@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "petrosa"
+version = "0.1.0"
+description = "Petrosa Trading Engine MVP"
+authors = ["Petrosa Team"]
+readme = "README.md"
+packages = [{include = "petrosa"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.104.1"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+pydantic = "^2.5.0"
+motor = "^3.3.2"
+prometheus-client = "^0.19.0"
+nats-py = "^2.7.0"
+python-dotenv = "^1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.11.0"
+ruff = "^0.1.6"
+pytest = "^7.4.3"
+httpx = "^0.25.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"

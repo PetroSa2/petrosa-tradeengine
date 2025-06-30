@@ -96,6 +96,63 @@ async def create_trade(signal: Signal):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/account")
+async def get_account_info():
+    """Get account information from Binance"""
+    try:
+        account_info = await dispatcher.get_account_info()
+        return {
+            "message": "Account information retrieved successfully",
+            "data": account_info,
+        }
+    except Exception as e:
+        logger.error("Error getting account info: %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to get account information")
+
+
+@app.get("/price/{symbol}")
+async def get_symbol_price(symbol: str):
+    """Get current price for a symbol"""
+    try:
+        price = await dispatcher.get_symbol_price(symbol)
+        return {
+            "symbol": symbol,
+            "price": price,
+            "timestamp": "2025-06-29T00:00:00Z",
+        }
+    except Exception as e:
+        logger.error("Error getting price for %s: %s", symbol, str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get price for {symbol}")
+
+
+@app.delete("/order/{symbol}/{order_id}")
+async def cancel_order(symbol: str, order_id: int):
+    """Cancel an existing order"""
+    try:
+        result = await dispatcher.cancel_order(symbol, order_id)
+        return {
+            "message": "Order cancelled successfully",
+            "data": result,
+        }
+    except Exception as e:
+        logger.error("Error cancelling order %s: %s", order_id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to cancel order")
+
+
+@app.get("/order/{symbol}/{order_id}")
+async def get_order_status(symbol: str, order_id: int):
+    """Get status of an existing order"""
+    try:
+        order_status = await dispatcher.get_order_status(symbol, order_id)
+        return {
+            "message": "Order status retrieved successfully",
+            "data": order_status,
+        }
+    except Exception as e:
+        logger.error("Error getting order status for %s: %s", order_id, str(e))
+        raise HTTPException(status_code=500, detail="Failed to get order status")
+
+
 @app.get("/version")
 async def get_version():
     """Get application version information"""

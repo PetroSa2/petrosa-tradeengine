@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: petrosa-tradeengine-ingress
+  namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.petrosa.com
+    secretName: petrosa-tradeengine-tls
+  rules:
+  - host: api.petrosa.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: petrosa-tradeengine-service
+            port:
+              number: 80 

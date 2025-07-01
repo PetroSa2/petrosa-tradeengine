@@ -59,6 +59,36 @@ async def health():
     }
 
 
+@app.get("/ready")
+async def ready():
+    """Readiness probe endpoint"""
+    try:
+        # Check if the application is ready to receive traffic
+        # Add any necessary checks here (database, external services, etc.)
+        return {
+            "status": "ready",
+            "timestamp": "2025-06-29T00:00:00Z",
+        }
+    except Exception as e:
+        logger.error("Readiness check failed: %s", str(e))
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+
+@app.get("/live")
+async def live():
+    """Liveness probe endpoint"""
+    try:
+        # Check if the application is alive and functioning
+        # This should be a lightweight check
+        return {
+            "status": "alive",
+            "timestamp": "2025-06-29T00:00:00Z",
+        }
+    except Exception as e:
+        logger.error("Liveness check failed: %s", str(e))
+        raise HTTPException(status_code=503, detail="Service not alive")
+
+
 @app.post("/trade")
 async def create_trade(signal: Signal):
     """

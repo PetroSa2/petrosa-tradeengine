@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petrosa-tradeengine
+  namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: petrosa-tradeengine
+  template:
+    metadata:
+      labels:
+        app: petrosa-tradeengine
+        version: v1
+    spec:
+      containers:
+      - name: tradeengine
+        image: petrosa/tradeengine:IMAGE_TAG
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-config
+              key: environment
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-config
+              key: log-level
+        - name: SIMULATION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-config
+              key: simulation-enabled
+        - name: BINANCE_TESTNET
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-config
+              key: binance-testnet
+        - name: MONGODB_URL
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-secrets
+              key: mongodb-url
+        - name: BINANCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-secrets
+              key: binance-api-key
+        - name: BINANCE_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-secrets
+              key: binance-api-secret
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-secrets
+              key: jwt-secret-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /live
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30 

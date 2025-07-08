@@ -8,16 +8,18 @@ All modules should import constants from this file rather than defining their ow
 """
 
 import os
-from typing import Dict, Any, List
+import warnings
 from enum import Enum
-
+from typing import Any
 
 # =============================================================================
 # ENVIRONMENT CONFIGURATION
 # =============================================================================
 
+
 class Environment(str, Enum):
     """Application environments"""
+
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
@@ -26,6 +28,7 @@ class Environment(str, Enum):
 
 class LogLevel(str, Enum):
     """Logging levels"""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -113,7 +116,9 @@ API_WORKERS = int(os.getenv("API_WORKERS", "1"))
 API_RELOAD = os.getenv("API_RELOAD", "true").lower() == "true"
 
 # CORS
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+).split(",")
 CORS_ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
 
 # Rate Limiting
@@ -165,8 +170,16 @@ SUPPORTED_TIME_IN_FORCE = ["GTC", "IOC", "FOK"]
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
-BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://testnet.binance.vision" if BINANCE_TESTNET else "https://api.binance.com")
-BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://testnet.binance.vision/ws" if BINANCE_TESTNET else "wss://stream.binance.com:9443/ws")
+BINANCE_BASE_URL = os.getenv(
+    "BINANCE_BASE_URL",
+    "https://testnet.binance.vision" if BINANCE_TESTNET else "https://api.binance.com",
+)
+BINANCE_WS_URL = os.getenv(
+    "BINANCE_WS_URL",
+    "wss://testnet.binance.vision/ws"
+    if BINANCE_TESTNET
+    else "wss://stream.binance.com:9443/ws",
+)
 BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT", "10"))
 BINANCE_RETRY_ATTEMPTS = int(os.getenv("BINANCE_RETRY_ATTEMPTS", "3"))
 
@@ -197,7 +210,9 @@ HEALTH_CHECK_TIMEOUT = int(os.getenv("HEALTH_CHECK_TIMEOUT", "5"))  # seconds
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_FORMAT = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+LOG_FORMAT = os.getenv(
+    "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 LOG_FILE = os.getenv("LOG_FILE", "")
 LOG_MAX_SIZE = int(os.getenv("LOG_MAX_SIZE", "10485760"))  # 10MB
 LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
@@ -215,15 +230,16 @@ JAEGER_PORT = int(os.getenv("JAEGER_PORT", "6831"))
 # JWT
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+)
 JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 # API Keys
 API_KEYS = {
     key.strip(): value.strip()
     for key, value in [
-        pair.split("=") for pair in os.getenv("API_KEYS", "").split(",")
-        if "=" in pair
+        pair.split("=") for pair in os.getenv("API_KEYS", "").split(",") if "=" in pair
     ]
 }
 
@@ -251,8 +267,10 @@ ORDER_BOOK_CACHE_TTL = int(os.getenv("ORDER_BOOK_CACHE_TTL", "5"))  # 5 seconds
 # TRADING CONSTANTS
 # =============================================================================
 
+
 class OrderStatus(str, Enum):
     """Order status constants"""
+
     PENDING = "pending"
     PARTIAL = "partial"
     FILLED = "filled"
@@ -263,6 +281,7 @@ class OrderStatus(str, Enum):
 
 class OrderType(str, Enum):
     """Order type constants"""
+
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
@@ -273,12 +292,14 @@ class OrderType(str, Enum):
 
 class OrderSide(str, Enum):
     """Order side constants"""
+
     BUY = "buy"
     SELL = "sell"
 
 
 class TimeInForce(str, Enum):
     """Time in force constants"""
+
     GTC = "GTC"  # Good Till Cancelled
     IOC = "IOC"  # Immediate Or Cancel
     FOK = "FOK"  # Fill Or Kill
@@ -318,7 +339,9 @@ if ENVIRONMENT == Environment.PRODUCTION:
     LOG_LEVEL = "WARNING"
     API_RELOAD = False
     SIMULATION_ENABLED = False
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")  # Must be set in production
+    JWT_SECRET_KEY = (
+        os.getenv("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
+    )  # Must be set in production
     BINANCE_TESTNET = False
     COINBASE_SANDBOX = False
     KRAKEN_SANDBOX = False
@@ -342,7 +365,8 @@ elif ENVIRONMENT == Environment.TESTING:
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def get_config_summary() -> Dict[str, Any]:
+
+def get_config_summary() -> dict[str, Any]:
     """Get a summary of all configuration for debugging/logging"""
     return {
         "app": {
@@ -380,10 +404,10 @@ def get_config_summary() -> Dict[str, Any]:
     }
 
 
-def validate_configuration() -> List[str]:
+def validate_configuration() -> list[str]:
     """Validate configuration and return list of issues"""
     issues = []
-    
+
     # Check required production settings
     if ENVIRONMENT == Environment.PRODUCTION:
         if not BINANCE_API_KEY:
@@ -392,15 +416,15 @@ def validate_configuration() -> List[str]:
             issues.append("BINANCE_API_SECRET is required in production")
         if JWT_SECRET_KEY == "your-secret-key-change-in-production":
             issues.append("JWT_SECRET_KEY must be changed in production")
-    
+
     # Check database connectivity
     if not MONGODB_URL:
         issues.append("MONGODB_URL is required")
-    
+
     # Check NATS connectivity
     if not NATS_SERVERS:
         issues.append("NATS_SERVERS is required")
-    
+
     return issues
 
 
@@ -408,13 +432,12 @@ def validate_configuration() -> List[str]:
 # DEPRECATION WARNINGS
 # =============================================================================
 
-import warnings
 
-def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0"):
+def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0") -> None:
     """Helper function to show deprecation warnings"""
     warnings.warn(
         f"{old_name} is deprecated and will be removed in version {version}. "
         f"Use {new_name} instead.",
         DeprecationWarning,
-        stacklevel=2
-    ) 
+        stacklevel=2,
+    )

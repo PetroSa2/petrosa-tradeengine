@@ -1,13 +1,17 @@
-import json
 import asyncio
+import json
 import logging
-import nats
-from nats.errors import Error as NatsError
-from contracts.signal import Signal
-from tradeengine.dispatcher import dispatcher
-from shared.config import settings
-from prometheus_client import Counter
 from datetime import datetime
+from typing import Any
+
+import nats
+import nats.aio.client
+import nats.aio.subscription
+from prometheus_client import Counter
+
+from contracts.signal import Signal
+from shared.config import settings
+from tradeengine.dispatcher import dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +27,12 @@ nats_errors = Counter("tradeengine_nats_errors_total", "Total NATS errors", ["ty
 class SignalConsumer:
     """NATS consumer for trading signals"""
 
-    def __init__(self):
-        self.nc = None
-        self.running = False
-        self.subscription = None
+    def __init__(self) -> None:
+        self.nc: nats.aio.client.Client | None = None
+        self.running: bool = False
+        self.subscription: nats.aio.subscription.Subscription | None = None
 
-    async def initialize(self):
+    async def initialize(self) -> bool:
         """Initialize NATS connection"""
         try:
             self.nc = await nats.connect(settings.nats_servers)
@@ -41,12 +45,16 @@ class SignalConsumer:
             nats_errors.labels(type="initialization").inc()
             return False
 
-    async def start_consuming(self):
+    async def start_consuming(self) -> None:
         """Start consuming messages from NATS"""
         if not self.nc:
             if not await self.initialize():
                 logger.error("Cannot start consuming - NATS consumer not initialized")
                 return
+        if self.nc is None:
+            raise RuntimeError(
+                "NATS client is not initialized after initialization attempt"
+            )
 
         self.running = True
         logger.info(
@@ -76,7 +84,7 @@ class SignalConsumer:
         finally:
             await self.stop_consuming()
 
-    async def _message_handler(self, msg):
+    async def _message_handler(self, msg: Any) -> None:
         """Handle incoming NATS messages"""
         try:
             logger.info("Processing NATS message from subject: %s", msg.subject)
@@ -93,7 +101,7 @@ class SignalConsumer:
             logger.info("Successfully processed signal: %s", signal.strategy_id)
 
             # Send acknowledgment if reply subject is provided
-            if msg.reply:
+            if msg.reply and self.nc:
                 response = {
                     "status": "processed",
                     "signal_id": signal.strategy_id,
@@ -107,11 +115,11 @@ class SignalConsumer:
             nats_errors.labels(type="processing").inc()
 
             # Send error response if reply subject is provided
-            if msg.reply:
+            if msg.reply and self.nc:
                 error_response = {"status": "error", "error": str(e)}
                 await self.nc.publish(msg.reply, json.dumps(error_response).encode())
 
-    async def stop_consuming(self):
+    async def stop_consuming(self) -> None:
         """Stop the consumer"""
         self.running = False
 
@@ -128,7 +136,7 @@ class SignalConsumer:
 signal_consumer = SignalConsumer()
 
 
-async def run_consumer():
+async def run_consumer() -> None:
     """Run the NATS consumer in a separate process/service"""
     logger.info("Starting Petrosa NATS Signal Consumer...")
     await signal_consumer.start_consuming()

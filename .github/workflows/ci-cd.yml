@@ -163,26 +163,6 @@ jobs:
         
     - name: Create namespace
       run: kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-      
-    - name: Create secrets
-      run: |
-        kubectl create secret generic petrosa-secrets \
-          --namespace=${{ env.NAMESPACE }} \
-          --from-literal=mongodb-url="${{ secrets.MONGODB_URL }}" \
-          --from-literal=binance-api-key="${{ secrets.BINANCE_API_KEY }}" \
-          --from-literal=binance-api-secret="${{ secrets.BINANCE_API_SECRET }}" \
-          --from-literal=jwt-secret-key="${{ secrets.JWT_SECRET_KEY }}" \
-          --dry-run=client -o yaml | kubectl apply -f -
-          
-    - name: Create ConfigMap
-      run: |
-        kubectl create configmap petrosa-config \
-          --namespace=${{ env.NAMESPACE }} \
-          --from-literal=environment=production \
-          --from-literal=log-level=INFO \
-          --from-literal=simulation-enabled=false \
-          --from-literal=binance-testnet=false \
-          --dry-run=client -o yaml | kubectl apply -f -
           
     - name: Update image tag in manifests
       run: |

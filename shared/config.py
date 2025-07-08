@@ -8,15 +8,22 @@ For new code, prefer importing from shared.constants directly.
 """
 
 from pydantic_settings import BaseSettings
+
 from shared.constants import (
-    MONGODB_URL, MONGODB_DATABASE, NATS_SERVERS, NATS_SIGNAL_SUBJECT,
-    API_HOST, API_PORT, ENVIRONMENT, LOG_LEVEL
+    API_HOST,
+    API_PORT,
+    ENVIRONMENT,
+    LOG_LEVEL,
+    MONGODB_DATABASE,
+    MONGODB_URL,
+    NATS_SERVERS,
+    NATS_SIGNAL_SUBJECT,
 )
 
 
 class Settings(BaseSettings):
     """Legacy settings class for backward compatibility"""
-    
+
     # MongoDB settings
     mongodb_url: str = MONGODB_URL
     mongodb_database: str = MONGODB_DATABASE
@@ -53,31 +60,14 @@ __all__ = [
     "get_settings",
     # Database
     "MONGODB_URL",
-    "MONGODB_DATABASE", 
-    "REDIS_URL",
-    "REDIS_DB",
+    "MONGODB_DATABASE",
     # Messaging
     "NATS_SERVERS",
     "NATS_SIGNAL_SUBJECT",
-    "NATS_QUEUE_GROUP",
     # API
     "API_HOST",
     "API_PORT",
-    "API_RELOAD",
-    # Trading
-    "DEFAULT_BASE_AMOUNT",
-    "SIMULATION_ENABLED",
-    "SUPPORTED_SYMBOLS",
-    # Exchange
-    "BINANCE_API_KEY",
-    "BINANCE_API_SECRET",
-    "BINANCE_TESTNET",
-    # Monitoring
+    # Environment
     "LOG_LEVEL",
-    "PROMETHEUS_ENABLED",
-    # App
     "ENVIRONMENT",
-    "DEBUG",
-    "Environment",
-    "LogLevel"
 ]

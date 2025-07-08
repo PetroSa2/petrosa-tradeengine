@@ -1,7 +1,9 @@
-import pytest
 from datetime import datetime
-from contracts.signal import Signal
+
+import pytest
+
 from contracts.order import TradeOrder
+from contracts.signal import Signal
 
 
 def test_signal_creation():
@@ -26,7 +28,9 @@ def test_signal_creation():
 
 def test_trade_order_creation():
     """Test TradeOrder model creation and validation"""
-    order = TradeOrder(type="market", side="buy", amount=100.0, simulate=True)
+    order = TradeOrder(
+        symbol="BTCUSDT", type="market", side="buy", amount=100.0, simulate=True
+    )
 
     assert order.type == "market"
     assert order.side == "buy"

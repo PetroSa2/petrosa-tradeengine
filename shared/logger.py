@@ -1,9 +1,10 @@
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from shared.config import settings
+from typing import Any
 
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+from shared.config import settings
 
 # Setup standard logging
 logging.basicConfig(
@@ -15,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class AuditLogger:
-    def __init__(self):
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorDatabase] = None
+    def __init__(self) -> None:
+        self.client: AsyncIOMotorClient | None = None
+        self.db: AsyncIOMotorDatabase | None = None
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Initialize MongoDB connection"""
         try:
             self.client = AsyncIOMotorClient(settings.mongodb_url)
@@ -35,10 +36,10 @@ class AuditLogger:
 
     async def log_trade(
         self,
-        order: Dict[str, Any],
-        result: Dict[str, Any],
-        signal_meta: Optional[Dict[str, Any]] = None,
-    ):
+        order: dict[str, Any],
+        result: dict[str, Any],
+        signal_meta: dict[str, Any] | None = None,
+    ) -> None:
         """Log trade execution to MongoDB"""
         if not self.db:
             logger.warning("MongoDB not available, skipping audit log")
@@ -61,7 +62,7 @@ class AuditLogger:
         except Exception as e:
             logger.error(f"Failed to log trade audit: {e}")
 
-    async def close(self):
+    async def close(self) -> None:
         """Close MongoDB connection"""
         if self.client:
             self.client.close()

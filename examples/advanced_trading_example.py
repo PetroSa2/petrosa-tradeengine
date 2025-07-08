@@ -12,28 +12,25 @@ Usage:
     python examples/advanced_trading_example.py
 """
 
-import sys
-import os
 import asyncio
+import os
+import sys
 from datetime import datetime
+
+from contracts.signal import Signal
+from shared.constants import BINANCE_TESTNET, SIMULATION_ENABLED
+from tradeengine.dispatcher import dispatcher
 
 # Add project root to path so we can import shared modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from contracts.signal import Signal
-from tradeengine.dispatcher import dispatcher
-from shared.constants import (
-    SIMULATION_ENABLED, BINANCE_TESTNET, SUPPORTED_SYMBOLS,
-    Environment, OrderType, OrderSide
-)
-
 
 async def demonstrate_market_orders():
     """Demonstrate market order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("MARKET ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Simple market buy order
     market_buy_signal = Signal(
         strategy_id="market_example",
@@ -46,10 +43,10 @@ async def demonstrate_market_orders():
             "order_type": "market",
             "base_amount": 0.001,  # 0.001 BTC
             "simulate": True,
-            "description": "Simple market buy order"
-        }
+            "description": "Simple market buy order",
+        },
     )
-    
+
     result = await dispatcher.dispatch(market_buy_signal)
     print(f"Market Buy Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -60,10 +57,10 @@ async def demonstrate_market_orders():
 
 async def demonstrate_limit_orders():
     """Demonstrate limit order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("LIMIT ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Limit buy order below current price
     limit_buy_signal = Signal(
         strategy_id="limit_example",
@@ -77,10 +74,10 @@ async def demonstrate_limit_orders():
             "base_amount": 0.001,
             "time_in_force": "GTC",
             "simulate": True,
-            "description": "Limit buy order below current price"
-        }
+            "description": "Limit buy order below current price",
+        },
     )
-    
+
     result = await dispatcher.dispatch(limit_buy_signal)
     print(f"Limit Buy Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -89,10 +86,10 @@ async def demonstrate_limit_orders():
 
 async def demonstrate_stop_orders():
     """Demonstrate stop order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("STOP ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Stop loss order for a long position
     stop_loss_signal = Signal(
         strategy_id="stop_example",
@@ -107,10 +104,10 @@ async def demonstrate_stop_orders():
             "stop_loss": 43000.0,  # Stop loss at 43k
             "use_default_stop_loss": False,
             "simulate": True,
-            "description": "Stop loss order for long position"
-        }
+            "description": "Stop loss order for long position",
+        },
     )
-    
+
     result = await dispatcher.dispatch(stop_loss_signal)
     print(f"Stop Loss Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -119,10 +116,10 @@ async def demonstrate_stop_orders():
 
 async def demonstrate_stop_limit_orders():
     """Demonstrate stop-limit order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("STOP-LIMIT ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Stop-limit order with both stop and limit prices
     stop_limit_signal = Signal(
         strategy_id="stop_limit_example",
@@ -138,10 +135,10 @@ async def demonstrate_stop_limit_orders():
             "target_price": 42900.0,  # Limit execution price
             "time_in_force": "GTC",
             "simulate": True,
-            "description": "Stop-limit order with execution price below stop"
-        }
+            "description": "Stop-limit order with execution price below stop",
+        },
     )
-    
+
     result = await dispatcher.dispatch(stop_limit_signal)
     print(f"Stop-Limit Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -151,10 +148,10 @@ async def demonstrate_stop_limit_orders():
 
 async def demonstrate_take_profit_orders():
     """Demonstrate take-profit order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TAKE-PROFIT ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Take profit order for a long position
     take_profit_signal = Signal(
         strategy_id="take_profit_example",
@@ -169,10 +166,10 @@ async def demonstrate_take_profit_orders():
             "take_profit": 47000.0,  # Take profit at 47k
             "use_default_take_profit": False,
             "simulate": True,
-            "description": "Take profit order for long position"
-        }
+            "description": "Take profit order for long position",
+        },
     )
-    
+
     result = await dispatcher.dispatch(take_profit_signal)
     print(f"Take Profit Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -181,10 +178,10 @@ async def demonstrate_take_profit_orders():
 
 async def demonstrate_take_profit_limit_orders():
     """Demonstrate take-profit-limit order execution"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TAKE-PROFIT-LIMIT ORDERS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Take profit limit order with both take profit and limit prices
     take_profit_limit_signal = Signal(
         strategy_id="take_profit_limit_example",
@@ -200,10 +197,12 @@ async def demonstrate_take_profit_limit_orders():
             "target_price": 47100.0,  # Limit execution price
             "time_in_force": "GTC",
             "simulate": True,
-            "description": "Take profit limit order with execution price above take profit"
-        }
+            "description": (
+                "Take profit limit order with execution price " "above take profit"
+            ),
+        },
     )
-    
+
     result = await dispatcher.dispatch(take_profit_limit_signal)
     print(f"Take Profit Limit Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -213,10 +212,10 @@ async def demonstrate_take_profit_limit_orders():
 
 async def demonstrate_advanced_signal_features():
     """Demonstrate advanced signal features"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("ADVANCED SIGNAL FEATURES")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Signal with custom risk management
     advanced_signal = Signal(
         strategy_id="advanced_example",
@@ -239,11 +238,11 @@ async def demonstrate_advanced_signal_features():
             "strategy_metadata": {
                 "indicators": {"rsi": 65, "macd": "bullish"},
                 "volatility": "medium",
-                "trend": "uptrend"
-            }
-        }
+                "trend": "uptrend",
+            },
+        },
     )
-    
+
     result = await dispatcher.dispatch(advanced_signal)
     print(f"Advanced Signal Result: {result['status']}")
     print(f"Order ID: {result.get('order_id')}")
@@ -256,21 +255,21 @@ async def demonstrate_advanced_signal_features():
 
 async def demonstrate_account_operations():
     """Demonstrate account and order management operations"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("ACCOUNT OPERATIONS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Get account information
     try:
         account_info = await dispatcher.get_account_info()
         print(f"Account Info: {account_info.get('message', 'Retrieved')}")
-        if 'data' in account_info and not account_info['data'].get('simulated'):
+        if "data" in account_info and not account_info["data"].get("simulated"):
             print(f"Can Trade: {account_info['data'].get('can_trade')}")
             print(f"Maker Commission: {account_info['data'].get('maker_commission')}")
             print(f"Taker Commission: {account_info['data'].get('taker_commission')}")
     except Exception as e:
         print(f"Account info error: {e}")
-    
+
     # Get symbol price
     try:
         price = await dispatcher.get_symbol_price("BTCUSDT")
@@ -281,13 +280,13 @@ async def demonstrate_account_operations():
 
 async def demonstrate_live_vs_simulation():
     """Demonstrate the difference between live and simulation trading"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("LIVE VS SIMULATION TRADING")
-    print("="*60)
-    
+    print("=" * 60)
+
     print(f"Simulation Enabled: {SIMULATION_ENABLED}")
     print(f"Binance Testnet: {BINANCE_TESTNET}")
-    
+
     if SIMULATION_ENABLED:
         print("✅ Currently running in SIMULATION mode")
         print("   - All orders are simulated")
@@ -298,7 +297,7 @@ async def demonstrate_live_vs_simulation():
         print("   - Real orders will be placed on Binance")
         print("   - Real money is at risk")
         print("   - Use with caution!")
-    
+
     if BINANCE_TESTNET:
         print("✅ Using Binance Testnet")
         print("   - Safe testing environment")
@@ -311,10 +310,10 @@ async def demonstrate_live_vs_simulation():
 
 async def demonstrate_hold_signals():
     """Demonstrate hold signal handling"""
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("HOLD SIGNALS")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Hold signal (no action)
     hold_signal = Signal(
         strategy_id="hold_example",
@@ -325,10 +324,10 @@ async def demonstrate_hold_signals():
         timestamp=datetime.now(),
         meta={
             "description": "Hold signal - no trading action",
-            "reason": "Market conditions uncertain"
-        }
+            "reason": "Market conditions uncertain",
+        },
     )
-    
+
     result = await dispatcher.dispatch(hold_signal)
     print(f"Hold Signal Result: {result['status']}")
     print(f"Message: {result.get('message')}")
@@ -337,8 +336,8 @@ async def demonstrate_hold_signals():
 async def main():
     """Run all trading demonstrations"""
     print("🚀 Petrosa Trading Engine - Advanced Trading Example")
-    print("="*80)
-    
+    print("=" * 80)
+
     try:
         # Run all demonstrations
         await demonstrate_market_orders()
@@ -351,11 +350,11 @@ async def main():
         await demonstrate_account_operations()
         await demonstrate_live_vs_simulation()
         await demonstrate_hold_signals()
-        
-        print("\n" + "="*80)
+
+        print("\n" + "=" * 80)
         print("✅ Advanced Trading Example Complete!")
-        print("="*80)
-        
+        print("=" * 80)
+
         print("\nKey Features Demonstrated:")
         print("1. ✅ Market Orders - Immediate execution at current price")
         print("2. ✅ Limit Orders - Execution at specified price or better")
@@ -367,17 +366,17 @@ async def main():
         print("8. ✅ Account Operations - Balance and price queries")
         print("9. ✅ Live vs Simulation - Safe testing environment")
         print("10. ✅ Hold Signals - No-action signals")
-        
+
         print("\nNext Steps:")
         print("1. Set your Binance API keys in .env file")
         print("2. Set SIMULATION_ENABLED=false for live trading")
         print("3. Set BINANCE_TESTNET=false for mainnet trading")
         print("4. Test with small amounts first!")
-        
+
     except Exception as e:
         print(f"❌ Error running trading example: {e}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

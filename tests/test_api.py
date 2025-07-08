@@ -1,5 +1,7 @@
-from fastapi.testclient import TestClient
 from datetime import datetime
+
+from fastapi.testclient import TestClient
+
 from tradeengine.api import app
 
 client = TestClient(app)

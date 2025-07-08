@@ -11,24 +11,25 @@ Usage:
 
 import asyncio
 import json
-import nats
-from datetime import datetime
-import sys
 import os
+import sys
+from datetime import datetime
+
+import nats
+
+from shared.config import settings
 
 # Add project root to path so we can import shared modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.config import settings
-
 
 async def publish_test_signal():
     """Publish a test trading signal to NATS"""
-    
+
     # Connect to NATS
     nc = await nats.connect(settings.nats_servers)
     print(f"Connected to NATS at {settings.nats_servers}")
-    
+
     # Create test signal
     test_signal = {
         "strategy_id": "nats_test_strategy",
@@ -41,19 +42,16 @@ async def publish_test_signal():
             "simulate": True,
             "indicators": {"rsi": 65, "macd": "bullish"},
             "rationale": "NATS integration test signal",
-            "source": "example_publisher"
-        }
+            "source": "example_publisher",
+        },
     }
-    
+
     # Publish signal
-    await nc.publish(
-        settings.nats_signal_subject,
-        json.dumps(test_signal).encode()
-    )
-    
+    await nc.publish(settings.nats_signal_subject, json.dumps(test_signal).encode())
+
     print(f"Published test signal to subject: {settings.nats_signal_subject}")
     print(f"Signal: {json.dumps(test_signal, indent=2)}")
-    
+
     # Close connection
     await nc.close()
     print("NATS connection closed")
@@ -62,9 +60,9 @@ async def publish_test_signal():
 if __name__ == "__main__":
     print("NATS Signal Publisher for Petrosa Trading Engine")
     print("=" * 50)
-    
+
     # Publish test signal
     print("\n1. Publishing test signal...")
     asyncio.run(publish_test_signal())
-    
+
     print("\nDone! Check your consumer logs to see if signals were processed.")

@@ -1,4 +1,6 @@
 import logging
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -11,17 +13,11 @@ from tradeengine.dispatcher import dispatcher
 
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Petrosa Trading Engine",
-    description="Petrosa Trading Engine MVP - Signal-driven trading execution",
-    version="0.1.0",
-)
 
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialize application components"""
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan manager"""
+    # Startup
     logger.info("Starting Petrosa Trading Engine...")
     # MongoDB initialization temporarily disabled for demo
     # try:
@@ -31,13 +27,21 @@ async def startup_event() -> None:
     #     logger.info("Continuing without audit logging...")
     logger.info("Petrosa Trading Engine started successfully")
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """Cleanup application components"""
+    # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
     await audit_logger.close()
     logger.info("Petrosa Trading Engine shut down complete")
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Petrosa Trading Engine",
+    description="Petrosa Trading Engine MVP - Signal-driven trading execution",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 
 @app.get("/")

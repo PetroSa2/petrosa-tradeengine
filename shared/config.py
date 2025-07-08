@@ -40,8 +40,7 @@ class Settings(BaseSettings):
     environment: str = ENVIRONMENT
     log_level: str = LOG_LEVEL
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env"}
 
 
 # Global settings instance for backward compatibility

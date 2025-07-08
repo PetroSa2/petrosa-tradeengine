@@ -56,7 +56,8 @@ class AuditLogger:
 
             await self.db.trade_audit.insert_one(audit_record)
             logger.info(
-                f"Trade audit logged: {order.get('type', 'unknown')} {order.get('side', 'unknown')} order"
+                f"Trade audit logged: {order.get('type', 'unknown')} "
+                f"{order.get('side', 'unknown')} order"
             )
 
         except Exception as e:

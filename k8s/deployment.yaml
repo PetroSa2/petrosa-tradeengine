@@ -27,42 +27,42 @@ spec:
         - name: ENVIRONMENT
           valueFrom:
             configMapKeyRef:
-              name: petrosa-config
+              name: petrosa-common-config
               key: environment
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: petrosa-config
+              name: petrosa-common-config
               key: log-level
         - name: SIMULATION_ENABLED
           valueFrom:
             configMapKeyRef:
-              name: petrosa-config
+              name: petrosa-common-config
               key: simulation-enabled
         - name: BINANCE_TESTNET
           valueFrom:
             configMapKeyRef:
-              name: petrosa-config
+              name: petrosa-common-config
               key: binance-testnet
         - name: MONGODB_URL
           valueFrom:
             secretKeyRef:
-              name: petrosa-secrets
+              name: petrosa-sensitive-credentials
               key: mongodb-url
         - name: BINANCE_API_KEY
           valueFrom:
             secretKeyRef:
-              name: petrosa-secrets
+              name: petrosa-sensitive-credentials
               key: binance-api-key
         - name: BINANCE_API_SECRET
           valueFrom:
             secretKeyRef:
-              name: petrosa-secrets
+              name: petrosa-sensitive-credentials
               key: binance-api-secret
         - name: JWT_SECRET_KEY
           valueFrom:
             secretKeyRef:
-              name: petrosa-secrets
+              name: petrosa-sensitive-credentials
               key: jwt-secret-key
         resources:
           requests:

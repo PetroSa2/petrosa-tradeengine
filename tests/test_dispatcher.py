@@ -1,6 +1,7 @@
-import pytest
-import asyncio
 from datetime import datetime
+
+import pytest
+
 from contracts.signal import Signal
 from tradeengine.dispatcher import TradeDispatcher
 

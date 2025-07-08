@@ -1,16 +1,21 @@
 import logging
-from typing import Dict, Any
-from contracts.signal import Signal
-from contracts.order import TradeOrder
-from tradeengine.exchange.simulator import simulator
-from tradeengine.exchange.binance import binance_exchange
-from shared.logger import audit_logger
-from shared.constants import (
-    SIMULATION_ENABLED, DEFAULT_BASE_AMOUNT, DEFAULT_ORDER_TYPE,
-    STOP_LOSS_DEFAULT, TAKE_PROFIT_DEFAULT, SUPPORTED_SYMBOLS
-)
-from prometheus_client import Counter, Histogram
 import time
+from typing import Any
+
+from prometheus_client import Counter, Histogram
+
+from contracts.order import TradeOrder
+from contracts.signal import Signal
+from shared.constants import (
+    DEFAULT_BASE_AMOUNT,
+    DEFAULT_ORDER_TYPE,
+    SIMULATION_ENABLED,
+    STOP_LOSS_DEFAULT,
+    TAKE_PROFIT_DEFAULT,
+)
+from shared.logger import audit_logger
+from tradeengine.exchange.binance import binance_exchange
+from tradeengine.exchange.simulator import simulator
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +30,10 @@ latency_seconds = Histogram("tradeengine_latency_seconds", "Trade execution late
 class TradeDispatcher:
     """Converts signals to trade orders and dispatches to execution engines"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.risk_enabled = False  # Placeholder for future risk management
 
-    async def dispatch(self, signal: Signal) -> Dict[str, Any]:
+    async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Convert signal to trade order and execute"""
         start_time = time.time()
 
@@ -75,7 +80,7 @@ class TradeDispatcher:
 
         # Determine order type based on signal meta or default
         order_type = signal.meta.get("order_type", DEFAULT_ORDER_TYPE)
-        
+
         # Determine position size based on confidence
         base_amount = signal.meta.get("base_amount", DEFAULT_BASE_AMOUNT)
         confidence_multiplier = min(signal.confidence, 1.0)  # Cap at 100%
@@ -87,14 +92,14 @@ class TradeDispatcher:
         # Calculate stop loss and take profit if not provided
         stop_loss = signal.meta.get("stop_loss")
         take_profit = signal.meta.get("take_profit")
-        
+
         if not stop_loss and signal.meta.get("use_default_stop_loss", True):
             # Calculate stop loss based on signal price and default percentage
             if signal.action == "buy":
                 stop_loss = signal.price * (1 - STOP_LOSS_DEFAULT / 100)
             else:
                 stop_loss = signal.price * (1 + STOP_LOSS_DEFAULT / 100)
-        
+
         if not take_profit and signal.meta.get("use_default_take_profit", True):
             # Calculate take profit based on signal price and default percentage
             if signal.action == "buy":
@@ -104,14 +109,14 @@ class TradeDispatcher:
 
         # Determine target price based on order type
         target_price = None
-        if order_type in ["limit", "stop_limit", "take_profit_limit"]:
+        if order_type in ["limit", "stop_limit", "take_profit_limit", "market"]:
             target_price = signal.price
 
         # Create the trade order
         trade_order = TradeOrder(
             symbol=signal.symbol,
             type=order_type,
-            side=signal.action,  # "buy" or "sell"
+            side=signal.action,  # type: ignore # We handle "hold" earlier
             amount=amount,
             target_price=target_price,
             stop_loss=stop_loss,
@@ -121,7 +126,7 @@ class TradeDispatcher:
             simulate=simulate,
             strategy_id=signal.strategy_id,
             signal_id=signal.strategy_id,  # Using strategy_id as signal_id for now
-            meta=signal.meta
+            meta=signal.meta,
         )
 
         logger.info(
@@ -132,12 +137,12 @@ class TradeDispatcher:
             signal.symbol,
             target_price or "market",
             stop_loss,
-            take_profit
+            take_profit,
         )
 
         return trade_order
 
-    async def get_account_info(self) -> Dict[str, Any]:
+    async def get_account_info(self) -> dict[str, Any]:
         """Get account information from Binance"""
         try:
             if not SIMULATION_ENABLED:
@@ -145,7 +150,7 @@ class TradeDispatcher:
             else:
                 return {
                     "simulated": True,
-                    "message": "Account info not available in simulation mode"
+                    "message": "Account info not available in simulation mode",
                 }
         except Exception as e:
             logger.error("Error getting account info: %s", str(e))
@@ -163,7 +168,7 @@ class TradeDispatcher:
             logger.error("Error getting symbol price: %s", str(e))
             raise
 
-    async def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
+    async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         """Cancel an existing order"""
         try:
             if not SIMULATION_ENABLED:
@@ -171,13 +176,13 @@ class TradeDispatcher:
             else:
                 return {
                     "simulated": True,
-                    "message": "Order cancellation not available in simulation mode"
+                    "message": "Order cancellation not available in simulation mode",
                 }
         except Exception as e:
             logger.error("Error canceling order: %s", str(e))
             return {"error": str(e)}
 
-    async def get_order_status(self, symbol: str, order_id: int) -> Dict[str, Any]:
+    async def get_order_status(self, symbol: str, order_id: int) -> dict[str, Any]:
         """Get order status"""
         try:
             if not SIMULATION_ENABLED:
@@ -185,7 +190,7 @@ class TradeDispatcher:
             else:
                 return {
                     "simulated": True,
-                    "message": "Order status not available in simulation mode"
+                    "message": "Order status not available in simulation mode",
                 }
         except Exception as e:
             logger.error("Error getting order status: %s", str(e))

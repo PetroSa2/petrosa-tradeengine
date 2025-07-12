@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Petrosa Trading Engine...")
 
     # Initialize audit logging in background - don't block startup
-    async def init_audit_logger():
+    async def init_audit_logger() -> None:
         try:
             await audit_logger.initialize()
         except Exception as e:

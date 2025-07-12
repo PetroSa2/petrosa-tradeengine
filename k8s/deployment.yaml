@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: tradeengine
-        image: petrosa/tradeengine:VERSION_PLACEHOLDER
+        image: petrosa/petrosa-tradeengine:VERSION_PLACEHOLDER
         ports:
         - containerPort: 8000
           name: http

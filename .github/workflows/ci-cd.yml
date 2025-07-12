@@ -252,7 +252,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: petrosa/petrosa-tradeengine
+        images: ${{ env.IMAGE_NAME }}
         tags: |
           type=raw,value=${{ steps.version.outputs.version }}
           type=raw,value=latest

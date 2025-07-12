@@ -1,11 +1,11 @@
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any
-import json
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from shared.config import settings
@@ -104,7 +104,7 @@ class AuditLogger:
                     # Insert into audit table
                     insert_query = text(
                         """
-                        INSERT INTO trade_audit 
+                        INSERT INTO trade_audit
                         (timestamp, order_data, result_data, signal_meta, environment)
                         VALUES (:timestamp, :order_data, :result_data, :signal_meta, :environment)
                     """

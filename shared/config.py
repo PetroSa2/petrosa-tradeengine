@@ -14,8 +14,8 @@ from shared.constants import (
     API_PORT,
     ENVIRONMENT,
     LOG_LEVEL,
-    MYSQL_URI,
     MYSQL_DATABASE,
+    MYSQL_URI,
     NATS_SERVERS,
     NATS_SIGNAL_SUBJECT,
 )

@@ -1,7 +1,7 @@
 import logging
 import random
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -43,7 +43,7 @@ class TradeSimulator:
                 "order_id": str(uuid.uuid4()),
                 "status": "failed",
                 "error": "Simulated execution failure",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "simulated": True,
                 "original_order": order.model_dump(),
             }
@@ -61,7 +61,7 @@ class TradeSimulator:
             "fill_price": round(fill_price, 2),
             "total_value": round(order.amount * fill_price, 2),
             "fees": round(order.amount * fill_price * 0.001, 4),  # 0.1% fees
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "simulated": True,
             "fills": self._generate_fills(order, fill_price),
             "original_order": order.model_dump(),

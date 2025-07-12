@@ -14,8 +14,8 @@ from shared.constants import (
     API_PORT,
     ENVIRONMENT,
     LOG_LEVEL,
-    MONGODB_DATABASE,
-    MONGODB_URL,
+    MYSQL_URI,
+    MYSQL_DATABASE,
     NATS_SERVERS,
     NATS_SIGNAL_SUBJECT,
 )
@@ -24,9 +24,9 @@ from shared.constants import (
 class Settings(BaseSettings):
     """Legacy settings class for backward compatibility"""
 
-    # MongoDB settings
-    mongodb_url: str = MONGODB_URL
-    mongodb_database: str = MONGODB_DATABASE
+    # MySQL settings
+    mysql_uri: str = MYSQL_URI
+    mysql_database: str = MYSQL_DATABASE
 
     # NATS settings
     nats_servers: str = NATS_SERVERS
@@ -40,8 +40,7 @@ class Settings(BaseSettings):
     environment: str = ENVIRONMENT
     log_level: str = LOG_LEVEL
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env"}
 
 
 # Global settings instance for backward compatibility
@@ -59,8 +58,8 @@ __all__ = [
     "settings",
     "get_settings",
     # Database
-    "MONGODB_URL",
-    "MONGODB_DATABASE",
+    "MYSQL_URI",
+    "MYSQL_DATABASE",
     # Messaging
     "NATS_SERVERS",
     "NATS_SIGNAL_SUBJECT",

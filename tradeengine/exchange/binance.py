@@ -103,7 +103,8 @@ class BinanceExchange:
 
         try:
             logger.info(
-                f"Executing {order.type} {order.side} order for {order.amount} {order.symbol}"
+                f"Executing {order.type} {order.side} order for "
+                f"{order.amount} {order.symbol}"
             )
 
             # Validate order
@@ -324,7 +325,8 @@ class BinanceExchange:
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
                 logger.warning(
-                    f"Retry {attempt + 1}/{MAX_RETRY_ATTEMPTS} after {wait_time}s: {last_exception}"
+                    f"Retry {attempt + 1}/{MAX_RETRY_ATTEMPTS} after "
+                    f"{wait_time}s: {last_exception}"
                 )
                 await asyncio.sleep(wait_time)
 

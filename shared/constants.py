@@ -69,7 +69,13 @@ RETRY_BACKOFF_MULTIPLIER = float(os.getenv("RETRY_BACKOFF_MULTIPLIER", "2.0"))
 # DATABASE CONFIGURATION
 # =============================================================================
 
-# MongoDB
+# MySQL
+MYSQL_URI = os.getenv("MYSQL_URI", "mysql+pymysql://localhost:3306/petrosa")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "petrosa")
+MYSQL_TIMEOUT_MS = int(os.getenv("MYSQL_TIMEOUT_MS", "5000"))
+MYSQL_MAX_POOL_SIZE = int(os.getenv("MYSQL_MAX_POOL_SIZE", "10"))
+
+# MongoDB (legacy - for backward compatibility)
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "petrosa")
 MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))

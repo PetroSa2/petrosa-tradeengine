@@ -64,9 +64,7 @@ class AuditLogger:
                 )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
-                    logger.info(
-                        f"Retrying MySQL initialization in {delay} seconds..."
-                    )
+                    logger.info(f"Retrying MySQL initialization in {delay} seconds...")
                     await asyncio.sleep(delay)
                 else:
                     logger.error(

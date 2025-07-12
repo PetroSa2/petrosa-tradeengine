@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from shared.config import settings
@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 class AuditLogger:
     def __init__(self) -> None:
-        self.engine = None
-        self.async_session = None
+        self.engine: AsyncEngine | None = None
+        self.async_session: sessionmaker[AsyncSession] | None = None
         self.initialized = False
         self.retry_attempts = 3
         self.retry_delay = 1.0
@@ -49,8 +49,9 @@ class AuditLogger:
                 self.async_session = async_session
 
                 # Test connection
-                async with self.engine.begin() as conn:
-                    await conn.execute(text("SELECT 1"))
+                if self.engine:
+                    async with self.engine.begin() as conn:
+                        await conn.execute(text("SELECT 1"))
 
                 self.initialized = True
                 logger.info("MySQL audit logger initialized successfully")
@@ -63,7 +64,9 @@ class AuditLogger:
                 )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
-                    logger.info(f"Retrying MySQL initialization in {delay} seconds...")
+                    logger.info(
+                        f"Retrying MySQL initialization in {delay} seconds..."
+                    )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
@@ -100,25 +103,26 @@ class AuditLogger:
         """Async task to log trade with retries and backoff"""
         for attempt in range(self.retry_attempts):
             try:
-                async with self.async_session() as session:
-                    # Insert into audit table
-                    insert_query = text(
+                if self.async_session:
+                    async with self.async_session() as session:
+                        # Insert into audit table
+                        insert_query = text(
+                            """
+                            INSERT INTO trade_audit
+                            (timestamp, order_data, result_data, signal_meta, environment)
+                            VALUES (:timestamp, :order_data, :result_data, :signal_meta, :environment)
                         """
-                        INSERT INTO trade_audit
-                        (timestamp, order_data, result_data, signal_meta, environment)
-                        VALUES (:timestamp, :order_data, :result_data, :signal_meta, :environment)
-                    """
-                    )
+                        )
 
-                    await session.execute(insert_query, audit_record)
-                    await session.commit()
+                        await session.execute(insert_query, audit_record)
+                        await session.commit()
 
-                    logger.debug(
-                        f"Trade audit logged: "
-                        f"{audit_record.get('order_data', {}).get('type', 'unknown')} "
-                        f"{audit_record.get('order_data', {}).get('side', 'unknown')} order"
-                    )
-                    return
+                        logger.debug(
+                            f"Trade audit logged: "
+                            f"{audit_record.get('order_data', {}).get('type', 'unknown')} "
+                            f"{audit_record.get('order_data', {}).get('side', 'unknown')} order"
+                        )
+                        return
 
             except Exception as e:
                 logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")

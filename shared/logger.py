@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -83,7 +83,7 @@ class AuditLogger:
             return
 
         # Create audit record
-        audit_record: Dict[str, Any] = {
+        audit_record: dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat(),
             "order_data": order,
             "result_data": result,

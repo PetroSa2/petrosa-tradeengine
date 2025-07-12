@@ -44,14 +44,13 @@ class AuditLogger:
 
                 # Create async session factory
                 async_session = sessionmaker(
-                    self.engine, class_=AsyncSession, expire_on_commit=False
+                    bind=self.engine, class_=AsyncSession, expire_on_commit=False
                 )
                 self.async_session = async_session
 
                 # Test connection
-                if self.engine:
-                    async with self.engine.begin() as conn:
-                        await conn.execute(text("SELECT 1"))
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
 
                 self.initialized = True
                 logger.info("MySQL audit logger initialized successfully")
@@ -87,57 +86,58 @@ class AuditLogger:
 
         # Create audit record
         audit_record = {
-            "timestamp": datetime.utcnow(),
-            "order_data": json.dumps(order, default=str),
-            "result_data": json.dumps(result, default=str),
-            "signal_meta": json.dumps(signal_meta or {}, default=str),
-            "environment": settings.environment,
+            "timestamp": datetime.utcnow().isoformat(),
+            "order_data": order,
+            "result_data": result,
+            "signal_meta": signal_meta or {},
         }
 
-        # Fire and forget - don't block the main operation
-        asyncio.create_task(self._log_trade_async(audit_record))
-
-    async def _log_trade_async(self, audit_record: dict[str, Any]) -> None:
-        """Async task to log trade with retries and backoff"""
+        # Non-blocking audit logging with retries
         for attempt in range(self.retry_attempts):
             try:
-                if self.async_session:
-                    async with self.async_session() as session:
-                        # Insert into audit table
-                        insert_query = text(
+                async with self.async_session() as session:
+                    # Insert audit record
+                    await session.execute(
+                        text(
                             """
-                            INSERT INTO trade_audit
-                            (timestamp, order_data, result_data, signal_meta, environment)
-                            VALUES (:timestamp, :order_data, :result_data, :signal_meta, :environment)
-                        """
-                        )
+                            INSERT INTO trade_audit_log 
+                            (timestamp, order_data, result_data, signal_meta)
+                            VALUES (:timestamp, :order_data, :result_data, :signal_meta)
+                            """
+                        ),
+                        {
+                            "timestamp": audit_record["timestamp"],
+                            "order_data": json.dumps(audit_record["order_data"]),
+                            "result_data": json.dumps(audit_record["result_data"]),
+                            "signal_meta": json.dumps(audit_record["signal_meta"]),
+                        },
+                    )
+                    await session.commit()
 
-                        await session.execute(insert_query, audit_record)
-                        await session.commit()
-
-                        logger.debug(
-                            f"Trade audit logged: "
-                            f"{audit_record.get('order_data', {}).get('type', 'unknown')} "
-                            f"{audit_record.get('order_data', {}).get('side', 'unknown')} order"
-                        )
-                        return
+                    logger.debug(
+                        f"Trade audit logged: "
+                        f"{audit_record['order_data'].get('type', 'unknown')} "
+                        f"{audit_record['order_data'].get('side', 'unknown')} order"
+                    )
+                    return
 
             except Exception as e:
-                logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    f"Trade audit logging attempt {attempt + 1} failed: {e}"
+                )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(f"Trade audit logging failed after all retries: {e}")
+                    logger.error(
+                        f"Trade audit logging failed after all retries: {e}"
+                    )
 
     async def close(self) -> None:
         """Close MySQL connection"""
         if self.engine:
-            try:
-                await self.engine.dispose()
-                logger.info("MySQL audit logger connection closed")
-            except Exception as e:
-                logger.warning(f"Error closing MySQL audit logger: {e}")
+            await self.engine.dispose()
+            logger.info("MySQL audit logger connection closed")
 
 
 # Global audit logger instance

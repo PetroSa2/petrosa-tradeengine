@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     def __init__(self) -> None:
         self.engine: AsyncEngine | None = None
-        self.async_session: sessionmaker[AsyncSession] | None = None
+        self.async_session: sessionmaker | None = None
         self.initialized = False
         self.retry_attempts = 3
         self.retry_delay = 1.0
@@ -42,20 +42,18 @@ class AuditLogger:
                     pool_recycle=3600,
                 )
 
-                # Create async session factory
-                async_session = sessionmaker(
-                    bind=self.engine, class_=AsyncSession, expire_on_commit=False
+                # Create async session factory (no explicit type param)
+                self.async_session = sessionmaker(
+                    self.engine, class_=AsyncSession, expire_on_commit=False
                 )
-                self.async_session = async_session
 
                 # Test connection
                 async with self.engine.begin() as conn:
-                    await conn.execute(text("SELECT 1"))
+                    await conn.run_sync(lambda c: None)
 
                 self.initialized = True
                 logger.info("MySQL audit logger initialized successfully")
                 return
-
             except Exception as e:
                 logger.warning(
                     f"MySQL audit logger initialization attempt "
@@ -63,7 +61,9 @@ class AuditLogger:
                 )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
-                    logger.info(f"Retrying MySQL initialization in {delay} seconds...")
+                    logger.info(
+                        f"Retrying MySQL initialization in {delay} seconds..."
+                    )
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
@@ -85,18 +85,16 @@ class AuditLogger:
             return
 
         # Create audit record
-        audit_record = {
+        audit_record: Dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat(),
             "order_data": order,
             "result_data": result,
             "signal_meta": signal_meta or {},
         }
 
-        # Non-blocking audit logging with retries
         for attempt in range(self.retry_attempts):
             try:
                 async with self.async_session() as session:
-                    # Insert audit record
                     await session.execute(
                         text(
                             """
@@ -114,20 +112,28 @@ class AuditLogger:
                     )
                     await session.commit()
 
+                    order_data = audit_record["order_data"]
+                    if isinstance(order_data, dict):
+                        order_type = order_data.get("type", "unknown")
+                        order_side = order_data.get("side", "unknown")
+                    else:
+                        order_type = order_side = "unknown"
                     logger.debug(
-                        f"Trade audit logged: "
-                        f"{audit_record['order_data'].get('type', 'unknown')} "
-                        f"{audit_record['order_data'].get('side', 'unknown')} order"
+                        f"Trade audit logged: {order_type} {order_side} order"
                     )
                     return
 
             except Exception as e:
-                logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    f"Trade audit logging attempt {attempt + 1} failed: {e}"
+                )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(f"Trade audit logging failed after all retries: {e}")
+                    logger.error(
+                        f"Trade audit logging failed after all retries: {e}"
+                    )
 
     async def close(self) -> None:
         """Close MySQL connection"""

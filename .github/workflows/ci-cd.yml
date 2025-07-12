@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine
+  IMAGE_NAME: petrosa/petrosa-tradeengine
   NAMESPACE: petrosa-apps
 
 jobs:
@@ -252,7 +252,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.IMAGE_NAME }}
+        images: petrosa/petrosa-tradeengine
         tags: |
           type=raw,value=${{ steps.version.outputs.version }}
           type=raw,value=latest

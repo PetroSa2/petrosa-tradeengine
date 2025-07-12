@@ -1,4 +1,7 @@
 import logging
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
+import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -11,33 +14,41 @@ from tradeengine.dispatcher import dispatcher
 
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan manager"""
+    # Startup
+    logger.info("Starting Petrosa Trading Engine...")
+    
+    # Initialize audit logging in background - don't block startup
+    async def init_audit_logger():
+        try:
+            await audit_logger.initialize()
+        except Exception as e:
+            logger.warning("MySQL audit logger initialization failed: %s", str(e))
+            logger.info("Continuing without audit logging...")
+    
+    # Start audit logger initialization in background
+    asyncio.create_task(init_audit_logger())
+    
+    logger.info("Petrosa Trading Engine started successfully")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down Petrosa Trading Engine...")
+    await audit_logger.close()
+    logger.info("Petrosa Trading Engine shut down complete")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Petrosa Trading Engine",
     description="Petrosa Trading Engine MVP - Signal-driven trading execution",
     version="0.1.0",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialize application components"""
-    logger.info("Starting Petrosa Trading Engine...")
-    # MongoDB initialization temporarily disabled for demo
-    # try:
-    #     await audit_logger.initialize()
-    # except Exception as e:
-    #     logger.warning("MongoDB audit logger initialization failed: %s", str(e))
-    #     logger.info("Continuing without audit logging...")
-    logger.info("Petrosa Trading Engine started successfully")
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """Cleanup application components"""
-    logger.info("Shutting down Petrosa Trading Engine...")
-    await audit_logger.close()
-    logger.info("Petrosa Trading Engine shut down complete")
 
 
 @app.get("/")

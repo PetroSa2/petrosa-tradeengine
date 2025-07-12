@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: tradeengine
-        image: petrosa/tradeengine:VERSION_PLACEHOLDER
+        image: petrosa/tradeengine:local-20250630-224643
         ports:
         - containerPort: 8000
           name: http
@@ -53,17 +53,17 @@ spec:
           valueFrom:
             secretKeyRef:
               name: petrosa-sensitive-credentials
-              key: BINANCE_API_KEY
+              key: binance-api-key
         - name: BINANCE_API_SECRET
           valueFrom:
             secretKeyRef:
               name: petrosa-sensitive-credentials
-              key: BINANCE_API_SECRET
+              key: binance-api-secret
         - name: JWT_SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: petrosa-sensitive-credentials
-              key: JWT_SECRET_KEY
+              key: jwt-secret-key
         resources:
           requests:
             memory: "256Mi"

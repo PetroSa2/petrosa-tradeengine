@@ -61,9 +61,7 @@ class AuditLogger:
                 )
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
-                    logger.info(
-                        f"Retrying MySQL initialization in {delay} seconds..."
-                    )
+                    logger.info(f"Retrying MySQL initialization in {delay} seconds...")
                     await asyncio.sleep(delay)
                 else:
                     logger.error(
@@ -118,22 +116,16 @@ class AuditLogger:
                         order_side = order_data.get("side", "unknown")
                     else:
                         order_type = order_side = "unknown"
-                    logger.debug(
-                        f"Trade audit logged: {order_type} {order_side} order"
-                    )
+                    logger.debug(f"Trade audit logged: {order_type} {order_side} order")
                     return
 
             except Exception as e:
-                logger.warning(
-                    f"Trade audit logging attempt {attempt + 1} failed: {e}"
-                )
+                logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
-                        f"Trade audit logging failed after all retries: {e}"
-                    )
+                    logger.error(f"Trade audit logging failed after all retries: {e}")
 
     async def close(self) -> None:
         """Close MySQL connection"""

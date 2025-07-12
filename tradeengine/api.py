@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
+import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -19,12 +20,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager"""
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
-    # MongoDB initialization temporarily disabled for demo
-    # try:
-    #     await audit_logger.initialize()
-    # except Exception as e:
-    #     logger.warning("MongoDB audit logger initialization failed: %s", str(e))
-    #     logger.info("Continuing without audit logging...")
+    
+    # Initialize audit logging in background - don't block startup
+    async def init_audit_logger():
+        try:
+            await audit_logger.initialize()
+        except Exception as e:
+            logger.warning("MySQL audit logger initialization failed: %s", str(e))
+            logger.info("Continuing without audit logging...")
+    
+    # Start audit logger initialization in background
+    asyncio.create_task(init_audit_logger())
+    
     logger.info("Petrosa Trading Engine started successfully")
 
     yield

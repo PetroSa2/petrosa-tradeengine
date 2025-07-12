@@ -5,8 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine, async_sessionmaker
 
 from shared.config import settings
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     def __init__(self) -> None:
         self.engine: AsyncEngine | None = None
-        self.async_session: sessionmaker | None = None
+        self.async_session: async_sessionmaker | None = None
         self.initialized = False
         self.retry_attempts = 3
         self.retry_delay = 1.0
@@ -42,8 +41,8 @@ class AuditLogger:
                     pool_recycle=3600,
                 )
 
-                # Create async session factory (no explicit type param)
-                self.async_session = sessionmaker(
+                # Create async session factory
+                self.async_session = async_sessionmaker(
                     self.engine, class_=AsyncSession, expire_on_commit=False
                 )
 

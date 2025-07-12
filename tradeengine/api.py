@@ -1,7 +1,7 @@
-import logging
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 import asyncio
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse

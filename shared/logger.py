@@ -4,8 +4,7 @@ from datetime import datetime
 from typing import Any
 import json
 
-import aiomysql
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -40,31 +39,36 @@ class AuditLogger:
                     pool_size=5,
                     max_overflow=10,
                     pool_pre_ping=True,
-                    pool_recycle=3600
+                    pool_recycle=3600,
                 )
-                
+
                 # Create async session factory
                 async_session = sessionmaker(
                     self.engine, class_=AsyncSession, expire_on_commit=False
                 )
                 self.async_session = async_session
-                
+
                 # Test connection
                 async with self.engine.begin() as conn:
                     await conn.execute(text("SELECT 1"))
-                
+
                 self.initialized = True
                 logger.info("MySQL audit logger initialized successfully")
                 return
-                
+
             except Exception as e:
-                logger.warning(f"MySQL audit logger initialization attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    f"MySQL audit logger initialization attempt "
+                    f"{attempt + 1} failed: {e}"
+                )
                 if attempt < self.retry_attempts - 1:
-                    delay = self.retry_delay * (self.backoff_multiplier ** attempt)
+                    delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     logger.info(f"Retrying MySQL initialization in {delay} seconds...")
                     await asyncio.sleep(delay)
                 else:
-                    logger.error("MySQL audit logger initialization failed after all retries")
+                    logger.error(
+                        "MySQL audit logger initialization failed after all retries"
+                    )
                     self.engine = None
                     self.async_session = None
                     self.initialized = False
@@ -98,25 +102,28 @@ class AuditLogger:
             try:
                 async with self.async_session() as session:
                     # Insert into audit table
-                    insert_query = text("""
+                    insert_query = text(
+                        """
                         INSERT INTO trade_audit 
                         (timestamp, order_data, result_data, signal_meta, environment)
                         VALUES (:timestamp, :order_data, :result_data, :signal_meta, :environment)
-                    """)
-                    
+                    """
+                    )
+
                     await session.execute(insert_query, audit_record)
                     await session.commit()
-                    
+
                     logger.debug(
-                        f"Trade audit logged: {audit_record.get('order_data', {}).get('type', 'unknown')} "
+                        f"Trade audit logged: "
+                        f"{audit_record.get('order_data', {}).get('type', 'unknown')} "
                         f"{audit_record.get('order_data', {}).get('side', 'unknown')} order"
                     )
                     return
-                    
+
             except Exception as e:
                 logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")
                 if attempt < self.retry_attempts - 1:
-                    delay = self.retry_delay * (self.backoff_multiplier ** attempt)
+                    delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     await asyncio.sleep(delay)
                 else:
                     logger.error(f"Trade audit logging failed after all retries: {e}")

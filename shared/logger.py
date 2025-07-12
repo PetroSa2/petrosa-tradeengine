@@ -100,7 +100,7 @@ class AuditLogger:
                     await session.execute(
                         text(
                             """
-                            INSERT INTO trade_audit_log 
+                            INSERT INTO trade_audit_log
                             (timestamp, order_data, result_data, signal_meta)
                             VALUES (:timestamp, :order_data, :result_data, :signal_meta)
                             """
@@ -122,16 +122,12 @@ class AuditLogger:
                     return
 
             except Exception as e:
-                logger.warning(
-                    f"Trade audit logging attempt {attempt + 1} failed: {e}"
-                )
+                logger.warning(f"Trade audit logging attempt {attempt + 1} failed: {e}")
                 if attempt < self.retry_attempts - 1:
                     delay = self.retry_delay * (self.backoff_multiplier**attempt)
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
-                        f"Trade audit logging failed after all retries: {e}"
-                    )
+                    logger.error(f"Trade audit logging failed after all retries: {e}")
 
     async def close(self) -> None:
         """Close MySQL connection"""

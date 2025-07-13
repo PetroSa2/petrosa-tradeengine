@@ -313,6 +313,9 @@ jobs:
         # Replace VERSION_PLACEHOLDER with the actual version tag
         find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|VERSION_PLACEHOLDER|${IMAGE_TAG}|g"
         
+        # Also replace the image name to use the correct format with secrets
+        find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|petrosa/petrosa-tradeengine|${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine|g"
+        
         echo "Updated manifests with image: ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine:${IMAGE_TAG}"
         
         # Verify the changes

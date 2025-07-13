@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: petrosa/petrosa-tradeengine
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine
   NAMESPACE: petrosa-apps
 
 jobs:

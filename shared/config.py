@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     environment: str = ENVIRONMENT
     log_level: str = LOG_LEVEL
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 # Global settings instance for backward compatibility

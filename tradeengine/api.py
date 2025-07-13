@@ -2,6 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -163,7 +164,7 @@ async def get_symbol_price(symbol: str) -> dict:
         return {
             "symbol": symbol,
             "price": price,
-            "timestamp": "2025-06-29T00:00:00Z",
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
         logger.error("Error getting price for %s: %s", symbol, str(err))

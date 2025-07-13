@@ -270,45 +270,49 @@ ORDER_BOOK_CACHE_TTL = int(os.getenv("ORDER_BOOK_CACHE_TTL", "5"))  # 5 seconds
 
 
 # =============================================================================
-# TRADING CONSTANTS
+# SIGNAL AGGREGATION AND STRATEGY MODES
 # =============================================================================
 
+# Signal Aggregation
+MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))  # 5 minutes
+SIGNAL_CONFLICT_RESOLUTION = os.getenv("SIGNAL_CONFLICT_RESOLUTION", "strongest_wins")  # strongest_wins, first_come_first_served, manual_review
+SIGNAL_AGGREGATION_ENABLED = os.getenv("SIGNAL_AGGREGATION_ENABLED", "true").lower() == "true"
 
-class OrderStatus(str, Enum):
-    """Order status constants"""
+# Strategy Modes
+DETERMINISTIC_MODE_ENABLED = os.getenv("DETERMINISTIC_MODE_ENABLED", "true").lower() == "true"
+ML_LIGHT_MODE_ENABLED = os.getenv("ML_LIGHT_MODE_ENABLED", "false").lower() == "true"
+LLM_REASONING_MODE_ENABLED = os.getenv("LLM_REASONING_MODE_ENABLED", "false").lower() == "true"
 
-    PENDING = "pending"
-    PARTIAL = "partial"
-    FILLED = "filled"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
-    EXPIRED = "expired"
+# Risk Management
+RISK_MANAGEMENT_ENABLED = os.getenv("RISK_MANAGEMENT_ENABLED", "true").lower() == "true"
+MAX_POSITION_SIZE_PCT = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.1"))  # 10%
+MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.05"))  # 5%
+MAX_PORTFOLIO_EXPOSURE_PCT = float(os.getenv("MAX_PORTFOLIO_EXPOSURE_PCT", "0.8"))  # 80%
 
+# Conditional Orders
+CONDITIONAL_ORDER_TIMEOUT = int(os.getenv("CONDITIONAL_ORDER_TIMEOUT", "3600"))  # 1 hour
+PRICE_MONITORING_INTERVAL = int(os.getenv("PRICE_MONITORING_INTERVAL", "5"))  # 5 seconds
 
-class OrderType(str, Enum):
-    """Order type constants"""
+# Strategy Weights (for deterministic mode)
+STRATEGY_WEIGHTS = {
+    key.strip(): float(value.strip())
+    for key, value in [
+        pair.split("=") for pair in os.getenv("STRATEGY_WEIGHTS", "momentum_v1=1.0,mean_reversion_v1=0.8,arbitrage_v1=1.2").split(",") if "=" in pair
+    ]
+}
 
-    MARKET = "market"
-    LIMIT = "limit"
-    STOP = "stop"
-    STOP_LIMIT = "stop_limit"
-    TAKE_PROFIT = "take_profit"
-    TAKE_PROFIT_LIMIT = "take_profit_limit"
+# ML Model Configuration
+ML_MODEL_PATH = os.getenv("ML_MODEL_PATH", "models/")
+ML_MODEL_UPDATE_INTERVAL = int(os.getenv("ML_MODEL_UPDATE_INTERVAL", "3600"))  # 1 hour
+ML_FEATURE_CACHE_TTL = int(os.getenv("ML_FEATURE_CACHE_TTL", "300"))  # 5 minutes
 
-
-class OrderSide(str, Enum):
-    """Order side constants"""
-
-    BUY = "buy"
-    SELL = "sell"
-
-
-class TimeInForce(str, Enum):
-    """Time in force constants"""
-
-    GTC = "GTC"  # Good Till Cancelled
-    IOC = "IOC"  # Immediate Or Cancel
-    FOK = "FOK"  # Fill Or Kill
+# LLM Configuration
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")  # openai, anthropic, local
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")  # gpt-4, gpt-3.5-turbo, claude-3, etc.
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+LLM_REASONING_TIMEOUT = int(os.getenv("LLM_REASONING_TIMEOUT", "30"))  # seconds
 
 
 # =============================================================================

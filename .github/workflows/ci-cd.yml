@@ -302,10 +302,10 @@ jobs:
     - name: Create namespace
       run: |
         # Create namespace if it doesn't exist, ignore if it already exists
-        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f - || echo "Namespace may already exist"
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply --insecure-skip-tls-verify -f - || echo "Namespace may already exist"
         
         # Verify namespace exists
-        kubectl get namespace ${{ env.NAMESPACE }} || echo "Failed to create/verify namespace"
+        kubectl get namespace ${{ env.NAMESPACE }} --insecure-skip-tls-verify || echo "Failed to create/verify namespace"
     
     - name: Update image tag in manifests
       run: |
@@ -338,18 +338,18 @@ jobs:
     
     - name: Apply Kubernetes manifests
       run: |
-        kubectl apply -f k8s/ -n ${{ env.NAMESPACE }}
+        kubectl apply --insecure-skip-tls-verify -f k8s/ -n ${{ env.NAMESPACE }}
     
     - name: Wait for deployment to be ready
       run: |
-        kubectl rollout status deployment/petrosa-tradeengine -n ${{ env.NAMESPACE }} --timeout=300s
+        kubectl rollout status deployment/petrosa-tradeengine -n ${{ env.NAMESPACE }} --timeout=300s --insecure-skip-tls-verify
     
     - name: Verify deployment
       run: |
         echo "🔍 Verifying deployment..."
-        kubectl get pods -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine
-        kubectl get svc -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine
-        kubectl get ingress -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine
+        kubectl get pods -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine --insecure-skip-tls-verify
+        kubectl get svc -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine --insecure-skip-tls-verify
+        kubectl get ingress -n ${{ env.NAMESPACE }} -l app=petrosa-tradeengine --insecure-skip-tls-verify
         
         echo ""
         echo "📊 Deployment Summary:"
@@ -360,14 +360,14 @@ jobs:
         echo "  🌐 Ingress: petrosa-tradeengine-ingress"
         echo ""
         echo "🔍 Next steps:"
-        echo "  1. Check that pods are running: kubectl get pods -n ${{ env.NAMESPACE }}"
-        echo "  2. Verify service is accessible: kubectl get svc -n ${{ env.NAMESPACE }}"
+        echo "  1. Check that pods are running: kubectl get pods -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify"
+        echo "  2. Verify service is accessible: kubectl get svc -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify"
         echo "  3. Check that the image can pull successfully"
         echo "  4. Test the API endpoints"
         echo "  5. Monitor application logs for any issues"
         echo ""
         echo "🔍 Verify deployed image version:"
-        echo "  kubectl get deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'"
+        echo "  kubectl get deployment -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'"
 
   notify:
     needs: [build-and-push, deploy, create-release]

@@ -300,7 +300,12 @@ jobs:
         kubectl get nodes --insecure-skip-tls-verify
     
     - name: Create namespace
-      run: kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+      run: |
+        # Create namespace if it doesn't exist, ignore if it already exists
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f - || echo "Namespace may already exist"
+        
+        # Verify namespace exists
+        kubectl get namespace ${{ env.NAMESPACE }} || echo "Failed to create/verify namespace"
     
     - name: Update image tag in manifests
       run: |

@@ -3,7 +3,8 @@ Signal Aggregator - Multi-strategy signal processing and conflict resolution
 
 This module handles incoming signals from multiple strategies, resolves conflicts,
 and makes intelligent execution decisions based on signal strength, confidence,
-and risk management rules. Supports three modes: deterministic, ML light, and LLM reasoning.
+and risk management rules. Supports three modes: deterministic, ML light, "
+"and LLM reasoning.
 """
 
 import logging
@@ -394,7 +395,10 @@ class LLMProcessor:
         return {
             "approved": approved,
             "confidence": confidence,
-            "reasoning": f"Signal confidence is {confidence:.2f}, which is {'sufficient' if approved else 'insufficient'} for execution",
+            "reasoning": (
+                f"Signal confidence is {confidence:.2f}, which is "
+                f"{'sufficient' if approved else 'insufficient'} for execution"
+            ),
             "alternatives_considered": [
                 "Hold position",
                 "Reduce position size",

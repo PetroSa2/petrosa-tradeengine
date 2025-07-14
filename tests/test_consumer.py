@@ -112,7 +112,8 @@ async def test_validate_signal_invalid_quantity(consumer: SignalConsumer) -> Non
         strength="medium",
         timeframe="1h",
         current_price=45000.0,
-        # Note: quantity is not a required field in the new model, so this test may need to be rethought
+        # Note: quantity is not a required field in the new model,
+        # so this test may need to be rethought
     )
 
     is_valid = consumer.validate_signal(invalid_signal)

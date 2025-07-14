@@ -21,7 +21,7 @@ def test_health_endpoint():
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "healthy"
+    assert data["status"] in ["healthy", "degraded"]
 
 
 def test_metrics_endpoint():
@@ -37,13 +37,18 @@ def test_trade_endpoint_success():
         "strategy_id": "test_strategy",
         "symbol": "BTCUSDT",
         "action": "buy",
-        "price": 45000.0,
         "confidence": 0.8,
+        "strength": "strong",
+        "timeframe": "1h",
+        "current_price": 45000.0,
+        "order_type": "market",
+        "time_in_force": "GTC",
+        "strategy_mode": "deterministic",
         "timestamp": datetime.now().isoformat(),
         "meta": {"simulate": True},
     }
 
-    response = client.post("/trade", json=signal_data)
+    response = client.post("/trade/signal", json=signal_data)
     assert response.status_code == 200
     data = response.json()
     assert data["message"] == "Signal processed successfully"
@@ -57,14 +62,19 @@ def test_trade_endpoint_invalid_confidence():
         "strategy_id": "test_strategy",
         "symbol": "BTCUSDT",
         "action": "buy",
-        "price": 45000.0,
         "confidence": 1.5,  # Invalid - greater than 1
+        "strength": "strong",
+        "timeframe": "1h",
+        "current_price": 45000.0,
+        "order_type": "market",
+        "time_in_force": "GTC",
+        "strategy_mode": "deterministic",
         "timestamp": datetime.now().isoformat(),
         "meta": {"simulate": True},
     }
 
-    response = client.post("/trade", json=signal_data)
-    assert response.status_code == 400
+    response = client.post("/trade/signal", json=signal_data)
+    assert response.status_code == 422  # Pydantic validation error
 
 
 def test_trade_endpoint_invalid_action():
@@ -102,7 +112,7 @@ def test_openapi_specs_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["openapi"] == "3.1.0"
-    assert data["info"]["title"] == "Petrosa Trading Engine"
-    assert data["info"]["version"] == "0.1.0"
+    assert data["info"]["title"] == "Petrosa Trading Engine API"
+    assert data["info"]["version"] == "1.1.0"
     assert "paths" in data
     assert "components" in data

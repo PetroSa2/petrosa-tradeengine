@@ -1,419 +1,311 @@
 import logging
-import time
-from typing import Any, Dict
+from typing import Dict, Any, List
 
-from prometheus_client import Counter, Histogram
-
-from contracts.order import TradeOrder
 from contracts.signal import Signal
-from shared.constants import (
-    DEFAULT_BASE_AMOUNT,
-    DEFAULT_ORDER_TYPE,
-    SIMULATION_ENABLED,
-    STOP_LOSS_DEFAULT,
-    TAKE_PROFIT_DEFAULT,
-)
-from shared.logger import audit_logger
-from tradeengine.exchange.binance import binance_exchange
-from tradeengine.exchange.simulator import simulator
-from tradeengine.signal_aggregator import signal_aggregator
-from tradeengine.position_manager import position_manager
-from tradeengine.order_manager import order_manager
-
-logger = logging.getLogger(__name__)
-
-# Prometheus metrics
-trades_total = Counter(
-    "tradeengine_trades_total", "Total number of trades", ["status", "type"]
-)
-errors_total = Counter("tradeengine_errors_total", "Total number of errors", ["type"])
-latency_seconds = Histogram("tradeengine_latency_seconds", "Trade execution latency")
+from contracts.order import TradeOrder
+from shared.audit import audit_logger
+from shared.config import Settings
+from tradeengine.order_manager import OrderManager
+from tradeengine.position_manager import PositionManager
+from tradeengine.signal_aggregator import SignalAggregator
 
 
-class TradeDispatcher:
-    """Enhanced dispatcher with signal aggregation and advanced order management"""
-    
+class Dispatcher:
+    """Central dispatcher for trading operations"""
+
     def __init__(self) -> None:
-        self.risk_enabled = True  # Enable risk management by default
-    
-    async def dispatch(self, signal: Signal) -> dict[str, Any]:
-        """Convert signal to trade order and execute"""
-        start_time = time.time()
+        self.settings = Settings()
+        self.order_manager = OrderManager()
+        self.position_manager = PositionManager()
+        self.signal_aggregator = SignalAggregator()
+        self.logger = logging.getLogger(__name__)
 
+    async def initialize(self) -> None:
+        """Initialize dispatcher components"""
         try:
-            logger.info("Processing signal from strategy: %s", signal.strategy_id)
-            # Log signal receipt
-            await audit_logger.log_signal(signal.model_dump(), status="received")
-
-            # Skip hold signals
-            if signal.action == "hold":
-                logger.info("Hold signal received, no action taken")
-                await audit_logger.log_signal(signal.model_dump(), status="hold_skipped")
-                return {"status": "hold", "message": "No action required"}
-
-            # Process signal through aggregator
-            aggregation_result = await signal_aggregator.process_signal(signal)
-            await audit_logger.log_signal(signal.model_dump(), status=aggregation_result.get("status", "processed"), extra={"aggregation_result": aggregation_result})
-            
-            if aggregation_result["status"] != "executed":
-                return aggregation_result
-
-            # Convert to trade order
-            trade_order = self._signal_to_order(signal, aggregation_result.get("order_params", {}))
-
-            # Execute the order
-            execution_result = await self.execute_order(trade_order)
-
-            # Log to audit trail
-            await audit_logger.log_order(trade_order.model_dump(), execution_result, status=execution_result.get("status", "executed"), extra={"signal": signal.model_dump()})
-
-            # Update metrics
-            trades_total.labels(
-                status=execution_result.get("status", "unknown"), 
-                type=trade_order.type
-            ).inc()
-            latency_seconds.observe(time.time() - start_time)
-
-            logger.info("Trade dispatch completed successfully")
-            return {
-                "status": "success",
-                "aggregation_result": aggregation_result,
-                "execution_result": execution_result
-            }
-
+            # Initialize components
+            await self.order_manager.initialize()
+            await self.position_manager.initialize()
+            self.logger.info("Dispatcher initialized successfully")
         except Exception as e:
-            logger.error("Error dispatching trade: %s", str(e))
-            errors_total.labels(type="dispatch").inc()
-            await audit_logger.log_error(str(e), context={"signal": signal.model_dump()})
-            return {"status": "error", "error": str(e), "timestamp": time.time()}
-
-    async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a trade order with enhanced features"""
-        start_time = time.time()
-        
-        try:
-            logger.info(f"Executing {order.type} {order.side} order for {order.symbol}")
-            
-            # Fail-safe: Only allow simulation if audit logger is not connected
-            if not audit_logger.enabled or not audit_logger.connected:
-                logger.error("Audit logging unavailable, refusing real trade execution. Only simulation allowed.")
-                order.simulate = True
-
-            # Validate order
-            await self._validate_order(order)
-            
-            # Check risk limits
-            if not await self._check_risk_limits(order):
-                await audit_logger.log_order(order.model_dump(), {"status": "rejected", "reason": "Risk limits exceeded"}, status="rejected")
-                return {"status": "rejected", "reason": "Risk limits exceeded"}
-            
-            # Execute based on order type
-            if order.type == "market":
-                result = await self._execute_market_order(order)
-            elif order.type == "limit":
-                result = await self._execute_limit_order(order)
-            elif order.type == "stop":
-                result = await self._execute_stop_order(order)
-            elif order.type == "stop_limit":
-                result = await self._execute_stop_limit_order(order)
-            elif order.type == "take_profit":
-                result = await self._execute_take_profit_order(order)
-            elif order.type == "take_profit_limit":
-                result = await self._execute_take_profit_limit_order(order)
-            elif order.type == "conditional_limit":
-                result = await self._execute_conditional_limit_order(order)
-            elif order.type == "conditional_stop":
-                result = await self._execute_conditional_stop_order(order)
-            else:
-                raise ValueError(f"Unsupported order type: {order.type}")
-            
-            # Update position tracking
-            await position_manager.update_position(order, result)
-            
-            # Track order
-            await order_manager.track_order(order, result)
-            
-            # Log to audit trail
-            await audit_logger.log_order(order.model_dump(), result, status=result.get("status", "executed"))
-            
-            # Update metrics
-            trades_total.labels(
-                status=result.get("status", "unknown"), 
-                type=order.type
-            ).inc()
-            latency_seconds.observe(time.time() - start_time)
-            
-            logger.info("Order execution completed successfully")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error executing order: {e}")
-            errors_total.labels(type="execution").inc()
-            await audit_logger.log_error(str(e), context={"order": order.model_dump()})
-            return {"status": "error", "error": str(e), "timestamp": time.time()}
-
-    def _signal_to_order(self, signal: Signal, order_params: Dict[str, Any] = {}) -> TradeOrder:
-        """Convert a trading signal to a trade order with advanced order types"""
-
-        # Use order params from aggregator if available
-        order_type = order_params.get("type", signal.order_type.value)
-        time_in_force = order_params.get("time_in_force", signal.time_in_force.value)
-        position_size_pct = order_params.get("position_size_pct", signal.position_size_pct)
-
-        # Determine position size based on confidence
-        base_amount = signal.meta.get("base_amount", DEFAULT_BASE_AMOUNT)
-        confidence_multiplier = min(signal.confidence, 1.0)  # Cap at 100%
-        amount = base_amount * confidence_multiplier
-
-        # Set simulate flag based on meta data or global setting
-        simulate = signal.meta.get("simulate", SIMULATION_ENABLED)
-
-        # Calculate stop loss and take profit if not provided
-        stop_loss = signal.stop_loss or signal.meta.get("stop_loss")
-        take_profit = signal.take_profit or signal.meta.get("take_profit")
-
-        if not stop_loss and signal.meta.get("use_default_stop_loss", True):
-            # Calculate stop loss based on signal price and default percentage
-            if signal.action == "buy":
-                stop_loss = signal.current_price * (1 - STOP_LOSS_DEFAULT / 100)
-            else:
-                stop_loss = signal.current_price * (1 + STOP_LOSS_DEFAULT / 100)
-
-        if not take_profit and signal.meta.get("use_default_take_profit", True):
-            # Calculate take profit based on signal price and default percentage
-            if signal.action == "buy":
-                take_profit = signal.current_price * (1 + TAKE_PROFIT_DEFAULT / 100)
-            else:
-                take_profit = signal.current_price * (1 - TAKE_PROFIT_DEFAULT / 100)
-
-        # Determine target price based on order type
-        target_price = signal.target_price or signal.current_price
-
-        # Create the trade order
-        trade_order = TradeOrder(
-            symbol=signal.symbol,
-            type=order_type,
-            side=signal.action,  # type: ignore # We handle "hold" earlier
-            amount=amount,
-            target_price=target_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            time_in_force=time_in_force,
-            quote_quantity=signal.quote_quantity,
-            simulate=simulate,
-            strategy_id=signal.strategy_id,
-            signal_id=signal.signal_id or signal.strategy_id,
-            meta={
-                **signal.meta,
-                "conditional_price": signal.conditional_price,
-                "conditional_direction": signal.conditional_direction,
-                "conditional_timeout": signal.conditional_timeout,
-                "iceberg_quantity": signal.iceberg_quantity,
-                "client_order_id": signal.client_order_id,
-            }
-        )
-
-        logger.info(
-            "Converted signal to %s %s order: %s %s @ %s (SL: %s, TP: %s)",
-            order_type,
-            signal.action,
-            amount,
-            signal.symbol,
-            target_price or "market",
-            stop_loss,
-            take_profit,
-        )
-
-        return trade_order
-
-    async def _validate_order(self, order: TradeOrder) -> None:
-        """Validate order parameters"""
-        # Basic validation
-        if order.amount <= 0:
-            raise ValueError("Order amount must be positive")
-        
-        if order.side not in ["buy", "sell"]:
-            raise ValueError(f"Invalid order side: {order.side}")
-        
-        # Validate price for limit orders
-        if order.type in ["limit", "stop_limit", "take_profit_limit"]:
-            if order.target_price is None:
-                raise ValueError("Target price required for limit orders")
-
-        # Validate stop price for stop orders
-        if order.type in ["stop", "stop_limit"]:
-            if order.stop_loss is None:
-                raise ValueError("Stop loss price required for stop orders")
-
-    async def _check_risk_limits(self, order: TradeOrder) -> bool:
-        """Check risk management limits"""
-        # Check position size limits
-        if not await position_manager.check_position_limits(order):
-            return False
-        
-        # Check daily loss limits
-        if not await position_manager.check_daily_loss_limits():
-            return False
-        
-        return True
-
-    async def _execute_market_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a market order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_limit_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a limit order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_stop_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a stop order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_stop_limit_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a stop limit order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_take_profit_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a take profit order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_take_profit_limit_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a take profit limit order"""
-        if SIMULATION_ENABLED or order.simulate:
-            return await simulator.execute(order)
-        else:
-            return await binance_exchange.execute(order)
-
-    async def _execute_conditional_limit_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a conditional limit order (if price crosses level)"""
-        # This would implement conditional order logic
-        # For now, return a placeholder
-        return {
-            "order_id": f"cond_{int(time.time())}",
-            "status": "pending",
-            "type": "conditional_limit",
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.amount,
-            "price": order.target_price,
-            "conditional_price": order.meta.get("conditional_price"),
-            "conditional_direction": order.meta.get("conditional_direction"),
-            "timestamp": int(time.time() * 1000),
-            "simulated": SIMULATION_ENABLED or order.simulate
-        }
-
-    async def _execute_conditional_stop_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a conditional stop order"""
-        return {
-            "order_id": f"cond_stop_{int(time.time())}",
-            "status": "pending",
-            "type": "conditional_stop",
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.amount,
-            "stop_price": order.stop_loss,
-            "conditional_price": order.meta.get("conditional_price"),
-            "conditional_direction": order.meta.get("conditional_direction"),
-            "timestamp": int(time.time() * 1000),
-            "simulated": SIMULATION_ENABLED or order.simulate
-        }
-
-    async def get_account_info(self) -> dict[str, Any]:
-        """Get detailed account information from Binance"""
-        try:
-            if not SIMULATION_ENABLED:
-                account_data = await binance_exchange.get_account_info()
-                
-                # Add additional computed fields
-                balances = account_data.get("balances", [])
-                total_balance_count = len(balances)
-                non_zero_balances = [b for b in balances if float(b.get("free", 0)) + float(b.get("locked", 0)) > 0]
-                
-                # Add summary statistics
-                account_data["summary"] = {
-                    "total_assets": total_balance_count,
-                    "active_assets": len(non_zero_balances),
-                    "last_updated": int(time.time() * 1000)
-                }
-                
-                return account_data
-            else:
-                return {
-                    "simulated": True,
-                    "message": "Account info not available in simulation mode",
-                    "summary": {
-                        "total_assets": 0,
-                        "active_assets": 0,
-                        "last_updated": int(time.time() * 1000)
-                    },
-                    "balances": [],
-                    "can_trade": False,
-                    "can_withdraw": False,
-                    "can_deposit": False,
-                    "maker_commission": 0,
-                    "taker_commission": 0,
-                    "buyer_commission": 0,
-                    "seller_commission": 0
-                }
-        except Exception as e:
-            logger.error("Error getting account info: %s", str(e))
-            return {"error": str(e)}
-
-    async def get_symbol_price(self, symbol: str) -> float:
-        """Get current symbol price"""
-        try:
-            if not SIMULATION_ENABLED:
-                return await binance_exchange.get_symbol_price(symbol)
-            else:
-                # Return a simulated price for testing
-                return 45000.0  # Default BTC price for simulation
-        except Exception as e:
-            logger.error("Error getting symbol price: %s", str(e))
+            self.logger.error(f"Dispatcher initialization error: {e}")
             raise
 
-    async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
-        """Cancel an existing order"""
+    async def close(self) -> None:
+        """Close dispatcher components"""
         try:
-            if not SIMULATION_ENABLED:
-                return await binance_exchange.cancel_order(symbol, order_id)
-            else:
-                return {
-                    "simulated": True,
-                    "message": "Order cancellation not available in simulation mode",
-                }
+            await self.order_manager.close()
+            await self.position_manager.close()
+            self.logger.info("Dispatcher closed successfully")
         except Exception as e:
-            logger.error("Error canceling order: %s", str(e))
+            self.logger.error(f"Dispatcher close error: {e}")
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Check dispatcher health"""
+        try:
+            # Check if components have health_check methods
+            order_manager_health = {"status": "unknown"}
+            position_manager_health = {"status": "unknown"}
+            
+            if hasattr(self.order_manager, 'health_check'):
+                order_manager_health = await self.order_manager.health_check()
+            else:
+                order_manager_health = {"status": "healthy", "type": "order_manager"}
+                
+            if hasattr(self.position_manager, 'health_check'):
+                position_manager_health = await self.position_manager.health_check()
+            else:
+                position_manager_health = {"status": "healthy", "type": "position_manager"}
+
+            return {
+                "status": "healthy",
+                "components": {
+                    "order_manager": order_manager_health,
+                    "position_manager": position_manager_health,
+                    "signal_aggregator": "active",
+                },
+            }
+        except Exception as e:
+            self.logger.error(f"Health check error: {e}")
+            return {"status": "unhealthy", "error": str(e)}
+
+    async def process_signal(
+        self,
+        signal: Signal,
+        conflict_resolution: str = "strongest_wins",
+        timeframe_resolution: str = "higher_timeframe_wins",
+        risk_management: bool = True,
+    ) -> Dict[str, Any]:
+        """Process a trading signal"""
+        try:
+            # Log signal
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_signal(signal.model_dump())
+
+            # Add signal to aggregator
+            self.signal_aggregator.add_signal(signal)
+
+            # Process based on strategy mode
+            if signal.strategy_mode.value == "deterministic":
+                from tradeengine.signal_aggregator import DeterministicProcessor
+
+                processor = DeterministicProcessor()
+                result = await processor.process(
+                    signal, self.signal_aggregator.active_signals
+                )
+            elif signal.strategy_mode.value == "ml_light":
+                from tradeengine.signal_aggregator import MLProcessor
+
+                processor = MLProcessor()
+                result = await processor.process(
+                    signal, self.signal_aggregator.active_signals
+                )
+            elif signal.strategy_mode.value == "llm_reasoning":
+                from tradeengine.signal_aggregator import LLMProcessor
+
+                processor = LLMProcessor()
+                result = await processor.process(
+                    signal, self.signal_aggregator.active_signals
+                )
+            else:
+                result = {
+                    "status": "rejected",
+                    "reason": f"Unknown strategy mode: {signal.strategy_mode.value}",
+                }
+
+            # Log result
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_signal(
+                    {
+                        "signal": signal.model_dump(),
+                        "result": result,
+                        "conflict_resolution": conflict_resolution,
+                        "timeframe_resolution": timeframe_resolution,
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Signal processing error: {e}")
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_error(
+                    {
+                        "error": str(e),
+                        "signal": signal.model_dump(),
+                        "endpoint": "process_signal",
+                    }
+                )
+            return {"status": "error", "error": str(e)}
+
+    async def dispatch(self, signal: Signal) -> Dict[str, Any]:
+        """Dispatch a signal for processing"""
+        try:
+            # Handle hold signals
+            if signal.action == "hold":
+                return {"status": "hold", "reason": "Signal indicates hold action"}
+
+            # Process the signal
+            result = await self.process_signal(signal)
+
+            # If processing was successful, execute the order
+            if result.get("status") == "success":
+                order = self._signal_to_order(signal)
+                execution_result = await self.execute_order(order)
+                result["execution_result"] = execution_result
+                result["status"] = "executed"  # Change status to executed for consistency
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Dispatch error: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def _signal_to_order(self, signal: Signal) -> TradeOrder:
+        """Convert a signal to a trade order"""
+        from datetime import datetime
+
+        # Calculate order amount based on position size percentage
+        amount = 0.001  # Default to 0.001 BTC
+        if signal.position_size_pct:
+            # This would need account balance to calculate actual amount
+            # For now, use a fixed amount
+            amount = 0.001
+
+        # Create the order
+        order = TradeOrder(
+            order_id=f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}",
+            symbol=signal.symbol,
+            side=signal.action,
+            type=signal.order_type.value,
+            amount=amount,
+            target_price=signal.current_price,
+            stop_loss=signal.stop_loss,
+            take_profit=signal.take_profit,
+            time_in_force=signal.time_in_force.value,
+            status="pending",
+            filled_amount=0.0,
+            average_price=0.0,
+            created_at=signal.timestamp,
+            updated_at=signal.timestamp,
+            simulate=signal.meta.get("simulate", False) if signal.meta else False,
+        )
+
+        return order
+
+    async def execute_order(self, order: TradeOrder) -> Dict[str, Any]:
+        """Execute a trading order"""
+        try:
+            # Log order
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_order(order.model_dump())
+
+            # Execute order
+            result = await self.order_manager.execute_order(order)
+
+            # Update position if order was successful
+            if result.get("status") == "executed":
+                await self.position_manager.update_position(order)
+
+            # Log result
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_order(
+                    {
+                        "order": order.model_dump(),
+                        "result": result,
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Order execution error: {e}")
+            if audit_logger.enabled and audit_logger.connected:
+                audit_logger.log_error(
+                    {
+                        "error": str(e),
+                        "order": order.model_dump(),
+                        "endpoint": "execute_order",
+                    }
+                )
+            return {"status": "error", "error": str(e)}
+
+    def get_signal_summary(self) -> Dict[str, Any]:
+        """Get signal processing summary"""
+        return self.signal_aggregator.get_signal_summary()
+
+    def set_strategy_weight(self, strategy_id: str, weight: float) -> None:
+        """Set weight for a strategy"""
+        self.signal_aggregator.set_strategy_weight(strategy_id, weight)
+
+    def get_positions(self) -> Dict[str, Any]:
+        """Get all positions"""
+        return self.position_manager.get_positions()
+
+    def get_position(self, symbol: str) -> Dict[str, Any] | None:
+        """Get specific position"""
+        return self.position_manager.get_position(symbol)
+
+    def get_portfolio_summary(self) -> Dict[str, Any]:
+        """Get portfolio summary"""
+        return self.position_manager.get_portfolio_summary()
+
+    def get_active_orders(self) -> List[Dict[str, Any]]:
+        """Get active orders"""
+        return self.order_manager.get_active_orders()
+
+    def get_conditional_orders(self) -> List[Dict[str, Any]]:
+        """Get conditional orders"""
+        return self.order_manager.get_conditional_orders()
+
+    def get_order_history(self) -> List[Dict[str, Any]]:
+        """Get order history"""
+        return self.order_manager.get_order_history()
+
+    def get_order_summary(self) -> Dict[str, Any]:
+        """Get order summary"""
+        return self.order_manager.get_order_summary()
+
+    def get_order(self, order_id: str) -> Dict[str, Any] | None:
+        """Get specific order"""
+        return self.order_manager.get_order(order_id)
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel an order"""
+        return self.order_manager.cancel_order(order_id)
+
+    async def get_account_info(self) -> Dict[str, Any]:
+        """Get account information"""
+        try:
+            # Get account info from order manager
+            account_info = await self.order_manager.get_account_info()
+            return account_info
+        except Exception as e:
+            self.logger.error(f"Account info error: {e}")
             return {"error": str(e)}
 
-    async def get_order_status(self, symbol: str, order_id: int) -> dict[str, Any]:
-        """Get order status"""
+    async def get_price(self, symbol: str) -> float:
+        """Get current price for a symbol"""
         try:
-            if not SIMULATION_ENABLED:
-                return await binance_exchange.get_order_status(symbol, order_id)
-            else:
-                return {
-                    "simulated": True,
-                    "message": "Order status not available in simulation mode",
-                }
+            # Get price from order manager
+            price = await self.order_manager.get_price(symbol)
+            return price
         except Exception as e:
-            logger.error("Error getting order status: %s", str(e))
+            self.logger.error(f"Price check error: {e}")
+            return 0.0
+
+    async def get_metrics(self) -> Dict[str, Any]:
+        """Get dispatcher metrics"""
+        try:
+            order_metrics = await self.order_manager.get_metrics()
+            position_metrics = await self.position_manager.get_metrics()
+            signal_metrics = self.signal_aggregator.get_signal_summary()
+
+            return {
+                "orders": order_metrics,
+                "positions": position_metrics,
+                "signals": signal_metrics,
+            }
+        except Exception as e:
+            self.logger.error(f"Metrics error: {e}")
             return {"error": str(e)}
-
-
-# Global dispatcher instance
-dispatcher = TradeDispatcher()

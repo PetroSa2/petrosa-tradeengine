@@ -2,7 +2,7 @@ import logging
 import random
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Dict
 
 from contracts.order import TradeOrder
 from shared.constants import (
@@ -12,6 +12,84 @@ from shared.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SimulatorExchange:
+    """Simulator exchange for testing and development"""
+
+    def __init__(self) -> None:
+        self.simulator = TradeSimulator()
+        self.logger = logging.getLogger(__name__)
+
+    async def initialize(self) -> None:
+        """Initialize simulator exchange"""
+        self.logger.info("Simulator exchange initialized")
+
+    async def close(self) -> None:
+        """Close simulator exchange"""
+        self.logger.info("Simulator exchange closed")
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Check simulator health"""
+        return {"status": "healthy", "type": "simulator"}
+
+    async def get_account_info(self) -> Dict[str, Any]:
+        """Get simulated account information"""
+        return {
+            "balances": {
+                "BTC": {"free": "0.1", "locked": "0.0"},
+                "USDT": {"free": "5000.0", "locked": "0.0"},
+            },
+            "positions": {},
+            "pnl": {"total": 0.0, "daily": 0.0},
+            "risk_metrics": {"max_position_size": 0.1, "max_daily_loss": 100.0},
+        }
+
+    async def get_price(self, symbol: str) -> float:
+        """Get simulated price for a symbol"""
+        # Simulate realistic prices
+        base_prices = {
+            "BTCUSDT": 45000.0,
+            "ETHUSDT": 3000.0,
+            "ADAUSDT": 0.5,
+            "DOTUSDT": 7.0,
+        }
+        base_price = base_prices.get(symbol, 100.0)
+        # Add some random variation
+        variation = random.uniform(-0.02, 0.02)  # ±2%
+        return base_price * (1 + variation)
+
+    async def execute_order(self, order: TradeOrder) -> Dict[str, Any]:
+        """Execute order through simulator"""
+        return await self.simulator.execute(order)
+
+    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """Cancel order in simulator"""
+        return {
+            "success": True,
+            "order_id": order_id,
+            "symbol": symbol,
+            "status": "cancelled",
+            "simulated": True,
+        }
+
+    async def get_order_status(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """Get order status from simulator"""
+        return {
+            "order_id": order_id,
+            "symbol": symbol,
+            "status": "filled",
+            "simulated": True,
+        }
+
+    async def get_metrics(self) -> Dict[str, Any]:
+        """Get simulator metrics"""
+        return {
+            "orders_executed": 0,
+            "total_volume": 0.0,
+            "success_rate": 1.0,
+            "average_execution_time": 0.1,
+        }
 
 
 class TradeSimulator:

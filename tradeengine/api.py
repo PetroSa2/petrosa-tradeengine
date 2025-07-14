@@ -1,21 +1,23 @@
 import asyncio
-import datetime
 import logging
+from datetime import datetime
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Dict, Any, List
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import PlainTextResponse, JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel
 
-from contracts.signal import Signal, StrategyMode
 from contracts.order import TradeOrder
+from contracts.signal import Signal
 from shared.config import settings
-from shared.logger import audit_logger
-from tradeengine.dispatcher import dispatcher
-from tradeengine.signal_aggregator import signal_aggregator
-from tradeengine.position_manager import position_manager
-from tradeengine.order_manager import order_manager
+from shared.audit import audit_logger
+from shared.config import Settings
+from tradeengine.dispatcher import Dispatcher
+from tradeengine.exchange.binance import BinanceExchange
+from tradeengine.exchange.simulator import SimulatorExchange
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +51,96 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Petrosa Trading Engine",
-    description="Petrosa Trading Engine MVP - Signal-driven trading execution with multi-strategy support",
-    version="0.1.0",
+    title="Petrosa Trading Engine API",
+    description="Advanced cryptocurrency trading engine with multi-strategy signal aggregation",
+    version="1.1.0",
     lifespan=lifespan,
 )
+
+# Initialize components
+settings = Settings()
+dispatcher = Dispatcher()
+binance_exchange = BinanceExchange()
+simulator_exchange = SimulatorExchange()
+
+logger = logging.getLogger(__name__)
+
+
+class HealthResponse(BaseModel):
+    """Health check response model"""
+
+    status: str
+    version: str
+    timestamp: str
+    components: Dict[str, Any]
+
+
+class AccountResponse(BaseModel):
+    """Account information response model"""
+
+    account_type: str
+    balances: Dict[str, Any]
+    total_balance_usdt: float
+    positions: Dict[str, Any]
+    pnl: Dict[str, Any]
+    risk_metrics: Dict[str, Any]
+
+
+class TradeRequest(BaseModel):
+    """Enhanced trade request model supporting all order types"""
+
+    signals: List[Signal]
+    conflict_resolution: str = "strongest_wins"
+    timeframe_resolution: str = "higher_timeframe_wins"
+    risk_management: bool = True
+    audit_logging: bool = True
+
+
+class TradeResponse(BaseModel):
+    """Trade response model"""
+
+    status: str
+    orders: List[Dict[str, Any]]
+    signals_processed: int
+    conflicts_resolved: int
+    audit_logs: List[Dict[str, Any]]
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize components on startup"""
+    try:
+        # Initialize audit logger
+        if audit_logger.enabled and audit_logger.connected:
+            logger.info("Audit logging enabled and connected")
+        elif audit_logger.enabled:
+            logger.warning("Audit logging enabled but not connected")
+        else:
+            logger.info("Audit logging disabled")
+
+        # Initialize exchanges
+        await binance_exchange.initialize()
+        await simulator_exchange.initialize()
+
+        # Initialize dispatcher
+        await dispatcher.initialize()
+
+        logger.info("Trading engine startup completed successfully")
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        raise
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    try:
+        await binance_exchange.close()
+        await simulator_exchange.close()
+        await dispatcher.close()
+        logger.info("Trading engine shutdown completed")
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
 
 
 @app.get("/")
@@ -71,302 +158,400 @@ async def root() -> dict:
             "LLM reasoning support",
             "Advanced order types",
             "Risk management",
-            "Position tracking"
-        ]
+            "Position tracking",
+        ],
     }
 
 
-@app.get("/health")
-async def health() -> dict:
-    """Detailed health check"""
-    audit_status = {
-        "enabled": audit_logger.enabled,
-        "connected": audit_logger.connected
-    }
-    status = "healthy" if audit_logger.enabled and audit_logger.connected else "degraded"
-    warnings = []
-    if not audit_logger.enabled or not audit_logger.connected:
-        warnings.append("Audit logging is not available. Real trading is disabled. Only simulation is allowed.")
-    return {
-        "status": status,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "environment": settings.environment,
-        "components": {
-            "signal_aggregator": "active",
-            "position_manager": "active",
-            "order_manager": "active",
-            "dispatcher": "active",
-            "audit_logger": audit_status
-        },
-        "warnings": warnings
-    }
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Comprehensive health check endpoint"""
+    try:
+        # Check component health
+        components = {
+            "dispatcher": await dispatcher.health_check(),
+            "binance_exchange": await binance_exchange.health_check(),
+            "simulator_exchange": await simulator_exchange.health_check(),
+            "audit_logger": {
+                "enabled": audit_logger.enabled,
+                "connected": audit_logger.connected,
+            },
+        }
+
+        # Determine overall status
+        all_healthy = all(
+            comp.get("status", "unknown") == "healthy"
+            for comp in components.values()
+            if isinstance(comp, dict)
+        )
+
+        return HealthResponse(
+            status="healthy" if all_healthy else "degraded",
+            version="1.1.0",
+            timestamp=datetime.utcnow().isoformat(),
+            components=components,
+        )
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
 
 
 @app.get("/ready")
-async def ready() -> dict:
-    """Readiness probe endpoint"""
+async def readiness_check():
+    """Readiness probe for Kubernetes"""
     try:
-        audit_status = {
-            "enabled": audit_logger.enabled,
-            "connected": audit_logger.connected
-        }
-        if not audit_logger.enabled or not audit_logger.connected:
-            raise HTTPException(status_code=503, detail="Audit logging unavailable. Not ready for real trading.")
-        return {
-            "status": "ready",
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-            "audit_logger": audit_status
-        }
-    except Exception as err:
-        logger.error("Readiness check failed: %s", str(err))
-        raise HTTPException(status_code=503, detail="Service not ready") from err
+        # Check if core components are ready
+        dispatcher_ready = await dispatcher.health_check()
+        binance_ready = await binance_exchange.health_check()
+        simulator_ready = await simulator_exchange.health_check()
+
+        if (
+            dispatcher_ready.get("status") == "healthy"
+            and binance_ready.get("status") == "healthy"
+            and simulator_ready.get("status") == "healthy"
+        ):
+            return {"status": "ready"}
+        else:
+            raise HTTPException(status_code=503, detail="Components not ready")
+    except Exception as e:
+        logger.error(f"Readiness check error: {e}")
+        raise HTTPException(status_code=503, detail=f"Not ready: {e}")
 
 
 @app.get("/live")
-async def live() -> dict:
-    """Liveness probe endpoint"""
+async def liveness_check():
+    """Liveness probe for Kubernetes"""
     try:
-        # Check if the application is alive and functioning
-        # This should be a lightweight check
-        return {
-            "status": "alive",
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        }
-    except Exception as err:
-        logger.error("Liveness check failed: %s", str(err))
-        raise HTTPException(status_code=503, detail="Service not alive") from err
+        # Simple liveness check
+        return {"status": "alive", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"Liveness check error: {e}")
+        raise HTTPException(status_code=500, detail=f"Not alive: {e}")
 
 
-@app.post("/trade")
-async def process_trading_signal(signal: Signal) -> dict:
-    """
-    Process a trading signal from any strategy
-    
-    This endpoint accepts signals from multiple strategies, aggregates them,
-    resolves conflicts, and makes intelligent execution decisions based on
-    the strategy mode (deterministic, ML light, or LLM reasoning) and timeframe.
-    
-    **Signal Schema:**
-    - strategy_id: Unique identifier for the strategy
-    - signal_id: Optional unique identifier for this signal
-    - strategy_mode: Processing mode (deterministic, ml_light, llm_reasoning)
-    - symbol: Trading symbol (e.g., BTCUSDT)
-    - action: Trading action (buy, sell, hold, close)
-    - confidence: Signal confidence (0-1)
-    - strength: Signal strength level (weak, medium, strong, extreme)
-    - timeframe: Timeframe used for signal analysis (tick, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M)
-    - current_price: Current market price
-    - target_price: Optional target execution price
-    - order_type: Order type (market, limit, stop, stop_limit, take_profit, take_profit_limit, conditional_limit, conditional_stop)
-    - time_in_force: Order time in force (GTC, IOC, FOK, GTX)
-    - position_size_pct: Optional position size as percentage of portfolio
-    - stop_loss: Optional stop loss price
-    - take_profit: Optional take profit price
-    - conditional_price: Optional price level for conditional execution
-    - conditional_direction: Optional direction for conditional execution (above, below)
-    - model_confidence: Optional ML model confidence score
-    - llm_reasoning: Optional LLM reasoning for the signal
-    - indicators: Optional technical indicators and market data
-    - rationale: Optional human-readable rationale for the signal
-    - meta: Additional metadata
-    
-    **Conflict Resolution:**
-    - Supports timeframe-based conflict resolution
-    - Higher timeframe signals can override lower timeframe signals
-    - Configurable resolution strategies (strongest_wins, higher_timeframe_wins, timeframe_weighted)
-    """
+@app.post("/trade", response_model=TradeResponse)
+async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks):
+    """Process trading signals with advanced conflict resolution"""
     try:
-        logger.info(f"Received signal from {signal.strategy_id}: {signal.action} {signal.symbol} (mode: {signal.strategy_mode})")
-        
-        # Validate signal
-        if signal.confidence < 0 or signal.confidence > 1:
-            raise HTTPException(
-                status_code=400, detail="Signal confidence must be between 0 and 1"
+        # Validate request
+        if not request.signals:
+            raise HTTPException(status_code=400, detail="No signals provided")
+
+        # Log trade request
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_signal(
+                {
+                    "signals_count": len(request.signals),
+                    "conflict_resolution": request.conflict_resolution,
+                    "timeframe_resolution": request.timeframe_resolution,
+                    "risk_management": request.risk_management,
+                }
             )
 
-        if signal.action not in ["buy", "sell", "hold", "close"]:
-            raise HTTPException(
-                status_code=400, detail="Signal action must be 'buy', 'sell', 'hold', or 'close'"
+        # Process signals through dispatcher
+        results = []
+        orders = []
+        conflicts_resolved = 0
+
+        for signal in request.signals:
+            try:
+                result = await dispatcher.process_signal(
+                    signal,
+                    conflict_resolution=request.conflict_resolution,
+                    timeframe_resolution=request.timeframe_resolution,
+                    risk_management=request.risk_management,
+                )
+
+                results.append(result)
+
+                if result.get("status") == "success":
+                    # Create order from signal
+                    order = TradeOrder(
+                        order_id=f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}",
+                        symbol=signal.symbol,
+                        type=signal.order_type.value,
+                        side=signal.action,
+                        amount=signal.amount or 0.001,
+                        target_price=signal.current_price,
+                        stop_loss=signal.stop_loss,
+                        take_profit=signal.take_profit,
+                        conditional_price=signal.conditional_price,
+                        conditional_direction=signal.conditional_direction,
+                        conditional_timeout=signal.conditional_timeout,
+                        iceberg_quantity=signal.iceberg_quantity,
+                        client_order_id=signal.client_order_id,
+                        time_in_force=signal.time_in_force.value,
+                        status="pending",
+                        filled_amount=0.0,
+                        average_price=0.0,
+                        created_at=signal.timestamp,
+                        updated_at=signal.timestamp,
+                        simulate=settings.simulation_enabled,
+                    )
+
+                    # Execute order
+                    order_result = await dispatcher.execute_order(order)
+                    orders.append(order_result)
+
+                    # Log order execution
+                    if audit_logger.enabled and audit_logger.connected:
+                        audit_logger.log_order(
+                            {
+                                "order": order.model_dump(),
+                                "result": order_result,
+                                "signal": signal.model_dump(),
+                            }
+                        )
+
+                elif result.get("status") == "conflict_resolved":
+                    conflicts_resolved += 1
+
+            except Exception as e:
+                logger.error(f"Error processing signal: {e}")
+                if audit_logger.enabled and audit_logger.connected:
+                    audit_logger.log_error(
+                        {
+                            "error": str(e),
+                            "signal": signal.model_dump(),
+                            "endpoint": "/trade",
+                        }
+                    )
+
+        # Prepare response
+        response = TradeResponse(
+            status="completed",
+            orders=orders,
+            signals_processed=len(request.signals),
+            conflicts_resolved=conflicts_resolved,
+            audit_logs=results,
+        )
+
+        # Log trade completion
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_trade(
+                {
+                    "request": request.model_dump(),
+                    "response": response.model_dump(),
+                    "orders_count": len(orders),
+                    "conflicts_resolved": conflicts_resolved,
+                }
             )
 
-        # Dispatch signal for execution
-        result = await dispatcher.dispatch(signal)
+        return response
+
+    except Exception as e:
+        logger.error(f"Trade processing error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error(
+                {"error": str(e), "endpoint": "/trade", "request": request.model_dump()}
+            )
+        raise HTTPException(status_code=500, detail=f"Trade processing failed: {e}")
+
+
+@app.post("/trade/signal")
+async def process_single_signal(signal: Signal):
+    """Process a single trading signal (backward compatibility)"""
+    try:
+        # Log signal
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_signal(signal.model_dump())
+
+        # Process signal through dispatcher
+        result = await dispatcher.process_signal(signal)
 
         return {
-            "status": "success",
             "message": "Signal processed successfully",
-            "signal_id": signal.signal_id or signal.strategy_id,
-            "strategy_id": signal.strategy_id,
-            "strategy_mode": signal.strategy_mode.value,
+            "signal_id": signal.strategy_id,
             "result": result,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
         }
 
-    except HTTPException as err:
-        raise err
-    except Exception as err:
-        logger.error("Error processing trade signal: %s", str(err))
-        raise HTTPException(status_code=500, detail="Internal server error") from err
+    except Exception as e:
+        logger.error(f"Signal processing error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error(
+                {"error": str(e), "signal": signal.model_dump(), "endpoint": "/trade/signal"}
+            )
+        raise HTTPException(status_code=500, detail=f"Signal processing failed: {e}")
 
 
 @app.post("/order")
 async def place_advanced_order(order: TradeOrder) -> dict:
     """
     Place an advanced order directly (bypassing signal processing)
-    
+
     This endpoint allows direct order placement with full Binance parameter support.
     Use this for advanced trading strategies that need precise control over order parameters.
     """
     try:
         logger.info(f"Placing advanced order: {order.type} {order.side} {order.symbol}")
-        
+
         # Execute the order directly
         result = await dispatcher.execute_order(order)
-        
+
         return {
             "status": "success",
             "message": "Advanced order placed successfully",
             "order_id": result.get("order_id"),
             "result": result,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
-        
+
     except Exception as err:
         logger.error(f"Error placing advanced order: {err}")
-        raise HTTPException(status_code=500, detail=f"Order placement error: {str(err)}")
-
-
-@app.get("/account")
-async def get_account_info() -> dict:
-    """Get detailed account information from Binance"""
-    try:
-        account_info = await dispatcher.get_account_info()
-        
-        # If there's an error, return it directly
-        if "error" in account_info:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to get account information: {account_info['error']}"
-            )
-        
-        # If it's simulated, return the simulation message
-        if account_info.get("simulated"):
-            return {
-                "status": "simulated",
-                "message": account_info.get("message", "Account info not available in simulation mode"),
-                "data": account_info
-            }
-        
-        # Process real account data
-        balances = account_info.get("balances", [])
-        
-        # Filter and format balances (only show non-zero balances)
-        active_balances = []
-        total_usdt_value = 0.0
-        
-        for balance in balances:
-            free = float(balance.get("free", 0))
-            locked = float(balance.get("locked", 0))
-            total = free + locked
-            
-            if total > 0:  # Only include non-zero balances
-                balance_info = {
-                    "asset": balance.get("asset"),
-                    "free": free,
-                    "locked": locked,
-                    "total": total,
-                    "available": free > 0
-                }
-                active_balances.append(balance_info)
-        
-        # Calculate account summary
-        account_summary = {
-            "can_trade": account_info.get("can_trade", False),
-            "can_withdraw": account_info.get("can_withdraw", False),
-            "can_deposit": account_info.get("can_deposit", False),
-            "total_assets": len(active_balances),
-            "active_balances": len([b for b in active_balances if b["total"] > 0]),
-            "commission_rates": {
-                "maker": account_info.get("maker_commission", 0),
-                "taker": account_info.get("taker_commission", 0),
-                "buyer": account_info.get("buyer_commission", 0),
-                "seller": account_info.get("seller_commission", 0)
-            }
-        }
-        
-        return {
-            "status": "success",
-            "message": "Account information retrieved successfully",
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-            "summary": account_summary,
-            "balances": active_balances,
-            "raw_data": account_info  # Include raw data for debugging
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as err:
-        logger.error("Error getting account info: %s", str(err))
         raise HTTPException(
-            status_code=500, detail="Failed to get account information"
-        ) from err
+            status_code=500, detail=f"Order placement error: {str(err)}"
+        )
+
+
+@app.get("/account", response_model=AccountResponse)
+async def get_account_info():
+    """Get detailed account information"""
+    try:
+        # Get account info from both exchanges
+        binance_account = await binance_exchange.get_account_info()
+        simulator_account = await simulator_exchange.get_account_info()
+
+        # Calculate total balance in USDT
+        total_usdt_value = 0.0
+
+        # Combine account information
+        account_info = {
+            "account_type": "hybrid",  # Both real and simulated
+            "balances": {
+                "binance": binance_account.get("balances", {}),
+                "simulator": simulator_account.get("balances", {}),
+            },
+            "total_balance_usdt": total_usdt_value,
+            "positions": {
+                "binance": binance_account.get("positions", {}),
+                "simulator": simulator_account.get("positions", {}),
+            },
+            "pnl": {
+                "binance": binance_account.get("pnl", {}),
+                "simulator": simulator_account.get("pnl", {}),
+            },
+            "risk_metrics": {
+                "binance": binance_account.get("risk_metrics", {}),
+                "simulator": simulator_account.get("risk_metrics", {}),
+            },
+        }
+
+        # Log account access
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_account(account_info)
+
+        return AccountResponse(**account_info)
+    except Exception as e:
+        logger.error(f"Account info error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error({"error": str(e), "endpoint": "/account"})
+        raise HTTPException(status_code=500, detail=f"Failed to get account info: {e}")
 
 
 @app.get("/price/{symbol}")
-async def get_symbol_price(symbol: str) -> dict:
+async def get_price(symbol: str):
     """Get current price for a symbol"""
     try:
-        price = await dispatcher.get_symbol_price(symbol)
+        # Get price from both exchanges
+        binance_price = await binance_exchange.get_price(symbol)
+        simulator_price = await simulator_exchange.get_price(symbol)
+
         return {
             "symbol": symbol,
-            "price": price,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "binance_price": binance_price,
+            "simulator_price": simulator_price,
+            "timestamp": datetime.utcnow().isoformat(),
         }
-    except Exception as err:
-        logger.error("Error getting price for %s: %s", symbol, str(err))
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get price for {symbol}"
-        ) from err
+    except Exception as e:
+        logger.error(f"Price check error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error(
+                {"error": str(e), "symbol": symbol, "endpoint": "/price"}
+            )
+        raise HTTPException(status_code=500, detail=f"Failed to get price: {e}")
 
 
 @app.delete("/order/{symbol}/{order_id}")
-async def cancel_order(symbol: str, order_id: int) -> dict:
+async def cancel_order(symbol: str, order_id: str):
     """Cancel an existing order"""
     try:
-        result = await dispatcher.cancel_order(symbol, order_id)
-        return {
-            "message": "Order cancelled successfully",
-            "data": result,
+        # Cancel order from both exchanges
+        binance_result = await binance_exchange.cancel_order(symbol, order_id)
+        simulator_result = await simulator_exchange.cancel_order(symbol, order_id)
+
+        result = {
+            "symbol": symbol,
+            "order_id": order_id,
+            "binance_result": binance_result,
+            "simulator_result": simulator_result,
+            "cancelled": binance_result.get("success")
+            or simulator_result.get("success"),
         }
-    except Exception as err:
-        logger.error("Error cancelling order %s: %s", order_id, str(err))
-        raise HTTPException(status_code=500, detail="Failed to cancel order") from err
+
+        # Log order cancellation
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_order(
+                {
+                    "action": "cancel",
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "result": result,
+                }
+            )
+
+        return result
+    except Exception as e:
+        logger.error(f"Cancel order error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error(
+                {
+                    "error": str(e),
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "endpoint": "/cancel_order",
+                }
+            )
+        raise HTTPException(status_code=500, detail=f"Failed to cancel order: {e}")
 
 
 @app.get("/order/{symbol}/{order_id}")
-async def get_order_status(symbol: str, order_id: int) -> dict:
+async def get_order_status(symbol: str, order_id: str):
     """Get status of an existing order"""
     try:
-        order_status = await dispatcher.get_order_status(symbol, order_id)
+        # Get order status from both exchanges
+        binance_status = await binance_exchange.get_order_status(symbol, order_id)
+        simulator_status = await simulator_exchange.get_order_status(symbol, order_id)
+
         return {
-            "message": "Order status retrieved successfully",
-            "data": order_status,
+            "symbol": symbol,
+            "order_id": order_id,
+            "binance_status": binance_status,
+            "simulator_status": simulator_status,
+            "timestamp": datetime.utcnow().isoformat(),
         }
-    except Exception as err:
-        logger.error("Error getting order status for %s: %s", order_id, str(err))
-        raise HTTPException(
-            status_code=500, detail="Failed to get order status"
-        ) from err
+    except Exception as e:
+        logger.error(f"Order status error: {e}")
+        if audit_logger.enabled and audit_logger.connected:
+            audit_logger.log_error(
+                {
+                    "error": str(e),
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "endpoint": "/order_status",
+                }
+            )
+        raise HTTPException(status_code=500, detail=f"Failed to get order status: {e}")
 
 
 @app.get("/signals/summary")
 async def get_signal_summary() -> dict:
     """Get summary of signal processing and aggregation"""
     try:
-        summary = signal_aggregator.get_signal_summary()
+        summary = dispatcher.get_signal_summary()
         return {
             "status": "success",
             "data": summary,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
         logger.error(f"Error getting signal summary: {err}")
@@ -378,16 +563,18 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict:
     """Set weight for a strategy in signal aggregation"""
     try:
         if weight < 0 or weight > 10:
-            raise HTTPException(status_code=400, detail="Weight must be between 0 and 10")
-        
-        signal_aggregator.set_strategy_weight(strategy_id, weight)
-        
+            raise HTTPException(
+                status_code=400, detail="Weight must be between 0 and 10"
+            )
+
+        dispatcher.set_strategy_weight(strategy_id, weight)
+
         return {
             "status": "success",
             "message": f"Strategy weight set for {strategy_id}",
             "strategy_id": strategy_id,
             "weight": weight,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except HTTPException:
         raise
@@ -401,25 +588,24 @@ async def get_active_signals() -> dict:
     """Get all active signals"""
     try:
         active_signals = []
-        for signal in signal_aggregator.active_signals.values():
-            active_signals.append({
-                "strategy_id": signal.strategy_id,
-                "symbol": signal.symbol,
-                "action": signal.action,
-                "confidence": signal.confidence,
-                "strength": signal.strength.value,
-                "strategy_mode": signal.strategy_mode.value,
-                "timestamp": signal.timestamp.isoformat(),
-                "order_type": signal.order_type.value
-            })
-        
+        for signal in dispatcher.active_signals.values():
+            active_signals.append(
+                {
+                    "strategy_id": signal.strategy_id,
+                    "symbol": signal.symbol,
+                    "action": signal.action,
+                    "confidence": signal.confidence,
+                    "strength": signal.strength.value,
+                    "strategy_mode": signal.strategy_mode.value,
+                    "timestamp": signal.timestamp.isoformat(),
+                    "order_type": signal.order_type.value,
+                }
+            )
+
         return {
             "status": "success",
-            "data": {
-                "active_signals": active_signals,
-                "count": len(active_signals)
-            },
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "data": {"active_signals": active_signals, "count": len(active_signals)},
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
         logger.error(f"Error getting active signals: {err}")
@@ -430,16 +616,13 @@ async def get_active_signals() -> dict:
 async def get_positions() -> dict:
     """Get all current positions"""
     try:
-        positions = position_manager.get_positions()
-        portfolio_summary = position_manager.get_portfolio_summary()
-        
+        positions = dispatcher.get_positions()
+        portfolio_summary = dispatcher.get_portfolio_summary()
+
         return {
             "status": "success",
-            "data": {
-                "positions": positions,
-                "portfolio_summary": portfolio_summary
-            },
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "data": {"positions": positions, "portfolio_summary": portfolio_summary},
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
         logger.error(f"Error getting positions: {err}")
@@ -450,15 +633,17 @@ async def get_positions() -> dict:
 async def get_position(symbol: str) -> dict:
     """Get specific position"""
     try:
-        position = position_manager.get_position(symbol)
-        
+        position = dispatcher.get_position(symbol)
+
         if not position:
-            raise HTTPException(status_code=404, detail=f"Position not found for {symbol}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Position not found for {symbol}"
+            )
+
         return {
             "status": "success",
             "data": position,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except HTTPException:
         raise
@@ -471,20 +656,20 @@ async def get_position(symbol: str) -> dict:
 async def get_orders() -> dict:
     """Get all orders (active, conditional, and history)"""
     try:
-        active_orders = order_manager.get_active_orders()
-        conditional_orders = order_manager.get_conditional_orders()
-        order_history = order_manager.get_order_history()
-        order_summary = order_manager.get_order_summary()
-        
+        active_orders = dispatcher.get_active_orders()
+        conditional_orders = dispatcher.get_conditional_orders()
+        order_history = dispatcher.get_order_history()
+        order_summary = dispatcher.get_order_summary()
+
         return {
             "status": "success",
             "data": {
                 "active_orders": active_orders,
                 "conditional_orders": conditional_orders,
                 "order_history": order_history,
-                "summary": order_summary
+                "summary": order_summary,
             },
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
         logger.error(f"Error getting orders: {err}")
@@ -495,15 +680,15 @@ async def get_orders() -> dict:
 async def get_order(order_id: str) -> dict:
     """Get specific order"""
     try:
-        order = order_manager.get_order(order_id)
-        
+        order = dispatcher.get_order(order_id)
+
         if not order:
             raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
-        
+
         return {
             "status": "success",
             "data": order,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except HTTPException:
         raise
@@ -516,15 +701,15 @@ async def get_order(order_id: str) -> dict:
 async def cancel_order_by_id(order_id: str) -> dict:
     """Cancel an order by ID"""
     try:
-        success = order_manager.cancel_order(order_id)
-        
+        success = dispatcher.cancel_order(order_id)
+
         if not success:
             raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
-        
+
         return {
             "status": "success",
             "message": f"Order {order_id} cancelled successfully",
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except HTTPException:
         raise
@@ -550,8 +735,8 @@ async def get_version() -> dict:
             "LLM reasoning support",
             "Advanced order types",
             "Risk management",
-            "Position tracking"
-        ]
+            "Position tracking",
+        ],
     }
 
 
@@ -565,6 +750,27 @@ async def get_openapi_specs() -> dict:
 async def metrics() -> PlainTextResponse:
     """Prometheus metrics endpoint"""
     return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/docs")
+async def get_documentation():
+    """Get API documentation"""
+    return {
+        "title": "Petrosa Trading Engine API",
+        "version": "1.1.0",
+        "description": "Advanced cryptocurrency trading engine with multi-strategy signal aggregation",
+        "endpoints": {
+            "/health": "Comprehensive health check",
+            "/ready": "Kubernetes readiness probe",
+            "/live": "Kubernetes liveness probe",
+            "/account": "Get detailed account information",
+            "/trade": "Process trading signals with conflict resolution",
+            "/price/{symbol}": "Get current price for a symbol",
+            "/order/{symbol}/{order_id}": "Get order status",
+            "/cancel_order/{symbol}/{order_id}": "Cancel an order",
+            "/metrics": "Get Prometheus metrics",
+        },
+    }
 
 
 if __name__ == "__main__":

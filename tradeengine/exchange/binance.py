@@ -8,7 +8,7 @@ all types of trading orders including market, limit, stop, and take-profit order
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Dict
 
 from binance import AsyncClient, BinanceAPIException
 from binance.enums import (
@@ -47,30 +47,23 @@ class BinanceExchange:
         self.initialized = False
 
     async def initialize(self) -> None:
-        """Initialize Binance client and load exchange information"""
-        if self.initialized:
-            return
-
+        """Initialize Binance exchange connection"""
         try:
-            logger.info("Initializing Binance exchange client...")
-
-            # Create async client
-            self.client = await AsyncClient.create(
-                api_key=BINANCE_API_KEY,
-                api_secret=BINANCE_API_SECRET,
-                testnet=BINANCE_TESTNET,
-                requests_params={"timeout": BINANCE_TIMEOUT},
-            )
-
-            # Load exchange information
-            await self._load_exchange_info()
-
-            self.initialized = True
-            logger.info("Binance exchange client initialized successfully")
-
+            # Test connection
+            await self.client.ping()
+            logger.info("Binance exchange initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize Binance client: {e}")
+            logger.error(f"Binance initialization error: {e}")
             raise
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Check Binance exchange health"""
+        try:
+            await self.client.ping()
+            return {"status": "healthy", "type": "binance"}
+        except Exception as e:
+            logger.error(f"Binance health check error: {e}")
+            return {"status": "unhealthy", "error": str(e)}
 
     async def _load_exchange_info(self) -> None:
         """Load exchange information and symbol details"""

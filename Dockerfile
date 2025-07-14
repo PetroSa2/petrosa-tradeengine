@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Petrosa Trading Engine
-FROM python:3.11-slim as base
+FROM python:3.11-alpine as base
 
 # Build arguments
 ARG VERSION=dev
@@ -27,15 +27,15 @@ LABEL org.opencontainers.image.title="Petrosa Trading Engine" \
       org.opencontainers.image.licenses="MIT"
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     gcc \
     g++ \
+    musl-dev \
     curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates
 
 # Create app user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN addgroup -S appuser && adduser -S -G appuser appuser
 
 # Set work directory
 WORKDIR /app

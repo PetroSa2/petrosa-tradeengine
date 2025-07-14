@@ -37,8 +37,9 @@ class AuditLogger:
         for attempt in range(self.retry_attempts):
             try:
                 # Create async engine for SQLAlchemy
+                mysql_uri = settings.mysql_uri or "mysql+aiomysql://localhost/petrosa"
                 self.engine = create_async_engine(
-                    settings.mysql_uri,
+                    mysql_uri,
                     echo=False,
                     pool_size=5,
                     max_overflow=10,

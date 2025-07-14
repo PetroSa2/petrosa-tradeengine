@@ -1,72 +1,114 @@
 """
-Petrosa Trading Engine - Configuration Settings
-
-This module provides backward compatibility with the existing settings system
-while leveraging the new centralized constants.
-
-For new code, prefer importing from shared.constants directly.
+Configuration settings for Petrosa Trading Engine
 """
+
+from typing import Any
 
 from pydantic_settings import BaseSettings
 
-from shared.constants import (
-    API_HOST,
-    API_PORT,
-    ENVIRONMENT,
-    LOG_LEVEL,
-    MYSQL_DATABASE,
-    MYSQL_URI,
-    NATS_SERVERS,
-    NATS_SIGNAL_SUBJECT,
-)
-
 
 class Settings(BaseSettings):
-    """Legacy settings class for backward compatibility"""
-
-    # MySQL settings
-    mysql_uri: str = MYSQL_URI
-    mysql_database: str = MYSQL_DATABASE
-
-    # NATS settings
-    nats_servers: str = NATS_SERVERS
-    nats_signal_subject: str = NATS_SIGNAL_SUBJECT
-
-    # API settings
-    api_host: str = API_HOST
-    api_port: int = API_PORT
+    """Application settings with environment variable support"""
 
     # Environment
-    environment: str = ENVIRONMENT
-    log_level: str = LOG_LEVEL
+    environment: str = "development"
+    debug: bool = False
+    log_level: str = "INFO"
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    # API Configuration
+    host: str = "0.0.0.0"
+    port: int = 8000
+    reload: bool = False
+
+    # Binance API Configuration
+    binance_api_key: str | None = None
+    binance_api_secret: str | None = None
+    binance_testnet: bool = True
+    binance_base_url: str = "https://testnet.binance.vision"
+
+    # MongoDB Configuration (from existing configmap)
+    mongodb_uri: str | None = None
+    mongodb_database: str = "petrosa"
+
+    # JWT Configuration
+    jwt_secret_key: str | None = None
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_hours: int = 24
+
+    # Trading Configuration
+    simulation_enabled: bool = True
+    max_position_size_pct: float = 0.1  # 10%
+    max_daily_loss_pct: float = 0.05  # 5%
+    max_portfolio_exposure_pct: float = 0.8  # 80%
+    risk_management_enabled: bool = True
+
+    # Redis Configuration (for caching)
+    redis_url: str | None = None
+    redis_password: str | None = None
+    redis_db: int = 0
+
+    # Monitoring Configuration
+    prometheus_enabled: bool = True
+    health_check_interval: int = 30
+
+    # Distributed Lock Configuration
+    lock_timeout_seconds: int = 60
+    heartbeat_interval_seconds: int = 10
+
+    # NATS Configuration
+    nats_servers: str = "nats://localhost:4222"
+    nats_signal_subject: str = "trading.signals"
+
+    # API Configuration (for uvicorn)
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+
+    # MySQL Configuration (legacy support)
+    mysql_uri: str | None = None
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+        extra = "allow"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+
+        # Set default MongoDB URL if not provided
+        if not self.mongodb_uri:
+            self.mongodb_uri = f"mongodb://localhost:27017/{self.mongodb_database}"
+
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production environment"""
+        return self.environment.lower() == "production"
+
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development environment"""
+        return self.environment.lower() == "development"
+
+    @property
+    def is_testing(self) -> bool:
+        """Check if running in testing environment"""
+        return self.environment.lower() == "testing"
+
+    def get_mongodb_connection_string(self) -> str:
+        """Get MongoDB connection string"""
+        return self.mongodb_uri or f"mongodb://localhost:27017/{self.mongodb_database}"
+
+    def validate_required_settings(self) -> None:
+        """Validate that required settings are present"""
+        if self.is_production:
+            if not self.binance_api_key:
+                raise ValueError("BINANCE_API_KEY is required in production")
+            if not self.binance_api_secret:
+                raise ValueError("BINANCE_API_SECRET is required in production")
+            if not self.jwt_secret_key:
+                raise ValueError("JWT_SECRET_KEY is required in production")
+            if not self.mongodb_uri:
+                raise ValueError("MONGODB_URI is required in production")
 
 
-# Global settings instance for backward compatibility
+# Global settings instance
 settings = Settings()
-
-
-# Convenience imports for easy migration
-def get_settings() -> Settings:
-    """Get the settings instance (for backward compatibility)"""
-    return settings
-
-
-# Export commonly used constants for easy access
-__all__ = [
-    "settings",
-    "get_settings",
-    # Database
-    "MYSQL_URI",
-    "MYSQL_DATABASE",
-    # Messaging
-    "NATS_SERVERS",
-    "NATS_SIGNAL_SUBJECT",
-    # API
-    "API_HOST",
-    "API_PORT",
-    # Environment
-    "LOG_LEVEL",
-    "ENVIRONMENT",
-]

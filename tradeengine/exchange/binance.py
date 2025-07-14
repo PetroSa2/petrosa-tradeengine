@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Any
 
-from binance import AsyncClient, BinanceAPIException
+from binance import AsyncClient
 from binance.enums import (
     ORDER_TYPE_LIMIT,
     ORDER_TYPE_MARKET,
@@ -22,6 +22,7 @@ from binance.enums import (
     SIDE_SELL,
     TIME_IN_FORCE_GTC,
 )
+from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
 from shared.constants import (

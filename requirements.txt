@@ -1,13 +1,45 @@
-# Production dependencies for Petrosa Trading Engine
+# Core dependencies
 fastapi==0.104.1
-uvicorn[standard]==0.24.0.post1
-pydantic==2.11.7
-pydantic-settings==2.1.0
+uvicorn[standard]==0.24.0
+pydantic==2.6.1
+pydantic-settings==2.2.0
+
+# Trading and exchange
+ccxt==4.1.77
+python-binance==1.0.19
+
+# Database and persistence
+motor==3.3.2
+pymongo==4.6.0
+
+# Messaging and async
+nats-py==2.6.0
+asyncio-mqtt==0.16.1
+
+# Monitoring and observability
 prometheus-client==0.19.0
-nats-py==2.10.0
-python-dotenv==1.1.1
-python-binance==1.0.29
-# MySQL dependencies
-aiomysql==0.2.0
-sqlalchemy[asyncio]==2.0.23
-pymysql==1.1.0 
+structlog==23.2.0
+
+# Security and authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+
+# Development and linting
+black==23.12.1
+flake8==7.0.0
+mypy==1.8.0
+ruff==0.1.15
+
+# Documentation
+mkdocs==1.5.3
+mkdocs-material==9.4.8
+
+# Utilities
+python-dotenv==1.0.0
+httpx==0.25.2 

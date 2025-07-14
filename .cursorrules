@@ -143,6 +143,16 @@ make k8s-clean
 
 ## Kubernetes Configuration
 
+## CRITICAL: ALWAYS FOLLOW THESE RULES
+- **BEFORE making any changes**: Check `docs/REPOSITORY_SETUP_GUIDE.md` and `docs/QUICK_REFERENCE.md`
+- **WHEN suggesting kubectl commands**: Always include `--kubeconfig=k8s/kubeconfig.yaml`
+- **WHEN dealing with credentials**: ONLY use existing secret `petrosa-sensitive-credentials`
+- **WHEN dealing with configuration**: ONLY use existing configmap `petrosa-common-config`
+- **WHEN running GitHub CLI**: ALWAYS use file-based approach: `gh command > /tmp/file.json && cat /tmp/file.json`
+- **WHEN fixing CI/CD issues**: Continue until GitHub Actions pipeline passes
+- **WHEN writing Python code**: Follow PEP 8, use type hints, add proper error handling
+- **NEVER suggest AWS EKS commands** - this is a MicroK8s setup
+- **NEVER create new Kubernetes secrets/configmaps** - use existing ones only
 ### Remote Cluster Setup
 - **Cluster Type**: Remote MicroK8s (no local installation required)
 - **Connection**: Use `k8s/kubeconfig.yaml` for cluster access

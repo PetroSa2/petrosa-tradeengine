@@ -5,7 +5,7 @@ Order Manager - Tracks orders and manages conditional execution
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from contracts.order import TradeOrder
 from shared.audit import audit_logger
@@ -17,12 +17,30 @@ logger = logging.getLogger(__name__)
 class OrderManager:
     """Manages order tracking and conditional execution"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_orders: dict[str, dict[str, Any]] = {}
         self.conditional_orders: dict[str, dict[str, Any]] = {}
         self.order_history: list[dict[str, Any]] = []
         self.price_cache: dict[str, float] = {}
         self.last_price_update: dict[str, datetime] = {}
+
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    def log_event(self, event_type: str, event_data: dict[str, Any]) -> None:
+        audit_logger.log_event(event_type, event_data)
+
+    async def get_account_info(self) -> dict[str, Any]:
+        return {}
+
+    async def get_price(self, symbol: str) -> float:
+        return 0.0
+
+    def get_metrics(self) -> dict[str, Any]:
+        return {}
 
     async def track_order(self, order: TradeOrder, result: dict[str, Any]) -> None:
         """Track an executed order"""
@@ -46,8 +64,8 @@ class OrderManager:
         else:
             self.order_history.append(order_info)
 
-        await audit_logger.log_order(
-            order.model_dump(), result, status=result.get("status", "tracked")
+        audit_logger.log_order(
+            order.model_dump(), status=result.get("status", "tracked")
         )
 
         # Handle conditional orders
@@ -75,11 +93,13 @@ class OrderManager:
             "original_order": order.model_dump(),
         }
 
-        self.conditional_orders[order_id] = conditional_info
-        await audit_logger.log_event("conditional_order_setup", conditional_info)
+        if order_id:
+            self.conditional_orders[order_id] = conditional_info
+        audit_logger.log_event("conditional_order_setup", conditional_info)
 
         # Start monitoring task
-        asyncio.create_task(self._monitor_conditional_order(order_id))
+        if order_id:
+            asyncio.create_task(self._monitor_conditional_order(order_id))
 
         logger.info(
             f"Started monitoring conditional order {order_id} for {order.symbol}"
@@ -110,8 +130,9 @@ class OrderManager:
 
             except Exception as e:
                 logger.error(f"Error monitoring conditional order {order_id}: {e}")
-                await audit_logger.log_error(
-                    str(e), context={"order_id": order_id, "order_info": order_info}
+                audit_logger.log_error(
+                    {"error": str(e), "order_id": order_id},
+                    context={"order_id": order_id, "order_info": order_info},
                 )
                 break
 
@@ -122,7 +143,7 @@ class OrderManager:
             order_info["timeout_at"] = datetime.utcnow()
             self.order_history.append(order_info)
             del self.conditional_orders[order_id]
-            await audit_logger.log_event("conditional_order_timeout", order_info)
+            audit_logger.log_event("conditional_order_timeout", order_info)
             logger.info(f"Conditional order {order_id} timed out")
 
     def _check_condition(
@@ -136,9 +157,9 @@ class OrderManager:
             return False
 
         if direction == "above":
-            return current_price >= conditional_price
+            return bool(current_price >= conditional_price)
         elif direction == "below":
-            return current_price <= conditional_price
+            return bool(current_price <= conditional_price)
 
         return False
 
@@ -182,7 +203,7 @@ class OrderManager:
         # Move to order history
         self.order_history.append(order_info)
         del self.conditional_orders[order_id]
-        await audit_logger.log_event("conditional_order_executed", order_info)
+        audit_logger.log_event("conditional_order_executed", order_info)
 
         logger.info(f"Conditional order {order_id} executed successfully")
 
@@ -198,7 +219,7 @@ class OrderManager:
         """Get order history"""
         return self.order_history.copy()
 
-    def get_order(self, order_id: str) -> Optional[dict[str, Any]]:
+    def get_order(self, order_id: str) -> dict[str, Any] | None:
         """Get specific order"""
         # Check active orders
         if order_id in self.active_orders:
@@ -246,7 +267,7 @@ class OrderManager:
         history_count = len(self.order_history)
 
         # Count by status
-        status_counts = {}
+        status_counts: dict[str, int] = {}
         for order in self.order_history:
             status = order.get("status", "unknown")
             status_counts[status] = status_counts.get(status, 0) + 1

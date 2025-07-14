@@ -4,7 +4,7 @@ Position Manager - Tracks positions and enforces risk limits
 
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from contracts.order import TradeOrder
 from shared.audit import audit_logger
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class PositionManager:
     """Manages trading positions and risk limits"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.positions: dict[str, dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
@@ -30,6 +30,15 @@ class PositionManager:
         self.total_portfolio_value: float = (
             10000.0  # Placeholder, would integrate with account
         )
+
+    async def initialize(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    def get_metrics(self) -> dict[str, Any]:
+        return {}
 
     async def update_position(self, order: TradeOrder, result: dict[str, Any]) -> None:
         """Update position after order execution"""
@@ -82,7 +91,7 @@ class PositionManager:
                         logger.info(
                             f"Position closed for {symbol}, total realized P&L: {position['realized_pnl']:.2f}"
                         )
-                        await audit_logger.log_position(position, status="closed")
+                        audit_logger.log_position(position, status="closed")
                         del self.positions[symbol]
                         return
 
@@ -94,11 +103,12 @@ class PositionManager:
             logger.info(
                 f"Updated position for {symbol}: quantity={position['quantity']:.6f}, avg_price={position['avg_price']:.2f}"
             )
-            await audit_logger.log_position(position, status="updated")
+            audit_logger.log_position(position, status="updated")
         except Exception as e:
             logger.error(f"Error updating position for {symbol}: {e}")
-            await audit_logger.log_error(
-                str(e), context={"order": order.model_dump(), "result": result}
+            audit_logger.log_error(
+                {"error": str(e)},
+                context={"order": order.model_dump(), "result": result},
             )
 
     async def check_position_limits(self, order: TradeOrder) -> bool:
@@ -145,7 +155,7 @@ class PositionManager:
         """Calculate current portfolio exposure"""
         total_exposure = 0.0
 
-        for symbol, position in self.positions.items():
+        for position in self.positions.values():
             if position["quantity"] > 0:
                 # Calculate position value as percentage of portfolio
                 position_value = position["quantity"] * position["avg_price"]
@@ -158,7 +168,7 @@ class PositionManager:
         """Get all current positions"""
         return self.positions.copy()
 
-    def get_position(self, symbol: str) -> Optional[dict[str, Any]]:
+    def get_position(self, symbol: str) -> dict[str, Any] | None:
         """Get specific position"""
         return self.positions.get(symbol)
 

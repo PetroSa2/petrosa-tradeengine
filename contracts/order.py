@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Dict, Any, List
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -76,6 +76,16 @@ class TradeOrder(BaseModel):
     # Simulation flag
     simulate: bool = Field(True, description="Whether to simulate the order")
 
+    # Time in force (for limit/stop orders)
+    time_in_force: str | None = Field(
+        None, description="Time in force policy (GTC, IOC, etc.)"
+    )
+
+    # Position sizing (for risk management)
+    position_size_pct: float | None = Field(
+        None, description="Position size as a percent of portfolio"
+    )
+
     # Timestamps
     created_at: datetime = Field(
         default_factory=datetime.utcnow, description="Order creation timestamp"
@@ -83,7 +93,7 @@ class TradeOrder(BaseModel):
     updated_at: datetime | None = Field(None, description="Last update timestamp")
 
     # Metadata
-    meta: Dict[str, Any] = Field(
+    meta: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
 

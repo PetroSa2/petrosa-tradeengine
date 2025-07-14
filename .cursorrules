@@ -256,6 +256,25 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml create secret generic petrosa-secrets \
 6. **Container**: Container testing
 7. **Deploy**: Kubernetes deployment
 
+## GitHub CLI Commands
+When running GitHub CLI (`gh`) commands, always dump output to a temporary file and then read the file:
+```bash
+# Example: Get repository info
+gh repo view --json name,description,url > /tmp/repo_info.json
+cat /tmp/repo_info.json
+
+# Example: List issues
+gh issue list --json number,title,state > /tmp/issues.json
+cat /tmp/issues.json
+
+# Example: Get pull requests
+gh pr list --json number,title,state,author > /tmp/prs.json
+cat /tmp/prs.json
+
+# Clean up temporary files when done
+rm -f /tmp/repo_info.json /tmp/issues.json /tmp/prs.json
+```
+
 ## Always Reference
 - Check `docs/DEPLOYMENT.md` for production deployment details
 - Check `docs/LOCAL_PIPELINE.md` for local development workflow

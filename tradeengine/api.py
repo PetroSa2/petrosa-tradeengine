@@ -41,7 +41,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # Initialize FastAPI app
 app = FastAPI(
     title="Petrosa Trading Engine API",
-    description="Advanced cryptocurrency trading engine with multi-strategy signal aggregation",
+    description=(
+        "Advanced cryptocurrency trading engine with multi-strategy signal aggregation"
+    ),
     version="1.1.0",
     lifespan=lifespan,
 )
@@ -258,7 +260,9 @@ async def process_trade(
                 if result.get("status") == "success":
                     # Create order from signal
                     order = TradeOrder(
-                        order_id=f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}",
+                        order_id=(
+                            f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}"
+                        ),
                         symbol=signal.symbol,
                         type=signal.order_type.value,
                         side=signal.action,
@@ -376,7 +380,8 @@ async def place_advanced_order(order: TradeOrder) -> dict:
     Place an advanced order directly (bypassing signal processing)
 
     This endpoint allows direct order placement with full Binance parameter support.
-    Use this for advanced trading strategies that need precise control over order parameters.
+    Use this for advanced trading strategies that need precise control over "
+    "order parameters.
     """
     try:
         logger.info(f"Placing advanced order: {order.type} {order.side} {order.symbol}")
@@ -745,7 +750,10 @@ async def get_version() -> dict[str, Any]:
     return {
         "name": "Petrosa Trading Engine",
         "version": "0.1.0",
-        "description": "Petrosa Trading Engine MVP - Signal-driven trading execution with multi-strategy support",
+        "description": (
+            "Petrosa Trading Engine MVP - Signal-driven trading execution with "
+            "multi-strategy support"
+        ),
         "build_date": "2025-06-29",
         "python_version": "3.11+",
         "api_version": "v1",
@@ -779,7 +787,10 @@ async def get_documentation() -> dict[str, Any]:
     return {
         "title": "Petrosa Trading Engine API",
         "version": "1.1.0",
-        "description": "Advanced cryptocurrency trading engine with multi-strategy signal aggregation",
+        "description": (
+            "Advanced cryptocurrency trading engine with multi-strategy "
+            "signal aggregation"
+        ),
         "endpoints": {
             "/health": "Comprehensive health check",
             "/ready": "Kubernetes readiness probe",

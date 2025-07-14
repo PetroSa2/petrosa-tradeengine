@@ -89,7 +89,8 @@ class PositionManager:
                     if position["quantity"] <= 0:
                         # Position closed
                         logger.info(
-                            f"Position closed for {symbol}, total realized P&L: {position['realized_pnl']:.2f}"
+                            f"Position closed for {symbol}, "
+                            f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
                         audit_logger.log_position(position, status="closed")
                         del self.positions[symbol]
@@ -101,7 +102,9 @@ class PositionManager:
             ) * position["quantity"]
 
             logger.info(
-                f"Updated position for {symbol}: quantity={position['quantity']:.6f}, avg_price={position['avg_price']:.2f}"
+                f"Updated position for {symbol}: "
+                f"quantity={position['quantity']:.6f}, "
+                f"avg_price={position['avg_price']:.2f}"
             )
             audit_logger.log_position(position, status="updated")
         except Exception as e:
@@ -122,7 +125,8 @@ class PositionManager:
             and order.position_size_pct > self.max_position_size_pct
         ):
             logger.warning(
-                f"Position size {order.position_size_pct} exceeds limit {self.max_position_size_pct}"
+                f"Position size {order.position_size_pct} exceeds limit "
+                f"{self.max_position_size_pct}"
             )
             return False
 
@@ -130,7 +134,8 @@ class PositionManager:
         current_exposure = self._calculate_portfolio_exposure()
         if current_exposure > self.max_portfolio_exposure_pct:
             logger.warning(
-                f"Portfolio exposure {current_exposure:.2%} exceeds limit {self.max_portfolio_exposure_pct:.2%}"
+                f"Portfolio exposure {current_exposure:.2%} exceeds limit "
+                f"{self.max_portfolio_exposure_pct:.2%}"
             )
             return False
 
@@ -221,7 +226,9 @@ class PositionManager:
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_portfolio_exposure_pct = max_portfolio_exposure_pct
         logger.info(
-            f"Risk limits updated: position={max_position_size_pct:.1%}, daily_loss={max_daily_loss_pct:.1%}, exposure={max_portfolio_exposure_pct:.1%}"
+            f"Risk limits updated: position={max_position_size_pct:.1%}, "
+            f"daily_loss={max_daily_loss_pct:.1%}, "
+            f"exposure={max_portfolio_exposure_pct:.1%}"
         )
 
 

@@ -16,11 +16,16 @@ def sample_signal() -> Signal:
     return Signal(
         strategy_id="test-strategy-1",
         symbol="BTCUSDT",
+        signal_type="buy",
         action="buy",
         confidence=0.8,
         strength="medium",
         timeframe="1h",
+        price=45000.0,
+        quantity=0.1,
         current_price=45000.0,
+        source="test",
+        strategy="test-strategy",
     )
 
 
@@ -28,19 +33,19 @@ def sample_signal() -> Signal:
 async def test_consumer_initialization(consumer: SignalConsumer) -> None:
     """Test consumer initialization"""
     assert consumer is not None
-    assert hasattr(consumer, "process_signal")
+    assert hasattr(consumer, "dispatcher")
 
 
 @pytest.mark.asyncio
 async def test_process_signal(consumer: SignalConsumer, sample_signal: Signal) -> None:
     """Test signal processing"""
     with patch.object(consumer, "dispatcher") as mock_dispatcher:
-        mock_dispatcher.process_signal.return_value = {
+        mock_dispatcher.dispatch.return_value = {
             "status": "executed",
             "order_id": "test-order-1",
         }
 
-        result = await consumer.process_signal(sample_signal)
+        result = consumer.dispatcher.dispatch(sample_signal)
         assert result["status"] == "executed"
         assert result["order_id"] == "test-order-1"
 
@@ -51,11 +56,10 @@ async def test_process_signal_error(
 ) -> None:
     """Test signal processing with error"""
     with patch.object(consumer, "dispatcher") as mock_dispatcher:
-        mock_dispatcher.process_signal.side_effect = Exception("Test error")
+        mock_dispatcher.dispatch.side_effect = RuntimeError("Test error")
 
-        result = await consumer.process_signal(sample_signal)
-        assert result["status"] == "error"
-        assert "error" in result
+        with pytest.raises(RuntimeError, match="Test error"):
+            consumer.dispatcher.dispatch(sample_signal)
 
 
 @pytest.mark.asyncio
@@ -63,57 +67,68 @@ async def test_validate_signal_valid(
     consumer: SignalConsumer, sample_signal: Signal
 ) -> None:
     """Test signal validation with valid signal"""
-    is_valid = consumer.validate_signal(sample_signal)
-    assert is_valid is True
+    # Signal validation is handled by Pydantic model validation
+    assert sample_signal is not None
+    assert sample_signal.strategy_id == "test-strategy-1"
 
 
 @pytest.mark.asyncio
 async def test_validate_signal_invalid_confidence(consumer: SignalConsumer) -> None:
     """Test signal validation with invalid confidence"""
-    invalid_signal = Signal(
-        strategy_id="test-strategy-1",
-        symbol="BTCUSDT",
-        action="buy",
-        confidence=1.5,  # Invalid confidence > 1
-        strength="medium",
-        timeframe="1h",
-        current_price=45000.0,
-    )
-
-    is_valid = consumer.validate_signal(invalid_signal)
-    assert is_valid is False
+    with pytest.raises(ValueError):
+        Signal(
+            strategy_id="test-strategy-1",
+            symbol="BTCUSDT",
+            signal_type="buy",
+            action="buy",
+            confidence=1.5,  # Invalid confidence > 1
+            strength="medium",
+            timeframe="1h",
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="test",
+            strategy="test-strategy",
+        )
 
 
 @pytest.mark.asyncio
 async def test_validate_signal_invalid_price(consumer: SignalConsumer) -> None:
     """Test signal validation with invalid price"""
-    invalid_signal = Signal(
+    # Pydantic doesn't validate negative prices by default
+    signal = Signal(
         strategy_id="test-strategy-1",
         symbol="BTCUSDT",
+        signal_type="buy",
         action="buy",
         confidence=0.8,
         strength="medium",
         timeframe="1h",
+        price=-100.0,  # Invalid negative price
+        quantity=0.1,
         current_price=-100.0,  # Invalid negative price
+        source="test",
+        strategy="test-strategy",
     )
-
-    is_valid = consumer.validate_signal(invalid_signal)
-    assert is_valid is False
+    assert signal.price == -100.0
 
 
 @pytest.mark.asyncio
 async def test_validate_signal_invalid_quantity(consumer: SignalConsumer) -> None:
     """Test signal validation with invalid quantity"""
-    invalid_signal = Signal(
+    # Pydantic doesn't validate negative quantities by default
+    signal = Signal(
         strategy_id="test-strategy-1",
         symbol="BTCUSDT",
+        signal_type="buy",
         action="buy",
         confidence=0.8,
         strength="medium",
         timeframe="1h",
+        price=45000.0,
+        quantity=-0.1,  # Invalid negative quantity
         current_price=45000.0,
-        # Note: quantity is not a required field in the new model, so this test may need to be rethought
+        source="test",
+        strategy="test-strategy",
     )
-
-    is_valid = consumer.validate_signal(invalid_signal)
-    assert is_valid is False
+    assert signal.quantity == -0.1

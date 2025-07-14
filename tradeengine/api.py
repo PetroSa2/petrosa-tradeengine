@@ -26,15 +26,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
-    # Audit logger is already initialized
-    pass
+    try:
+        # Initialize audit logger
+        if audit_logger.enabled and audit_logger.connected:
+            logger.info("Audit logging enabled and connected")
+        elif audit_logger.enabled:
+            logger.warning("Audit logging enabled but not connected")
+        else:
+            logger.info("Audit logging disabled")
 
-    logger.info("Petrosa Trading Engine started successfully")
+        # Initialize exchanges
+        logger.info("Initializing Binance exchange...")
+        await binance_exchange.initialize()
+        logger.info("Initializing simulator exchange...")
+        await simulator_exchange.initialize()
+
+        # Initialize dispatcher
+        logger.info("Initializing dispatcher...")
+        await dispatcher.initialize()
+
+        logger.info("Trading engine startup completed successfully")
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        raise
 
     yield
 
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
+    try:
+        await binance_exchange.close()
+        await simulator_exchange.close()
+        await dispatcher.close()
+        logger.info("Trading engine shutdown completed")
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
     logger.info("Petrosa Trading Engine shut down complete")
 
 
@@ -95,43 +121,6 @@ class TradeResponse(BaseModel):
     signals_processed: int
     conflicts_resolved: int
     audit_logs: list[dict[str, Any]]
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialize components on startup"""
-    try:
-        # Initialize audit logger
-        if audit_logger.enabled and audit_logger.connected:
-            logger.info("Audit logging enabled and connected")
-        elif audit_logger.enabled:
-            logger.warning("Audit logging enabled but not connected")
-        else:
-            logger.info("Audit logging disabled")
-
-        # Initialize exchanges
-        await binance_exchange.initialize()
-        await simulator_exchange.initialize()
-
-        # Initialize dispatcher
-        await dispatcher.initialize()
-
-        logger.info("Trading engine startup completed successfully")
-    except Exception as e:
-        logger.error(f"Startup error: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """Cleanup on shutdown"""
-    try:
-        await binance_exchange.close()
-        await simulator_exchange.close()
-        await dispatcher.close()
-        logger.info("Trading engine shutdown completed")
-    except Exception as e:
-        logger.error(f"Shutdown error: {e}")
 
 
 @app.get("/")

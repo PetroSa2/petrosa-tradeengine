@@ -14,14 +14,16 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
 from enum import Enum
 
-from contracts.signal import Signal, SignalStrength, StrategyMode
+from contracts.signal import Signal, SignalStrength, StrategyMode, TimeFrame
 from shared.constants import (
     MAX_SIGNAL_AGE_SECONDS,
     SIGNAL_CONFLICT_RESOLUTION,
+    TIMEFRAME_CONFLICT_RESOLUTION,
     RISK_MANAGEMENT_ENABLED,
     MAX_POSITION_SIZE_PCT,
     MAX_DAILY_LOSS_PCT,
     STRATEGY_WEIGHTS,
+    TIMEFRAME_WEIGHTS,
     DETERMINISTIC_MODE_ENABLED,
     ML_LIGHT_MODE_ENABLED,
     LLM_REASONING_MODE_ENABLED,
@@ -37,6 +39,8 @@ class ConflictResolutionStrategy(str, Enum):
     FIRST_COME_FIRST_SERVED = "first_come_first_served"
     MANUAL_REVIEW = "manual_review"
     WEIGHTED_AVERAGE = "weighted_average"
+    HIGHER_TIMEFRAME_WINS = "higher_timeframe_wins"
+    TIMEFRAME_WEIGHTED = "timeframe_weighted"
 
 
 class SignalAggregator:
@@ -197,10 +201,18 @@ class SignalAggregator:
             self._calculate_signal_strength(s) for s in opposing_signals
         )
         
+        # Calculate timeframe-based strength
+        new_timeframe_strength = self._calculate_timeframe_strength(new_signal)
+        max_existing_timeframe_strength = max(
+            self._calculate_timeframe_strength(s) for s in opposing_signals
+        )
+        
         return {
             "has_conflict": True,
             "new_strength": new_strength,
             "existing_strength": max_existing_strength,
+            "new_timeframe_strength": new_timeframe_strength,
+            "existing_timeframe_strength": max_existing_timeframe_strength,
             "opposing_signals": opposing_signals
         }
     
@@ -231,10 +243,40 @@ class SignalAggregator:
         
         return weighted_strength * multiplier * mode_multiplier
     
+    def _calculate_timeframe_strength(self, signal: Signal) -> float:
+        """Calculate timeframe-based signal strength"""
+        # Get timeframe weight
+        timeframe_weight = TIMEFRAME_WEIGHTS.get(signal.timeframe.value, 1.0)
+        
+        # Base strength from confidence
+        base_strength = signal.confidence
+        
+        # Apply timeframe weight
+        timeframe_strength = base_strength * timeframe_weight
+        
+        # Apply strategy weight
+        strategy_weight = self.strategy_weights.get(signal.strategy_id, 1.0)
+        
+        # Apply mode-specific adjustments
+        mode_multipliers = {
+            StrategyMode.DETERMINISTIC: 1.0,
+            StrategyMode.ML_LIGHT: 1.1,
+            StrategyMode.LLM_REASONING: 1.3
+        }
+        mode_multiplier = mode_multipliers.get(signal.strategy_mode, 1.0)
+        
+        return timeframe_strength * strategy_weight * mode_multiplier
+    
     def _handle_conflict(self, signal: Signal, conflict_result: Dict[str, Any]) -> Dict[str, Any]:
         """Handle signal conflicts based on resolution strategy"""
         resolution_strategy = SIGNAL_CONFLICT_RESOLUTION
+        timeframe_resolution = TIMEFRAME_CONFLICT_RESOLUTION
         
+        # Check if timeframe-based resolution is enabled
+        if timeframe_resolution in ["higher_timeframe_wins", "timeframe_weighted"]:
+            return self._handle_timeframe_conflict(signal, conflict_result, timeframe_resolution)
+        
+        # Standard conflict resolution
         if resolution_strategy == ConflictResolutionStrategy.STRONGEST_WINS:
             if conflict_result["new_strength"] > conflict_result["existing_strength"]:
                 # Cancel existing signals and execute new one
@@ -284,6 +326,70 @@ class SignalAggregator:
             return {"status": "executed", "reason": "Weighted average conflict resolution"}
         
         return {"status": "rejected", "reason": "Insufficient signal strength for weighted average"}
+    
+    def _handle_timeframe_conflict(self, signal: Signal, conflict_result: Dict[str, Any], resolution_strategy: str) -> Dict[str, Any]:
+        """Handle conflicts using timeframe-based resolution strategies"""
+        
+        if resolution_strategy == "higher_timeframe_wins":
+            # Higher timeframe signals win over lower timeframe signals
+            new_timeframe_value = self._get_timeframe_numeric_value(signal.timeframe)
+            existing_timeframe_value = max(
+                self._get_timeframe_numeric_value(s.timeframe) 
+                for s in conflict_result["opposing_signals"]
+            )
+            
+            if new_timeframe_value > existing_timeframe_value:
+                # Higher timeframe signal wins
+                self._cancel_opposing_signals(signal.symbol)
+                return {
+                    "status": "executed", 
+                    "reason": f"Higher timeframe signal won conflict ({signal.timeframe.value} vs {existing_timeframe_value})"
+                }
+            else:
+                return {
+                    "status": "rejected", 
+                    "reason": f"Lower timeframe signal lost conflict ({signal.timeframe.value} vs {existing_timeframe_value})"
+                }
+        
+        elif resolution_strategy == "timeframe_weighted":
+            # Use weighted average considering timeframe strength
+            if conflict_result["new_timeframe_strength"] > conflict_result["existing_timeframe_strength"]:
+                # Higher timeframe-weighted signal wins
+                self._cancel_opposing_signals(signal.symbol)
+                return {
+                    "status": "executed", 
+                    "reason": "Higher timeframe-weighted signal won conflict"
+                }
+            else:
+                return {
+                    "status": "rejected", 
+                    "reason": "Lower timeframe-weighted signal lost conflict"
+                }
+        
+        else:
+            return {"status": "rejected", "reason": f"Unknown timeframe resolution strategy: {resolution_strategy}"}
+    
+    def _get_timeframe_numeric_value(self, timeframe: TimeFrame) -> int:
+        """Convert timeframe to numeric value for comparison"""
+        timeframe_values = {
+            TimeFrame.TICK: 1,
+            TimeFrame.MINUTE_1: 2,
+            TimeFrame.MINUTE_3: 3,
+            TimeFrame.MINUTE_5: 4,
+            TimeFrame.MINUTE_15: 5,
+            TimeFrame.MINUTE_30: 6,
+            TimeFrame.HOUR_1: 7,
+            TimeFrame.HOUR_2: 8,
+            TimeFrame.HOUR_4: 9,
+            TimeFrame.HOUR_6: 10,
+            TimeFrame.HOUR_8: 11,
+            TimeFrame.HOUR_12: 12,
+            TimeFrame.DAY_1: 13,
+            TimeFrame.DAY_3: 14,
+            TimeFrame.WEEK_1: 15,
+            TimeFrame.MONTH_1: 16
+        }
+        return timeframe_values.get(timeframe, 1)
     
     def _store_signal(self, signal: Signal) -> None:
         """Store signal in active signals and history"""

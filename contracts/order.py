@@ -1,52 +1,91 @@
-from typing import Literal, Optional, Dict, Any
+from datetime import datetime
+from typing import Dict, Any, List
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
+class OrderSide(str, Enum):
+    """Order side options"""
+
+    BUY = "buy"
+    SELL = "sell"
+
+
+class OrderType(str, Enum):
+    """Order type options"""
+
+    MARKET = "market"
+    LIMIT = "limit"
+    STOP = "stop"
+    STOP_LIMIT = "stop_limit"
+    TAKE_PROFIT = "take_profit"
+    TAKE_PROFIT_LIMIT = "take_profit_limit"
+    CONDITIONAL_LIMIT = "conditional_limit"
+    CONDITIONAL_STOP = "conditional_stop"
+
+
+class OrderStatus(str, Enum):
+    """Order status options"""
+
+    PENDING = "pending"
+    FILLED = "filled"
+    PARTIALLY_FILLED = "partially_filled"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
 class TradeOrder(BaseModel):
-    """Trade order model with support for all order types"""
+    """Trade order model with advanced features"""
 
-    # Required fields
+    # Core order information
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
-    type: Literal[
-        "market", "limit", "stop", "stop_limit", "take_profit", "take_profit_limit", 
-        "conditional_limit", "conditional_stop"
-    ] = Field(..., description="Order type")
-    side: Literal["buy", "sell"] = Field(..., description="Order side")
-    amount: float = Field(..., description="Order quantity")
+    type: str = Field(..., description="Order type")
+    side: str = Field(..., description="Order side (buy/sell)")
+    amount: float = Field(..., description="Order amount")
 
-    # Optional price fields
-    target_price: Optional[float] = Field(None, description="Limit price for limit orders")
-    stop_loss: Optional[float] = Field(None, description="Stop loss price for stop orders")
-    take_profit: Optional[float] = Field(None, description="Take profit price for take profit orders")
+    # Price information
+    target_price: float | None = Field(None, description="Target execution price")
+    stop_loss: float | None = Field(None, description="Stop loss price")
+    take_profit: float | None = Field(None, description="Take profit price")
 
-    # Order parameters
-    time_in_force: str = Field("GTC", description="Time in force (GTC, IOC, FOK, GTX)")
-    quote_quantity: Optional[float] = Field(None, description="Quote quantity for market orders")
-    
-    # Position sizing
-    position_size_pct: Optional[float] = Field(None, ge=0, le=1, description="Position size as percentage of portfolio")
-    
-    # Risk management
+    # Conditional order parameters
+    conditional_price: float | None = Field(
+        None, description="Price level for conditional execution"
+    )
+    conditional_direction: str | None = Field(
+        None, description="Direction for conditional execution"
+    )
+    conditional_timeout: int | None = Field(
+        None, description="Timeout in seconds for conditional orders"
+    )
+
+    # Advanced order features
+    iceberg_quantity: float | None = Field(
+        None, description="Iceberg quantity for iceberg orders"
+    )
+    client_order_id: str | None = Field(None, description="Client-provided order ID")
+
+    # Order metadata
+    order_id: str | None = Field(None, description="Exchange order ID")
+    status: OrderStatus = Field(OrderStatus.PENDING, description="Order status")
+    filled_amount: float = Field(0.0, description="Amount filled so far")
+    average_price: float | None = Field(None, description="Average fill price")
+
+    # Simulation flag
     simulate: bool = Field(True, description="Whether to simulate the order")
 
+    # Timestamps
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow, description="Order creation timestamp"
+    )
+    updated_at: datetime | None = Field(None, description="Last update timestamp")
+
     # Metadata
-    strategy_id: Optional[str] = Field(None, description="Strategy that generated this order")
-    signal_id: Optional[str] = Field(None, description="Original signal ID")
-    meta: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    meta: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
 
     class Config:
-        json_schema_extra = {
-            "example": {
-                "symbol": "BTCUSDT",
-                "type": "limit",
-                "side": "buy",
-                "amount": 0.001,
-                "target_price": 45000.0,
-                "time_in_force": "GTC",
-                "position_size_pct": 0.1,
-                "simulate": True,
-                "strategy_id": "momentum_v1",
-                "meta": {"confidence": 0.85},
-            }
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}

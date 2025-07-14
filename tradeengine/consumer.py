@@ -11,7 +11,7 @@ from prometheus_client import Counter
 
 from contracts.signal import Signal
 from shared.config import settings
-from tradeengine.dispatcher import dispatcher
+from tradeengine.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,13 @@ class SignalConsumer:
         self.nc: nats.aio.client.Client | None = None
         self.running: bool = False
         self.subscription: nats.aio.subscription.Subscription | None = None
+        self.dispatcher = Dispatcher()
 
     async def initialize(self) -> bool:
         """Initialize NATS connection"""
         try:
             self.nc = await nats.connect(settings.nats_servers)
+            await self.dispatcher.initialize()
             logger.info(
                 "NATS consumer initialized, connected to: %s", settings.nats_servers
             )
@@ -95,7 +97,7 @@ class SignalConsumer:
             signal = Signal(**signal_data)
 
             # Dispatch signal
-            result = await dispatcher.dispatch(signal)
+            result = await self.dispatcher.dispatch(signal)
 
             messages_processed.labels(status="success").inc()
             logger.info("Successfully processed signal: %s", signal.strategy_id)

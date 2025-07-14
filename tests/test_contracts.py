@@ -3,7 +3,14 @@ from datetime import datetime
 import pytest
 
 from contracts.order import TradeOrder
-from contracts.signal import Signal, TimeFrame, StrategyMode, SignalStrength, OrderType, TimeInForce
+from contracts.signal import (
+    OrderType,
+    Signal,
+    SignalStrength,
+    StrategyMode,
+    TimeFrame,
+    TimeInForce,
+)
 
 
 def test_signal_creation():
@@ -40,9 +47,9 @@ def test_signal_with_timeframe():
         TimeFrame.MINUTE_5,
         TimeFrame.HOUR_1,
         TimeFrame.HOUR_4,
-        TimeFrame.DAY_1
+        TimeFrame.DAY_1,
     ]
-    
+
     for timeframe in timeframes:
         signal = Signal(
             strategy_id="test_strategy",
@@ -56,7 +63,7 @@ def test_signal_with_timeframe():
             time_in_force=TimeInForce.GTC,
             strategy_mode=StrategyMode.DETERMINISTIC,
         )
-        
+
         assert signal.timeframe == timeframe
         assert signal.timeframe.value in ["1m", "5m", "1h", "4h", "1d"]
 
@@ -66,9 +73,9 @@ def test_signal_with_strategy_modes():
     modes = [
         StrategyMode.DETERMINISTIC,
         StrategyMode.ML_LIGHT,
-        StrategyMode.LLM_REASONING
+        StrategyMode.LLM_REASONING,
     ]
-    
+
     for mode in modes:
         signal = Signal(
             strategy_id="test_strategy",
@@ -82,7 +89,7 @@ def test_signal_with_strategy_modes():
             time_in_force=TimeInForce.GTC,
             strategy_mode=mode,
         )
-        
+
         assert signal.strategy_mode == mode
 
 
@@ -156,13 +163,9 @@ def test_signal_with_advanced_features():
         llm_reasoning="Comprehensive analysis indicates strong buy signal",
         indicators={"rsi": 65, "macd": "bullish"},
         rationale="Advanced signal with comprehensive analysis",
-        meta={
-            "strategy_type": "advanced",
-            "timeframe": "4h",
-            "sentiment_score": 0.8
-        }
+        meta={"strategy_type": "advanced", "timeframe": "4h", "sentiment_score": 0.8},
     )
-    
+
     assert signal.strategy_mode == StrategyMode.LLM_REASONING
     assert signal.timeframe == TimeFrame.HOUR_4
     assert signal.strength == SignalStrength.EXTREME

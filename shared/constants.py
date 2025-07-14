@@ -167,6 +167,48 @@ SUPPORTED_ORDER_TYPES = ["market", "limit", "stop", "stop_limit"]
 SUPPORTED_SIDES = ["buy", "sell"]
 SUPPORTED_TIME_IN_FORCE = ["GTC", "IOC", "FOK"]
 
+# Signal Aggregation and Conflict Resolution
+SIGNAL_CONFLICT_RESOLUTION = os.getenv("SIGNAL_CONFLICT_RESOLUTION", "strongest_wins")
+TIMEFRAME_CONFLICT_RESOLUTION = os.getenv("TIMEFRAME_CONFLICT_RESOLUTION", "higher_timeframe_wins")
+MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))  # 5 minutes
+RISK_MANAGEMENT_ENABLED = os.getenv("RISK_MANAGEMENT_ENABLED", "true").lower() == "true"
+MAX_POSITION_SIZE_PCT = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.1"))  # 10%
+MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.05"))  # 5%
+
+# Strategy Weights (for weighted average conflict resolution)
+STRATEGY_WEIGHTS = {
+    "momentum_strategy": float(os.getenv("MOMENTUM_STRATEGY_WEIGHT", "1.0")),
+    "mean_reversion_strategy": float(os.getenv("MEAN_REVERSION_STRATEGY_WEIGHT", "0.8")),
+    "ml_strategy": float(os.getenv("ML_STRATEGY_WEIGHT", "1.2")),
+    "llm_strategy": float(os.getenv("LLM_STRATEGY_WEIGHT", "1.5")),
+    "default": float(os.getenv("DEFAULT_STRATEGY_WEIGHT", "1.0"))
+}
+
+# Timeframe Weights (for timeframe-based conflict resolution)
+TIMEFRAME_WEIGHTS = {
+    "tick": float(os.getenv("TICK_WEIGHT", "0.3")),
+    "1m": float(os.getenv("MINUTE_1_WEIGHT", "0.5")),
+    "3m": float(os.getenv("MINUTE_3_WEIGHT", "0.6")),
+    "5m": float(os.getenv("MINUTE_5_WEIGHT", "0.7")),
+    "15m": float(os.getenv("MINUTE_15_WEIGHT", "0.8")),
+    "30m": float(os.getenv("MINUTE_30_WEIGHT", "0.9")),
+    "1h": float(os.getenv("HOUR_1_WEIGHT", "1.0")),
+    "2h": float(os.getenv("HOUR_2_WEIGHT", "1.1")),
+    "4h": float(os.getenv("HOUR_4_WEIGHT", "1.2")),
+    "6h": float(os.getenv("HOUR_6_WEIGHT", "1.3")),
+    "8h": float(os.getenv("HOUR_8_WEIGHT", "1.4")),
+    "12h": float(os.getenv("HOUR_12_WEIGHT", "1.5")),
+    "1d": float(os.getenv("DAY_1_WEIGHT", "1.6")),
+    "3d": float(os.getenv("DAY_3_WEIGHT", "1.7")),
+    "1w": float(os.getenv("WEEK_1_WEIGHT", "1.8")),
+    "1M": float(os.getenv("MONTH_1_WEIGHT", "2.0"))
+}
+
+# Strategy Mode Configuration
+DETERMINISTIC_MODE_ENABLED = os.getenv("DETERMINISTIC_MODE_ENABLED", "true").lower() == "true"
+ML_LIGHT_MODE_ENABLED = os.getenv("ML_LIGHT_MODE_ENABLED", "true").lower() == "true"
+LLM_REASONING_MODE_ENABLED = os.getenv("LLM_REASONING_MODE_ENABLED", "true").lower() == "true"
+
 
 # =============================================================================
 # EXCHANGE CONFIGURATION

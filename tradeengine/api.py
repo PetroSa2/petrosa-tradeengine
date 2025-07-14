@@ -144,7 +144,36 @@ async def process_trading_signal(signal: Signal) -> dict:
     
     This endpoint accepts signals from multiple strategies, aggregates them,
     resolves conflicts, and makes intelligent execution decisions based on
-    the strategy mode (deterministic, ML light, or LLM reasoning).
+    the strategy mode (deterministic, ML light, or LLM reasoning) and timeframe.
+    
+    **Signal Schema:**
+    - strategy_id: Unique identifier for the strategy
+    - signal_id: Optional unique identifier for this signal
+    - strategy_mode: Processing mode (deterministic, ml_light, llm_reasoning)
+    - symbol: Trading symbol (e.g., BTCUSDT)
+    - action: Trading action (buy, sell, hold, close)
+    - confidence: Signal confidence (0-1)
+    - strength: Signal strength level (weak, medium, strong, extreme)
+    - timeframe: Timeframe used for signal analysis (tick, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M)
+    - current_price: Current market price
+    - target_price: Optional target execution price
+    - order_type: Order type (market, limit, stop, stop_limit, take_profit, take_profit_limit, conditional_limit, conditional_stop)
+    - time_in_force: Order time in force (GTC, IOC, FOK, GTX)
+    - position_size_pct: Optional position size as percentage of portfolio
+    - stop_loss: Optional stop loss price
+    - take_profit: Optional take profit price
+    - conditional_price: Optional price level for conditional execution
+    - conditional_direction: Optional direction for conditional execution (above, below)
+    - model_confidence: Optional ML model confidence score
+    - llm_reasoning: Optional LLM reasoning for the signal
+    - indicators: Optional technical indicators and market data
+    - rationale: Optional human-readable rationale for the signal
+    - meta: Additional metadata
+    
+    **Conflict Resolution:**
+    - Supports timeframe-based conflict resolution
+    - Higher timeframe signals can override lower timeframe signals
+    - Configurable resolution strategies (strongest_wins, higher_timeframe_wins, timeframe_weighted)
     """
     try:
         logger.info(f"Received signal from {signal.strategy_id}: {signal.action} {signal.symbol} (mode: {signal.strategy_mode})")

@@ -13,6 +13,26 @@ class SignalStrength(str, Enum):
     EXTREME = "extreme"
 
 
+class TimeFrame(str, Enum):
+    """Trading timeframes for signal analysis"""
+    TICK = "tick"           # Real-time tick data
+    MINUTE_1 = "1m"         # 1 minute
+    MINUTE_3 = "3m"         # 3 minutes
+    MINUTE_5 = "5m"         # 5 minutes
+    MINUTE_15 = "15m"       # 15 minutes
+    MINUTE_30 = "30m"       # 30 minutes
+    HOUR_1 = "1h"           # 1 hour
+    HOUR_2 = "2h"           # 2 hours
+    HOUR_4 = "4h"           # 4 hours
+    HOUR_6 = "6h"           # 6 hours
+    HOUR_8 = "8h"           # 8 hours
+    HOUR_12 = "12h"         # 12 hours
+    DAY_1 = "1d"            # 1 day
+    DAY_3 = "3d"            # 3 days
+    WEEK_1 = "1w"           # 1 week
+    MONTH_1 = "1M"          # 1 month
+
+
 class OrderType(str, Enum):
     """Supported order types"""
     MARKET = "market"
@@ -53,6 +73,9 @@ class Signal(BaseModel):
     action: Literal["buy", "sell", "hold", "close"] = Field(..., description="Trading action")
     confidence: float = Field(..., ge=0, le=1, description="Signal confidence (0-1)")
     strength: SignalStrength = Field(SignalStrength.MEDIUM, description="Signal strength level")
+    
+    # Timeframe information
+    timeframe: TimeFrame = Field(TimeFrame.HOUR_1, description="Timeframe used for signal analysis")
     
     # Price information
     current_price: float = Field(..., description="Current market price")

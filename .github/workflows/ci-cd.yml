@@ -13,10 +13,16 @@ env:
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine
   NAMESPACE: petrosa-apps
 
+# =============================================================================
+# PR CHECKS ONLY - No deployment
+# =============================================================================
+
 jobs:
+  # PR Checks - Only run on pull requests
   lint-and-test:
     name: Lint & Test
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout code
@@ -71,9 +77,11 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
+  # PR Security Scan - Only run on pull requests
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     
     steps:
     - name: Checkout code
@@ -91,10 +99,14 @@ jobs:
         ignore-unfixed: true
         vuln-type: 'os,library'
 
+# =============================================================================
+# MAIN BRANCH DEPLOYMENT ONLY - No checks (they passed in PR)
+# =============================================================================
+
+  # Main Branch Deployment - Only run on main branch pushes
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [lint-and-test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: write
@@ -197,7 +209,7 @@ jobs:
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
-    needs: [lint-and-test, security-scan, create-release]
+    needs: [create-release]
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read

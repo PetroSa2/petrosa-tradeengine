@@ -45,12 +45,40 @@ class BinanceExchange:
     async def initialize(self) -> None:
         """Initialize Binance exchange connection"""
         try:
-            # Test connection
-            if self.client is not None:
+            # Import constants here to avoid circular imports
+            from shared.constants import (
+                BINANCE_API_KEY,
+                BINANCE_API_SECRET,
+                BINANCE_TESTNET,
+            )
+
+            # Create Binance client
+            if BINANCE_API_KEY and BINANCE_API_SECRET:
+                self.client = await AsyncClient.create(
+                    api_key=BINANCE_API_KEY,
+                    api_secret=BINANCE_API_SECRET,
+                    testnet=BINANCE_TESTNET,
+                )
+                logger.info(f"Binance client initialized (testnet: {BINANCE_TESTNET})")
+
+                # Test connection
                 await self.client.ping()
-            logger.info("Binance exchange initialized successfully")
+
+                # Load exchange info
+                await self._load_exchange_info()
+
+                self.initialized = True
+                logger.info("Binance exchange initialized successfully")
+            else:
+                logger.warning(
+                    "Binance API credentials not provided, client not initialized"
+                )
+                self.client = None
+                self.initialized = False
         except Exception as e:
             logger.error(f"Binance initialization error: {e}")
+            self.client = None
+            self.initialized = False
             raise
 
     async def health_check(self) -> dict[str, Any]:

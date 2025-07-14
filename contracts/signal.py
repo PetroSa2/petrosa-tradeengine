@@ -1,8 +1,17 @@
 from datetime import datetime
-from typing import Literal, Dict, Any, List
 from enum import Enum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, validator
+
+
+class SignalType(str, Enum):
+    """Signal types for trading actions"""
+
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+    CLOSE = "close"
 
 
 class SignalStrength(str, Enum):
@@ -69,6 +78,7 @@ class Signal(BaseModel):
     """Enhanced trading signal with advanced features"""
 
     # Core signal information
+    id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_id: str = Field(..., description="Unique identifier for the strategy")
     signal_id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_mode: StrategyMode = Field(
@@ -77,6 +87,9 @@ class Signal(BaseModel):
 
     # Trading parameters
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
+    signal_type: SignalType = Field(
+        ..., description="Signal type (buy/sell/hold/close)"
+    )
     action: Literal["buy", "sell", "hold", "close"] = Field(
         ..., description="Trading action"
     )
@@ -85,14 +98,21 @@ class Signal(BaseModel):
         SignalStrength.MEDIUM, description="Signal strength level"
     )
 
-    # Timeframe information
-    timeframe: TimeFrame = Field(
-        TimeFrame.HOUR_1, description="Timeframe used for signal analysis"
-    )
-
-    # Price information
+    # Price and quantity information
+    price: float = Field(..., description="Signal price")
+    quantity: float = Field(..., description="Signal quantity")
     current_price: float = Field(..., description="Current market price")
     target_price: float | None = Field(None, description="Target execution price")
+
+    # Source and metadata
+    source: str = Field(..., description="Signal source")
+    strategy: str = Field(..., description="Strategy name")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
+
+    # Timeframe information
+    timeframe: str = Field("1h", description="Timeframe used for signal analysis")
 
     # Order configuration
     order_type: OrderType = Field(OrderType.MARKET, description="Order type to execute")
@@ -137,16 +157,16 @@ class Signal(BaseModel):
     model_confidence: float | None = Field(
         None, ge=0, le=1, description="ML model confidence score"
     )
-    model_features: Dict[str, Any] | None = Field(
+    model_features: dict[str, Any] | None = Field(
         None, description="Features used by ML model"
     )
     llm_reasoning: str | None = Field(None, description="LLM reasoning for the signal")
-    llm_alternatives: List[Dict[str, Any]] | None = Field(
+    llm_alternatives: list[dict[str, Any]] | None = Field(
         None, description="Alternative actions considered by LLM"
     )
 
     # Market indicators
-    indicators: Dict[str, Any] | None = Field(
+    indicators: dict[str, Any] | None = Field(
         None, description="Technical indicators and market data"
     )
 
@@ -154,7 +174,7 @@ class Signal(BaseModel):
     rationale: str | None = Field(
         None, description="Human-readable rationale for the signal"
     )
-    meta: Dict[str, Any] = Field(
+    meta: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
 
@@ -164,38 +184,40 @@ class Signal(BaseModel):
     )
 
     @validator("timestamp", pre=True)
-    def validate_timestamp(cls, v) -> datetime:
+    def validate_timestamp(cls, v: Any) -> datetime:
         """Ensure timestamp is timezone-aware"""
         if isinstance(v, str):
-            # Parse string to datetime
+            # Parse ISO format string
             try:
                 dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
                 return dt
             except ValueError:
-                # Try parsing without timezone info
-                dt = datetime.fromisoformat(v)
-                # Make it timezone-aware (UTC)
-                return dt.replace(tzinfo=datetime.utcnow().tzinfo)
+                # Try parsing as Unix timestamp
+                try:
+                    return datetime.fromtimestamp(float(v))
+                except (ValueError, TypeError):
+                    raise ValueError("Invalid timestamp format")
+        elif isinstance(v, int | float):
+            # Unix timestamp
+            return datetime.fromtimestamp(v)
         elif isinstance(v, datetime):
-            # If naive datetime, make it timezone-aware
-            if v.tzinfo is None:
-                return v.replace(tzinfo=datetime.utcnow().tzinfo)
             return v
-        return v
+        else:
+            raise ValueError("Invalid timestamp type")
 
     @validator("confidence", "model_confidence")
-    def validate_confidence(cls, v) -> float | None:
+    def validate_confidence(cls, v: Any) -> float | None:
         """Validate confidence values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Confidence must be between 0 and 1")
-        return v
+        return float(v) if v is not None else None
 
     @validator("position_size_pct", "stop_loss_pct", "take_profit_pct")
-    def validate_percentages(cls, v) -> float | None:
+    def validate_percentages(cls, v: Any) -> float | None:
         """Validate percentage values"""
         if v is not None and (v < 0 or v > 1):
-            raise ValueError("Percentage values must be between 0 and 1")
-        return v
+            raise ValueError("Percentage must be between 0 and 1")
+        return float(v) if v is not None else None
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}

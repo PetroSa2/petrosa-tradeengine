@@ -1,225 +1,218 @@
 #!/usr/bin/env python3
 """
-Constants Usage Example - Petrosa Trading Engine
-
-This example demonstrates how to use the new simplified constants system
-in your modules and components.
-
-Usage:
-    python examples/constants_usage.py
+Example script demonstrating the usage of constants in the trading engine.
+This shows how to use the various enums and constants defined in the system.
 """
 
-import os
-import sys
+from typing import Any
 
-from shared.constants import (
-    API_HOST,
-    API_PORT,
-    API_RELOAD,
-    APP_NAME,
-    APP_VERSION,
-    BINANCE_API_KEY,
-    BINANCE_API_SECRET,
-    BINANCE_TESTNET,
-    DEBUG,
-    DEFAULT_BASE_AMOUNT,
-    ENVIRONMENT,
-    LOG_LEVEL,
-    MONGODB_DATABASE,
-    MONGODB_URL,
-    NATS_SERVERS,
-    NATS_SIGNAL_SUBJECT,
-    PROMETHEUS_ENABLED,
-    SIMULATION_ENABLED,
-    SUPPORTED_SYMBOLS,
-    Environment,
-    LogLevel,
-    OrderSide,
-    OrderType,
-    get_config_summary,
-    validate_configuration,
-)
-
-# Add project root to path so we can import shared modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from contracts.order import OrderSide, OrderStatus, OrderType
+from contracts.signal import SignalType
 
 
-def demonstrate_constants_usage():
-    """Demonstrate how to use the constants in your code"""
+def demonstrate_signal_types() -> None:
+    """Demonstrate different signal types."""
+    print("=== Signal Types ===")
 
-    print("=" * 60)
+    signal_types = [SignalType.BUY, SignalType.SELL, SignalType.HOLD]
+
+    for signal_type in signal_types:
+        print(f"Signal Type: {signal_type.value}")
+        print(f"  Description: {signal_type.name}")
+        print()
+
+
+def demonstrate_order_types() -> None:
+    """Demonstrate different order types."""
+    print("=== Order Types ===")
+
+    order_types = [
+        OrderType.MARKET,
+        OrderType.LIMIT,
+        OrderType.STOP,
+        OrderType.STOP_LIMIT,
+        OrderType.TAKE_PROFIT,
+        OrderType.TAKE_PROFIT_LIMIT,
+    ]
+
+    for order_type in order_types:
+        print(f"Order Type: {order_type.value}")
+        print(f"  Description: {order_type.name}")
+        print()
+
+
+def demonstrate_order_sides() -> None:
+    """Demonstrate different order sides."""
+    print("=== Order Sides ===")
+
+    order_sides = [OrderSide.BUY, OrderSide.SELL]
+
+    for order_side in order_sides:
+        print(f"Order Side: {order_side.value}")
+        print(f"  Description: {order_side.name}")
+        print()
+
+
+def demonstrate_order_statuses() -> None:
+    """Demonstrate different order statuses."""
+    print("=== Order Statuses ===")
+
+    order_statuses = [
+        OrderStatus.PENDING,
+        OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+        OrderStatus.PARTIALLY_FILLED,
+    ]
+
+    for order_status in order_statuses:
+        print(f"Order Status: {order_status.value}")
+        print(f"  Description: {order_status.name}")
+        print()
+
+
+def create_order_example() -> dict[str, Any]:
+    """Create an example order using constants."""
+    print("=== Creating Order Example ===")
+
+    order_data = {
+        "symbol": "BTCUSDT",
+        "order_type": OrderType.MARKET.value,
+        "side": OrderSide.BUY.value,
+        "quantity": 0.1,
+        "price": 45000.0,
+        "status": OrderStatus.PENDING.value,
+        "time_in_force": "GTC",
+        "position_size_pct": 0.1,
+    }
+
+    print("Order Data:")
+    for key, value in order_data.items():
+        print(f"  {key}: {value}")
+    print()
+
+    return order_data
+
+
+def create_signal_example() -> dict[str, Any]:
+    """Create an example signal using constants."""
+    print("=== Creating Signal Example ===")
+
+    signal_data = {
+        "id": "example-signal-001",
+        "symbol": "BTCUSDT",
+        "signal_type": SignalType.BUY.value,
+        "price": 45000.0,
+        "quantity": 0.1,
+        "timestamp": 1640995200,
+        "source": "example_script",
+        "confidence": 0.8,
+        "metadata": {"strategy": "momentum", "timeframe": "1h"},
+        "timeframe": "1h",
+        "strategy": "momentum_strategy",
+    }
+
+    print("Signal Data:")
+    for key, value in signal_data.items():
+        print(f"  {key}: {value}")
+    print()
+
+    return signal_data
+
+
+def demonstrate_validation() -> None:
+    """Demonstrate validation using constants."""
+    print("=== Validation Examples ===")
+
+    # Valid signal type
+    valid_signal_type = SignalType.BUY
+    print(f"Valid signal type: {valid_signal_type.value}")
+
+    # Valid order type
+    valid_order_type = OrderType.MARKET
+    print(f"Valid order type: {valid_order_type.value}")
+
+    # Valid order side
+    valid_order_side = OrderSide.BUY
+    print(f"Valid order side: {valid_order_side.value}")
+
+    # Valid order status
+    valid_order_status = OrderStatus.PENDING
+    print(f"Valid order status: {valid_order_status.value}")
+    print()
+
+
+def demonstrate_comparison() -> None:
+    """Demonstrate comparing constants."""
+    print("=== Comparison Examples ===")
+
+    # Compare signal types
+    signal_type1 = SignalType.BUY
+    signal_type2 = SignalType.SELL
+
+    print(f"Signal type 1: {signal_type1.value}")
+    print(f"Signal type 2: {signal_type2.value}")
+    print(f"Are they equal? {signal_type1 == signal_type2}")
+    print()
+
+    # Compare order types
+    order_type1 = OrderType.MARKET
+    order_type2 = OrderType.LIMIT
+
+    print(f"Order type 1: {order_type1.value}")
+    print(f"Order type 2: {order_type2.value}")
+    print(f"Are they equal? {order_type1 == order_type2}")
+    print()
+
+
+def demonstrate_iteration() -> None:
+    """Demonstrate iterating through constants."""
+    print("=== Iteration Examples ===")
+
+    print("All Signal Types:")
+    for signal_type in SignalType:
+        print(f"  {signal_type.name}: {signal_type.value}")
+    print()
+
+    print("All Order Types:")
+    for order_type in OrderType:
+        print(f"  {order_type.name}: {order_type.value}")
+    print()
+
+    print("All Order Sides:")
+    for order_side in OrderSide:
+        print(f"  {order_side.name}: {order_side.value}")
+    print()
+
+    print("All Order Statuses:")
+    for order_status in OrderStatus:
+        print(f"  {order_status.name}: {order_status.value}")
+    print()
+
+
+def main() -> None:
+    """Main function to demonstrate constants usage."""
     print("Petrosa Trading Engine - Constants Usage Example")
-    print("=" * 60)
+    print("=" * 50)
+    print()
 
-    # 1. Basic application info
-    print("\n1. Application Information:")
-    print(f"   Name: {APP_NAME}")
-    print(f"   Version: {APP_VERSION}")
-    print(f"   Environment: {ENVIRONMENT}")
-    print(f"   Debug Mode: {DEBUG}")
+    # Demonstrate all constant types
+    demonstrate_signal_types()
+    demonstrate_order_types()
+    demonstrate_order_sides()
+    demonstrate_order_statuses()
 
-    # 2. Database configuration
-    print("\n2. Database Configuration:")
-    print(f"   MongoDB URL: {MONGODB_URL}")
-    print(f"   MongoDB Database: {MONGODB_DATABASE}")
+    # Create examples
+    create_order_example()
+    create_signal_example()
 
-    # 3. Messaging configuration
-    print("\n3. Messaging Configuration:")
-    print(f"   NATS Servers: {NATS_SERVERS}")
-    print(f"   NATS Signal Subject: {NATS_SIGNAL_SUBJECT}")
+    # Demonstrate validation and comparison
+    demonstrate_validation()
+    demonstrate_comparison()
+    demonstrate_iteration()
 
-    # 4. API configuration
-    print("\n4. API Configuration:")
-    print(f"   Host: {API_HOST}")
-    print(f"   Port: {API_PORT}")
-    print(f"   Auto-reload: {API_RELOAD}")
-
-    # 5. Trading configuration
-    print("\n5. Trading Configuration:")
-    print(f"   Default Base Amount: {DEFAULT_BASE_AMOUNT}")
-    print(f"   Simulation Enabled: {SIMULATION_ENABLED}")
-    print(f"   Supported Symbols: {SUPPORTED_SYMBOLS}")
-
-    # 6. Exchange configuration
-    print("\n6. Exchange Configuration:")
-    print(f"   Binance Testnet: {BINANCE_TESTNET}")
-    print(f"   Binance API Key Set: {bool(BINANCE_API_KEY)}")
-    print(f"   Binance API Secret Set: {bool(BINANCE_API_SECRET)}")
-
-    # 7. Monitoring configuration
-    print("\n7. Monitoring Configuration:")
-    print(f"   Log Level: {LOG_LEVEL}")
-    print(f"   Prometheus Enabled: {PROMETHEUS_ENABLED}")
-
-    # 8. Using enums
-    print("\n8. Using Enums:")
-    print(f"   Environment Types: {[env.value for env in Environment]}")
-    print(f"   Log Levels: {[level.value for level in LogLevel]}")
-    print(f"   Order Types: {[order_type.value for order_type in OrderType]}")
-    print(f"   Order Sides: {[side.value for side in OrderSide]}")
-
-    # 9. Configuration summary
-    print("\n9. Configuration Summary:")
-    config_summary = get_config_summary()
-    for section, config in config_summary.items():
-        print(f"   {section}: {config}")
-
-    # 10. Configuration validation
-    print("\n10. Configuration Validation:")
-    issues = validate_configuration()
-    if issues:
-        print("   Issues found:")
-        for issue in issues:
-            print(f"     - {issue}")
-    else:
-        print("   No configuration issues found!")
-
-    # 11. Environment-specific behavior
-    print("\n11. Environment-Specific Behavior:")
-    if ENVIRONMENT == Environment.PRODUCTION:
-        print("   Running in PRODUCTION mode")
-        print("   - Simulation disabled")
-        print("   - Auto-reload disabled")
-        print("   - Log level set to WARNING")
-    elif ENVIRONMENT == Environment.STAGING:
-        print("   Running in STAGING mode")
-        print("   - Simulation enabled for safety")
-        print("   - Auto-reload disabled")
-    elif ENVIRONMENT == Environment.TESTING:
-        print("   Running in TESTING mode")
-        print("   - Simulation enabled")
-        print("   - Auto-reload enabled")
-        print("   - Debug logging enabled")
-    else:
-        print("   Running in DEVELOPMENT mode")
-        print("   - Simulation enabled")
-        print("   - Auto-reload enabled")
-        print("   - Debug mode enabled")
-
-
-def demonstrate_conditional_logic():
-    """Demonstrate conditional logic using constants"""
-
-    print("\n" + "=" * 60)
-    print("Conditional Logic Examples")
-    print("=" * 60)
-
-    # Example 1: Environment-based configuration
-    if ENVIRONMENT == Environment.PRODUCTION:
-        print("Production: Using live trading with strict risk management")
-    elif ENVIRONMENT == Environment.STAGING:
-        print("Staging: Using simulation with production-like settings")
-    else:
-        print("Development: Using simulation with relaxed settings")
-
-    # Example 2: Feature flags
-    if SIMULATION_ENABLED:
-        print("Trading: Using simulation mode")
-    else:
-        print("Trading: Using live trading mode")
-
-    # Example 3: Logging levels
-    if LOG_LEVEL == LogLevel.DEBUG:
-        print("Logging: Verbose debug logging enabled")
-    elif LOG_LEVEL == LogLevel.INFO:
-        print("Logging: Standard info logging")
-    else:
-        print("Logging: Minimal logging for production")
-
-    # Example 4: Exchange configuration
-    if BINANCE_TESTNET:
-        print("Binance: Using testnet (safe for testing)")
-    else:
-        print("Binance: Using live trading (real money!)")
-
-    # Example 5: API configuration
-    if API_RELOAD:
-        print("API: Auto-reload enabled (development mode)")
-    else:
-        print("API: Auto-reload disabled (production mode)")
-
-
-def demonstrate_validation():
-    """Demonstrate configuration validation"""
-
-    print("\n" + "=" * 60)
-    print("Configuration Validation")
-    print("=" * 60)
-
-    issues = validate_configuration()
-
-    if issues:
-        print("Configuration issues found:")
-        for i, issue in enumerate(issues, 1):
-            print(f"  {i}. {issue}")
-
-        print("\nTo fix these issues:")
-        print("1. Set the required environment variables")
-        print("2. Check your .env file")
-        print("3. Ensure production secrets are properly configured")
-    else:
-        print("✅ All configuration is valid!")
-        print("Your Petrosa Trading Engine is ready to run.")
+    print("Constants usage example completed!")
 
 
 if __name__ == "__main__":
-    try:
-        demonstrate_constants_usage()
-        demonstrate_conditional_logic()
-        demonstrate_validation()
-
-        print("\n" + "=" * 60)
-        print("Constants Usage Example Complete!")
-        print("=" * 60)
-        print("\nKey takeaways:")
-        print("1. Import constants directly: from shared.constants import API_HOST")
-        print("2. Use enums for type safety: Environment.PRODUCTION")
-        print(
-            "3. Use utility functions: get_config_summary(), validate_configuration()"
-        )
-        print("4. Environment variables override defaults automatically")
-        print("5. Environment-specific overrides are applied automatically")
-
-    except Exception as e:
-        print(f"Error running constants example: {e}")
-        sys.exit(1)
+    main()

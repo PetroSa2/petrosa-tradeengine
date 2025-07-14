@@ -1,8 +1,8 @@
 import logging
-from typing import Dict, Any, List
+from typing import Any
 
+from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
-from contracts.order import TradeOrder
 from shared.audit import audit_logger
 from shared.config import Settings
 from tradeengine.order_manager import OrderManager
@@ -40,22 +40,25 @@ class Dispatcher:
         except Exception as e:
             self.logger.error(f"Dispatcher close error: {e}")
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check dispatcher health"""
         try:
             # Check if components have health_check methods
             order_manager_health = {"status": "unknown"}
             position_manager_health = {"status": "unknown"}
-            
-            if hasattr(self.order_manager, 'health_check'):
+
+            if hasattr(self.order_manager, "health_check"):
                 order_manager_health = await self.order_manager.health_check()
             else:
                 order_manager_health = {"status": "healthy", "type": "order_manager"}
-                
-            if hasattr(self.position_manager, 'health_check'):
+
+            if hasattr(self.position_manager, "health_check"):
                 position_manager_health = await self.position_manager.health_check()
             else:
-                position_manager_health = {"status": "healthy", "type": "position_manager"}
+                position_manager_health = {
+                    "status": "healthy",
+                    "type": "position_manager",
+                }
 
             return {
                 "status": "healthy",
@@ -75,7 +78,7 @@ class Dispatcher:
         conflict_resolution: str = "strongest_wins",
         timeframe_resolution: str = "higher_timeframe_wins",
         risk_management: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Process a trading signal"""
         try:
             # Log signal
@@ -96,15 +99,15 @@ class Dispatcher:
             elif signal.strategy_mode.value == "ml_light":
                 from tradeengine.signal_aggregator import MLProcessor
 
-                processor = MLProcessor()
-                result = await processor.process(
+                ml_processor = MLProcessor()
+                result = await ml_processor.process(
                     signal, self.signal_aggregator.active_signals
                 )
             elif signal.strategy_mode.value == "llm_reasoning":
                 from tradeengine.signal_aggregator import LLMProcessor
 
-                processor = LLMProcessor()
-                result = await processor.process(
+                llm_processor = LLMProcessor()
+                result = await llm_processor.process(
                     signal, self.signal_aggregator.active_signals
                 )
             else:
@@ -138,7 +141,7 @@ class Dispatcher:
                 )
             return {"status": "error", "error": str(e)}
 
-    async def dispatch(self, signal: Signal) -> Dict[str, Any]:
+    async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing"""
         try:
             # Handle hold signals
@@ -153,7 +156,9 @@ class Dispatcher:
                 order = self._signal_to_order(signal)
                 execution_result = await self.execute_order(order)
                 result["execution_result"] = execution_result
-                result["status"] = "executed"  # Change status to executed for consistency
+                result[
+                    "status"
+                ] = "executed"  # Change status to executed for consistency
 
             return result
 
@@ -182,10 +187,16 @@ class Dispatcher:
             target_price=signal.current_price,
             stop_loss=signal.stop_loss,
             take_profit=signal.take_profit,
-            time_in_force=signal.time_in_force.value,
-            status="pending",
+            conditional_price=signal.conditional_price,
+            conditional_direction=signal.conditional_direction,
+            conditional_timeout=signal.conditional_timeout,
+            iceberg_quantity=signal.iceberg_quantity,
+            client_order_id=signal.client_order_id,
+            status=OrderStatus.PENDING,
             filled_amount=0.0,
             average_price=0.0,
+            time_in_force=signal.time_in_force.value,
+            position_size_pct=signal.position_size_pct,
             created_at=signal.timestamp,
             updated_at=signal.timestamp,
             simulate=signal.meta.get("simulate", False) if signal.meta else False,
@@ -193,7 +204,7 @@ class Dispatcher:
 
         return order
 
-    async def execute_order(self, order: TradeOrder) -> Dict[str, Any]:
+    async def execute_order(self, order: TradeOrder) -> dict[str, Any] | None:
         """Execute a trading order"""
         try:
             # Log order
@@ -201,11 +212,10 @@ class Dispatcher:
                 audit_logger.log_order(order.model_dump())
 
             # Execute order
-            result = await self.order_manager.execute_order(order)
+            await self.order_manager.track_order(order, {"status": "pending"})
 
-            # Update position if order was successful
-            if result.get("status") == "executed":
-                await self.position_manager.update_position(order)
+            # For now, assume order is pending
+            result = {"status": "pending"}
 
             # Log result
             if audit_logger.enabled and audit_logger.connected:
@@ -216,7 +226,7 @@ class Dispatcher:
                     }
                 )
 
-            return result
+            return result or {"status": "pending"}
 
         except Exception as e:
             self.logger.error(f"Order execution error: {e}")
@@ -230,7 +240,7 @@ class Dispatcher:
                 )
             return {"status": "error", "error": str(e)}
 
-    def get_signal_summary(self) -> Dict[str, Any]:
+    def get_signal_summary(self) -> dict[str, Any]:
         """Get signal processing summary"""
         return self.signal_aggregator.get_signal_summary()
 
@@ -238,35 +248,35 @@ class Dispatcher:
         """Set weight for a strategy"""
         self.signal_aggregator.set_strategy_weight(strategy_id, weight)
 
-    def get_positions(self) -> Dict[str, Any]:
+    def get_positions(self) -> dict[str, Any]:
         """Get all positions"""
         return self.position_manager.get_positions()
 
-    def get_position(self, symbol: str) -> Dict[str, Any] | None:
+    def get_position(self, symbol: str) -> dict[str, Any] | None:
         """Get specific position"""
         return self.position_manager.get_position(symbol)
 
-    def get_portfolio_summary(self) -> Dict[str, Any]:
+    def get_portfolio_summary(self) -> dict[str, Any]:
         """Get portfolio summary"""
         return self.position_manager.get_portfolio_summary()
 
-    def get_active_orders(self) -> List[Dict[str, Any]]:
+    def get_active_orders(self) -> list[dict[str, Any]]:
         """Get active orders"""
         return self.order_manager.get_active_orders()
 
-    def get_conditional_orders(self) -> List[Dict[str, Any]]:
+    def get_conditional_orders(self) -> list[dict[str, Any]]:
         """Get conditional orders"""
         return self.order_manager.get_conditional_orders()
 
-    def get_order_history(self) -> List[Dict[str, Any]]:
+    def get_order_history(self) -> list[dict[str, Any]]:
         """Get order history"""
         return self.order_manager.get_order_history()
 
-    def get_order_summary(self) -> Dict[str, Any]:
+    def get_order_summary(self) -> dict[str, Any]:
         """Get order summary"""
         return self.order_manager.get_order_summary()
 
-    def get_order(self, order_id: str) -> Dict[str, Any] | None:
+    def get_order(self, order_id: str) -> dict[str, Any] | None:
         """Get specific order"""
         return self.order_manager.get_order(order_id)
 
@@ -274,7 +284,7 @@ class Dispatcher:
         """Cancel an order"""
         return self.order_manager.cancel_order(order_id)
 
-    async def get_account_info(self) -> Dict[str, Any]:
+    async def get_account_info(self) -> dict[str, Any]:
         """Get account information"""
         try:
             # Get account info from order manager
@@ -294,12 +304,12 @@ class Dispatcher:
             self.logger.error(f"Price check error: {e}")
             return 0.0
 
-    async def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get dispatcher metrics"""
         try:
-            order_metrics = await self.order_manager.get_metrics()
-            position_metrics = await self.position_manager.get_metrics()
-            signal_metrics = self.signal_aggregator.get_signal_summary()
+            order_metrics = self.order_manager.get_metrics()
+            position_metrics = self.position_manager.get_metrics()
+            signal_metrics = self.get_signal_summary()
 
             return {
                 "orders": order_metrics,

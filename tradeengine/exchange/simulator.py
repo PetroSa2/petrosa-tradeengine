@@ -2,7 +2,7 @@ import logging
 import random
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Dict
+from typing import Any
 
 from contracts.order import TradeOrder
 from shared.constants import (
@@ -29,11 +29,11 @@ class SimulatorExchange:
         """Close simulator exchange"""
         self.logger.info("Simulator exchange closed")
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check simulator health"""
         return {"status": "healthy", "type": "simulator"}
 
-    async def get_account_info(self) -> Dict[str, Any]:
+    async def get_account_info(self) -> dict[str, Any]:
         """Get simulated account information"""
         return {
             "balances": {
@@ -59,11 +59,11 @@ class SimulatorExchange:
         variation = random.uniform(-0.02, 0.02)  # ±2%
         return base_price * (1 + variation)
 
-    async def execute_order(self, order: TradeOrder) -> Dict[str, Any]:
+    async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order through simulator"""
         return await self.simulator.execute(order)
 
-    async def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         """Cancel order in simulator"""
         return {
             "success": True,
@@ -73,7 +73,7 @@ class SimulatorExchange:
             "simulated": True,
         }
 
-    async def get_order_status(self, symbol: str, order_id: str) -> Dict[str, Any]:
+    async def get_order_status(self, symbol: str, order_id: str) -> dict[str, Any]:
         """Get order status from simulator"""
         return {
             "order_id": order_id,
@@ -82,7 +82,7 @@ class SimulatorExchange:
             "simulated": True,
         }
 
-    async def get_metrics(self) -> Dict[str, Any]:
+    async def get_metrics(self) -> dict[str, Any]:
         """Get simulator metrics"""
         return {
             "orders_executed": 0,

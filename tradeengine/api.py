@@ -1,18 +1,16 @@
-import asyncio
 import logging
-from datetime import datetime
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Dict, Any, List
+from datetime import datetime
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from contracts.order import TradeOrder
+from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
-from shared.config import settings
 from shared.audit import audit_logger
 from shared.config import Settings
 from tradeengine.dispatcher import Dispatcher
@@ -28,16 +26,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
-    # Initialize audit logging in background - don't block startup
-    async def init_audit_logger() -> None:
-        try:
-            await audit_logger.initialize()
-        except Exception as e:
-            logger.warning("MySQL audit logger initialization failed: %s", str(e))
-            logger.info("Continuing without audit logging...")
-
-    # Start audit logger initialization in background
-    asyncio.create_task(init_audit_logger())
+    # Audit logger is already initialized
+    pass
 
     logger.info("Petrosa Trading Engine started successfully")
 
@@ -45,7 +35,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
-    await audit_logger.close()
     logger.info("Petrosa Trading Engine shut down complete")
 
 
@@ -72,24 +61,24 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     timestamp: str
-    components: Dict[str, Any]
+    components: dict[str, Any]
 
 
 class AccountResponse(BaseModel):
     """Account information response model"""
 
     account_type: str
-    balances: Dict[str, Any]
+    balances: dict[str, Any]
     total_balance_usdt: float
-    positions: Dict[str, Any]
-    pnl: Dict[str, Any]
-    risk_metrics: Dict[str, Any]
+    positions: dict[str, Any]
+    pnl: dict[str, Any]
+    risk_metrics: dict[str, Any]
 
 
 class TradeRequest(BaseModel):
     """Enhanced trade request model supporting all order types"""
 
-    signals: List[Signal]
+    signals: list[Signal]
     conflict_resolution: str = "strongest_wins"
     timeframe_resolution: str = "higher_timeframe_wins"
     risk_management: bool = True
@@ -100,14 +89,14 @@ class TradeResponse(BaseModel):
     """Trade response model"""
 
     status: str
-    orders: List[Dict[str, Any]]
+    orders: list[dict[str, Any]]
     signals_processed: int
     conflicts_resolved: int
-    audit_logs: List[Dict[str, Any]]
+    audit_logs: list[dict[str, Any]]
 
 
 @app.on_event("startup")
-async def startup_event():
+async def startup_event() -> None:
     """Initialize components on startup"""
     try:
         # Initialize audit logger
@@ -132,7 +121,7 @@ async def startup_event():
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event() -> None:
     """Cleanup on shutdown"""
     try:
         await binance_exchange.close()
@@ -144,7 +133,7 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def root() -> dict:
+async def root() -> dict[str, Any]:
     """Health check endpoint"""
     return {
         "service": "Petrosa Trading Engine",
@@ -164,7 +153,7 @@ async def root() -> dict:
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check() -> HealthResponse:
     """Comprehensive health check endpoint"""
     try:
         # Check component health
@@ -197,7 +186,7 @@ async def health_check():
 
 
 @app.get("/ready")
-async def readiness_check():
+async def readiness_check() -> dict[str, Any]:
     """Readiness probe for Kubernetes"""
     try:
         # Check if core components are ready
@@ -219,7 +208,7 @@ async def readiness_check():
 
 
 @app.get("/live")
-async def liveness_check():
+async def liveness_check() -> dict[str, Any]:
     """Liveness probe for Kubernetes"""
     try:
         # Simple liveness check
@@ -230,7 +219,9 @@ async def liveness_check():
 
 
 @app.post("/trade", response_model=TradeResponse)
-async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks):
+async def process_trade(
+    request: TradeRequest, background_tasks: BackgroundTasks
+) -> TradeResponse:
     """Process trading signals with advanced conflict resolution"""
     try:
         # Validate request
@@ -271,7 +262,7 @@ async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks
                         symbol=signal.symbol,
                         type=signal.order_type.value,
                         side=signal.action,
-                        amount=signal.amount or 0.001,
+                        amount=signal.position_size_pct or 0.001,
                         target_price=signal.current_price,
                         stop_loss=signal.stop_loss,
                         take_profit=signal.take_profit,
@@ -281,12 +272,13 @@ async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks
                         iceberg_quantity=signal.iceberg_quantity,
                         client_order_id=signal.client_order_id,
                         time_in_force=signal.time_in_force.value,
-                        status="pending",
+                        status=OrderStatus.PENDING,
                         filled_amount=0.0,
                         average_price=0.0,
                         created_at=signal.timestamp,
                         updated_at=signal.timestamp,
-                        simulate=settings.simulation_enabled,
+                        position_size_pct=signal.position_size_pct or 0.0,
+                        simulate=True,  # Default to simulation for safety
                     )
 
                     # Execute order
@@ -320,7 +312,7 @@ async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks
         # Prepare response
         response = TradeResponse(
             status="completed",
-            orders=orders,
+            orders=[order for order in orders if order is not None],
             signals_processed=len(request.signals),
             conflicts_resolved=conflicts_resolved,
             audit_logs=results,
@@ -349,7 +341,7 @@ async def process_trade(request: TradeRequest, background_tasks: BackgroundTasks
 
 
 @app.post("/trade/signal")
-async def process_single_signal(signal: Signal):
+async def process_single_signal(signal: Signal) -> dict[str, Any]:
     """Process a single trading signal (backward compatibility)"""
     try:
         # Log signal
@@ -362,14 +354,18 @@ async def process_single_signal(signal: Signal):
         return {
             "message": "Signal processed successfully",
             "signal_id": signal.strategy_id,
-            "result": result,
+            "result": result or {},
         }
 
     except Exception as e:
         logger.error(f"Signal processing error: {e}")
         if audit_logger.enabled and audit_logger.connected:
             audit_logger.log_error(
-                {"error": str(e), "signal": signal.model_dump(), "endpoint": "/trade/signal"}
+                {
+                    "error": str(e),
+                    "signal": signal.model_dump(),
+                    "endpoint": "/trade/signal",
+                }
             )
         raise HTTPException(status_code=500, detail=f"Signal processing failed: {e}")
 
@@ -391,7 +387,7 @@ async def place_advanced_order(order: TradeOrder) -> dict:
         return {
             "status": "success",
             "message": "Advanced order placed successfully",
-            "order_id": result.get("order_id"),
+            "order_id": result.get("order_id") if result else None,
             "result": result,
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
@@ -404,7 +400,7 @@ async def place_advanced_order(order: TradeOrder) -> dict:
 
 
 @app.get("/account", response_model=AccountResponse)
-async def get_account_info():
+async def get_account_info() -> AccountResponse:
     """Get detailed account information"""
     try:
         # Get account info from both exchanges
@@ -440,7 +436,28 @@ async def get_account_info():
         if audit_logger.enabled and audit_logger.connected:
             audit_logger.log_account(account_info)
 
-        return AccountResponse(**account_info)
+        # Ensure all values are dictionaries
+        balances = account_info.get("balances")
+        positions = account_info.get("positions")
+        pnl = account_info.get("pnl")
+        risk_metrics = account_info.get("risk_metrics")
+        total_balance_usdt_raw = account_info.get("total_balance_usdt", 0.0)
+        if isinstance(total_balance_usdt_raw, int | float):
+            total_balance_usdt = float(total_balance_usdt_raw)
+        else:
+            try:
+                total_balance_usdt = float(str(total_balance_usdt_raw))
+            except Exception:
+                total_balance_usdt = 0.0
+
+        return AccountResponse(
+            account_type=str(account_info.get("account_type", "unknown")),
+            balances=dict(balances) if isinstance(balances, dict) else {},
+            total_balance_usdt=total_balance_usdt,
+            positions=dict(positions) if isinstance(positions, dict) else {},
+            pnl=dict(pnl) if isinstance(pnl, dict) else {},
+            risk_metrics=dict(risk_metrics) if isinstance(risk_metrics, dict) else {},
+        )
     except Exception as e:
         logger.error(f"Account info error: {e}")
         if audit_logger.enabled and audit_logger.connected:
@@ -449,7 +466,7 @@ async def get_account_info():
 
 
 @app.get("/price/{symbol}")
-async def get_price(symbol: str):
+async def get_price(symbol: str) -> dict[str, Any]:
     """Get current price for a symbol"""
     try:
         # Get price from both exchanges
@@ -472,11 +489,13 @@ async def get_price(symbol: str):
 
 
 @app.delete("/order/{symbol}/{order_id}")
-async def cancel_order(symbol: str, order_id: str):
+async def cancel_order(symbol: str, order_id: str) -> dict[str, Any]:
     """Cancel an existing order"""
     try:
         # Cancel order from both exchanges
-        binance_result = await binance_exchange.cancel_order(symbol, order_id)
+        binance_result = await binance_exchange.cancel_order(
+            symbol, int(order_id) if order_id.isdigit() else 0
+        )
         simulator_result = await simulator_exchange.cancel_order(symbol, order_id)
 
         result = {
@@ -515,11 +534,13 @@ async def cancel_order(symbol: str, order_id: str):
 
 
 @app.get("/order/{symbol}/{order_id}")
-async def get_order_status(symbol: str, order_id: str):
+async def get_order_status(symbol: str, order_id: str) -> dict[str, Any]:
     """Get status of an existing order"""
     try:
         # Get order status from both exchanges
-        binance_status = await binance_exchange.get_order_status(symbol, order_id)
+        binance_status = await binance_exchange.get_order_status(
+            symbol, int(order_id) if order_id.isdigit() else 0
+        )
         simulator_status = await simulator_exchange.get_order_status(symbol, order_id)
 
         return {
@@ -544,7 +565,7 @@ async def get_order_status(symbol: str, order_id: str):
 
 
 @app.get("/signals/summary")
-async def get_signal_summary() -> dict:
+async def get_signal_summary() -> dict[str, Any]:
     """Get summary of signal processing and aggregation"""
     try:
         summary = dispatcher.get_signal_summary()
@@ -559,7 +580,7 @@ async def get_signal_summary() -> dict:
 
 
 @app.post("/signals/strategy/{strategy_id}/weight")
-async def set_strategy_weight(strategy_id: str, weight: float) -> dict:
+async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]:
     """Set weight for a strategy in signal aggregation"""
     try:
         if weight < 0 or weight > 10:
@@ -584,11 +605,11 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict:
 
 
 @app.get("/signals/active")
-async def get_active_signals() -> dict:
+async def get_active_signals() -> dict[str, Any]:
     """Get all active signals"""
     try:
         active_signals = []
-        for signal in dispatcher.active_signals.values():
+        for signal in dispatcher.signal_aggregator.active_signals.values():
             active_signals.append(
                 {
                     "strategy_id": signal.strategy_id,
@@ -613,7 +634,7 @@ async def get_active_signals() -> dict:
 
 
 @app.get("/positions")
-async def get_positions() -> dict:
+async def get_positions() -> dict[str, Any]:
     """Get all current positions"""
     try:
         positions = dispatcher.get_positions()
@@ -630,7 +651,7 @@ async def get_positions() -> dict:
 
 
 @app.get("/positions/{symbol}")
-async def get_position(symbol: str) -> dict:
+async def get_position(symbol: str) -> dict[str, Any]:
     """Get specific position"""
     try:
         position = dispatcher.get_position(symbol)
@@ -653,7 +674,7 @@ async def get_position(symbol: str) -> dict:
 
 
 @app.get("/orders")
-async def get_orders() -> dict:
+async def get_orders() -> dict[str, Any]:
     """Get all orders (active, conditional, and history)"""
     try:
         active_orders = dispatcher.get_active_orders()
@@ -677,7 +698,7 @@ async def get_orders() -> dict:
 
 
 @app.get("/orders/{order_id}")
-async def get_order(order_id: str) -> dict:
+async def get_order(order_id: str) -> dict[str, Any]:
     """Get specific order"""
     try:
         order = dispatcher.get_order(order_id)
@@ -698,7 +719,7 @@ async def get_order(order_id: str) -> dict:
 
 
 @app.delete("/orders/{order_id}")
-async def cancel_order_by_id(order_id: str) -> dict:
+async def cancel_order_by_id(order_id: str) -> dict[str, Any]:
     """Cancel an order by ID"""
     try:
         success = dispatcher.cancel_order(order_id)
@@ -719,7 +740,7 @@ async def cancel_order_by_id(order_id: str) -> dict:
 
 
 @app.get("/version")
-async def get_version() -> dict:
+async def get_version() -> dict[str, Any]:
     """Get application version information"""
     return {
         "name": "Petrosa Trading Engine",
@@ -741,7 +762,7 @@ async def get_version() -> dict:
 
 
 @app.get("/openapi.json")
-async def get_openapi_specs() -> dict:
+async def get_openapi_specs() -> dict[str, Any]:
     """Get OpenAPI specifications in JSON format"""
     return app.openapi()
 
@@ -753,7 +774,7 @@ async def metrics() -> PlainTextResponse:
 
 
 @app.get("/docs")
-async def get_documentation():
+async def get_documentation() -> dict[str, Any]:
     """Get API documentation"""
     return {
         "title": "Petrosa Trading Engine API",

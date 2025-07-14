@@ -1,376 +1,148 @@
 #!/usr/bin/env python3
 """
-Signal Publishing Example - Petrosa Trading Engine
-
-This script demonstrates how to publish trading signals to the Petrosa Trading Engine
-with different timeframes and conflict resolution scenarios.
-
-Usage:
-    python publish_signal.py
-
-Features:
-    - Multiple timeframe signals (1m, 5m, 1h, 4h, 1d)
-    - Different strategy modes (deterministic, ml_light, llm_reasoning)
-    - Conflict resolution demonstration
-    - Advanced order types
-    - Risk management parameters
+Example script to publish trading signals to the trading engine.
+This demonstrates how to send signals to the trading engine API.
 """
 
 import asyncio
-import random
-import time
+import json
+import logging
+from datetime import datetime
 from typing import Any
 
-import httpx
+import aiohttp
 
-from contracts.signal import (
-    OrderType,
-    Signal,
-    SignalStrength,
-    StrategyMode,
-    TimeFrame,
-    TimeInForce,
-)
+from contracts.signal import Signal, SignalType
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-class SignalPublisher:
-    """Publishes trading signals to the Petrosa Trading Engine"""
+async def publish_signal(
+    signal: Signal, api_url: str = "http://localhost:8000"
+) -> dict[str, Any]:
+    """
+    Publish a trading signal to the trading engine API.
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
-        self.base_url = base_url
-        self.client = httpx.AsyncClient(timeout=30.0)
+    Args:
+        signal: The trading signal to publish
+        api_url: The base URL of the trading engine API
 
-    async def close(self):
-        """Close the HTTP client"""
-        await self.client.aclose()
+    Returns:
+        Dict containing the API response
+    """
+    async with aiohttp.ClientSession() as session:
+        url = f"{api_url}/trade"
+        payload = signal.dict()
 
-    async def publish_signal(self, signal: Signal) -> dict[str, Any]:
-        """Publish a signal to the trading engine"""
         try:
-            response = await self.client.post(
-                f"{self.base_url}/trade",
-                json=signal.model_dump(),
-                headers={"Content-Type": "application/json"},
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            print(f"HTTP error: {e.response.status_code} - {e.response.text}")
-            return {"status": "error", "error": str(e)}
+            async with session.post(url, json=payload) as response:
+                result = await response.json()
+                logger.info(f"Signal published successfully: {result}")
+                return result
         except Exception as e:
-            print(f"Error publishing signal: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.error(f"Failed to publish signal: {e}")
+            return {"status": "error", "message": str(e)}
 
-    def create_momentum_signal(
-        self, symbol: str, timeframe: TimeFrame, confidence: float = 0.8
-    ) -> Signal:
-        """Create a momentum strategy signal"""
-        current_price = 50000 + random.uniform(-1000, 1000)
 
-        return Signal(
-            strategy_id="momentum_strategy",
-            signal_id=f"momentum_{symbol}_{timeframe.value}_{int(time.time())}",
-            strategy_mode=StrategyMode.DETERMINISTIC,
-            symbol=symbol,
-            action="buy",
-            confidence=confidence,
-            strength=SignalStrength.STRONG,
-            timeframe=timeframe,
-            current_price=current_price,
-            target_price=current_price * 1.02,  # 2% target
-            order_type=OrderType.MARKET,
-            time_in_force=TimeInForce.GTC,
-            position_size_pct=0.05,  # 5% of portfolio
-            stop_loss=current_price * 0.98,  # 2% stop loss
-            take_profit=current_price * 1.05,  # 5% take profit
-            rationale=f"Momentum signal on {timeframe.value} timeframe - strong upward trend detected",
-            meta={
-                "strategy_type": "momentum",
-                "timeframe": timeframe.value,
-                "indicators": {"rsi": 65, "macd": "bullish", "volume": "increasing"},
-            },
-        )
+async def publish_multiple_signals(
+    signals: list[Signal], api_url: str = "http://localhost:8000"
+) -> list[dict[str, Any]]:
+    """
+    Publish multiple trading signals to the trading engine API.
 
-    def create_mean_reversion_signal(
-        self, symbol: str, timeframe: TimeFrame, confidence: float = 0.7
-    ) -> Signal:
-        """Create a mean reversion strategy signal"""
-        current_price = 50000 + random.uniform(-1000, 1000)
+    Args:
+        signals: List of trading signals to publish
+        api_url: The base URL of the trading engine API
 
-        return Signal(
-            strategy_id="mean_reversion_strategy",
-            signal_id=f"meanrev_{symbol}_{timeframe.value}_{int(time.time())}",
-            strategy_mode=StrategyMode.ML_LIGHT,
-            symbol=symbol,
-            action="sell",
-            confidence=confidence,
-            strength=SignalStrength.MEDIUM,
-            timeframe=timeframe,
-            current_price=current_price,
-            target_price=current_price * 0.98,  # 2% target
-            order_type=OrderType.LIMIT,
-            time_in_force=TimeInForce.GTC,
-            position_size_pct=0.03,  # 3% of portfolio
-            stop_loss=current_price * 1.02,  # 2% stop loss
-            take_profit=current_price * 0.95,  # 5% take profit
-            model_confidence=confidence,
-            model_features={
-                "bollinger_position": 0.8,
-                "rsi": 75,
-                "price_deviation": 0.02,
-            },
-            rationale=f"Mean reversion signal on {timeframe.value} timeframe - overbought conditions detected",
-            meta={
-                "strategy_type": "mean_reversion",
-                "timeframe": timeframe.value,
-                "indicators": {
-                    "bollinger_upper": current_price * 1.02,
-                    "bollinger_lower": current_price * 0.98,
-                    "rsi": 75,
-                },
-            },
-        )
+    Returns:
+        List of API responses
+    """
+    async with aiohttp.ClientSession() as session:
+        url = f"{api_url}/trade/batch"
+        payload = [signal.dict() for signal in signals]
 
-    def create_llm_signal(
-        self, symbol: str, timeframe: TimeFrame, confidence: float = 0.9
-    ) -> Signal:
-        """Create an LLM reasoning strategy signal"""
-        current_price = 50000 + random.uniform(-1000, 1000)
+        try:
+            async with session.post(url, json=payload) as response:
+                results = await response.json()
+                logger.info(f"Multiple signals published successfully: {results}")
+                return results
+        except Exception as e:
+            logger.error(f"Failed to publish multiple signals: {e}")
+            return [{"status": "error", "message": str(e)}]
 
-        return Signal(
-            strategy_id="llm_strategy",
-            signal_id=f"llm_{symbol}_{timeframe.value}_{int(time.time())}",
-            strategy_mode=StrategyMode.LLM_REASONING,
-            symbol=symbol,
-            action="buy",
-            confidence=confidence,
-            strength=SignalStrength.EXTREME,
-            timeframe=timeframe,
-            current_price=current_price,
-            target_price=current_price * 1.03,  # 3% target
-            order_type=OrderType.STOP_LIMIT,
-            time_in_force=TimeInForce.GTC,
-            position_size_pct=0.08,  # 8% of portfolio
-            stop_loss=current_price * 0.97,  # 3% stop loss
-            take_profit=current_price * 1.06,  # 6% take profit
-            conditional_price=current_price * 1.01,
-            conditional_direction="above",
-            llm_reasoning="Based on comprehensive market analysis, including technical indicators, sentiment analysis, and macroeconomic factors, this appears to be a strong buying opportunity. The combination of oversold conditions, positive news sentiment, and institutional buying patterns suggests a significant upward move is likely.",
-            llm_alternatives=[
-                {
-                    "action": "hold",
-                    "confidence": 0.3,
-                    "reason": "Wait for clearer confirmation",
-                },
-                {
-                    "action": "sell",
-                    "confidence": 0.1,
-                    "reason": "Potential downside risk",
-                },
-            ],
-            rationale=f"LLM reasoning signal on {timeframe.value} timeframe - comprehensive analysis indicates strong buy opportunity",
-            meta={
-                "strategy_type": "llm_reasoning",
-                "timeframe": timeframe.value,
-                "sentiment_score": 0.8,
-                "news_impact": "positive",
-                "institutional_flow": "buying",
-            },
-        )
 
-    async def demonstrate_timeframe_conflicts(self):
-        """Demonstrate timeframe-based conflict resolution"""
-        print("\n=== Timeframe Conflict Resolution Demo ===")
+def create_sample_signals() -> list[Signal]:
+    """
+    Create sample trading signals for demonstration.
 
-        symbol = "BTCUSDT"
-        timeframes = [
-            TimeFrame.MINUTE_1,
-            TimeFrame.MINUTE_5,
-            TimeFrame.HOUR_1,
-            TimeFrame.HOUR_4,
-            TimeFrame.DAY_1,
-        ]
-
-        # Create conflicting signals with different timeframes
-        signals = []
-        for i, timeframe in enumerate(timeframes):
-            if i % 3 == 0:
-                signal = self.create_momentum_signal(
-                    symbol, timeframe, confidence=0.7 + i * 0.05
-                )
-            elif i % 3 == 1:
-                signal = self.create_mean_reversion_signal(
-                    symbol, timeframe, confidence=0.6 + i * 0.05
-                )
-            else:
-                signal = self.create_llm_signal(
-                    symbol, timeframe, confidence=0.8 + i * 0.05
-                )
-
-            signals.append(signal)
-
-        # Publish signals in sequence to demonstrate conflict resolution
-        for i, signal in enumerate(signals):
-            print(f"\nPublishing signal {i+1}/{len(signals)}:")
-            print(f"  Strategy: {signal.strategy_id}")
-            print(f"  Action: {signal.action}")
-            print(f"  Timeframe: {signal.timeframe.value}")
-            print(f"  Confidence: {signal.confidence:.2f}")
-            print(f"  Mode: {signal.strategy_mode.value}")
-
-            result = await self.publish_signal(signal)
-            print(f"  Result: {result.get('status', 'unknown')}")
-            if "result" in result and "aggregation_result" in result["result"]:
-                agg_result = result["result"]["aggregation_result"]
-                if agg_result.get("status") == "rejected":
-                    print(f"  Reason: {agg_result.get('reason', 'Unknown')}")
-
-            # Small delay between signals
-            await asyncio.sleep(1)
-
-    async def demonstrate_strategy_modes(self):
-        """Demonstrate different strategy modes"""
-        print("\n=== Strategy Modes Demo ===")
-
-        symbol = "ETHUSDT"
-        timeframe = TimeFrame.HOUR_1
-
-        # Deterministic mode
-        deterministic_signal = self.create_momentum_signal(
-            symbol, timeframe, confidence=0.8
-        )
-        print("\nPublishing deterministic signal:")
-        print(f"  Strategy: {deterministic_signal.strategy_id}")
-        print(f"  Mode: {deterministic_signal.strategy_mode.value}")
-        result = await self.publish_signal(deterministic_signal)
-        print(f"  Result: {result.get('status', 'unknown')}")
-
-        await asyncio.sleep(1)
-
-        # ML Light mode
-        ml_signal = self.create_mean_reversion_signal(
-            symbol, timeframe, confidence=0.75
-        )
-        print("\nPublishing ML Light signal:")
-        print(f"  Strategy: {ml_signal.strategy_id}")
-        print(f"  Mode: {ml_signal.strategy_mode.value}")
-        result = await self.publish_signal(ml_signal)
-        print(f"  Result: {result.get('status', 'unknown')}")
-
-        await asyncio.sleep(1)
-
-        # LLM Reasoning mode
-        llm_signal = self.create_llm_signal(symbol, timeframe, confidence=0.9)
-        print("\nPublishing LLM Reasoning signal:")
-        print(f"  Strategy: {llm_signal.strategy_id}")
-        print(f"  Mode: {llm_signal.strategy_mode.value}")
-        result = await self.publish_signal(llm_signal)
-        print(f"  Result: {result.get('status', 'unknown')}")
-
-    async def demonstrate_advanced_orders(self):
-        """Demonstrate advanced order types"""
-        print("\n=== Advanced Order Types Demo ===")
-
-        symbol = "ADAUSDT"
-        timeframe = TimeFrame.MINUTE_15
-        current_price = 0.5 + random.uniform(-0.05, 0.05)
-
-        # Stop Limit Order
-        stop_limit_signal = Signal(
-            strategy_id="advanced_strategy",
-            signal_id=f"stop_limit_{symbol}_{int(time.time())}",
-            strategy_mode=StrategyMode.DETERMINISTIC,
-            symbol=symbol,
-            action="buy",
-            confidence=0.85,
-            strength=SignalStrength.STRONG,
-            timeframe=timeframe,
-            current_price=current_price,
-            target_price=current_price * 1.01,
-            order_type=OrderType.STOP_LIMIT,
-            time_in_force=TimeInForce.GTC,
-            position_size_pct=0.04,
-            stop_loss=current_price * 0.98,
-            take_profit=current_price * 1.04,
-            conditional_price=current_price * 1.005,
-            conditional_direction="above",
-            rationale="Stop limit order to buy on breakout",
-            meta={"order_type": "stop_limit", "breakout_strategy": True},
-        )
-
-        print("\nPublishing Stop Limit Order:")
-        print(f"  Symbol: {symbol}")
-        print(f"  Order Type: {stop_limit_signal.order_type.value}")
-        print(f"  Conditional Price: {stop_limit_signal.conditional_price}")
-        result = await self.publish_signal(stop_limit_signal)
-        print(f"  Result: {result.get('status', 'unknown')}")
-
-        await asyncio.sleep(1)
-
-        # Take Profit Limit Order
-        take_profit_signal = Signal(
-            strategy_id="advanced_strategy",
-            signal_id=f"take_profit_{symbol}_{int(time.time())}",
-            strategy_mode=StrategyMode.DETERMINISTIC,
-            symbol=symbol,
-            action="sell",
+    Returns:
+        List of sample trading signals
+    """
+    signals = [
+        Signal(
+            id="signal-btc-buy-001",
+            symbol="BTCUSDT",
+            signal_type=SignalType.BUY,
+            price=45000.0,
+            quantity=0.1,
+            timestamp=int(datetime.now().timestamp()),
+            source="example_script",
             confidence=0.8,
-            strength=SignalStrength.MEDIUM,
-            timeframe=timeframe,
-            current_price=current_price,
-            target_price=current_price * 0.99,
-            order_type=OrderType.TAKE_PROFIT_LIMIT,
-            time_in_force=TimeInForce.GTC,
-            position_size_pct=0.03,
-            stop_loss=current_price * 1.02,
-            take_profit=current_price * 0.96,
-            conditional_price=current_price * 0.985,
-            conditional_direction="below",
-            rationale="Take profit limit order to sell on pullback",
-            meta={"order_type": "take_profit_limit", "profit_taking": True},
-        )
+            metadata={"strategy": "momentum", "timeframe": "1h"},
+            timeframe="1h",
+            strategy="momentum_strategy",
+        ),
+        Signal(
+            id="signal-eth-sell-001",
+            symbol="ETHUSDT",
+            signal_type=SignalType.SELL,
+            price=3000.0,
+            quantity=1.0,
+            timestamp=int(datetime.now().timestamp()),
+            source="example_script",
+            confidence=0.7,
+            metadata={"strategy": "mean_reversion", "timeframe": "4h"},
+            timeframe="4h",
+            strategy="mean_reversion_strategy",
+        ),
+        Signal(
+            id="signal-btc-hold-001",
+            symbol="BTCUSDT",
+            signal_type=SignalType.HOLD,
+            price=45000.0,
+            quantity=0.0,
+            timestamp=int(datetime.now().timestamp()),
+            source="example_script",
+            confidence=0.6,
+            metadata={"strategy": "trend_following", "timeframe": "1d"},
+            timeframe="1d",
+            strategy="trend_following_strategy",
+        ),
+    ]
 
-        print("\nPublishing Take Profit Limit Order:")
-        print(f"  Symbol: {symbol}")
-        print(f"  Order Type: {take_profit_signal.order_type.value}")
-        print(f"  Conditional Price: {take_profit_signal.conditional_price}")
-        result = await self.publish_signal(take_profit_signal)
-        print(f"  Result: {result.get('status', 'unknown')}")
+    return signals
 
 
-async def main():
-    """Main function to run the signal publishing demo"""
-    publisher = SignalPublisher()
+async def main() -> None:
+    """Main function to demonstrate signal publishing."""
+    logger.info("Starting signal publishing example...")
 
-    try:
-        print("Petrosa Trading Engine - Signal Publishing Demo")
-        print("=" * 50)
+    # Create sample signals
+    signals = create_sample_signals()
 
-        # Check if the service is running
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get("http://localhost:8000/health")
-                if response.status_code == 200:
-                    print("✓ Trading Engine is running")
-                else:
-                    print("✗ Trading Engine is not responding")
-                    return
-        except Exception as e:
-            print(f"✗ Cannot connect to Trading Engine: {e}")
-            return
+    # Publish single signal
+    logger.info("Publishing single signal...")
+    result = await publish_signal(signals[0])
+    print(f"Single signal result: {json.dumps(result, indent=2)}")
 
-        # Run demonstrations
-        await publisher.demonstrate_strategy_modes()
-        await publisher.demonstrate_advanced_orders()
-        await publisher.demonstrate_timeframe_conflicts()
+    # Publish multiple signals
+    logger.info("Publishing multiple signals...")
+    results = await publish_multiple_signals(signals)
+    print(f"Multiple signals results: {json.dumps(results, indent=2)}")
 
-        print("\n" + "=" * 50)
-        print("Demo completed successfully!")
-
-    except Exception as e:
-        print(f"Error during demo: {e}")
-    finally:
-        await publisher.close()
+    logger.info("Signal publishing example completed.")
 
 
 if __name__ == "__main__":

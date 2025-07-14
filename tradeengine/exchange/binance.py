@@ -53,8 +53,12 @@ class BinanceExchange:
             )
 
             # Debug logging
-            logger.info(f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}")
-            logger.info(f"Binance initialization - API_SECRET present: {bool(BINANCE_API_SECRET)}")
+            logger.info(
+                f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}"
+            )
+            logger.info(
+                f"Binance initialization - API_SECRET present: {bool(BINANCE_API_SECRET)}"
+            )
             logger.info(f"Binance initialization - TESTNET: {BINANCE_TESTNET}")
 
             # Create Binance client

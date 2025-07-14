@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager"""
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
-    
+
     try:
         # Initialize audit logger
         if audit_logger.enabled and audit_logger.connected:
@@ -121,9 +121,6 @@ class TradeResponse(BaseModel):
     signals_processed: int
     conflicts_resolved: int
     audit_logs: list[dict[str, Any]]
-
-
-
 
 
 @app.get("/")

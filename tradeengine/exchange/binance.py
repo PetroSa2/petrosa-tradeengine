@@ -46,27 +46,33 @@ class BinanceExchange:
         """Initialize Binance exchange connection"""
         try:
             # Import constants here to avoid circular imports
-            from shared.constants import BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_TESTNET
-            
+            from shared.constants import (
+                BINANCE_API_KEY,
+                BINANCE_API_SECRET,
+                BINANCE_TESTNET,
+            )
+
             # Create Binance client
             if BINANCE_API_KEY and BINANCE_API_SECRET:
                 self.client = await AsyncClient.create(
                     api_key=BINANCE_API_KEY,
                     api_secret=BINANCE_API_SECRET,
-                    testnet=BINANCE_TESTNET
+                    testnet=BINANCE_TESTNET,
                 )
                 logger.info(f"Binance client initialized (testnet: {BINANCE_TESTNET})")
-                
+
                 # Test connection
                 await self.client.ping()
-                
+
                 # Load exchange info
                 await self._load_exchange_info()
-                
+
                 self.initialized = True
                 logger.info("Binance exchange initialized successfully")
             else:
-                logger.warning("Binance API credentials not provided, client not initialized")
+                logger.warning(
+                    "Binance API credentials not provided, client not initialized"
+                )
                 self.client = None
                 self.initialized = False
         except Exception as e:

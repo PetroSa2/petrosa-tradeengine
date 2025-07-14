@@ -5,17 +5,13 @@ metadata:
   namespace: petrosa-apps
   labels:
     app: petrosa-tradeengine
+    version: VERSION_PLACEHOLDER
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 spec:
-  ingressClassName: nginx
-  tls:
-  - hosts:
-    - api.petrosa.com
-    secretName: petrosa-tradeengine-tls
   rules:
   - host: api.petrosa.com
     http:

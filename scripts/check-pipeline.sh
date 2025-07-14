@@ -1,12 +1,9 @@
 #!/bin/bash
 
-# Pipeline Diagnostic Script
-# This script helps diagnose CI/CD pipeline issues
+# Petrosa Trading Engine - Pipeline Check Script
+# This script checks the status of the local CI/CD pipeline
 
 set -e
-
-echo "🔍 Petrosa Trading Engine Pipeline Diagnostics"
-echo "=============================================="
 
 # Colors for output
 RED='\033[0;31m'
@@ -15,230 +12,389 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Configuration
+PROJECT_NAME="petrosa-tradeengine"
+NAMESPACE="petrosa-apps"
+
 # Function to print colored output
 print_status() {
-    local status=$1
-    local message=$2
-    case $status in
-        "SUCCESS")
-            echo -e "${GREEN}✅ $message${NC}"
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to check Python environment
+check_python_env() {
+    print_status "Checking Python environment..."
+    
+    if [ ! -d ".venv" ]; then
+        print_error "Virtual environment not found. Run 'make setup' first."
+        return 1
+    fi
+    
+    if ! source .venv/bin/activate 2>/dev/null; then
+        print_error "Failed to activate virtual environment"
+        return 1
+    fi
+    
+    # Check Python version
+    python_version=$(python --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
+    required_version="3.11"
+    
+    if [ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]; then
+        print_error "Python 3.11 or higher is required. Current version: $python_version"
+        return 1
+    fi
+    
+    print_success "Python environment is ready"
+}
+
+# Function to check dependencies
+check_dependencies() {
+    print_status "Checking dependencies..."
+    
+    # Check if requirements files exist
+    if [ ! -f "requirements.txt" ]; then
+        print_error "requirements.txt not found"
+        return 1
+    fi
+    
+    if [ ! -f "requirements-dev.txt" ]; then
+        print_error "requirements-dev.txt not found"
+        return 1
+    fi
+    
+    # Check if key packages are installed
+    local missing_packages=()
+    
+    if ! python -c "import fastapi" 2>/dev/null; then
+        missing_packages+=("fastapi")
+    fi
+    
+    if ! python -c "import motor" 2>/dev/null; then
+        missing_packages+=("motor")
+    fi
+    
+    if ! python -c "import pytest" 2>/dev/null; then
+        missing_packages+=("pytest")
+    fi
+    
+    if [ ${#missing_packages[@]} -ne 0 ]; then
+        print_error "Missing packages: ${missing_packages[*]}"
+        print_status "Run 'make install-dev' to install dependencies"
+        return 1
+    fi
+    
+    print_success "Dependencies are installed"
+}
+
+# Function to check code quality tools
+check_code_quality_tools() {
+    print_status "Checking code quality tools..."
+    
+    local missing_tools=()
+    
+    if ! command_exists black; then
+        missing_tools+=("black")
+    fi
+    
+    if ! command_exists flake8; then
+        missing_tools+=("flake8")
+    fi
+    
+    if ! command_exists mypy; then
+        missing_tools+=("mypy")
+    fi
+    
+    if ! command_exists ruff; then
+        missing_tools+=("ruff")
+    fi
+    
+    if [ ${#missing_tools[@]} -ne 0 ]; then
+        print_warning "Missing code quality tools: ${missing_tools[*]}"
+        print_status "Run 'make install-dev' to install development tools"
+    else
+        print_success "Code quality tools are available"
+    fi
+}
+
+# Function to check Docker
+check_docker() {
+    print_status "Checking Docker..."
+    
+    if ! command_exists docker; then
+        print_error "Docker not found"
+        return 1
+    fi
+    
+    if ! docker info >/dev/null 2>&1; then
+        print_error "Docker daemon not running"
+        return 1
+    fi
+    
+    print_success "Docker is ready"
+}
+
+# Function to check Kubernetes
+check_kubernetes() {
+    print_status "Checking Kubernetes..."
+    
+    if ! command_exists kubectl; then
+        print_warning "kubectl not found - Kubernetes deployment will be skipped"
+        return 0
+    fi
+    
+    if ! kubectl cluster-info >/dev/null 2>&1; then
+        print_warning "Cannot connect to Kubernetes cluster"
+        return 0
+    fi
+    
+    print_success "Kubernetes is accessible"
+}
+
+# Function to check Kubernetes manifests
+check_kubernetes_manifests() {
+    print_status "Checking Kubernetes manifests..."
+    
+    local missing_manifests=()
+    
+    if [ ! -f "k8s/deployment.yaml" ]; then
+        missing_manifests+=("deployment.yaml")
+    fi
+    
+    if [ ! -f "k8s/service.yaml" ]; then
+        missing_manifests+=("service.yaml")
+    fi
+    
+    if [ ! -f "k8s/ingress.yaml" ]; then
+        missing_manifests+=("ingress.yaml")
+    fi
+    
+    if [ ! -f "k8s/hpa.yaml" ]; then
+        missing_manifests+=("hpa.yaml")
+    fi
+    
+    if [ ! -f "k8s/networkpolicy-allow-egress.yaml" ]; then
+        missing_manifests+=("networkpolicy-allow-egress.yaml")
+    fi
+    
+    if [ ${#missing_manifests[@]} -ne 0 ]; then
+        print_error "Missing Kubernetes manifests: ${missing_manifests[*]}"
+        return 1
+    fi
+    
+    print_success "Kubernetes manifests are present"
+}
+
+# Function to check application code
+check_application_code() {
+    print_status "Checking application code..."
+    
+    local missing_files=()
+    
+    if [ ! -f "tradeengine/api.py" ]; then
+        missing_files+=("tradeengine/api.py")
+    fi
+    
+    if [ ! -f "tradeengine/position_manager.py" ]; then
+        missing_files+=("tradeengine/position_manager.py")
+    fi
+    
+    if [ ! -f "tradeengine/order_manager.py" ]; then
+        missing_files+=("tradeengine/order_manager.py")
+    fi
+    
+    if [ ! -f "shared/config.py" ]; then
+        missing_files+=("shared/config.py")
+    fi
+    
+    if [ ! -f "contracts/order.py" ]; then
+        missing_files+=("contracts/order.py")
+    fi
+    
+    if [ ${#missing_files[@]} -ne 0 ]; then
+        print_error "Missing application files: ${missing_files[*]}"
+        return 1
+    fi
+    
+    print_success "Application code is present"
+}
+
+# Function to check tests
+check_tests() {
+    print_status "Checking tests..."
+    
+    if [ ! -d "tests" ]; then
+        print_error "Tests directory not found"
+        return 1
+    fi
+    
+    local test_files=($(find tests -name "test_*.py" -type f))
+    
+    if [ ${#test_files[@]} -eq 0 ]; then
+        print_warning "No test files found"
+    else
+        print_success "Found ${#test_files[@]} test files"
+    fi
+}
+
+# Function to check scripts
+check_scripts() {
+    print_status "Checking scripts..."
+    
+    local missing_scripts=()
+    
+    if [ ! -f "scripts/local-pipeline.sh" ]; then
+        missing_scripts+=("local-pipeline.sh")
+    fi
+    
+    if [ ! -f "scripts/setup-mongodb.sh" ]; then
+        missing_scripts+=("setup-mongodb.sh")
+    fi
+    
+    if [ ${#missing_scripts[@]} -ne 0 ]; then
+        print_warning "Missing scripts: ${missing_scripts[*]}"
+    else
+        print_success "Scripts are present"
+    fi
+}
+
+# Function to check MongoDB setup
+check_mongodb_setup() {
+    print_status "Checking MongoDB setup..."
+    
+    if ! command_exists mongosh; then
+        print_warning "mongosh not found - MongoDB setup will be manual"
+        return 0
+    fi
+    
+    # Try to connect to MongoDB
+    if mongosh --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
+        print_success "MongoDB is accessible"
+    else
+        print_warning "MongoDB is not accessible - run 'make setup-mongodb'"
+    fi
+}
+
+# Function to run comprehensive check
+run_comprehensive_check() {
+    print_status "Running comprehensive pipeline check..."
+    
+    local errors=0
+    
+    # Check Python environment
+    if ! check_python_env; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check dependencies
+    if ! check_dependencies; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check code quality tools
+    check_code_quality_tools
+    
+    # Check Docker
+    if ! check_docker; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check Kubernetes
+    check_kubernetes
+    
+    # Check Kubernetes manifests
+    if ! check_kubernetes_manifests; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check application code
+    if ! check_application_code; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check tests
+    if ! check_tests; then
+        errors=$((errors + 1))
+    fi
+    
+    # Check scripts
+    check_scripts
+    
+    # Check MongoDB setup
+    check_mongodb_setup
+    
+    # Summary
+    echo ""
+    if [ $errors -eq 0 ]; then
+        print_success "All checks passed! Pipeline is ready to run."
+        print_status "Run 'make pipeline' to execute the complete pipeline."
+    else
+        print_error "Found $errors error(s). Please fix the issues before running the pipeline."
+        return 1
+    fi
+}
+
+# Main execution
+main() {
+    echo "Petrosa Trading Engine - Pipeline Check"
+    echo "======================================"
+    echo ""
+    
+    case "${1:-all}" in
+        python)
+            check_python_env
             ;;
-        "WARNING")
-            echo -e "${YELLOW}⚠️  $message${NC}"
+        deps)
+            check_dependencies
             ;;
-        "ERROR")
-            echo -e "${RED}❌ $message${NC}"
+        docker)
+            check_docker
             ;;
-        "INFO")
-            echo -e "${BLUE}ℹ️  $message${NC}"
+        k8s)
+            check_kubernetes
+            check_kubernetes_manifests
+            ;;
+        code)
+            check_application_code
+            check_tests
+            ;;
+        mongodb)
+            check_mongodb_setup
+            ;;
+        all)
+            run_comprehensive_check
+            ;;
+        *)
+            echo "Usage: $0 [python|deps|docker|k8s|code|mongodb|all]"
+            echo ""
+            echo "Check specific components:"
+            echo "  python   - Check Python environment"
+            echo "  deps     - Check dependencies"
+            echo "  docker   - Check Docker"
+            echo "  k8s      - Check Kubernetes"
+            echo "  code     - Check application code"
+            echo "  mongodb  - Check MongoDB setup"
+            echo "  all      - Run comprehensive check (default)"
+            exit 1
             ;;
     esac
 }
 
-# Check if we're in a GitHub Actions environment
-check_github_environment() {
-    echo ""
-    print_status "INFO" "Checking GitHub Actions environment..."
-    
-    if [ -n "$GITHUB_ACTIONS" ]; then
-        print_status "SUCCESS" "Running in GitHub Actions"
-        echo "  - Workflow: $GITHUB_WORKFLOW"
-        echo "  - Run ID: $GITHUB_RUN_ID"
-        echo "  - Ref: $GITHUB_REF"
-        echo "  - SHA: $GITHUB_SHA"
-    else
-        print_status "WARNING" "Not running in GitHub Actions"
-    fi
-}
-
-# Check required secrets
-check_secrets() {
-    echo ""
-    print_status "INFO" "Checking required secrets..."
-    
-    local missing_secrets=()
-    
-    # Check Docker Hub secrets
-    if [ -z "$DOCKERHUB_USERNAME" ] && [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-        missing_secrets+=("DOCKERHUB_USERNAME")
-    fi
-    
-    if [ -z "$DOCKERHUB_TOKEN" ] && [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-        missing_secrets+=("DOCKERHUB_TOKEN")
-    fi
-    
-    # Check Kubernetes secrets
-    if [ -z "$KUBE_CONFIG_DATA" ] && [ -z "${{ secrets.KUBE_CONFIG_DATA }}" ]; then
-        missing_secrets+=("KUBE_CONFIG_DATA")
-    fi
-    
-    if [ ${#missing_secrets[@]} -eq 0 ]; then
-        print_status "SUCCESS" "All required secrets appear to be configured"
-    else
-        print_status "ERROR" "Missing required secrets: ${missing_secrets[*]}"
-        echo "  Please configure these secrets in your GitHub repository settings"
-    fi
-}
-
-# Check Docker Hub authentication
-check_docker_auth() {
-    echo ""
-    print_status "INFO" "Checking Docker Hub authentication..."
-    
-    if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
-        print_status "SUCCESS" "Docker Hub credentials available"
-        echo "  - Username: $DOCKERHUB_USERNAME"
-        echo "  - Token: [HIDDEN]"
-    else
-        print_status "WARNING" "Docker Hub credentials not available in environment"
-        echo "  - This is normal if not running in GitHub Actions"
-    fi
-}
-
-# Check Kubernetes configuration
-check_k8s_config() {
-    echo ""
-    print_status "INFO" "Checking Kubernetes configuration..."
-    
-    if [ -f "k8s/kubeconfig.yaml" ]; then
-        print_status "SUCCESS" "Local kubeconfig found"
-    else
-        print_status "WARNING" "Local kubeconfig not found"
-    fi
-    
-    if [ -n "$KUBE_CONFIG_DATA" ]; then
-        print_status "SUCCESS" "Kubernetes config data available"
-    else
-        print_status "WARNING" "Kubernetes config data not available"
-    fi
-}
-
-# Check pipeline files
-check_pipeline_files() {
-    echo ""
-    print_status "INFO" "Checking pipeline files..."
-    
-    local files=(
-        ".github/workflows/ci-cd.yml"
-        "k8s/deployment.yaml"
-        "k8s/service.yaml"
-        "k8s/ingress.yaml"
-        "Dockerfile"
-        "requirements.txt"
-    )
-    
-    for file in "${files[@]}"; do
-        if [ -f "$file" ]; then
-            print_status "SUCCESS" "Found: $file"
-        else
-            print_status "ERROR" "Missing: $file"
-        fi
-    done
-}
-
-# Check Dockerfile
-check_dockerfile() {
-    echo ""
-    print_status "INFO" "Checking Dockerfile..."
-    
-    if [ -f "Dockerfile" ]; then
-        print_status "SUCCESS" "Dockerfile exists"
-        
-        # Check for common issues
-        if grep -q "VERSION_PLACEHOLDER" Dockerfile; then
-            print_status "WARNING" "Dockerfile contains VERSION_PLACEHOLDER"
-        fi
-        
-        if grep -q "petrosa-tradeengine" Dockerfile; then
-            print_status "SUCCESS" "Dockerfile references correct image name"
-        else
-            print_status "WARNING" "Dockerfile may not reference correct image name"
-        fi
-    else
-        print_status "ERROR" "Dockerfile not found"
-    fi
-}
-
-# Check Kubernetes manifests
-check_k8s_manifests() {
-    echo ""
-    print_status "INFO" "Checking Kubernetes manifests..."
-    
-    local manifests=(
-        "k8s/deployment.yaml"
-        "k8s/service.yaml"
-        "k8s/ingress.yaml"
-        "k8s/configmap.yaml"
-    )
-    
-    for manifest in "${manifests[@]}"; do
-        if [ -f "$manifest" ]; then
-            print_status "SUCCESS" "Found: $manifest"
-            
-            # Check for VERSION_PLACEHOLDER
-            if grep -q "VERSION_PLACEHOLDER" "$manifest"; then
-                print_status "INFO" "  - Contains VERSION_PLACEHOLDER (will be replaced during deployment)"
-            fi
-            
-            # Check for correct image name
-            if grep -q "petrosa/petrosa-tradeengine" "$manifest"; then
-                print_status "SUCCESS" "  - Uses correct image name"
-            else
-                print_status "WARNING" "  - May not use correct image name"
-            fi
-        else
-            print_status "WARNING" "Missing: $manifest"
-        fi
-    done
-}
-
-# Check recent pipeline runs
-check_recent_runs() {
-    echo ""
-    print_status "INFO" "Checking recent pipeline runs..."
-    
-    if [ -n "$GITHUB_ACTIONS" ]; then
-        echo "  - Current run: $GITHUB_RUN_ID"
-        echo "  - Workflow: $GITHUB_WORKFLOW"
-        echo "  - Branch: $GITHUB_REF_NAME"
-        echo "  - Commit: $GITHUB_SHA"
-    else
-        print_status "INFO" "Not in GitHub Actions environment"
-        echo "  - Check GitHub repository Actions tab for recent runs"
-    fi
-}
-
-# Main diagnostic function
-run_diagnostics() {
-    echo "Starting pipeline diagnostics..."
-    
-    check_github_environment
-    check_secrets
-    check_docker_auth
-    check_k8s_config
-    check_pipeline_files
-    check_dockerfile
-    check_k8s_manifests
-    check_recent_runs
-    
-    echo ""
-    print_status "INFO" "Diagnostic Summary"
-    echo "=================="
-    echo ""
-    echo "Common Pipeline Issues:"
-    echo "1. Missing GitHub Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, KUBE_CONFIG_DATA"
-    echo "2. Docker Hub authentication failures"
-    echo "3. Kubernetes cluster connectivity issues"
-    echo "4. Image name mismatches between pipeline and manifests"
-    echo "5. Missing or incorrect VERSION_PLACEHOLDER replacements"
-    echo ""
-    echo "Next Steps:"
-    echo "1. Check GitHub repository Settings > Secrets and variables > Actions"
-    echo "2. Verify Docker Hub repository exists and is accessible"
-    echo "3. Test Kubernetes cluster connectivity"
-    echo "4. Review recent pipeline runs in GitHub Actions tab"
-    echo "5. Check pipeline logs for specific error messages"
-}
-
-# Run diagnostics
-run_diagnostics 
+# Run main function
+main "$@" 

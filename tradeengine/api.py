@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from contracts.order import OrderStatus, TradeOrder
+from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
@@ -145,7 +145,7 @@ async def root() -> dict[str, Any]:
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Comprehensive health check endpoint"""
+    """Comprehensive health check endpoint with distributed state info"""
     try:
         # Check component health
         components = {
@@ -174,6 +174,33 @@ async def health_check() -> HealthResponse:
     except Exception as e:
         logger.error(f"Health check error: {e}")
         raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
+
+
+@app.get("/distributed-state")
+async def get_distributed_state() -> dict[str, Any]:
+    """Get distributed state information"""
+    try:
+        from shared.distributed_lock import distributed_lock_manager
+
+        leader_info = await distributed_lock_manager.get_leader_info()
+        position_manager_health = await dispatcher.position_manager.health_check()
+
+        return {
+            "status": "success",
+            "data": {
+                "leader_info": leader_info,
+                "position_manager": position_manager_health,
+                "pod_id": distributed_lock_manager.pod_id,
+                "is_leader": distributed_lock_manager.is_leader,
+                "database_connected": position_manager_health.get(
+                    "database_connected", False
+                ),
+            },
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+    except Exception as err:
+        logger.error(f"Error getting distributed state: {err}")
+        raise HTTPException(status_code=500, detail="Failed to get distributed state")
 
 
 @app.get("/ready")
@@ -213,124 +240,78 @@ async def liveness_check() -> dict[str, Any]:
 async def process_trade(
     request: TradeRequest, background_tasks: BackgroundTasks
 ) -> TradeResponse:
-    """Process trading signals with advanced conflict resolution"""
+    """Process trading signals with distributed state management"""
     try:
-        # Validate request
-        if not request.signals:
-            raise HTTPException(status_code=400, detail="No signals provided")
+        # Get distributed state info
+        from shared.distributed_lock import distributed_lock_manager
 
-        # Log trade request
-        if audit_logger.enabled and audit_logger.connected:
-            audit_logger.log_signal(
-                {
-                    "signals_count": len(request.signals),
-                    "conflict_resolution": request.conflict_resolution,
-                    "timeframe_resolution": request.timeframe_resolution,
-                    "risk_management": request.risk_management,
-                }
-            )
+        leader_info = await distributed_lock_manager.get_leader_info()
 
-        # Process signals through dispatcher
-        results = []
+        # Process signals
         orders = []
+        signals_processed = 0
         conflicts_resolved = 0
+        audit_logs = []
 
         for signal in request.signals:
             try:
-                result = await dispatcher.process_signal(
-                    signal,
-                    conflict_resolution=request.conflict_resolution,
-                    timeframe_resolution=request.timeframe_resolution,
-                    risk_management=request.risk_management,
-                )
+                # Process signal with distributed consensus
+                result = await dispatcher.dispatch(signal)
 
-                results.append(result)
+                if result.get("status") == "executed":
+                    signals_processed += 1
+                    if result.get("conflicts_resolved"):
+                        conflicts_resolved += result["conflicts_resolved"]
 
-                if result.get("status") == "success":
-                    # Create order from signal
-                    order = TradeOrder(
-                        order_id=(
-                            f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}"
-                        ),
-                        symbol=signal.symbol,
-                        type=signal.order_type.value,
-                        side=signal.action,
-                        amount=signal.position_size_pct or 0.001,
-                        target_price=signal.current_price,
-                        stop_loss=signal.stop_loss,
-                        take_profit=signal.take_profit,
-                        conditional_price=signal.conditional_price,
-                        conditional_direction=signal.conditional_direction,
-                        conditional_timeout=signal.conditional_timeout,
-                        iceberg_quantity=signal.iceberg_quantity,
-                        client_order_id=signal.client_order_id,
-                        time_in_force=signal.time_in_force.value,
-                        status=OrderStatus.PENDING,
-                        filled_amount=0.0,
-                        average_price=0.0,
-                        created_at=signal.timestamp,
-                        updated_at=signal.timestamp,
-                        position_size_pct=signal.position_size_pct or 0.0,
-                        simulate=True,  # Default to simulation for safety
-                    )
-
-                    # Execute order
-                    order_result = await dispatcher.execute_order(order)
-                    orders.append(order_result)
-
-                    # Log order execution
-                    if audit_logger.enabled and audit_logger.connected:
-                        audit_logger.log_order(
+                    # Add order info
+                    if "execution_result" in result:
+                        orders.append(
                             {
-                                "order": order.model_dump(),
-                                "result": order_result,
                                 "signal": signal.model_dump(),
+                                "result": result["execution_result"],
+                                "distributed_state": {
+                                    "pod_id": distributed_lock_manager.pod_id,
+                                    "is_leader": distributed_lock_manager.is_leader,
+                                    "leader_info": leader_info,
+                                },
                             }
                         )
 
-                elif result.get("status") == "conflict_resolved":
-                    conflicts_resolved += 1
-
-            except Exception as e:
-                logger.error(f"Error processing signal: {e}")
-                if audit_logger.enabled and audit_logger.connected:
-                    audit_logger.log_error(
+                # Log for audit
+                if request.audit_logging and audit_logger.enabled:
+                    audit_logs.append(
                         {
-                            "error": str(e),
                             "signal": signal.model_dump(),
-                            "endpoint": "/trade",
+                            "result": result,
+                            "timestamp": datetime.utcnow().isoformat(),
                         }
                     )
 
-        # Prepare response
-        response = TradeResponse(
-            status="completed",
-            orders=[order for order in orders if order is not None],
-            signals_processed=len(request.signals),
+            except Exception as e:
+                logger.error(f"Error processing signal: {e}")
+                orders.append(
+                    {
+                        "signal": signal.model_dump(),
+                        "error": str(e),
+                        "distributed_state": {
+                            "pod_id": distributed_lock_manager.pod_id,
+                            "is_leader": distributed_lock_manager.is_leader,
+                            "leader_info": leader_info,
+                        },
+                    }
+                )
+
+        return TradeResponse(
+            status="success",
+            orders=orders,
+            signals_processed=signals_processed,
             conflicts_resolved=conflicts_resolved,
-            audit_logs=results,
+            audit_logs=audit_logs,
         )
 
-        # Log trade completion
-        if audit_logger.enabled and audit_logger.connected:
-            audit_logger.log_trade(
-                {
-                    "request": request.model_dump(),
-                    "response": response.model_dump(),
-                    "orders_count": len(orders),
-                    "conflicts_resolved": conflicts_resolved,
-                }
-            )
-
-        return response
-
-    except Exception as e:
-        logger.error(f"Trade processing error: {e}")
-        if audit_logger.enabled and audit_logger.connected:
-            audit_logger.log_error(
-                {"error": str(e), "endpoint": "/trade", "request": request.model_dump()}
-            )
-        raise HTTPException(status_code=500, detail=f"Trade processing failed: {e}")
+    except Exception as err:
+        logger.error(f"Trade processing error: {err}")
+        raise HTTPException(status_code=500, detail=f"Trade processing failed: {err}")
 
 
 @app.post("/trade/signal")
@@ -629,14 +610,27 @@ async def get_active_signals() -> dict[str, Any]:
 
 @app.get("/positions")
 async def get_positions() -> dict[str, Any]:
-    """Get all current positions"""
+    """Get all current positions with distributed state info"""
     try:
         positions = dispatcher.get_positions()
         portfolio_summary = dispatcher.get_portfolio_summary()
 
+        # Get distributed state info
+        from shared.distributed_lock import distributed_lock_manager
+
+        leader_info = await distributed_lock_manager.get_leader_info()
+
         return {
             "status": "success",
-            "data": {"positions": positions, "portfolio_summary": portfolio_summary},
+            "data": {
+                "positions": positions,
+                "portfolio_summary": portfolio_summary,
+                "distributed_state": {
+                    "pod_id": distributed_lock_manager.pod_id,
+                    "is_leader": distributed_lock_manager.is_leader,
+                    "leader_info": leader_info,
+                },
+            },
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as err:
@@ -646,7 +640,7 @@ async def get_positions() -> dict[str, Any]:
 
 @app.get("/positions/{symbol}")
 async def get_position(symbol: str) -> dict[str, Any]:
-    """Get specific position"""
+    """Get specific position with distributed state info"""
     try:
         position = dispatcher.get_position(symbol)
 
@@ -655,9 +649,21 @@ async def get_position(symbol: str) -> dict[str, Any]:
                 status_code=404, detail=f"Position not found for {symbol}"
             )
 
+        # Get distributed state info
+        from shared.distributed_lock import distributed_lock_manager
+
+        leader_info = await distributed_lock_manager.get_leader_info()
+
         return {
             "status": "success",
-            "data": position,
+            "data": {
+                "position": position,
+                "distributed_state": {
+                    "pod_id": distributed_lock_manager.pod_id,
+                    "is_leader": distributed_lock_manager.is_leader,
+                    "leader_info": leader_info,
+                },
+            },
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
     except HTTPException:

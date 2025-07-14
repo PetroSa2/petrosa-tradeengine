@@ -1,8 +1,11 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-egress-internet
+  name: petrosa-tradeengine-allow-egress
   namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+    version: VERSION_PLACEHOLDER
 spec:
   podSelector:
     matchLabels:
@@ -10,13 +13,21 @@ spec:
   policyTypes:
   - Egress
   egress:
-  - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-    ports:
-    - protocol: TCP
-      port: 443
+  # Allow DNS resolution
+  - ports:
+    - protocol: UDP
+      port: 53
+  # Allow HTTP/HTTPS for external APIs
+  - ports:
     - protocol: TCP
       port: 80
-    - protocol: UDP
-      port: 53 
+    - protocol: TCP
+      port: 443
+  # Allow MongoDB connection
+  - ports:
+    - protocol: TCP
+      port: 27017
+  # Allow metrics scraping
+  - ports:
+    - protocol: TCP
+      port: 9090 

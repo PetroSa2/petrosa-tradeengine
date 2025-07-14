@@ -5,7 +5,7 @@ metadata:
   namespace: petrosa-apps
   labels:
     app: petrosa-tradeengine
-    version: v1
+    version: VERSION_PLACEHOLDER
 spec:
   replicas: 3
   selector:
@@ -15,15 +15,19 @@ spec:
     metadata:
       labels:
         app: petrosa-tradeengine
-        version: v1
+        version: VERSION_PLACEHOLDER
     spec:
       containers:
-      - name: tradeengine
-        image: petrosa/petrosa-tradeengine:VERSION_PLACEHOLDER
+      - name: petrosa-tradeengine
+        image: petrosa-tradeengine:VERSION_PLACEHOLDER
+        imagePullPolicy: Always
         ports:
         - containerPort: 8000
           name: http
+        - containerPort: 9090
+          name: metrics
         env:
+        # Environment configuration from existing configmap
         - name: ENVIRONMENT
           valueFrom:
             configMapKeyRef:
@@ -34,6 +38,22 @@ spec:
             configMapKeyRef:
               name: petrosa-common-config
               key: log-level
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "8000"
+        # MongoDB configuration from existing configmap
+        - name: MONGODB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: MONGODB_URI
+        - name: MONGODB_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: MONGODB_DATABASE
+        # Trading configuration from existing configmap
         - name: SIMULATION_ENABLED
           valueFrom:
             configMapKeyRef:
@@ -44,11 +64,31 @@ spec:
             configMapKeyRef:
               name: petrosa-common-config
               key: binance-testnet
-        - name: MYSQL_URI
-          valueFrom:
-            secretKeyRef:
-              name: petrosa-sensitive-credentials
-              key: MYSQL_URI
+        - name: RISK_MANAGEMENT_ENABLED
+          value: "true"
+        # Risk management limits
+        - name: MAX_POSITION_SIZE_PCT
+          value: "0.1"
+        - name: MAX_DAILY_LOSS_PCT
+          value: "0.05"
+        - name: MAX_PORTFOLIO_EXPOSURE_PCT
+          value: "0.8"
+        # Distributed lock configuration
+        - name: LOCK_TIMEOUT_SECONDS
+          value: "60"
+        - name: HEARTBEAT_INTERVAL_SECONDS
+          value: "10"
+        # Monitoring configuration
+        - name: PROMETHEUS_ENABLED
+          value: "true"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "30"
+        # JWT configuration
+        - name: JWT_ALGORITHM
+          value: "HS256"
+        - name: JWT_EXPIRATION_HOURS
+          value: "24"
+        # Secrets from existing secret
         - name: BINANCE_API_KEY
           valueFrom:
             secretKeyRef:
@@ -64,6 +104,15 @@ spec:
             secretKeyRef:
               name: petrosa-sensitive-credentials
               key: JWT_SECRET_KEY
+        # Pod information for distributed state
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         resources:
           requests:
             memory: "256Mi"
@@ -73,7 +122,7 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /health
+            path: /live
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 10
@@ -89,7 +138,7 @@ spec:
           failureThreshold: 3
         startupProbe:
           httpGet:
-            path: /live
+            path: /health
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 10

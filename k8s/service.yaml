@@ -5,6 +5,7 @@ metadata:
   namespace: petrosa-apps
   labels:
     app: petrosa-tradeengine
+    version: VERSION_PLACEHOLDER
 spec:
   type: ClusterIP
   ports:
@@ -12,5 +13,9 @@ spec:
     targetPort: 8000
     protocol: TCP
     name: http
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: metrics
   selector:
     app: petrosa-tradeengine 

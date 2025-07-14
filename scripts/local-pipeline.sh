@@ -291,53 +291,49 @@ test_docker_container() {
     fi
 }
 
-# Function to deploy to local Kubernetes (optional)
-deploy_to_k8s() {
+# Function to deploy to Kubernetes
+deploy_to_kubernetes() {
+    print_status "Deploying to Kubernetes..."
+    
+    # Check if kubectl is available
     if ! command_exists kubectl; then
-        print_warning "kubectl not found - skipping Kubernetes deployment"
-        return 0
+        print_error "kubectl not found - skipping deployment"
+        return 1
     fi
     
-    print_status "Deploying to local Kubernetes cluster..."
-    
-    # Check if kubectl can connect to cluster
-    if ! kubectl cluster-info >/dev/null 2>&1; then
-        print_warning "Cannot connect to Kubernetes cluster - skipping deployment"
-        return 0
-    fi
-    
-    # Create namespace if it doesn't exist
+    # Check if namespace exists, create if not
     if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
         print_status "Creating namespace $NAMESPACE..."
         kubectl create namespace "$NAMESPACE"
     fi
     
-    # Update image tag in manifests
-    print_status "Updating image tag in Kubernetes manifests..."
-    sed "s|IMAGE_TAG|$DOCKER_TAG|g" k8s/deployment.yaml > k8s/deployment-local.yaml
-    
-    # Apply manifests
+    # Apply Kubernetes manifests
     print_status "Applying Kubernetes manifests..."
-    kubectl apply -f k8s/deployment-local.yaml -n "$NAMESPACE"
+    
+    # Apply deployment
+    kubectl apply -f k8s/deployment.yaml -n "$NAMESPACE"
+    
+    # Apply service
     kubectl apply -f k8s/service.yaml -n "$NAMESPACE"
-    kubectl apply -f k8s/configmap.yaml -n "$NAMESPACE"
     
-    # Wait for deployment
+    # Apply ingress
+    kubectl apply -f k8s/ingress.yaml -n "$NAMESPACE"
+    
+    # Apply HPA
+    kubectl apply -f k8s/hpa.yaml -n "$NAMESPACE"
+    
+    # Apply network policy
+    kubectl apply -f k8s/networkpolicy-allow-egress.yaml -n "$NAMESPACE"
+    
+    # Wait for deployment to be ready
     print_status "Waiting for deployment to be ready..."
-    if kubectl rollout status deployment/petrosa-tradeengine -n "$NAMESPACE" --timeout=300s; then
-        print_success "Kubernetes deployment successful"
-        
-        # Show deployment status
-        print_status "Deployment status:"
-        kubectl get pods -n "$NAMESPACE" -l app=petrosa-tradeengine
-    else
-        print_error "Kubernetes deployment failed"
-        kubectl describe deployment petrosa-tradeengine -n "$NAMESPACE"
-        return 1
-    fi
+    kubectl rollout status deployment/petrosa-tradeengine -n "$NAMESPACE" --timeout=300s
     
-    # Clean up temporary file
-    rm -f k8s/deployment-local.yaml
+    # Get deployment status
+    print_status "Deployment status:"
+    kubectl get pods -n "$NAMESPACE" -l app=petrosa-tradeengine
+    
+    print_success "Deployment completed successfully"
 }
 
 # Function to cleanup
@@ -439,7 +435,7 @@ main() {
                 test_docker_container
                 ;;
             deploy)
-                deploy_to_k8s
+                deploy_to_kubernetes
                 ;;
             all)
                 check_prerequisites
@@ -450,7 +446,7 @@ main() {
                 run_security_scan
                 build_docker_image
                 test_docker_container
-                deploy_to_k8s
+                deploy_to_kubernetes
                 ;;
             *)
                 print_error "Unknown stage: $stage"

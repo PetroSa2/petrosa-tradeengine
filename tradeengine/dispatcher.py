@@ -5,13 +5,14 @@ from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
+from shared.distributed_lock import distributed_lock_manager
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import SignalAggregator
 
 
 class Dispatcher:
-    """Central dispatcher for trading operations"""
+    """Central dispatcher for trading operations with distributed state management"""
 
     def __init__(self) -> None:
         self.settings = Settings()
@@ -21,12 +22,18 @@ class Dispatcher:
         self.logger = logging.getLogger(__name__)
 
     async def initialize(self) -> None:
-        """Initialize dispatcher components"""
+        """Initialize dispatcher components with distributed state management"""
         try:
+            # Initialize distributed lock manager first
+            await distributed_lock_manager.initialize()
+
             # Initialize components
             await self.order_manager.initialize()
             await self.position_manager.initialize()
-            self.logger.info("Dispatcher initialized successfully")
+
+            self.logger.info(
+                "Dispatcher initialized successfully with distributed state management"
+            )
         except Exception as e:
             self.logger.error(f"Dispatcher initialization error: {e}")
             raise
@@ -36,16 +43,18 @@ class Dispatcher:
         try:
             await self.order_manager.close()
             await self.position_manager.close()
+            await distributed_lock_manager.close()
             self.logger.info("Dispatcher closed successfully")
         except Exception as e:
             self.logger.error(f"Dispatcher close error: {e}")
 
     async def health_check(self) -> dict[str, Any]:
-        """Check dispatcher health"""
+        """Check dispatcher health with distributed state info"""
         try:
             # Check if components have health_check methods
             order_manager_health = {"status": "unknown"}
             position_manager_health = {"status": "unknown"}
+            distributed_lock_health = {"status": "unknown"}
 
             if hasattr(self.order_manager, "health_check"):
                 order_manager_health = await self.order_manager.health_check()
@@ -60,12 +69,21 @@ class Dispatcher:
                     "type": "position_manager",
                 }
 
+            if hasattr(distributed_lock_manager, "health_check"):
+                distributed_lock_health = await distributed_lock_manager.health_check()
+            else:
+                distributed_lock_health = {
+                    "status": "healthy",
+                    "type": "distributed_lock_manager",
+                }
+
             return {
                 "status": "healthy",
                 "components": {
                     "order_manager": order_manager_health,
                     "position_manager": position_manager_health,
                     "signal_aggregator": "active",
+                    "distributed_lock_manager": distributed_lock_health,
                 },
             }
         except Exception as e:
@@ -79,7 +97,7 @@ class Dispatcher:
         timeframe_resolution: str = "higher_timeframe_wins",
         risk_management: bool = True,
     ) -> dict[str, Any]:
-        """Process a trading signal"""
+        """Process a trading signal with distributed state management"""
         try:
             # Log signal
             if audit_logger.enabled and audit_logger.connected:
@@ -142,7 +160,7 @@ class Dispatcher:
             return {"status": "error", "error": str(e)}
 
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
-        """Dispatch a signal for processing"""
+        """Dispatch a signal for processing with distributed state management"""
         try:
             # Handle hold signals
             if signal.action == "hold":
@@ -151,10 +169,17 @@ class Dispatcher:
             # Process the signal
             result = await self.process_signal(signal)
 
-            # If processing was successful, execute the order
+            # If processing was successful, execute the order with distributed lock
             if result.get("status") == "success":
                 order = self._signal_to_order(signal)
-                execution_result = await self.execute_order(order)
+
+                # Execute order with distributed lock to ensure consensus
+                execution_result = await distributed_lock_manager.execute_with_lock(
+                    f"order_execution_{signal.symbol}",
+                    self._execute_order_with_consensus,
+                    order,
+                )
+
                 result["execution_result"] = execution_result
                 result[
                     "status"
@@ -164,6 +189,29 @@ class Dispatcher:
 
         except Exception as e:
             self.logger.error(f"Dispatch error: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
+        """Execute order with distributed consensus"""
+        try:
+            # Check risk limits with distributed state
+            if not await self.position_manager.check_position_limits(order):
+                return {"status": "rejected", "reason": "Risk limits exceeded"}
+
+            if not await self.position_manager.check_daily_loss_limits():
+                return {"status": "rejected", "reason": "Daily loss limits exceeded"}
+
+            # Execute order
+            result = await self.execute_order(order)
+
+            # Update position with distributed state management
+            if result and result.get("status") in ["filled", "partially_filled"]:
+                await self.position_manager.update_position(order, result)
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Order execution with consensus error: {e}")
             return {"status": "error", "error": str(e)}
 
     def _signal_to_order(self, signal: Signal) -> TradeOrder:
@@ -204,7 +252,7 @@ class Dispatcher:
 
         return order
 
-    async def execute_order(self, order: TradeOrder) -> dict[str, Any] | None:
+    async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a trading order"""
         try:
             # Log order
@@ -261,11 +309,11 @@ class Dispatcher:
         return self.position_manager.get_portfolio_summary()
 
     def get_active_orders(self) -> list[dict[str, Any]]:
-        """Get active orders"""
+        """Get all active orders"""
         return self.order_manager.get_active_orders()
 
     def get_conditional_orders(self) -> list[dict[str, Any]]:
-        """Get conditional orders"""
+        """Get all conditional orders"""
         return self.order_manager.get_conditional_orders()
 
     def get_order_history(self) -> list[dict[str, Any]]:
@@ -287,35 +335,52 @@ class Dispatcher:
     async def get_account_info(self) -> dict[str, Any]:
         """Get account information"""
         try:
-            # Get account info from order manager
-            account_info = await self.order_manager.get_account_info()
-            return account_info
+            # This would integrate with the exchange to get real account info
+            # For now, return a placeholder
+            return {
+                "account_type": "simulated",
+                "balances": {
+                    "BTC": {"free": "0.1", "locked": "0.0"},
+                    "USDT": {"free": "5000.0", "locked": "0.0"},
+                },
+                "total_balance_usdt": 5000.0,
+                "positions": self.get_positions(),
+                "pnl": {
+                    "total": 0.0,
+                    "daily": self.position_manager.get_daily_pnl(),
+                    "unrealized": self.position_manager.get_total_unrealized_pnl(),
+                },
+                "risk_metrics": {
+                    "max_position_size": 0.1,
+                    "max_daily_loss": 100.0,
+                    "current_exposure": self.position_manager._calculate_portfolio_exposure(),
+                },
+            }
         except Exception as e:
-            self.logger.error(f"Account info error: {e}")
+            self.logger.error(f"Error getting account info: {e}")
             return {"error": str(e)}
 
     async def get_price(self, symbol: str) -> float:
         """Get current price for a symbol"""
         try:
-            # Get price from order manager
-            price = await self.order_manager.get_price(symbol)
-            return price
+            # This would integrate with price feeds
+            # For now, return a placeholder
+            base_prices = {
+                "BTCUSDT": 45000.0,
+                "ETHUSDT": 3000.0,
+                "ADAUSDT": 0.5,
+            }
+            return base_prices.get(symbol, 100.0)
         except Exception as e:
-            self.logger.error(f"Price check error: {e}")
+            self.logger.error(f"Error getting price for {symbol}: {e}")
             return 0.0
 
     def get_metrics(self) -> dict[str, Any]:
-        """Get dispatcher metrics"""
-        try:
-            order_metrics = self.order_manager.get_metrics()
-            position_metrics = self.position_manager.get_metrics()
-            signal_metrics = self.get_signal_summary()
-
-            return {
-                "orders": order_metrics,
-                "positions": position_metrics,
-                "signals": signal_metrics,
-            }
-        except Exception as e:
-            self.logger.error(f"Metrics error: {e}")
-            return {"error": str(e)}
+        """Get system metrics"""
+        return {
+            "positions_count": len(self.get_positions()),
+            "active_orders_count": len(self.get_active_orders()),
+            "conditional_orders_count": len(self.get_conditional_orders()),
+            "daily_pnl": self.position_manager.get_daily_pnl(),
+            "total_unrealized_pnl": self.position_manager.get_total_unrealized_pnl(),
+        }

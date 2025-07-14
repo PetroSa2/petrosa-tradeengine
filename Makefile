@@ -1,6 +1,6 @@
 #!/usr/bin/env make
 
-.PHONY: help setup lint test security build container deploy pipeline clean format install-dev install-prod
+.PHONY: help setup lint test security build container deploy pipeline clean format install-dev install-prod setup-mongodb mongodb-status mongodb-check
 
 # Default target
 help:
@@ -11,6 +11,7 @@ help:
 	@echo "  setup          Setup Python environment and install dependencies"
 	@echo "  install-dev    Install development dependencies"
 	@echo "  install-prod   Install production dependencies"
+	@echo "  setup-mongodb  Setup MongoDB for distributed state management"
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  lint           Run all linting and formatting checks"
@@ -26,6 +27,11 @@ help:
 	@echo "Deployment:"
 	@echo "  deploy         Deploy to local Kubernetes cluster"
 	@echo "  pipeline       Run complete local CI/CD pipeline"
+	@echo ""
+	@echo "Database:"
+	@echo "  setup-mongodb  Setup MongoDB for distributed state"
+	@echo "  mongodb-status Check MongoDB connection"
+	@echo "  mongodb-check  Detailed MongoDB health check"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  clean          Clean up temporary files and caches"
@@ -46,6 +52,20 @@ install-dev:
 install-prod:
 	@echo "📦 Installing production dependencies..."
 	pip install -r requirements.txt
+
+# MongoDB setup
+setup-mongodb:
+	@echo "🗄️  Setting up MongoDB for distributed state management..."
+	@chmod +x scripts/setup-mongodb.sh
+	@./scripts/setup-mongodb.sh
+
+mongodb-status:
+	@echo "🔍 Checking MongoDB connection..."
+	@python scripts/check-mongodb.py
+
+mongodb-check:
+	@echo "🔍 Checking MongoDB connection and collections..."
+	@python scripts/check-mongodb.py detailed
 
 # Code quality
 lint:
@@ -80,8 +100,8 @@ container:
 
 docker-clean:
 	@echo "🧹 Cleaning up Docker images..."
-	docker rmi petrosa/tradeengine:latest 2>/dev/null || true
-	docker rmi petrosa/tradeengine:local-* 2>/dev/null || true
+	docker rmi petrosa-tradeengine:VERSION_PLACEHOLDER 2>/dev/null || true
+	docker rmi petrosa-tradeengine:local-* 2>/dev/null || true
 	docker system prune -f
 
 # Deployment
@@ -102,7 +122,12 @@ run:
 
 run-docker:
 	@echo "🐳 Running application in Docker..."
-	docker run -p 8000:8000 petrosa/tradeengine:latest
+	docker run -p 8000:8000 \
+		-e MONGODB_URI=mongodb://host.docker.internal:27017/petrosa \
+		-e BINANCE_API_KEY=test \
+		-e BINANCE_API_SECRET=test \
+		-e JWT_SECRET_KEY=test \
+		petrosa-tradeengine:VERSION_PLACEHOLDER
 
 # Utilities
 clean:

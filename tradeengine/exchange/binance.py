@@ -52,19 +52,28 @@ class BinanceExchange:
                 BINANCE_TESTNET,
             )
 
+            # Debug logging
+            logger.info(f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}")
+            logger.info(f"Binance initialization - API_SECRET present: {bool(BINANCE_API_SECRET)}")
+            logger.info(f"Binance initialization - TESTNET: {BINANCE_TESTNET}")
+
             # Create Binance client
             if BINANCE_API_KEY and BINANCE_API_SECRET:
+                logger.info("Creating Binance AsyncClient...")
                 self.client = await AsyncClient.create(
                     api_key=BINANCE_API_KEY,
                     api_secret=BINANCE_API_SECRET,
                     testnet=BINANCE_TESTNET,
                 )
-                logger.info(f"Binance client initialized (testnet: {BINANCE_TESTNET})")
+                logger.info(f"Binance client created (testnet: {BINANCE_TESTNET})")
 
                 # Test connection
+                logger.info("Testing Binance connection...")
                 await self.client.ping()
+                logger.info("Binance connection test successful")
 
                 # Load exchange info
+                logger.info("Loading exchange info...")
                 await self._load_exchange_info()
 
                 self.initialized = True

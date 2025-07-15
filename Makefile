@@ -16,6 +16,9 @@ help:
 	@echo "Code Quality:"
 	@echo "  lint           Run all linting and formatting checks"
 	@echo "  format         Format code with black"
+	@echo "  pre-commit-install  Install pre-commit hooks"
+	@echo "  pre-commit-run      Run pre-commit hooks on all files"
+	@echo "  pre-commit-update   Update pre-commit hooks"
 	@echo "  test           Run tests with coverage"
 	@echo "  security       Run security scan with Trivy"
 	@echo ""
@@ -44,6 +47,8 @@ setup:
 	@echo "🚀 Setting up development environment..."
 	@chmod +x scripts/dev-setup.sh
 	@./scripts/dev-setup.sh
+	@echo "🔧 Installing pre-commit hooks..."
+	@pre-commit install || echo "Pre-commit not available, skipping hook installation"
 
 install-dev:
 	@echo "📚 Installing development dependencies..."
@@ -76,6 +81,18 @@ lint:
 format:
 	@echo "🎨 Formatting code with black..."
 	black .
+
+pre-commit-install:
+	@echo "🔧 Installing pre-commit hooks..."
+	pre-commit install
+
+pre-commit-run:
+	@echo "🔍 Running pre-commit hooks..."
+	pre-commit run --all-files
+
+pre-commit-update:
+	@echo "🔄 Updating pre-commit hooks..."
+	pre-commit autoupdate
 
 test:
 	@echo "🧪 Running tests..."

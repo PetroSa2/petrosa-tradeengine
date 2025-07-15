@@ -316,11 +316,29 @@ make deploy
 
 ### Pre-commit Workflow
 ```bash
+# Install pre-commit hooks (first time setup)
+make pre-commit-install
+
+# Run pre-commit hooks manually
+make pre-commit-run
+
+# Update pre-commit hooks
+make pre-commit-update
+
 # Before committing
 make dev          # Quick development check
 make prod         # Full production readiness check
 make pipeline     # Complete CI/CD simulation
 ```
+
+### Pre-commit Hooks Included
+- **Black**: Code formatting with 88 character line length
+- **Ruff**: Fast Python linter with auto-fix
+- **MyPy**: Type checking with strict settings
+- **isort**: Import sorting compatible with Black
+- **Security checks**: Detect private keys and AWS credentials
+- **File checks**: YAML, JSON, TOML validation
+- **Code quality**: Trailing whitespace, end-of-file, merge conflicts
 
 ### Debugging Workflow
 ```bash

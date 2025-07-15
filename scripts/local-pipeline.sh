@@ -307,23 +307,39 @@ deploy_to_kubernetes() {
         kubectl create namespace "$NAMESPACE"
     fi
     
-    # Apply Kubernetes manifests
+    # Create temporary manifests with version substitution for local deployment
+    print_status "Creating temporary manifests with version $DOCKER_TAG..."
+    mkdir -p k8s/temp
+    
+    # Copy and substitute version in all manifests
+    for manifest in k8s/*.yaml; do
+        if [ -f "$manifest" ]; then
+            local temp_file="k8s/temp/$(basename "$manifest")"
+            sed "s|VERSION_PLACEHOLDER|${DOCKER_TAG}|g" "$manifest" > "$temp_file"
+        fi
+    done
+    
+    # Apply Kubernetes manifests from temp directory
     print_status "Applying Kubernetes manifests..."
     
     # Apply deployment
-    kubectl apply -f k8s/deployment.yaml -n "$NAMESPACE"
+    kubectl apply -f k8s/temp/deployment.yaml -n "$NAMESPACE"
     
     # Apply service
-    kubectl apply -f k8s/service.yaml -n "$NAMESPACE"
+    kubectl apply -f k8s/temp/service.yaml -n "$NAMESPACE"
     
     # Apply ingress
-    kubectl apply -f k8s/ingress.yaml -n "$NAMESPACE"
+    kubectl apply -f k8s/temp/ingress.yaml -n "$NAMESPACE"
     
     # Apply HPA
-    kubectl apply -f k8s/hpa.yaml -n "$NAMESPACE"
+    kubectl apply -f k8s/temp/hpa.yaml -n "$NAMESPACE"
     
     # Apply network policy
-    kubectl apply -f k8s/networkpolicy-allow-egress.yaml -n "$NAMESPACE"
+    kubectl apply -f k8s/temp/networkpolicy-allow-egress.yaml -n "$NAMESPACE"
+    
+    # Clean up temporary files
+    print_status "Cleaning up temporary manifests..."
+    rm -rf k8s/temp
     
     # Wait for deployment to be ready
     print_status "Waiting for deployment to be ready..."
@@ -342,6 +358,7 @@ cleanup() {
     
     # Remove temporary files
     rm -f k8s/deployment-local.yaml
+    rm -rf k8s/temp
     
     # Optionally remove Docker images
     if [ "${CLEANUP_DOCKER:-false}" = "true" ]; then

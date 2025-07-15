@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Petrosa Trading Engine
-FROM python:3.11-alpine as base
+FROM python:3.11-alpine AS base
 
 # Build arguments
 ARG VERSION=dev

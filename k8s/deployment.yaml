@@ -43,7 +43,7 @@ spec:
         - name: PORT
           value: "8000"
         # MongoDB configuration from secret
-        - name: MONGODB_URL
+        - name: MONGODB_URI
           valueFrom:
             secretKeyRef:
               name: petrosa-sensitive-credentials

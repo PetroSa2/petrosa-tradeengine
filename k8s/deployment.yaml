@@ -42,12 +42,12 @@ spec:
           value: "0.0.0.0"
         - name: PORT
           value: "8000"
-        # MongoDB configuration from existing configmap
+        # MongoDB configuration from secret
         - name: MONGODB_URL
           valueFrom:
-            configMapKeyRef:
-              name: petrosa-common-config
-              key: MONGODB_URI
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: mongodb-connection-string
         - name: MONGODB_DATABASE
           valueFrom:
             configMapKeyRef:

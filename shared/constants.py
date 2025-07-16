@@ -86,19 +86,21 @@ MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
 # MongoDB validation
 def validate_mongodb_config() -> None:
-    """Validate MongoDB configuration and fail catastrophically if invalid"""
+    """Validate MongoDB configuration"""
     if not MONGODB_URI:
         raise ValueError(
             "CRITICAL: MongoDB URI is not configured. "
-            "The MONGODB_URI environment variable must be set from the Kubernetes secret. "
-            "Check that the secret 'petrosa-sensitive-credentials' with key 'mongodb-connection-string' exists."
+            "The MONGODB_URI environment variable must be set from the Kubernetes "
+            "secret. Check that the secret 'petrosa-sensitive-credentials' with "
+            "key 'mongodb-connection-string' exists."
         )
 
     if not MONGODB_DATABASE:
         raise ValueError(
             "CRITICAL: MongoDB database name is not configured. "
-            "The MONGODB_DATABASE environment variable must be set from the Kubernetes configmap. "
-            "Check that the configmap 'petrosa-common-config' with key 'MONGODB_DATABASE' exists."
+            "The MONGODB_DATABASE environment variable must be set from the Kubernetes "
+            "configmap. Check that the configmap 'petrosa-common-config' with key "
+            "'MONGODB_DATABASE' exists."
         )
 
     # Validate URL format
@@ -150,8 +152,9 @@ def validate_nats_config() -> None:
     if NATS_ENABLED and not NATS_URL:
         raise ValueError(
             "CRITICAL: NATS is enabled but NATS_URL is not configured. "
-            "The NATS_URL environment variable must be set from the Kubernetes configmap. "
-            "Check that the configmap 'petrosa-common-config' with key 'NATS_URL' exists."
+            "The NATS_URL environment variable must be set from the Kubernetes "
+            "configmap. Check that the configmap 'petrosa-common-config' with "
+            "key 'NATS_URL' exists."
         )
 
 

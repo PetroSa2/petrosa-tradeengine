@@ -510,3 +510,25 @@ This repository enforces code quality and formatting on every commit using [pre-
 - **trailing whitespace, end-of-file, and more**
 
 See `.pre-commit-config.yaml` for the full list.
+
+## Running Tests Locally
+
+To run tests locally, you must set the required MongoDB environment variables. You can do this by exporting them in your shell:
+
+```sh
+export MONGODB_URI="mongodb://localhost:27017"
+export MONGODB_DATABASE="test"
+make pipeline
+```
+
+Or, create a `.env.test` file in the project root with the following contents:
+
+```
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=test
+BINANCE_API_KEY=test
+BINANCE_API_SECRET=test
+JWT_SECRET_KEY=test
+```
+
+If your test runner loads `.env.test` automatically, these values will be used for local testing. This ensures the catastrophic failure logic is satisfied and tests will run successfully.

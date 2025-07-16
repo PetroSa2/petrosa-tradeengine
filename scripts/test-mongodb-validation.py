@@ -18,13 +18,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def test_mongodb_validation() -> None:
-    """Test MongoDB validation with different configurations"""
-
-    print("🧪 Testing MongoDB Validation and Catastrophic Failure Behavior")
-    print("=" * 70)
-
-    # Test 1: Default configuration (should fail)
+def test_default_configuration() -> None:
+    """Test with default configuration (should fail)"""
     print("\n1️⃣ Testing with default configuration (should fail catastrophically):")
     try:
         # Clear any existing MongoDB environment variables
@@ -38,7 +33,9 @@ def test_mongodb_validation() -> None:
     except ValueError as e:
         print(f"✅ PASSED: Correctly failed with error: {e}")
 
-    # Test 2: Invalid URL format
+
+def test_invalid_url_format() -> None:
+    """Test with invalid URL format (should fail)"""
     print("\n2️⃣ Testing with invalid URL format (should fail catastrophically):")
     try:
         os.environ["MONGODB_URI"] = "invalid-url"
@@ -49,7 +46,9 @@ def test_mongodb_validation() -> None:
     except ValueError as e:
         print(f"✅ PASSED: Correctly failed with error: {e}")
 
-    # Test 3: Valid configuration
+
+def test_valid_configuration() -> None:
+    """Test with valid configuration (should pass)"""
     print("\n3️⃣ Testing with valid configuration (should pass):")
     try:
         os.environ["MONGODB_URI"] = "mongodb://localhost:27017"
@@ -62,7 +61,9 @@ def test_mongodb_validation() -> None:
     except Exception as e:
         print(f"❌ FAILED: Should have passed with valid configuration: {e}")
 
-    # Test 4: Atlas configuration
+
+def test_atlas_configuration() -> None:
+    """Test with MongoDB Atlas configuration (should pass)"""
     print("\n4️⃣ Testing with MongoDB Atlas configuration (should pass):")
     try:
         os.environ[
@@ -77,7 +78,9 @@ def test_mongodb_validation() -> None:
     except Exception as e:
         print(f"❌ FAILED: Should have passed with Atlas configuration: {e}")
 
-    # Test 5: Missing database
+
+def test_missing_database() -> None:
+    """Test with missing database (should fail)"""
     print("\n5️⃣ Testing with missing database (should fail catastrophically):")
     try:
         os.environ["MONGODB_URI"] = "mongodb://localhost:27017"
@@ -88,6 +91,20 @@ def test_mongodb_validation() -> None:
         print("❌ FAILED: Should have failed with missing database")
     except ValueError as e:
         print(f"✅ PASSED: Correctly failed with error: {e}")
+
+
+def test_mongodb_validation() -> None:
+    """Test MongoDB validation with different configurations"""
+
+    print("🧪 Testing MongoDB Validation and Catastrophic Failure Behavior")
+    print("=" * 70)
+
+    # Run individual tests
+    test_default_configuration()
+    test_invalid_url_format()
+    test_valid_configuration()
+    test_atlas_configuration()
+    test_missing_database()
 
     print("\n" + "=" * 70)
     print("🎯 Summary:")
@@ -137,7 +154,8 @@ def main() -> None:
 
     print("\n🎉 All tests completed!")
     print(
-        "The service will now fail catastrophically if MongoDB is not properly configured."
+        "The service will now fail catastrophically if MongoDB is not properly "
+        "configured."
     )
 
 

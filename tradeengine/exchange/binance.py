@@ -54,7 +54,8 @@ class BinanceExchange:
                 f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}"
             )
             logger.info(
-                f"Binance initialization - API_SECRET present: {bool(BINANCE_API_SECRET)}"
+                f"Binance initialization - API_SECRET present: "
+                f"{bool(BINANCE_API_SECRET)}"
             )
             logger.info(f"Binance initialization - TESTNET: {BINANCE_TESTNET}")
 

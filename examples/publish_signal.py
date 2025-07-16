@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
 """
-Example script to publish trading signals to the trading engine.
-This demonstrates how to send signals to the trading engine API.
+Signal Publisher Example - Demonstrates signal publishing to NATS
 """
 
 import asyncio
@@ -10,139 +8,149 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import aiohttp
-
-from contracts.signal import Signal, SignalType
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def publish_signal(
-    signal: Signal, api_url: str = "http://localhost:8000"
-) -> dict[str, Any]:
-    """
-    Publish a trading signal to the trading engine API.
-
-    Args:
-        signal: The trading signal to publish
-        api_url: The base URL of the trading engine API
-
-    Returns:
-        Dict containing the API response
-    """
-    async with aiohttp.ClientSession() as session:
-        url = f"{api_url}/trade"
-        payload = signal.dict()
-
-        try:
-            async with session.post(url, json=payload) as response:
-                result = await response.json()
-                logger.info(f"Signal published successfully: {result}")
-                return result
-        except Exception as e:
-            logger.error(f"Failed to publish signal: {e}")
-            return {"status": "error", "message": str(e)}
-
-
-async def publish_multiple_signals(
-    signals: list[Signal], api_url: str = "http://localhost:8000"
-) -> list[dict[str, Any]]:
-    """
-    Publish multiple trading signals to the trading engine API.
-
-    Args:
-        signals: List of trading signals to publish
-        api_url: The base URL of the trading engine API
-
-    Returns:
-        List of API responses
-    """
-    async with aiohttp.ClientSession() as session:
-        url = f"{api_url}/trade/batch"
-        payload = [signal.dict() for signal in signals]
-
-        try:
-            async with session.post(url, json=payload) as response:
-                results = await response.json()
-                logger.info(f"Multiple signals published successfully: {results}")
-                return results
-        except Exception as e:
-            logger.error(f"Failed to publish multiple signals: {e}")
-            return [{"status": "error", "message": str(e)}]
-
-
-def create_sample_signals() -> list[Signal]:
-    """
-    Create sample trading signals for demonstration.
-
-    Returns:
-        List of sample trading signals
-    """
+def create_sample_signals() -> list[dict[str, Any]]:
+    """Create sample trading signals"""
     signals = [
-        Signal(
-            id="signal-btc-buy-001",
-            symbol="BTCUSDT",
-            signal_type=SignalType.BUY,
-            price=45000.0,
-            quantity=0.1,
-            timestamp=int(datetime.now().timestamp()),
-            source="example_script",
-            confidence=0.8,
-            metadata={"strategy": "momentum", "timeframe": "1h"},
-            timeframe="1h",
-            strategy="momentum_strategy",
-        ),
-        Signal(
-            id="signal-eth-sell-001",
-            symbol="ETHUSDT",
-            signal_type=SignalType.SELL,
-            price=3000.0,
-            quantity=1.0,
-            timestamp=int(datetime.now().timestamp()),
-            source="example_script",
-            confidence=0.7,
-            metadata={"strategy": "mean_reversion", "timeframe": "4h"},
-            timeframe="4h",
-            strategy="mean_reversion_strategy",
-        ),
-        Signal(
-            id="signal-btc-hold-001",
-            symbol="BTCUSDT",
-            signal_type=SignalType.HOLD,
-            price=45000.0,
-            quantity=0.0,
-            timestamp=int(datetime.now().timestamp()),
-            source="example_script",
-            confidence=0.6,
-            metadata={"strategy": "trend_following", "timeframe": "1d"},
-            timeframe="1d",
-            strategy="trend_following_strategy",
-        ),
+        {
+            "strategy_id": "momentum-1",
+            "symbol": "BTCUSDT",
+            "signal_type": "buy",
+            "action": "buy",
+            "confidence": 0.85,
+            "strength": "high",
+            "timeframe": "1h",
+            "price": 45000.0,
+            "quantity": 0.1,
+            "current_price": 45000.0,
+            "source": "momentum-strategy",
+            "strategy": "momentum",
+            "timestamp": datetime.now().isoformat(),
+        },
+        {
+            "strategy_id": "mean-reversion-1",
+            "symbol": "ETHUSDT",
+            "signal_type": "sell",
+            "action": "sell",
+            "confidence": 0.75,
+            "strength": "medium",
+            "timeframe": "4h",
+            "price": 2800.0,
+            "quantity": 2.0,
+            "current_price": 2800.0,
+            "source": "mean-reversion-strategy",
+            "strategy": "mean-reversion",
+            "timestamp": datetime.now().isoformat(),
+        },
+        {
+            "strategy_id": "arbitrage-1",
+            "symbol": "ADAUSDT",
+            "signal_type": "buy",
+            "action": "buy",
+            "confidence": 0.90,
+            "strength": "high",
+            "timeframe": "5m",
+            "price": 0.45,
+            "quantity": 1000.0,
+            "current_price": 0.45,
+            "source": "arbitrage-strategy",
+            "strategy": "arbitrage",
+            "timestamp": datetime.now().isoformat(),
+        },
     ]
-
     return signals
 
 
+def create_advanced_signals() -> list[dict[str, Any]]:
+    """Create advanced trading signals with metadata"""
+    signals = [
+        {
+            "strategy_id": "risk-management-1",
+            "symbol": "BTCUSDT",
+            "signal_type": "sell",
+            "action": "sell",
+            "confidence": 0.95,
+            "strength": "high",
+            "timeframe": "1h",
+            "price": 44000.0,
+            "quantity": 0.2,
+            "current_price": 44000.0,
+            "source": "risk-management",
+            "strategy": "risk-management",
+            "timestamp": datetime.now().isoformat(),
+            "metadata": {
+                "risk_level": "high",
+                "stop_loss": 43000.0,
+                "take_profit": 46000.0,
+                "position_size": "large",
+            },
+        },
+        {
+            "strategy_id": "portfolio-rebalancing-1",
+            "symbol": "ETHUSDT",
+            "signal_type": "buy",
+            "action": "buy",
+            "confidence": 0.80,
+            "strength": "medium",
+            "timeframe": "1d",
+            "price": 2800.0,
+            "quantity": 1.5,
+            "current_price": 2800.0,
+            "source": "portfolio-rebalancing",
+            "strategy": "rebalancing",
+            "timestamp": datetime.now().isoformat(),
+            "metadata": {
+                "target_allocation": 0.3,
+                "current_allocation": 0.25,
+                "rebalancing_threshold": 0.05,
+            },
+        },
+    ]
+    return signals
+
+
+async def publish_signals_to_nats(signals: list[dict[str, Any]]) -> None:
+    """Publish signals to NATS (simulated)"""
+    logger.info(f"Publishing {len(signals)} signals to NATS...")
+
+    for i, signal in enumerate(signals, 1):
+        # Simulate NATS publishing
+        signal_json = json.dumps(signal, indent=2)
+        logger.info(f"Signal {i}: {signal['symbol']} {signal['action']}")
+        logger.debug(f"Signal data: {signal_json}")
+
+        # Simulate network delay
+        await asyncio.sleep(0.1)
+
+    logger.info("All signals published successfully!")
+
+
 async def main() -> None:
-    """Main function to demonstrate signal publishing."""
-    logger.info("Starting signal publishing example...")
+    """Main function to publish trading signals"""
+    logger.info("Starting signal publisher example...")
 
-    # Create sample signals
-    signals = create_sample_signals()
+    try:
+        # Create sample signals
+        basic_signals = create_sample_signals()
+        advanced_signals = create_advanced_signals()
 
-    # Publish single signal
-    logger.info("Publishing single signal...")
-    result = await publish_signal(signals[0])
-    print(f"Single signal result: {json.dumps(result, indent=2)}")
+        # Publish basic signals
+        logger.info("Publishing basic signals...")
+        await publish_signals_to_nats(basic_signals)
 
-    # Publish multiple signals
-    logger.info("Publishing multiple signals...")
-    results = await publish_multiple_signals(signals)
-    print(f"Multiple signals results: {json.dumps(results, indent=2)}")
+        # Publish advanced signals
+        logger.info("Publishing advanced signals...")
+        await publish_signals_to_nats(advanced_signals)
 
-    logger.info("Signal publishing example completed.")
+        logger.info("Signal publisher example completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in signal publisher example: {e}")
+        raise
 
 
 if __name__ == "__main__":

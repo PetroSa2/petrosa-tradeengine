@@ -183,7 +183,7 @@ class Signal(BaseModel):
         default_factory=datetime.utcnow, description="Signal timestamp"
     )
 
-    @validator("timestamp", pre=True)  # type: ignore[misc]
+    @validator("timestamp", pre=True)
     def validate_timestamp(cls, v: Any) -> datetime:
         """Ensure timestamp is timezone-aware"""
         if isinstance(v, str):
@@ -205,14 +205,14 @@ class Signal(BaseModel):
         else:
             raise ValueError("Invalid timestamp type")
 
-    @validator("confidence", "model_confidence")  # type: ignore[misc]
+    @validator("confidence", "model_confidence")
     def validate_confidence(cls, v: Any) -> float | None:
         """Validate confidence values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Confidence must be between 0 and 1")
         return float(v) if v is not None else None
 
-    @validator("position_size_pct", "stop_loss_pct", "take_profit_pct")  # type: ignore[misc]
+    @validator("position_size_pct", "stop_loss_pct", "take_profit_pct")
     def validate_percentages(cls, v: Any) -> float | None:
         """Validate percentage values"""
         if v is not None and (v < 0 or v > 1):

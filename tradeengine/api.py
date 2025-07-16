@@ -130,7 +130,7 @@ class TradeResponse(BaseModel):
     audit_logs: list[dict[str, Any]]
 
 
-@app.get("/")  # type: ignore[misc]
+@app.get("/")
 async def root() -> dict[str, Any]:
     """Health check endpoint"""
     return {
@@ -150,7 +150,7 @@ async def root() -> dict[str, Any]:
     }
 
 
-@app.get("/health", response_model=HealthResponse)  # type: ignore[misc]
+@app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Comprehensive health check endpoint with distributed state info"""
     try:
@@ -192,7 +192,7 @@ async def health_check() -> HealthResponse:
         raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
 
 
-@app.get("/distributed-state")  # type: ignore[misc]
+@app.get("/distributed-state")
 async def get_distributed_state() -> dict[str, Any]:
     """Get distributed state information"""
     try:
@@ -219,7 +219,7 @@ async def get_distributed_state() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail="Failed to get distributed state")
 
 
-@app.get("/ready")  # type: ignore[misc]
+@app.get("/ready")
 async def readiness_check() -> dict[str, Any]:
     """Readiness probe for Kubernetes"""
     try:
@@ -246,7 +246,7 @@ async def readiness_check() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"Not ready: {e}")
 
 
-@app.get("/live")  # type: ignore[misc]
+@app.get("/live")
 async def liveness_check() -> dict[str, Any]:
     """Liveness probe for Kubernetes"""
     try:
@@ -257,7 +257,7 @@ async def liveness_check() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Not alive: {e}")
 
 
-@app.post("/trade", response_model=TradeResponse)  # type: ignore[misc]
+@app.post("/trade", response_model=TradeResponse)
 async def process_trade(
     request: TradeRequest, background_tasks: BackgroundTasks
 ) -> TradeResponse:
@@ -335,7 +335,7 @@ async def process_trade(
         raise HTTPException(status_code=500, detail=f"Trade processing failed: {e}")
 
 
-@app.post("/trade/signal")  # type: ignore[misc]
+@app.post("/trade/signal")
 async def process_single_signal(signal: Signal) -> dict[str, Any]:
     """Process a single trading signal"""
     try:
@@ -351,7 +351,7 @@ async def process_single_signal(signal: Signal) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Signal processing failed: {e}")
 
 
-@app.post("/order")  # type: ignore[misc]
+@app.post("/order")
 async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
     """Place an advanced order with specific parameters"""
     try:
@@ -368,7 +368,7 @@ async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Order placement failed: {e}")
 
 
-@app.get("/account", response_model=AccountResponse)  # type: ignore[misc]
+@app.get("/account", response_model=AccountResponse)
 async def get_account_info() -> AccountResponse:
     """Get comprehensive account information"""
     try:
@@ -425,7 +425,7 @@ async def get_account_info() -> AccountResponse:
         raise HTTPException(status_code=500, detail=f"Failed to get account info: {e}")
 
 
-@app.get("/price/{symbol}")  # type: ignore[misc]
+@app.get("/price/{symbol}")
 async def get_price(symbol: str) -> dict[str, Any]:
     """Get current price for a symbol"""
     try:
@@ -448,7 +448,7 @@ async def get_price(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get price: {e}")
 
 
-@app.delete("/order/{symbol}/{order_id}")  # type: ignore[misc]
+@app.delete("/order/{symbol}/{order_id}")
 async def cancel_order(symbol: str, order_id: str) -> dict[str, Any]:
     """Cancel an order by symbol and order ID"""
     try:
@@ -476,7 +476,7 @@ async def cancel_order(symbol: str, order_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to cancel order: {e}")
 
 
-@app.get("/order/{symbol}/{order_id}")  # type: ignore[misc]
+@app.get("/order/{symbol}/{order_id}")
 async def get_order_status(symbol: str, order_id: str) -> dict[str, Any]:
     """Get order status by symbol and order ID"""
     try:
@@ -504,7 +504,7 @@ async def get_order_status(symbol: str, order_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get order status: {e}")
 
 
-@app.get("/signals/summary")  # type: ignore[misc]
+@app.get("/signals/summary")
 async def get_signal_summary() -> dict[str, Any]:
     """Get summary of signal processing statistics"""
     try:
@@ -522,7 +522,7 @@ async def get_signal_summary() -> dict[str, Any]:
         )
 
 
-@app.post("/signals/strategy/{strategy_id}/weight")  # type: ignore[misc]
+@app.post("/signals/strategy/{strategy_id}/weight")
 async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]:
     """Set weight for a specific strategy"""
     try:
@@ -541,7 +541,7 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]
         )
 
 
-@app.get("/signals/active")  # type: ignore[misc]
+@app.get("/signals/active")
 async def get_active_signals() -> dict[str, Any]:
     """Get currently active signals"""
     try:
@@ -562,7 +562,7 @@ async def get_active_signals() -> dict[str, Any]:
         )
 
 
-@app.get("/positions")  # type: ignore[misc]
+@app.get("/positions")
 async def get_positions() -> dict[str, Any]:
     """Get all positions"""
     try:
@@ -578,7 +578,7 @@ async def get_positions() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get positions: {e}")
 
 
-@app.get("/positions/{symbol}")  # type: ignore[misc]
+@app.get("/positions/{symbol}")
 async def get_position(symbol: str) -> dict[str, Any]:
     """Get position for a specific symbol"""
     try:
@@ -595,7 +595,7 @@ async def get_position(symbol: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get position: {e}")
 
 
-@app.get("/orders")  # type: ignore[misc]
+@app.get("/orders")
 async def get_orders() -> dict[str, Any]:
     """Get all orders"""
     try:
@@ -619,7 +619,7 @@ async def get_orders() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get orders: {e}")
 
 
-@app.get("/orders/{order_id}")  # type: ignore[misc]
+@app.get("/orders/{order_id}")
 async def get_order(order_id: str) -> dict[str, Any]:
     """Get order by ID"""
     try:
@@ -646,7 +646,7 @@ async def get_order(order_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to get order: {e}")
 
 
-@app.delete("/orders/{order_id}")  # type: ignore[misc]
+@app.delete("/orders/{order_id}")
 async def cancel_order_by_id(order_id: str) -> dict[str, Any]:
     """Cancel order by ID"""
     try:
@@ -673,7 +673,7 @@ async def cancel_order_by_id(order_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to cancel order: {e}")
 
 
-@app.get("/version")  # type: ignore[misc]
+@app.get("/version")
 async def get_version() -> dict[str, Any]:
     """Get service version information"""
     return {
@@ -694,13 +694,13 @@ async def get_version() -> dict[str, Any]:
     }
 
 
-@app.get("/openapi.json")  # type: ignore[misc]
+@app.get("/openapi.json")
 async def get_openapi_specs() -> Any:
     """Get OpenAPI specification"""
     return app.openapi()
 
 
-@app.get("/metrics")  # type: ignore[misc]
+@app.get("/metrics")
 async def metrics() -> PlainTextResponse:
     """Get Prometheus metrics"""
     from prometheus_client import generate_latest
@@ -708,13 +708,16 @@ async def metrics() -> PlainTextResponse:
     return PlainTextResponse(generate_latest())
 
 
-@app.get("/docs")  # type: ignore[misc]
+@app.get("/docs")
 async def get_documentation() -> dict[str, Any]:
     """Get API documentation information"""
     return {
         "title": "Petrosa Trading Engine API",
         "version": "1.1.0",
-        "description": "Signal-driven cryptocurrency trading engine with distributed state management",
+        "description": (
+            "Signal-driven cryptocurrency trading engine with distributed state "
+            "management"
+        ),
         "endpoints": [
             "/health - Health check",
             "/ready - Readiness probe",

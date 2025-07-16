@@ -221,3 +221,4 @@ class Signal(BaseModel):
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
+        protected_namespaces = ()

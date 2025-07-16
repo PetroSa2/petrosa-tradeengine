@@ -95,7 +95,7 @@ class PositionManager:
 
     async def _load_positions_from_mongodb(self) -> None:
         """Load positions from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position load")
             return
 
@@ -130,7 +130,7 @@ class PositionManager:
 
     async def _load_daily_pnl_from_mongodb(self) -> None:
         """Load daily P&L from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -159,7 +159,7 @@ class PositionManager:
 
     async def _sync_positions_to_mongodb(self) -> None:
         """Sync current positions to MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position sync")
             return
 
@@ -301,7 +301,7 @@ class PositionManager:
         self, symbol: str, position: dict[str, Any]
     ) -> None:
         """Mark position as closed in MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -353,7 +353,7 @@ class PositionManager:
 
     async def _refresh_positions_from_mongodb(self) -> None:
         """Refresh positions from MongoDB to ensure consistency across pods"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -405,7 +405,7 @@ class PositionManager:
 
     async def _refresh_daily_pnl_from_mongodb(self) -> None:
         """Refresh daily P&L from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -477,7 +477,7 @@ class PositionManager:
         logger.info("Daily P&L reset")
 
         # Sync to MongoDB
-        if self.mongodb_db:
+        if self.mongodb_db is not None:
             try:
                 daily_pnl_collection = self.mongodb_db.daily_pnl
                 today = datetime.utcnow().date().isoformat()

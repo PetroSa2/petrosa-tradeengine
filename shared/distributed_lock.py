@@ -105,7 +105,7 @@ class DistributedLockManager:
         self, lock_name: str, timeout_seconds: int | None = None
     ) -> bool:
         """Acquire a distributed lock using MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, lock acquisition will fail")
             return False
 
@@ -153,7 +153,7 @@ class DistributedLockManager:
 
     async def release_lock(self, lock_name: str) -> bool:
         """Release a distributed lock"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return False
 
         try:
@@ -177,7 +177,7 @@ class DistributedLockManager:
 
     async def _try_become_leader(self) -> bool:
         """Try to become the leader pod using MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return False
 
         try:
@@ -243,7 +243,7 @@ class DistributedLockManager:
 
     async def _release_leadership(self) -> None:
         """Release leadership"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -264,7 +264,7 @@ class DistributedLockManager:
         """Send periodic heartbeats as leader"""
         while self.is_leader:
             try:
-                if self.mongodb_db:
+                if self.mongodb_db is not None:
                     leader_election = self.mongodb_db.leader_election
                     await leader_election.update_one(
                         {"pod_id": self.pod_id, "status": "leader"},
@@ -288,7 +288,7 @@ class DistributedLockManager:
         """Periodically cleanup expired locks"""
         while True:
             try:
-                if self.mongodb_db:
+                if self.mongodb_db is not None:
                     distributed_locks = self.mongodb_db.distributed_locks
                     result = await distributed_locks.delete_many(
                         {"expires_at": {"$lt": datetime.utcnow()}}
@@ -305,7 +305,7 @@ class DistributedLockManager:
 
     async def get_leader_info(self) -> dict[str, Any]:
         """Get current leader information"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return {"status": "unknown", "error": "MongoDB not available"}
 
         try:

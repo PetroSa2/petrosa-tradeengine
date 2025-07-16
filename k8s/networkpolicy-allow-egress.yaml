@@ -30,4 +30,8 @@ spec:
   # Allow metrics scraping
   - ports:
     - protocol: TCP
-      port: 9090 
+      port: 9090
+  # Allow New Relic OTLP metrics export
+  - ports:
+    - protocol: TCP
+      port: 4317 

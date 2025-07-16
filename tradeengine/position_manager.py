@@ -76,9 +76,10 @@ class PositionManager:
         try:
             import motor.motor_asyncio
 
-            # Get MongoDB connection string from settings
-            mongodb_url = self.settings.mongodb_uri or "mongodb://localhost:27017"
-            database_name = self.settings.mongodb_database or "petrosa"
+            # Get MongoDB connection string from constants
+            from shared.constants import MONGODB_URL, MONGODB_DATABASE
+            mongodb_url = self.settings.mongodb_uri or MONGODB_URL
+            database_name = self.settings.mongodb_database or MONGODB_DATABASE
 
             self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
             self.mongodb_db = self.mongodb_client[database_name]
@@ -95,7 +96,7 @@ class PositionManager:
 
     async def _load_positions_from_mongodb(self) -> None:
         """Load positions from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position load")
             return
 
@@ -130,7 +131,7 @@ class PositionManager:
 
     async def _load_daily_pnl_from_mongodb(self) -> None:
         """Load daily P&L from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -159,7 +160,7 @@ class PositionManager:
 
     async def _sync_positions_to_mongodb(self) -> None:
         """Sync current positions to MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position sync")
             return
 
@@ -301,7 +302,7 @@ class PositionManager:
         self, symbol: str, position: dict[str, Any]
     ) -> None:
         """Mark position as closed in MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -353,7 +354,7 @@ class PositionManager:
 
     async def _refresh_positions_from_mongodb(self) -> None:
         """Refresh positions from MongoDB to ensure consistency across pods"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -405,7 +406,7 @@ class PositionManager:
 
     async def _refresh_daily_pnl_from_mongodb(self) -> None:
         """Refresh daily P&L from MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -477,7 +478,7 @@ class PositionManager:
         logger.info("Daily P&L reset")
 
         # Sync to MongoDB
-        if self.mongodb_db:
+        if self.mongodb_db is not None:
             try:
                 daily_pnl_collection = self.mongodb_db.daily_pnl
                 today = datetime.utcnow().date().isoformat()
@@ -521,7 +522,7 @@ class PositionManager:
             "mongodb_connected": self.mongodb_db is not None,
             "mongodb_uri": self.settings.mongodb_uri
             if self.settings.mongodb_uri
-            else "mongodb://localhost:27017",
+            else MONGODB_URL,
         }
 
 

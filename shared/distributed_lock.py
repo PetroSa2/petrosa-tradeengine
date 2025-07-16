@@ -84,9 +84,10 @@ class DistributedLockManager:
         try:
             import motor.motor_asyncio
 
-            # Get MongoDB connection string from settings
-            mongodb_url = self.settings.mongodb_uri or "mongodb://localhost:27017"
-            database_name = self.settings.mongodb_database or "petrosa"
+            # Get MongoDB connection string from constants
+            from shared.constants import MONGODB_URL, MONGODB_DATABASE
+            mongodb_url = self.settings.mongodb_uri or MONGODB_URL
+            database_name = self.settings.mongodb_database or MONGODB_DATABASE
 
             self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
             self.mongodb_db = self.mongodb_client[database_name]
@@ -105,7 +106,7 @@ class DistributedLockManager:
         self, lock_name: str, timeout_seconds: int | None = None
     ) -> bool:
         """Acquire a distributed lock using MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             logger.warning("MongoDB not available, lock acquisition will fail")
             return False
 
@@ -153,7 +154,7 @@ class DistributedLockManager:
 
     async def release_lock(self, lock_name: str) -> bool:
         """Release a distributed lock"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return False
 
         try:
@@ -177,7 +178,7 @@ class DistributedLockManager:
 
     async def _try_become_leader(self) -> bool:
         """Try to become the leader pod using MongoDB"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return False
 
         try:
@@ -243,7 +244,7 @@ class DistributedLockManager:
 
     async def _release_leadership(self) -> None:
         """Release leadership"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return
 
         try:
@@ -264,7 +265,7 @@ class DistributedLockManager:
         """Send periodic heartbeats as leader"""
         while self.is_leader:
             try:
-                if self.mongodb_db:
+                if self.mongodb_db is not None:
                     leader_election = self.mongodb_db.leader_election
                     await leader_election.update_one(
                         {"pod_id": self.pod_id, "status": "leader"},
@@ -288,7 +289,7 @@ class DistributedLockManager:
         """Periodically cleanup expired locks"""
         while True:
             try:
-                if self.mongodb_db:
+                if self.mongodb_db is not None:
                     distributed_locks = self.mongodb_db.distributed_locks
                     result = await distributed_locks.delete_many(
                         {"expires_at": {"$lt": datetime.utcnow()}}
@@ -305,7 +306,7 @@ class DistributedLockManager:
 
     async def get_leader_info(self) -> dict[str, Any]:
         """Get current leader information"""
-        if not self.mongodb_db:
+        if self.mongodb_db is None:
             return {"status": "unknown", "error": "MongoDB not available"}
 
         try:
@@ -351,7 +352,7 @@ class DistributedLockManager:
             "mongodb_connected": self.mongodb_db is not None,
             "mongodb_uri": self.settings.mongodb_uri
             if self.settings.mongodb_uri
-            else "mongodb://localhost:27017",
+            else MONGODB_URL,
             "lock_timeout": self.lock_timeout,
             "heartbeat_interval": self.heartbeat_interval,
         }

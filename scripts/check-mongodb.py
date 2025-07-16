@@ -17,7 +17,10 @@ except ImportError:
 async def check_mongodb_basic():
     """Basic MongoDB connection check"""
     try:
-        mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/petrosa")
+        # Import constants for MongoDB configuration
+        sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+        from shared.constants import MONGODB_URL, MONGODB_DATABASE
+        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URL}/{MONGODB_DATABASE}")
         client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_uri)
         await client.admin.command("ping")
         print("✅ MongoDB is accessible")
@@ -48,7 +51,10 @@ async def check_mongodb_basic():
 async def check_mongodb_detailed():
     """Detailed MongoDB health check"""
     try:
-        mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/petrosa")
+        # Import constants for MongoDB configuration
+        sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+        from shared.constants import MONGODB_URL, MONGODB_DATABASE
+        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URL}/{MONGODB_DATABASE}")
         client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_uri)
         await client.admin.command("ping")
         print("✅ MongoDB connection successful")

@@ -76,9 +76,10 @@ class PositionManager:
         try:
             import motor.motor_asyncio
 
-            # Get MongoDB connection string from settings
-            mongodb_url = self.settings.mongodb_uri or "mongodb://localhost:27017"
-            database_name = self.settings.mongodb_database or "petrosa"
+            # Get MongoDB connection string from constants
+            from shared.constants import MONGODB_URL, MONGODB_DATABASE
+            mongodb_url = self.settings.mongodb_uri or MONGODB_URL
+            database_name = self.settings.mongodb_database or MONGODB_DATABASE
 
             self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
             self.mongodb_db = self.mongodb_client[database_name]
@@ -521,7 +522,7 @@ class PositionManager:
             "mongodb_connected": self.mongodb_db is not None,
             "mongodb_uri": self.settings.mongodb_uri
             if self.settings.mongodb_uri
-            else "mongodb://localhost:27017",
+            else MONGODB_URL,
         }
 
 

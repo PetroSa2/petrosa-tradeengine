@@ -15,6 +15,7 @@ from shared.constants import (
     MAX_PORTFOLIO_EXPOSURE_PCT,
     MAX_POSITION_SIZE_PCT,
     RISK_MANAGEMENT_ENABLED,
+    get_mongodb_connection_string,
 )
 
 logger = logging.getLogger(__name__)

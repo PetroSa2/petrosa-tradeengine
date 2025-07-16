@@ -507,7 +507,7 @@ def get_config_summary() -> dict[str, Any]:
             "reload": API_RELOAD,
         },
         "database": {
-            "mongodb_url": MONGODB_URL,
+            "mongodb_url": MONGODB_URI,
             "mongodb_database": MONGODB_DATABASE,
         },
         "messaging": {
@@ -546,8 +546,8 @@ def validate_configuration() -> list[str]:
             issues.append("JWT_SECRET_KEY must be changed in production")
 
     # Check database connectivity
-    if not MONGODB_URL:
-        issues.append("MONGODB_URL is required")
+    if not MONGODB_URI:
+        issues.append("MONGODB_URI is required")
 
     # Check NATS connectivity
     if NATS_ENABLED and not NATS_URL:

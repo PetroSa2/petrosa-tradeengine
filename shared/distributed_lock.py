@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from shared.config import Settings
+from shared.constants import get_mongodb_connection_string
 
 logger = logging.getLogger(__name__)
 

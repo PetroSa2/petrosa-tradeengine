@@ -17,7 +17,7 @@ dependencies = [
     "nats-py==2.10.0",
     "python-dotenv==1.1.1",
     "python-binance==1.0.29",
-    "pymongo==4.13.2",
+    "pymongo==4.6.3",
 ]
 
 [project.optional-dependencies]
@@ -26,7 +26,7 @@ dev = [
     "pytest-asyncio==0.23.5",
     "pytest-cov==4.1.0",
     "httpx==0.25.2",
-    "black==23.12.1",
+    "black==24.3.0",
     "ruff==0.1.15",
     "flake8==7.0.0",
     "mypy==1.8.0",

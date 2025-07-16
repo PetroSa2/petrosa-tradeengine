@@ -84,9 +84,9 @@ class DistributedLockManager:
         try:
             import motor.motor_asyncio
 
-            # Get MongoDB connection string from constants
-            from shared.constants import MONGODB_URL, MONGODB_DATABASE
-            mongodb_url = self.settings.mongodb_uri or MONGODB_URL
+            # Get MongoDB connection string from constants with validation
+            from shared.constants import get_mongodb_connection_string, MONGODB_DATABASE
+            mongodb_url = self.settings.mongodb_uri or get_mongodb_connection_string()
             database_name = self.settings.mongodb_database or MONGODB_DATABASE
 
             self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
@@ -352,7 +352,7 @@ class DistributedLockManager:
             "mongodb_connected": self.mongodb_db is not None,
             "mongodb_uri": self.settings.mongodb_uri
             if self.settings.mongodb_uri
-            else MONGODB_URL,
+            else get_mongodb_connection_string(),
             "lock_timeout": self.lock_timeout,
             "heartbeat_interval": self.heartbeat_interval,
         }

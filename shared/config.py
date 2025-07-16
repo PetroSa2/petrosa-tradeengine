@@ -76,8 +76,8 @@ class Settings(BaseSettings):
 
         # Set default MongoDB URL if not provided
         if not self.mongodb_uri:
-            from shared.constants import MONGODB_URL
-            self.mongodb_uri = f"{MONGODB_URL}/{self.mongodb_database}"
+            from shared.constants import get_mongodb_connection_string
+            self.mongodb_uri = get_mongodb_connection_string()
 
     @property
     def is_production(self) -> bool:
@@ -96,8 +96,8 @@ class Settings(BaseSettings):
 
     def get_mongodb_connection_string(self) -> str:
         """Get MongoDB connection string"""
-        from shared.constants import MONGODB_URL
-        return self.mongodb_uri or f"{MONGODB_URL}/{self.mongodb_database}"
+        from shared.constants import get_mongodb_connection_string
+        return self.mongodb_uri or get_mongodb_connection_string()
 
     def validate_required_settings(self) -> None:
         """Validate that required settings are present"""

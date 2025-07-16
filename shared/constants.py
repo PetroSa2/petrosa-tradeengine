@@ -81,6 +81,34 @@ MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "petrosa")
 MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))
 MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
+# MongoDB validation
+def validate_mongodb_config() -> None:
+    """Validate MongoDB configuration and fail catastrophically if invalid"""
+    if not MONGODB_URL or MONGODB_URL == "mongodb://localhost:27017":
+        raise ValueError(
+            "CRITICAL: MongoDB URL is not configured. "
+            "Set MONGODB_URL environment variable to a valid MongoDB connection string. "
+            "Example: mongodb://username:password@host:port/database"
+        )
+    
+    if not MONGODB_DATABASE:
+        raise ValueError(
+            "CRITICAL: MongoDB database name is not configured. "
+            "Set MONGODB_DATABASE environment variable."
+        )
+    
+    # Validate URL format
+    if not MONGODB_URL.startswith(("mongodb://", "mongodb+srv://")):
+        raise ValueError(
+            f"CRITICAL: Invalid MongoDB URL format: {MONGODB_URL}. "
+            "Must start with 'mongodb://' or 'mongodb+srv://'"
+        )
+
+def get_mongodb_connection_string() -> str:
+    """Get MongoDB connection string with validation"""
+    validate_mongodb_config()
+    return f"{MONGODB_URL}/{MONGODB_DATABASE}"
+
 # Redis (for future use)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))

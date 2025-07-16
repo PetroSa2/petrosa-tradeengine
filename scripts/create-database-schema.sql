@@ -107,7 +107,7 @@ INSERT IGNORE INTO distributed_config (config_key, config_value, updated_by) VAL
 
 -- Create views for easier querying
 CREATE OR REPLACE VIEW open_positions AS
-SELECT 
+SELECT
     symbol,
     quantity,
     avg_price,
@@ -117,17 +117,17 @@ SELECT
     total_value,
     entry_time,
     last_update
-FROM positions 
+FROM positions
 WHERE status = 'open' AND quantity > 0;
 
 CREATE OR REPLACE VIEW portfolio_summary AS
-SELECT 
+SELECT
     COUNT(*) as total_positions,
     SUM(quantity * avg_price) as total_exposure,
     SUM(unrealized_pnl) as total_unrealized_pnl,
     SUM(realized_pnl) as total_realized_pnl,
     MAX(last_update) as last_position_update
-FROM positions 
+FROM positions
 WHERE status = 'open';
 
 -- Create stored procedures for common operations
@@ -141,19 +141,19 @@ CREATE PROCEDURE IF NOT EXISTS AcquireLock(
 BEGIN
     DECLARE lock_expires TIMESTAMP;
     SET lock_expires = DATE_ADD(NOW(), INTERVAL p_timeout_seconds SECOND);
-    
+
     INSERT INTO distributed_locks (lock_name, pod_id, expires_at)
     VALUES (p_lock_name, p_pod_id, lock_expires)
     ON DUPLICATE KEY UPDATE
-        pod_id = CASE 
+        pod_id = CASE
             WHEN expires_at < NOW() THEN p_pod_id
             ELSE pod_id
         END,
-        expires_at = CASE 
+        expires_at = CASE
             WHEN expires_at < NOW() THEN lock_expires
             ELSE expires_at
         END;
-    
+
     SELECT ROW_COUNT() as acquired;
 END //
 
@@ -162,7 +162,7 @@ CREATE PROCEDURE IF NOT EXISTS ReleaseLock(
     IN p_pod_id VARCHAR(100)
 )
 BEGIN
-    DELETE FROM distributed_locks 
+    DELETE FROM distributed_locks
     WHERE lock_name = p_lock_name AND pod_id = p_pod_id;
 END //
 
@@ -177,31 +177,31 @@ CREATE PROCEDURE IF NOT EXISTS ElectLeader(
 BEGIN
     DECLARE current_leader VARCHAR(100);
     DECLARE leader_heartbeat TIMESTAMP;
-    
+
     -- Get current leader info
     SELECT pod_id, last_heartbeat INTO current_leader, leader_heartbeat
-    FROM leader_election 
-    WHERE status = 'leader' 
+    FROM leader_election
+    WHERE status = 'leader'
     LIMIT 1;
-    
+
     -- If no leader or leader is stale, try to become leader
     IF current_leader IS NULL OR leader_heartbeat < DATE_SUB(NOW(), INTERVAL 30 SECOND) THEN
         INSERT INTO leader_election (pod_id, status, last_heartbeat)
         VALUES (p_pod_id, 'leader', NOW())
         ON DUPLICATE KEY UPDATE
-            pod_id = CASE 
+            pod_id = CASE
                 WHEN last_heartbeat < DATE_SUB(NOW(), INTERVAL 30 SECOND) THEN p_pod_id
                 ELSE pod_id
             END,
-            last_heartbeat = CASE 
+            last_heartbeat = CASE
                 WHEN last_heartbeat < DATE_SUB(NOW(), INTERVAL 30 SECOND) THEN NOW()
                 ELSE last_heartbeat
             END;
     END IF;
-    
+
     -- Return current leader
     SELECT pod_id, status, last_heartbeat
-    FROM leader_election 
+    FROM leader_election
     WHERE status = 'leader';
 END //
 
@@ -235,4 +235,4 @@ DESCRIBE daily_pnl;
 DESCRIBE position_history;
 DESCRIBE distributed_locks;
 DESCRIBE leader_election;
-DESCRIBE distributed_config; 
+DESCRIBE distributed_config;

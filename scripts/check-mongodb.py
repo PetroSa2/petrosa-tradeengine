@@ -14,13 +14,14 @@ except ImportError:
     sys.exit(1)
 
 
-async def check_mongodb_basic():
+async def check_mongodb_basic() -> bool:
     """Basic MongoDB connection check"""
     try:
         # Import constants for MongoDB configuration
         sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-        from shared.constants import MONGODB_URL, MONGODB_DATABASE
-        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URL}/{MONGODB_DATABASE}")
+        from shared.constants import MONGODB_DATABASE, MONGODB_URI
+
+        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URI}/{MONGODB_DATABASE}")
         client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_uri)
         await client.admin.command("ping")
         print("✅ MongoDB is accessible")
@@ -48,13 +49,14 @@ async def check_mongodb_basic():
         return False
 
 
-async def check_mongodb_detailed():
+async def check_mongodb_detailed() -> bool:
     """Detailed MongoDB health check"""
     try:
         # Import constants for MongoDB configuration
         sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-        from shared.constants import MONGODB_URL, MONGODB_DATABASE
-        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URL}/{MONGODB_DATABASE}")
+        from shared.constants import MONGODB_DATABASE, MONGODB_URI
+
+        mongodb_uri = os.getenv("MONGODB_URI", f"{MONGODB_URI}/{MONGODB_DATABASE}")
         client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_uri)
         await client.admin.command("ping")
         print("✅ MongoDB connection successful")
@@ -93,7 +95,7 @@ async def check_mongodb_detailed():
         return False
 
 
-def main():
+def main() -> None:
     """Main function"""
     if len(sys.argv) > 1 and sys.argv[1] == "detailed":
         success = asyncio.run(check_mongodb_detailed())

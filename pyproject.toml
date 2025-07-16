@@ -78,7 +78,7 @@ ignore = [
 ]
 exclude = [
     ".venv",
-    "venv", 
+    "venv",
     "env",
     "__pycache__",
     ".git",
@@ -107,7 +107,7 @@ warn_unreachable = true
 strict_equality = true
 exclude = [
     ".*\\.venv.*",
-    ".*venv.*", 
+    ".*venv.*",
     ".*env.*",
     ".*__pycache__.*",
     ".*\\.git.*",
@@ -135,7 +135,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--cov=tradeengine",
-    "--cov=contracts", 
+    "--cov=contracts",
     "--cov=shared",
     "--cov-report=term-missing",
     "--cov-report=html",

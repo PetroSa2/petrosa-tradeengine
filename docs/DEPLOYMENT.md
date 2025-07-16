@@ -321,4 +321,4 @@ For deployment issues:
 
 - **v1.0.0**: Initial production deployment
 - **v1.1.0**: Added HPA and improved health checks
-- **v1.2.0**: Enhanced security and monitoring 
+- **v1.2.0**: Enhanced security and monitoring

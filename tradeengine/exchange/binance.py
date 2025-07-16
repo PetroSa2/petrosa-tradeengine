@@ -25,11 +25,7 @@ from binance.enums import (
 from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
-from shared.constants import (
-    MAX_RETRY_ATTEMPTS,
-    RETRY_BACKOFF_MULTIPLIER,
-    RETRY_DELAY,
-)
+from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
 
 logger = logging.getLogger(__name__)
 

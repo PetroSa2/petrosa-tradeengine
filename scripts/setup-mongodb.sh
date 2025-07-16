@@ -184,4 +184,4 @@ fi
 
 echo ""
 echo "🎉 MongoDB is ready for Petrosa Trading Engine!"
-echo "You can now start the application with distributed state management." 
+echo "You can now start the application with distributed state management."

@@ -86,7 +86,8 @@ class DistributedLockManager:
             import motor.motor_asyncio
 
             # Get MongoDB connection string from constants with validation
-            from shared.constants import get_mongodb_connection_string, MONGODB_DATABASE
+            from shared.constants import MONGODB_DATABASE, get_mongodb_connection_string
+
             mongodb_url = self.settings.mongodb_uri or get_mongodb_connection_string()
             database_name = self.settings.mongodb_database or MONGODB_DATABASE
 

@@ -60,12 +60,12 @@ get_current_version() {
 increment_version() {
     local current_version=$1
     local increment_type=$2
-    
+
     if [[ "$current_version" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local patch="${BASH_REMATCH[3]}"
-        
+
         case $increment_type in
             major)
                 major=$((major + 1))
@@ -84,7 +84,7 @@ increment_version() {
                 exit 1
                 ;;
         esac
-        
+
         echo "v${major}.${minor}.${patch}"
     else
         print_error "Current version '$current_version' is not in semantic version format"
@@ -111,9 +111,9 @@ tag_exists() {
 # Function to create and push tag
 create_tag() {
     local version=$1
-    
+
     print_status "Creating tag: $version"
-    
+
     # Check if tag already exists
     if tag_exists "$version"; then
         print_warning "Tag $version already exists!"
@@ -124,14 +124,14 @@ create_tag() {
             exit 0
         fi
     fi
-    
+
     # Create the tag
     git tag "$version"
-    
+
     # Push the tag
     print_status "Pushing tag to remote..."
     git push origin "$version"
-    
+
     print_success "Tag $version created and pushed successfully!"
     print_status "This will trigger the CI/CD pipeline to build and deploy version $version"
 }
@@ -143,22 +143,22 @@ main() {
         print_error "Not in a git repository"
         exit 1
     fi
-    
+
     # Check if we have uncommitted changes
     if ! git diff-index --quiet HEAD --; then
         print_warning "You have uncommitted changes. Please commit or stash them before creating a release."
         exit 1
     fi
-    
+
     # Parse arguments
     if [ $# -eq 0 ]; then
         show_usage
         exit 1
     fi
-    
+
     local current_version=$(get_current_version)
     local new_version=""
-    
+
     if [ $# -eq 1 ]; then
         # Check if it's a specific version
         if validate_version "$1"; then
@@ -199,17 +199,17 @@ main() {
         show_usage
         exit 1
     fi
-    
+
     # Validate the new version
     if ! validate_version "$new_version"; then
         print_error "Invalid version format: $new_version"
         exit 1
     fi
-    
+
     # Show what we're about to do
     print_status "Current version: $current_version"
     print_status "New version: $new_version"
-    
+
     # Confirm action
     read -p "Create and push tag $new_version? (y/N): " -n 1 -r
     echo
@@ -217,10 +217,10 @@ main() {
         print_status "Aborted."
         exit 0
     fi
-    
+
     # Create and push the tag
     create_tag "$new_version"
 }
 
 # Run main function
-main "$@" 
+main "$@"

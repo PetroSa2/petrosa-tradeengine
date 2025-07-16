@@ -34,7 +34,7 @@ To test with NATS locally:
    ```bash
    # macOS
    brew install nats-server
-   
+
    # Or use Docker
    docker run -p 4222:4222 nats:latest
    ```

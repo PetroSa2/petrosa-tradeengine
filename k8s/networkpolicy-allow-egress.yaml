@@ -34,4 +34,4 @@ spec:
   # Allow New Relic OTLP metrics export
   - ports:
     - protocol: TCP
-      port: 4317 
+      port: 4317

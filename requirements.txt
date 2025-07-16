@@ -42,4 +42,4 @@ mkdocs-material==9.4.8
 
 # Utilities
 python-dotenv==1.0.0
-httpx==0.25.2 
+httpx==0.25.2

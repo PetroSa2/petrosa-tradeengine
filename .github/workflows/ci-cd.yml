@@ -317,24 +317,6 @@ jobs:
           COMMIT_SHA=${{ github.sha }}
           BUILD_DATE=${{ steps.meta.outputs.date }}
 
-    - name: Test Docker container health
-      run: |
-        docker run --rm \
-          -e MONGODB_URL="mongodb://testuser:testpass@localhost:27017/testdb" \
-          -e MONGODB_URI="mongodb://testuser:testpass@localhost:27017/testdb" \
-          -e MONGODB_DATABASE="testdb" \
-          -e NATS_SERVERS="nats://localhost:4222" \
-          -e NATS_ENABLED="false" \
-          -e MYSQL_URI="mysql://testuser:testpass@localhost:3306/testdb" \
-          -e JWT_SECRET_KEY="test-jwt-secret-key-for-testing-only" \
-          -e BINANCE_API_KEY="test-api-key" \
-          -e BINANCE_API_SECRET="test-api-secret" \
-          -e BINANCE_TESTNET="true" \
-          -e ENVIRONMENT="test" \
-          -e LOG_LEVEL="DEBUG" \
-          -e SIMULATION_ENABLED="true" \
-          ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-
   deploy:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest

@@ -342,10 +342,10 @@ Petrosa uses NATS for cloud-native event streaming, which is particularly well-s
    ```bash
    # macOS
    brew install nats-server
-   
+
    # Docker
    docker run -p 4222:4222 nats:latest
-   
+
    # Kubernetes
    helm repo add nats https://nats-io.github.io/k8s/helm/charts/
    helm install my-nats nats/nats
@@ -363,7 +363,7 @@ Petrosa uses NATS for cloud-native event streaming, which is particularly well-s
 
 ## 🚦 Trade Flow
 
-1. **Signal Input**: 
+1. **Signal Input**:
    - Via REST API: `POST /trade`
    - Via NATS: Messages on `signals.trading` subject
 
@@ -476,3 +476,59 @@ signal = Signal(
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 # Trigger CI/CD Pipeline
+
+## Pre-commit Enforcement
+
+This repository enforces code quality and formatting on every commit using [pre-commit](https://pre-commit.com/). **No commit can be made unless all pre-commit hooks pass.**
+
+### How It Works
+- **Automatic Installation:**
+  - `make setup` and `make install-dev` will automatically install `pre-commit` (if missing) and set up the hooks for you.
+- **Mandatory Local Checks:**
+  - A custom `.git/hooks/pre-commit` script blocks all commits if `pre-commit` is not installed, and runs all hooks before every commit.
+  - If any hook fails (black, ruff, mypy, isort, etc.), the commit is blocked until you fix the issues.
+- **No Bypassing:**
+  - You cannot commit unless pre-commit is installed and all checks pass.
+  - If you try to commit without pre-commit, you will see an error message with installation instructions.
+
+### What Developers Should Do
+1. Run `make setup` or `make install-dev` after cloning the repo.
+2. Commit as usual. If a hook fails, fix the issues and try again.
+3. If you see an error about pre-commit not being installed, run:
+   ```bash
+   pip install pre-commit
+   pre-commit install
+   ```
+
+### Hooks Enforced
+- **black** (code formatting)
+- **ruff** (linting)
+- **mypy** (type checking)
+- **isort** (import sorting)
+- **bandit** (security, if enabled)
+- **YAML/JSON/TOML checks**
+- **trailing whitespace, end-of-file, and more**
+
+See `.pre-commit-config.yaml` for the full list.
+
+## Running Tests Locally
+
+To run tests locally, you must set the required MongoDB environment variables. You can do this by exporting them in your shell:
+
+```sh
+export MONGODB_URI="mongodb://localhost:27017"
+export MONGODB_DATABASE="test"
+make pipeline
+```
+
+Or, create a `.env.test` file in the project root with the following contents:
+
+```
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DATABASE=test
+BINANCE_API_KEY=test
+BINANCE_API_SECRET=test
+JWT_SECRET_KEY=test
+```
+
+If your test runner loads `.env.test` automatically, these values will be used for local testing. This ensures the catastrophic failure logic is satisfied and tests will run successfully.

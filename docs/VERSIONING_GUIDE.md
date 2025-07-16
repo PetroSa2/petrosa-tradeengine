@@ -222,4 +222,4 @@ The versioning system ensures that:
 - Audit logging doesn't block core trading operations
 - Database failures don't prevent application startup
 - Version deployment continues even if audit logging fails
-- Retries and backoff are implemented for database operations 
+- Retries and backoff are implemented for database operations

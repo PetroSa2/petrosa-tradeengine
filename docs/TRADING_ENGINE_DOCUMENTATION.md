@@ -104,11 +104,11 @@ else:
 ```python
 def calculate_signal_strength(signal: Signal) -> float:
     base_strength = signal.confidence
-    
+
     # Apply strategy weight
     strategy_weight = strategy_weights.get(signal.strategy_id, 1.0)
     weighted_strength = base_strength * strategy_weight
-    
+
     # Apply strength multiplier
     strength_multipliers = {
         SignalStrength.WEAK: 0.5,
@@ -117,7 +117,7 @@ def calculate_signal_strength(signal: Signal) -> float:
         SignalStrength.EXTREME: 2.0
     }
     multiplier = strength_multipliers.get(signal.strength, 1.0)
-    
+
     # Apply mode-specific adjustments
     mode_multipliers = {
         StrategyMode.DETERMINISTIC: 1.0,
@@ -125,7 +125,7 @@ def calculate_signal_strength(signal: Signal) -> float:
         StrategyMode.LLM_REASONING: 1.5
     }
     mode_multiplier = mode_multipliers.get(signal.strategy_mode, 1.0)
-    
+
     return weighted_strength * multiplier * mode_multiplier
 ```
 
@@ -157,7 +157,7 @@ for signal in all_signals:
 
 if total_weight > 0:
     final_action_value = weighted_action / total_weight
-    
+
     # Determine final action
     if final_action_value > 0.3:
         final_action = "buy"
@@ -165,7 +165,7 @@ if total_weight > 0:
         final_action = "sell"
     else:
         final_action = "hold"
-    
+
     # Update signal with aggregated action
     signal.action = final_action
     return {"status": "executed", "reason": "Weighted average conflict resolution"}
@@ -579,4 +579,4 @@ curl http://localhost:8000/positions
 - Health checks for all critical components
 - Graceful degradation of functionality
 
-This system provides a robust, auditable, and safe foundation for multi-strategy cryptocurrency trading with intelligent signal aggregation and conflict resolution. 
+This system provides a robust, auditable, and safe foundation for multi-strategy cryptocurrency trading with intelligent signal aggregation and conflict resolution.

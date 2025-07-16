@@ -77,27 +77,32 @@ MYSQL_MAX_POOL_SIZE = int(os.getenv("MYSQL_MAX_POOL_SIZE", "10"))
 
 # MongoDB configuration from Kubernetes configmap and secret
 MONGODB_URI = os.getenv("MONGODB_URI")  # From secret: petrosa-sensitive-credentials
-MONGODB_DATABASE = os.getenv("MONGODB_DATABASE")  # From configmap: petrosa-common-config
+MONGODB_DATABASE = os.getenv(
+    "MONGODB_DATABASE"
+)  # From configmap: petrosa-common-config
 MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))
 MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
+
 # MongoDB validation
 def validate_mongodb_config() -> None:
-    """Validate MongoDB configuration and fail catastrophically if invalid"""
+    """Validate MongoDB configuration"""
     if not MONGODB_URI:
         raise ValueError(
             "CRITICAL: MongoDB URI is not configured. "
-            "The MONGODB_URI environment variable must be set from the Kubernetes secret. "
-            "Check that the secret 'petrosa-sensitive-credentials' with key 'mongodb-connection-string' exists."
+            "The MONGODB_URI environment variable must be set from the Kubernetes "
+            "secret. Check that the secret 'petrosa-sensitive-credentials' with "
+            "key 'mongodb-connection-string' exists."
         )
-    
+
     if not MONGODB_DATABASE:
         raise ValueError(
             "CRITICAL: MongoDB database name is not configured. "
-            "The MONGODB_DATABASE environment variable must be set from the Kubernetes configmap. "
-            "Check that the configmap 'petrosa-common-config' with key 'MONGODB_DATABASE' exists."
+            "The MONGODB_DATABASE environment variable must be set from the Kubernetes "
+            "configmap. Check that the configmap 'petrosa-common-config' with key "
+            "'MONGODB_DATABASE' exists."
         )
-    
+
     # Validate URL format
     if not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
         raise ValueError(
@@ -105,10 +110,12 @@ def validate_mongodb_config() -> None:
             "Must start with 'mongodb://' or 'mongodb+srv://'"
         )
 
+
 def get_mongodb_connection_string() -> str:
     """Get MongoDB connection string with validation"""
     validate_mongodb_config()
     return f"{MONGODB_URI}/{MONGODB_DATABASE}"
+
 
 # Redis (for future use)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -129,12 +136,15 @@ POSTGRES_DB = os.getenv("POSTGRES_DB", "petrosa")
 # NATS
 NATS_SERVERS = os.getenv("NATS_SERVERS", "nats://localhost:4222")
 NATS_ENABLED = os.getenv("NATS_ENABLED", "false").lower() == "true"
-NATS_URL = os.getenv("NATS_URL", "nats://nats-server:4222")  # From configmap: petrosa-common-config
+NATS_URL = os.getenv(
+    "NATS_URL", "nats://nats-server:4222"
+)  # From configmap: petrosa-common-config
 NATS_SIGNAL_SUBJECT = os.getenv("NATS_SIGNAL_SUBJECT", "signals.trading")
 NATS_QUEUE_GROUP = os.getenv("NATS_QUEUE_GROUP", "petrosa-tradeengine")
 NATS_CONNECT_TIMEOUT = int(os.getenv("NATS_CONNECT_TIMEOUT", "5"))
 NATS_RECONNECT_TIME_WAIT = int(os.getenv("NATS_RECONNECT_TIME_WAIT", "1"))
 NATS_MAX_RECONNECT_ATTEMPTS = int(os.getenv("NATS_MAX_RECONNECT_ATTEMPTS", "10"))
+
 
 # NATS validation
 def validate_nats_config() -> None:
@@ -142,9 +152,11 @@ def validate_nats_config() -> None:
     if NATS_ENABLED and not NATS_URL:
         raise ValueError(
             "CRITICAL: NATS is enabled but NATS_URL is not configured. "
-            "The NATS_URL environment variable must be set from the Kubernetes configmap. "
-            "Check that the configmap 'petrosa-common-config' with key 'NATS_URL' exists."
+            "The NATS_URL environment variable must be set from the Kubernetes "
+            "configmap. Check that the configmap 'petrosa-common-config' with "
+            "key 'NATS_URL' exists."
         )
+
 
 def get_nats_connection_string() -> str | None:
     """Get NATS connection string with validation"""
@@ -152,6 +164,7 @@ def get_nats_connection_string() -> str | None:
         return None
     validate_nats_config()
     return NATS_URL
+
 
 # Kafka (for future use)
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")

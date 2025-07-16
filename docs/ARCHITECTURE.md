@@ -169,10 +169,10 @@ trade_order = dispatcher._signal_to_order(signal, order_params)
 # Execute with risk checks
 if await dispatcher._check_risk_limits(trade_order):
     result = await dispatcher.execute_order(trade_order)
-    
+
     # Update position tracking
     await position_manager.update_position(trade_order, result)
-    
+
     # Track order
     await order_manager.track_order(trade_order, result)
 ```
@@ -396,4 +396,4 @@ Visit `http://localhost:8000/docs` for interactive API documentation with exampl
 - Risk limit enforcement
 - Secure configuration management
 
-This architecture provides a robust foundation for multi-strategy trading with intelligent signal aggregation, risk management, and flexible execution modes. 
+This architecture provides a robust foundation for multi-strategy trading with intelligent signal aggregation, risk management, and flexible execution modes.

@@ -58,6 +58,9 @@ extend-exclude = '''
 )/
 '''
 
+[tool.flake8]
+ignore = ["E501", "W503"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 88
@@ -78,7 +81,7 @@ ignore = [
 ]
 exclude = [
     ".venv",
-    "venv", 
+    "venv",
     "env",
     "__pycache__",
     ".git",
@@ -98,7 +101,7 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
-disallow_untyped_decorators = true
+disallow_untyped_decorators = false  # Allow FastAPI decorators
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
@@ -107,7 +110,7 @@ warn_unreachable = true
 strict_equality = true
 exclude = [
     ".*\\.venv.*",
-    ".*venv.*", 
+    ".*venv.*",
     ".*env.*",
     ".*__pycache__.*",
     ".*\\.git.*",
@@ -135,7 +138,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--cov=tradeengine",
-    "--cov=contracts", 
+    "--cov=contracts",
     "--cov=shared",
     "--cov-report=term-missing",
     "--cov-report=html",

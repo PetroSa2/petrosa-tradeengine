@@ -42,17 +42,21 @@ help:
 	@echo "  run-docker     Run the application in Docker"
 	@echo ""
 
-# Development setup
+pre-commit-auto-install:
+	@command -v pre-commit >/dev/null 2>&1 || pip install pre-commit
+	@pre-commit install
+
 setup:
 	@echo "🚀 Setting up development environment..."
 	@chmod +x scripts/dev-setup.sh
 	@./scripts/dev-setup.sh
 	@echo "🔧 Installing pre-commit hooks..."
-	@pre-commit install || echo "Pre-commit not available, skipping hook installation"
+	make pre-commit-auto-install
 
 install-dev:
 	@echo "📚 Installing development dependencies..."
 	pip install -r requirements-dev.txt
+	make pre-commit-auto-install
 
 install-prod:
 	@echo "📦 Installing production dependencies..."

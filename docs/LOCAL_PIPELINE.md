@@ -440,4 +440,4 @@ bash -x ./scripts/local-pipeline.sh
 - **Kubernetes logs**: `kubectl logs -n petrosa-apps`
 - **Test reports**: `htmlcov/index.html`
 
-This local pipeline ensures your code is production-ready before pushing to GitHub, catching issues early and maintaining high code quality standards! 🎉 
+This local pipeline ensures your code is production-ready before pushing to GitHub, catching issues early and maintaining high code quality standards! 🎉

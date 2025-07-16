@@ -295,7 +295,7 @@ rm -f /tmp/repo_info.json /tmp/issues.json /tmp/prs.json
 - **Remote MicroK8s cluster** - no local Kubernetes installation required
 - Kubernetes deployment uses namespace `petrosa-apps`
 - Health checks are critical for Kubernetes probes
-- Security scanning is integrated into the pipeline 
+- Security scanning is integrated into the pipeline
 
 ## Pipeline Fixing Process
 When fixing the pipeline, go until it is fully green and stop only when CI/CD on GHA is fixed. This means:
@@ -303,4 +303,4 @@ When fixing the pipeline, go until it is fully green and stop only when CI/CD on
 - Only commit and push when all local checks are green
 - Check the GitHub Actions (GHA) pipeline after pushing
 - If the GHA pipeline fails, repeat the process until it is green
-- Do not stop until the CI/CD pipeline on GHA is fully fixed 
+- Do not stop until the CI/CD pipeline on GHA is fully fixed

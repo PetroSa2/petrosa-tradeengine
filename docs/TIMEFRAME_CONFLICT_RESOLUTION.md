@@ -53,7 +53,7 @@ signal_1m = Signal(
 
 # 4-hour signal (sell) - will win the conflict
 signal_4h = Signal(
-    strategy_id="mean_reversion_strategy", 
+    strategy_id="mean_reversion_strategy",
     action="sell",
     timeframe=TimeFrame.HOUR_4,
     confidence=0.7,
@@ -201,7 +201,7 @@ signal_1m = Signal(
 
 signal_4h = Signal(
     strategy_id="mean_reversion_strategy",
-    symbol="BTCUSDT", 
+    symbol="BTCUSDT",
     action="sell",
     confidence=0.7,
     timeframe=TimeFrame.HOUR_4,
@@ -295,7 +295,7 @@ INFO: Higher timeframe signal won conflict (4h vs 1m)
 ### 1. Timeframe Selection
 
 - **Short-term strategies**: Use 1m, 5m, 15m timeframes
-- **Medium-term strategies**: Use 1h, 4h, 6h timeframes  
+- **Medium-term strategies**: Use 1h, 4h, 6h timeframes
 - **Long-term strategies**: Use 1d, 1w, 1M timeframes
 
 ### 2. Conflict Resolution Strategy
@@ -380,4 +380,4 @@ This will provide detailed logs about:
 
 - **v1.2.0**: Dynamic timeframe weights
 - **v1.3.0**: Multi-timeframe signal fusion
-- **v1.4.0**: Timeframe-specific risk management 
+- **v1.4.0**: Timeframe-specific risk management

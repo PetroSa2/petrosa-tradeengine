@@ -1,5 +1,6 @@
 """
-Position Manager - Tracks positions and enforces risk limits with distributed state management using MongoDB
+Position Manager - Tracks positions and enforces risk limits with distributed state
+management using MongoDB
 """
 
 import asyncio
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class PositionManager:
-    """Manages trading positions and risk limits with distributed state management using MongoDB"""
+    """Manages trading positions and risk limits with distributed state management
+    using MongoDB"""
 
     def __init__(self) -> None:
         self.positions: dict[str, dict[str, Any]] = {}
@@ -78,19 +80,24 @@ class PositionManager:
             import motor.motor_asyncio
 
             # Get MongoDB connection string from constants with validation
-            from shared.constants import get_mongodb_connection_string, MONGODB_DATABASE
+            from shared.constants import MONGODB_DATABASE, get_mongodb_connection_string
+
             mongodb_url = self.settings.mongodb_uri or get_mongodb_connection_string()
             database_name = self.settings.mongodb_database or MONGODB_DATABASE
 
+            # Ensure database_name is a string
+            if database_name is None:
+                raise ValueError("MongoDB database name is required")
+
             self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
-            self.mongodb_db = self.mongodb_client[database_name]
+            self.mongodb_db = self.mongodb_client[str(database_name)]
 
             # Test connection
             await self.mongodb_client.admin.command("ping")
-            logger.info(f"MongoDB connected: {mongodb_url}")
+            logger.info(f"MongoDB connected for position manager: {mongodb_url}")
 
         except Exception as e:
-            logger.error(f"Failed to initialize MongoDB: {e}")
+            logger.error(f"Failed to initialize MongoDB for position manager: {e}")
             self.mongodb_client = None
             self.mongodb_db = None
             raise

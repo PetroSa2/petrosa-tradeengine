@@ -76,8 +76,8 @@ async def test_trade_endpoint_single_signal(
 ) -> None:
     """Test trade endpoint with single signal"""
     with patch("tradeengine.api.dispatcher") as mock_dispatcher:
-        # Make the mock async
-        mock_dispatcher.process_signal = AsyncMock(
+        # Mock the dispatch method which is what the API actually calls
+        mock_dispatcher.dispatch = AsyncMock(
             return_value={
                 "status": "executed",
                 "order_id": "test-order-1",
@@ -91,7 +91,7 @@ async def test_trade_endpoint_single_signal(
         response = client.post("/trade/signal", json=signal_dict)
         assert response.status_code == 200
         data = response.json()
-        assert data["message"] == "Signal processed successfully"
+        assert data["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -129,8 +129,8 @@ async def test_trade_endpoint_multiple_signals(client: TestClient) -> None:
     ]
 
     with patch("tradeengine.api.dispatcher") as mock_dispatcher:
-        # Make the mock async
-        mock_dispatcher.process_signal = AsyncMock(
+        # Mock the dispatch method which is what the API actually calls
+        mock_dispatcher.dispatch = AsyncMock(
             return_value={
                 "status": "executed",
                 "order_id": "test-order-1",
@@ -143,7 +143,7 @@ async def test_trade_endpoint_multiple_signals(client: TestClient) -> None:
         response = client.post("/trade/signal", json=signal_dict)
         assert response.status_code == 200
         data = response.json()
-        assert data["message"] == "Signal processed successfully"
+        assert data["status"] == "success"
 
 
 def test_account_endpoint(client: TestClient) -> None:
@@ -160,8 +160,9 @@ def test_price_endpoint(client: TestClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert "symbol" in data
-    assert "binance_price" in data
-    assert "simulator_price" in data
+    assert "price" in data
+    assert "source" in data
+    assert "timestamp" in data
 
 
 def test_order_endpoint(client: TestClient) -> None:

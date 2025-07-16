@@ -25,11 +25,7 @@ from binance.enums import (
 from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
-from shared.constants import (
-    MAX_RETRY_ATTEMPTS,
-    RETRY_BACKOFF_MULTIPLIER,
-    RETRY_DELAY,
-)
+from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +54,8 @@ class BinanceExchange:
                 f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}"
             )
             logger.info(
-                f"Binance initialization - API_SECRET present: {bool(BINANCE_API_SECRET)}"
+                f"Binance initialization - API_SECRET present: "
+                f"{bool(BINANCE_API_SECRET)}"
             )
             logger.info(f"Binance initialization - TESTNET: {BINANCE_TESTNET}")
 

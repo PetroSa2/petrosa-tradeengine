@@ -385,32 +385,21 @@ async def get_account_info() -> AccountResponse:
         if binance_account:
             # Binance returns balances as a list, convert to dict by asset
             binance_balances = binance_account.get("balances", [])
-            logger.debug(
-                f"Binance balances type: {type(binance_balances)}, value: {binance_balances}"
-            )
             if isinstance(binance_balances, list):
                 for balance in binance_balances:
                     if isinstance(balance, dict) and "asset" in balance:
                         combined_balances[balance["asset"]] = balance
-            else:
+            elif isinstance(binance_balances, dict):
                 combined_balances.update(binance_balances)
-
+            # else: ignore
             combined_positions.update(binance_account.get("positions", {}))
             combined_pnl.update(binance_account.get("pnl", {}))
 
         # Merge simulator data
         if simulator_account:
             simulator_balances = simulator_account.get("balances", {})
-            logger.debug(
-                f"Simulator balances type: {type(simulator_balances)}, value: {simulator_balances}"
-            )
             if isinstance(simulator_balances, dict):
                 combined_balances.update(simulator_balances)
-            else:
-                logger.warning(
-                    f"Simulator balances is not a dict: {type(simulator_balances)}"
-                )
-
             combined_positions.update(simulator_account.get("positions", {}))
             combined_pnl.update(simulator_account.get("pnl", {}))
 
@@ -422,8 +411,7 @@ async def get_account_info() -> AccountResponse:
                     free = float(balance.get("free", 0))
                     locked = float(balance.get("locked", 0))
                     total_balance_usdt += free + locked
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing balance: {balance}, error: {e}")
+                except (ValueError, TypeError):
                     continue
 
         # Calculate risk metrics
@@ -433,8 +421,7 @@ async def get_account_info() -> AccountResponse:
                 try:
                     notional = float(pos.get("notional", 0))
                     total_exposure += notional
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing position: {pos}, error: {e}")
+                except (ValueError, TypeError):
                     continue
 
         total_pnl = 0.0
@@ -443,8 +430,7 @@ async def get_account_info() -> AccountResponse:
                 try:
                     realized = float(pnl.get("realized", 0))
                     total_pnl += realized
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing PnL: {pnl}, error: {e}")
+                except (ValueError, TypeError):
                     continue
 
         risk_metrics = {

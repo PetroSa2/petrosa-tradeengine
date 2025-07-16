@@ -28,8 +28,8 @@ def test_mongodb_validation():
     print("\n1️⃣ Testing with default configuration (should fail catastrophically):")
     try:
         # Clear any existing MongoDB environment variables
-        if "MONGODB_URL" in os.environ:
-            del os.environ["MONGODB_URL"]
+        if "MONGODB_URI" in os.environ:
+            del os.environ["MONGODB_URI"]
         if "MONGODB_DATABASE" in os.environ:
             del os.environ["MONGODB_DATABASE"]
         
@@ -41,7 +41,7 @@ def test_mongodb_validation():
     # Test 2: Invalid URL format
     print("\n2️⃣ Testing with invalid URL format (should fail catastrophically):")
     try:
-        os.environ["MONGODB_URL"] = "invalid-url"
+        os.environ["MONGODB_URI"] = "invalid-url"
         os.environ["MONGODB_DATABASE"] = "test"
         
         validate_mongodb_config()
@@ -52,7 +52,7 @@ def test_mongodb_validation():
     # Test 3: Valid configuration
     print("\n3️⃣ Testing with valid configuration (should pass):")
     try:
-        os.environ["MONGODB_URL"] = "mongodb://localhost:27017"
+        os.environ["MONGODB_URI"] = "mongodb://localhost:27017"
         os.environ["MONGODB_DATABASE"] = "test"
         
         validate_mongodb_config()
@@ -65,7 +65,7 @@ def test_mongodb_validation():
     # Test 4: Atlas configuration
     print("\n4️⃣ Testing with MongoDB Atlas configuration (should pass):")
     try:
-        os.environ["MONGODB_URL"] = "mongodb+srv://username:password@cluster.mongodb.net"
+        os.environ["MONGODB_URI"] = "mongodb+srv://username:password@cluster.mongodb.net"
         os.environ["MONGODB_DATABASE"] = "production"
         
         validate_mongodb_config()
@@ -78,7 +78,7 @@ def test_mongodb_validation():
     # Test 5: Missing database
     print("\n5️⃣ Testing with missing database (should fail catastrophically):")
     try:
-        os.environ["MONGODB_URL"] = "mongodb://localhost:27017"
+        os.environ["MONGODB_URI"] = "mongodb://localhost:27017"
         if "MONGODB_DATABASE" in os.environ:
             del os.environ["MONGODB_DATABASE"]
         
@@ -90,13 +90,14 @@ def test_mongodb_validation():
     print("\n" + "=" * 70)
     print("🎯 Summary:")
     print("✅ MongoDB validation correctly fails catastrophically when:")
-    print("   - MONGODB_URL is not configured or is default")
-    print("   - MONGODB_URL has invalid format")
-    print("   - MONGODB_DATABASE is not configured")
+    print("   - MONGODB_URI is not configured (missing from Kubernetes secret)")
+    print("   - MONGODB_URI has invalid format")
+    print("   - MONGODB_DATABASE is not configured (missing from Kubernetes configmap)")
     print("✅ MongoDB validation passes when:")
-    print("   - Valid MongoDB URL is provided")
-    print("   - Valid database name is provided")
+    print("   - Valid MongoDB URI is provided from Kubernetes secret")
+    print("   - Valid database name is provided from Kubernetes configmap")
     print("\n🚨 This ensures the service fails fast if MongoDB is not properly configured!")
+    print("✅ All environments require proper Kubernetes configuration")
 
 
 async def test_api_startup_validation():
@@ -105,8 +106,8 @@ async def test_api_startup_validation():
     print("=" * 50)
     
     # Clear MongoDB environment variables to simulate unconfigured state
-    if "MONGODB_URL" in os.environ:
-        del os.environ["MONGODB_URL"]
+    if "MONGODB_URI" in os.environ:
+        del os.environ["MONGODB_URI"]
     if "MONGODB_DATABASE" in os.environ:
         del os.environ["MONGODB_DATABASE"]
     

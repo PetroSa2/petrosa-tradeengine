@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     binance_testnet: bool = True
     binance_base_url: str = "https://testnet.binance.vision"
 
-    # MongoDB Configuration (from existing configmap)
-    mongodb_uri: str | None = None
-    mongodb_database: str = "petrosa"
+    # MongoDB Configuration (from Kubernetes configmap and secret)
+    mongodb_uri: str | None = None  # From secret: petrosa-sensitive-credentials
+    mongodb_database: str | None = None  # From configmap: petrosa-common-config
 
     # JWT Configuration
     jwt_secret_key: str | None = None
@@ -56,7 +56,9 @@ class Settings(BaseSettings):
     heartbeat_interval_seconds: int = 10
 
     # NATS Configuration
-    nats_servers: str = "nats://localhost:4222"
+    nats_enabled: bool = False
+    nats_url: str | None = None
+    nats_servers: str | None = None
     nats_signal_subject: str = "trading.signals"
 
     # API Configuration (for uvicorn)
@@ -78,6 +80,15 @@ class Settings(BaseSettings):
         if not self.mongodb_uri:
             from shared.constants import get_mongodb_connection_string
             self.mongodb_uri = get_mongodb_connection_string()
+
+        # Set NATS configuration from constants
+        from shared.constants import NATS_ENABLED, get_nats_connection_string
+        self.nats_enabled = NATS_ENABLED
+        if self.nats_enabled:
+            self.nats_url = get_nats_connection_string()
+            self.nats_servers = self.nats_url
+        else:
+            self.nats_servers = None
 
     @property
     def is_production(self) -> bool:

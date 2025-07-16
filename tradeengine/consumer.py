@@ -36,6 +36,15 @@ class SignalConsumer:
     async def initialize(self) -> bool:
         """Initialize NATS connection"""
         try:
+            # Check if NATS is enabled
+            if not settings.nats_enabled:
+                logger.info("NATS is disabled - skipping NATS consumer initialization")
+                return False
+            
+            if not settings.nats_servers:
+                logger.error("NATS is enabled but no servers configured")
+                return False
+                
             self.nc = await nats.connect(settings.nats_servers)
             await self.dispatcher.initialize()
             logger.info(
@@ -49,6 +58,11 @@ class SignalConsumer:
 
     async def start_consuming(self) -> None:
         """Start consuming messages from NATS"""
+        # Check if NATS is enabled
+        if not settings.nats_enabled:
+            logger.info("NATS is disabled - consumer will not start")
+            return
+            
         if not self.nc:
             if not await self.initialize():
                 logger.error("Cannot start consuming - NATS consumer not initialized")
@@ -140,6 +154,10 @@ signal_consumer = SignalConsumer()
 
 async def run_consumer() -> None:
     """Run the NATS consumer in a separate process/service"""
+    if not settings.nats_enabled:
+        logger.info("NATS is disabled - consumer will not run")
+        return
+        
     logger.info("Starting Petrosa NATS Signal Consumer...")
     await signal_consumer.start_consuming()
 

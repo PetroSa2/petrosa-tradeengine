@@ -27,6 +27,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Petrosa Trading Engine...")
 
     try:
+        # Validate MongoDB configuration first - fail catastrophically if not configured
+        logger.info("Validating MongoDB configuration...")
+        from shared.constants import validate_mongodb_config
+        validate_mongodb_config()
+        logger.info("✅ MongoDB configuration validated successfully")
+
         # Initialize audit logger
         if audit_logger.enabled and audit_logger.connected:
             logger.info("Audit logging enabled and connected")
@@ -47,7 +53,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         logger.info("Trading engine startup completed successfully")
     except Exception as e:
-        logger.error(f"Startup error: {e}")
+        logger.error(f"CRITICAL: Startup failed - {e}")
+        logger.error("Service will exit due to critical configuration error")
         raise
 
     yield
@@ -147,6 +154,10 @@ async def root() -> dict[str, Any]:
 async def health_check() -> HealthResponse:
     """Comprehensive health check endpoint with distributed state info"""
     try:
+        # Validate MongoDB configuration in health check
+        from shared.constants import validate_mongodb_config
+        validate_mongodb_config()
+        
         # Check component health
         components = {
             "dispatcher": await dispatcher.health_check(),
@@ -155,6 +166,10 @@ async def health_check() -> HealthResponse:
             "audit_logger": {
                 "enabled": audit_logger.enabled,
                 "connected": audit_logger.connected,
+            },
+            "mongodb_config": {
+                "status": "healthy",
+                "configured": True,
             },
         }
 
@@ -207,6 +222,10 @@ async def get_distributed_state() -> dict[str, Any]:
 async def readiness_check() -> dict[str, Any]:
     """Readiness probe for Kubernetes"""
     try:
+        # Validate MongoDB configuration first
+        from shared.constants import validate_mongodb_config
+        validate_mongodb_config()
+        
         # Check if core components are ready
         dispatcher_ready = await dispatcher.health_check()
         binance_ready = await binance_exchange.health_check()

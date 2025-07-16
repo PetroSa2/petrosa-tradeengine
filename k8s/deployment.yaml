@@ -53,6 +53,17 @@ spec:
             configMapKeyRef:
               name: petrosa-common-config
               key: MONGODB_DATABASE
+        # NATS configuration from configmap
+        - name: NATS_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: NATS_ENABLED
+        - name: NATS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: NATS_URL
         # Trading configuration from existing configmap
         - name: SIMULATION_ENABLED
           valueFrom:

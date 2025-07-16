@@ -383,32 +383,74 @@ async def get_account_info() -> AccountResponse:
 
         # Merge binance data
         if binance_account:
-            combined_balances.update(binance_account.get("balances", {}))
+            # Binance returns balances as a list, convert to dict by asset
+            binance_balances = binance_account.get("balances", [])
+            logger.debug(
+                f"Binance balances type: {type(binance_balances)}, value: {binance_balances}"
+            )
+            if isinstance(binance_balances, list):
+                for balance in binance_balances:
+                    if isinstance(balance, dict) and "asset" in balance:
+                        combined_balances[balance["asset"]] = balance
+            else:
+                combined_balances.update(binance_balances)
+
             combined_positions.update(binance_account.get("positions", {}))
             combined_pnl.update(binance_account.get("pnl", {}))
 
         # Merge simulator data
         if simulator_account:
-            combined_balances.update(simulator_account.get("balances", {}))
+            simulator_balances = simulator_account.get("balances", {})
+            logger.debug(
+                f"Simulator balances type: {type(simulator_balances)}, value: {simulator_balances}"
+            )
+            if isinstance(simulator_balances, dict):
+                combined_balances.update(simulator_balances)
+            else:
+                logger.warning(
+                    f"Simulator balances is not a dict: {type(simulator_balances)}"
+                )
+
             combined_positions.update(simulator_account.get("positions", {}))
             combined_pnl.update(simulator_account.get("pnl", {}))
 
         # Calculate total USDT balance
-        total_balance_usdt = sum(
-            float(balance.get("free", 0)) + float(balance.get("locked", 0))
-            for balance in combined_balances.values()
-            if balance.get("asset") == "USDT"
-        )
+        total_balance_usdt = 0.0
+        for balance in combined_balances.values():
+            if isinstance(balance, dict) and balance.get("asset") == "USDT":
+                try:
+                    free = float(balance.get("free", 0))
+                    locked = float(balance.get("locked", 0))
+                    total_balance_usdt += free + locked
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing balance: {balance}, error: {e}")
+                    continue
 
         # Calculate risk metrics
+        total_exposure = 0.0
+        for pos in combined_positions.values():
+            if isinstance(pos, dict):
+                try:
+                    notional = float(pos.get("notional", 0))
+                    total_exposure += notional
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing position: {pos}, error: {e}")
+                    continue
+
+        total_pnl = 0.0
+        for pnl in combined_pnl.values():
+            if isinstance(pnl, dict):
+                try:
+                    realized = float(pnl.get("realized", 0))
+                    total_pnl += realized
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing PnL: {pnl}, error: {e}")
+                    continue
+
         risk_metrics = {
-            "total_exposure": sum(
-                float(pos.get("notional", 0)) for pos in combined_positions.values()
-            ),
+            "total_exposure": total_exposure,
             "open_positions": len(combined_positions),
-            "total_pnl": sum(
-                float(pnl.get("realized", 0)) for pnl in combined_pnl.values()
-            ),
+            "total_pnl": total_pnl,
         }
 
         return AccountResponse(
@@ -422,6 +464,10 @@ async def get_account_info() -> AccountResponse:
 
     except Exception as e:
         logger.error(f"Account info error: {e}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to get account info: {e}")
 
 

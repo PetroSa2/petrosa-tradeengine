@@ -58,3 +58,4 @@ repos:
     hooks:
       - id: detect-private-key
       - id: detect-aws-credentials
+        args: [--allow-missing]

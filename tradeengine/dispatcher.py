@@ -215,15 +215,11 @@ class Dispatcher:
             return {"status": "error", "error": str(e)}
 
     def _signal_to_order(self, signal: Signal) -> TradeOrder:
-        """Convert a signal to a trade order"""
+        """Convert a signal to a trade order with dynamic minimum amounts"""
         from datetime import datetime
 
-        # Calculate order amount based on position size percentage
-        amount = 0.001  # Default to 0.001 BTC
-        if signal.position_size_pct:
-            # This would need account balance to calculate actual amount
-            # For now, use a fixed amount
-            amount = 0.001
+        # Calculate order amount based on signal quantity or dynamic minimum
+        amount = self._calculate_order_amount(signal)
 
         # Create the order
         order = TradeOrder(
@@ -251,6 +247,36 @@ class Dispatcher:
         )
 
         return order
+
+    def _calculate_order_amount(self, signal: Signal) -> float:
+        """Calculate order amount based on signal and symbol requirements"""
+        try:
+            # Import here to avoid circular imports
+            from tradeengine.api import binance_exchange
+
+            # Use signal quantity if valid and positive
+            if signal.quantity and signal.quantity > 0:
+                amount = signal.quantity
+            else:
+                # Calculate minimum amount for the symbol
+                current_price = signal.current_price or 0
+                amount = binance_exchange.calculate_min_order_amount(
+                    signal.symbol, current_price
+                )
+
+            self.logger.info(
+                f"Calculated order amount for {signal.symbol}: {amount} "
+                f"(signal_qty: {signal.quantity}, current_price: {signal.current_price})"
+            )
+
+            return amount
+
+        except Exception as e:
+            self.logger.error(
+                f"Error calculating order amount for {signal.symbol}: {e}"
+            )
+            # Fallback to safe default
+            return 0.001
 
     async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a trading order"""

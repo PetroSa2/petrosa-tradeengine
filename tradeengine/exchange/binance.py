@@ -1,7 +1,7 @@
 """
-Binance Exchange Client - Petrosa Trading Engine
+Binance Futures Exchange Client - Petrosa Trading Engine
 
-This module provides a comprehensive interface to Binance API for executing
+This module provides a comprehensive interface to Binance Futures API for executing
 all types of trading orders including market, limit, stop, and take-profit orders.
 """
 
@@ -10,14 +10,14 @@ import logging
 import time
 from typing import Any
 
-from binance import AsyncClient
+from binance import Client
 from binance.enums import (
-    ORDER_TYPE_LIMIT,
-    ORDER_TYPE_MARKET,
-    ORDER_TYPE_STOP_LOSS,
-    ORDER_TYPE_STOP_LOSS_LIMIT,
-    ORDER_TYPE_TAKE_PROFIT,
-    ORDER_TYPE_TAKE_PROFIT_LIMIT,
+    FUTURE_ORDER_TYPE_LIMIT,
+    FUTURE_ORDER_TYPE_MARKET,
+    FUTURE_ORDER_TYPE_STOP,
+    FUTURE_ORDER_TYPE_STOP_MARKET,
+    FUTURE_ORDER_TYPE_TAKE_PROFIT,
+    FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
     SIDE_BUY,
     SIDE_SELL,
     TIME_IN_FORCE_GTC,
@@ -30,17 +30,17 @@ from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY
 logger = logging.getLogger(__name__)
 
 
-class BinanceExchange:
-    """Binance exchange client for executing trades"""
+class BinanceFuturesExchange:
+    """Binance Futures exchange client for executing trades"""
 
     def __init__(self) -> None:
-        self.client: AsyncClient | None = None
+        self.client: Client | None = None
         self.exchange_info: dict[str, Any] = {}
         self.symbol_info: dict[str, Any] = {}
         self.initialized = False
 
     async def initialize(self) -> None:
-        """Initialize Binance exchange connection"""
+        """Initialize Binance Futures exchange connection"""
         try:
             # Import constants here to avoid circular imports
             from shared.constants import (
@@ -51,35 +51,37 @@ class BinanceExchange:
 
             # Debug logging
             logger.info(
-                f"Binance initialization - API_KEY present: {bool(BINANCE_API_KEY)}"
+                f"Binance Futures initialization - API_KEY present: {bool(BINANCE_API_KEY)}"
             )
             logger.info(
-                f"Binance initialization - API_SECRET present: "
+                f"Binance Futures initialization - API_SECRET present: "
                 f"{bool(BINANCE_API_SECRET)}"
             )
-            logger.info(f"Binance initialization - TESTNET: {BINANCE_TESTNET}")
+            logger.info(f"Binance Futures initialization - TESTNET: {BINANCE_TESTNET}")
 
-            # Create Binance client
+            # Create Binance Futures client
             if BINANCE_API_KEY and BINANCE_API_SECRET:
-                logger.info("Creating Binance AsyncClient...")
-                self.client = await AsyncClient.create(
+                logger.info("Creating Binance Futures UMFutures client...")
+                self.client = Client(
                     api_key=BINANCE_API_KEY,
                     api_secret=BINANCE_API_SECRET,
                     testnet=BINANCE_TESTNET,
                 )
-                logger.info(f"Binance client created (testnet: {BINANCE_TESTNET})")
+                logger.info(
+                    f"Binance Futures client created (testnet: {BINANCE_TESTNET})"
+                )
 
                 # Test connection
-                logger.info("Testing Binance connection...")
-                await self.client.ping()
-                logger.info("Binance connection test successful")
+                logger.info("Testing Binance Futures connection...")
+                self.client.futures_ping()
+                logger.info("Binance Futures connection test successful")
 
                 # Load exchange info
-                logger.info("Loading exchange info...")
+                logger.info("Loading futures exchange info...")
                 await self._load_exchange_info()
 
                 self.initialized = True
-                logger.info("Binance exchange initialized successfully")
+                logger.info("Binance Futures exchange initialized successfully")
             else:
                 logger.warning(
                     "Binance API credentials not provided, client not initialized"
@@ -87,34 +89,34 @@ class BinanceExchange:
                 self.client = None
                 self.initialized = False
         except Exception as e:
-            logger.error(f"Binance initialization error: {e}")
+            logger.error(f"Binance Futures initialization error: {e}")
             self.client = None
             self.initialized = False
             raise
 
     async def health_check(self) -> dict[str, Any]:
-        """Check Binance exchange health"""
+        """Check Binance Futures exchange health"""
         try:
             if self.client is not None:
-                await self.client.ping()
-                return {"status": "healthy", "type": "binance"}
+                self.client.futures_ping()
+                return {"status": "healthy", "type": "binance_futures"}
             else:
                 return {
                     "status": "degraded",
-                    "type": "binance",
+                    "type": "binance_futures",
                     "error": "Client not initialized",
                 }
         except Exception as e:
-            logger.error(f"Binance health check error: {e}")
+            logger.error(f"Binance Futures health check error: {e}")
             return {"status": "unhealthy", "error": str(e)}
 
     async def _load_exchange_info(self) -> None:
-        """Load exchange information and symbol details"""
+        """Load futures exchange information and symbol details"""
         try:
-            # Get exchange information
+            # Get futures exchange information
             if self.client is None:
-                raise RuntimeError("Binance client not initialized")
-            self.exchange_info = await self.client.get_exchange_info()
+                raise RuntimeError("Binance Futures client not initialized")
+            self.exchange_info = self.client.futures_exchange_info()
 
             # Create symbol info lookup
             for symbol_data in self.exchange_info["symbols"]:
@@ -126,14 +128,16 @@ class BinanceExchange:
                     "filters": symbol_data["filters"],
                 }
 
-            logger.info(f"Loaded exchange info for {len(self.symbol_info)} symbols")
+            logger.info(
+                f"Loaded futures exchange info for {len(self.symbol_info)} symbols"
+            )
 
         except Exception as e:
-            logger.error(f"Failed to load exchange info: {e}")
+            logger.error(f"Failed to load futures exchange info: {e}")
             raise
 
     async def execute(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a trade order on Binance"""
+        """Execute a trade order on Binance Futures"""
         if not self.initialized:
             await self.initialize()
 
@@ -166,7 +170,7 @@ class BinanceExchange:
             return self._format_execution_result(result, order)
 
         except BinanceAPIException as e:
-            logger.error(f"Binance API error: {e}")
+            logger.error(f"Binance Futures API error: {e}")
             return self._format_error_result(str(e), order)
         except Exception as e:
             logger.error(f"Order execution error: {e}")
@@ -214,11 +218,11 @@ class BinanceExchange:
     async def _execute_market_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a market order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_MARKET,
+            "type": FUTURE_ORDER_TYPE_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
         }
 
@@ -226,53 +230,65 @@ class BinanceExchange:
         if hasattr(order, "quote_quantity") and order.quote_quantity:
             params["quoteOrderQty"] = order.quote_quantity
 
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
-            raise RuntimeError("Binance API did not return a dict for market order")
+            raise RuntimeError(
+                "Binance Futures API did not return a dict for market order"
+            )
         return result
 
     async def _execute_limit_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a limit order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         if order.target_price is None:
             raise ValueError("Target price required for limit orders")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_LIMIT,
+            "type": FUTURE_ORDER_TYPE_LIMIT,
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
         }
 
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
-            raise RuntimeError("Binance API did not return a dict for limit order")
+            raise RuntimeError(
+                "Binance Futures API did not return a dict for limit order"
+            )
         return result
 
     async def _execute_stop_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a stop market order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop orders")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_STOP_LOSS,
+            "type": FUTURE_ORDER_TYPE_STOP_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
         }
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
-            raise RuntimeError("Binance API did not return a dict for stop order")
+            raise RuntimeError(
+                "Binance Futures API did not return a dict for stop order"
+            )
         return result
 
     async def _execute_stop_limit_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a stop limit order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         if order.target_price is None:
             raise ValueError("Target price required for stop limit orders")
         if order.stop_loss is None:
@@ -280,34 +296,40 @@ class BinanceExchange:
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_STOP_LOSS_LIMIT,
+            "type": FUTURE_ORDER_TYPE_STOP,
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
         }
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
-            raise RuntimeError("Binance API did not return a dict for stop limit order")
+            raise RuntimeError(
+                "Binance Futures API did not return a dict for stop limit order"
+            )
         return result
 
     async def _execute_take_profit_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a take profit market order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_TAKE_PROFIT,
+            "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
         }
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
             raise RuntimeError(
-                "Binance API did not return a dict for take profit order"
+                "Binance Futures API did not return a dict for take profit order"
             )
         return result
 
@@ -316,7 +338,7 @@ class BinanceExchange:
     ) -> dict[str, Any]:
         """Execute a take profit limit order"""
         if self.client is None:
-            raise RuntimeError("Binance client not initialized")
+            raise RuntimeError("Binance Futures client not initialized")
         if order.target_price is None:
             raise ValueError("Target price required for take profit limit orders")
         if order.take_profit is None:
@@ -324,16 +346,18 @@ class BinanceExchange:
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": ORDER_TYPE_TAKE_PROFIT_LIMIT,
+            "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
         }
-        result = await self._execute_with_retry(self.client.create_order, **params)
+        result = await self._execute_with_retry(
+            self.client.futures_create_order, **params
+        )
         if not isinstance(result, dict):
             raise RuntimeError(
-                "Binance API did not return a dict for take profit limit order"
+                "Binance Futures API did not return a dict for take profit limit order"
             )
         return result
 
@@ -343,7 +367,7 @@ class BinanceExchange:
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                return await func(**kwargs)
+                return func(**kwargs)  # Futures client is synchronous
             except BinanceAPIException as e:
                 # Don't retry on certain errors
                 if e.code in [
@@ -369,6 +393,81 @@ class BinanceExchange:
         if last_exception is None:
             raise RuntimeError("No exception captured during retry")
         raise last_exception
+
+    def get_min_order_amount(self, symbol: str) -> dict[str, Any]:
+        """Get minimum order amount for a symbol based on Binance filters"""
+        if symbol not in self.symbol_info:
+            raise ValueError(f"Symbol {symbol} not found in exchange info")
+
+        symbol_data = self.symbol_info[symbol]
+        filters = symbol_data["filters"]
+
+        # Find LOT_SIZE filter for minimum quantity
+        lot_size_filter = next(
+            (f for f in filters if f["filterType"] == "LOT_SIZE"), None
+        )
+
+        # Find MIN_NOTIONAL filter for minimum order value
+        min_notional_filter = next(
+            (f for f in filters if f["filterType"] == "MIN_NOTIONAL"), None
+        )
+
+        # Find PRICE_FILTER for price precision (unused for now)
+        # price_filter = next(
+        #     (f for f in filters if f["filterType"] == "PRICE_FILTER"), None
+        # )
+
+        min_qty = float(lot_size_filter["minQty"]) if lot_size_filter else 0.001
+        min_notional = (
+            float(min_notional_filter["notional"]) if min_notional_filter else 5.0
+        )
+        step_size = float(lot_size_filter["stepSize"]) if lot_size_filter else 0.001
+
+        # Calculate precision based on step size
+        precision = (
+            len(str(step_size).split(".")[-1].rstrip("0"))
+            if "." in str(step_size)
+            else 0
+        )
+
+        return {
+            "symbol": symbol,
+            "min_qty": min_qty,
+            "min_notional": min_notional,
+            "step_size": step_size,
+            "precision": precision,
+            "base_asset": symbol_data["baseAsset"],
+            "quote_asset": symbol_data["quoteAsset"],
+        }
+
+    def calculate_min_order_amount(
+        self, symbol: str, current_price: float | None = None
+    ) -> float:
+        """Calculate the minimum order amount that meets all requirements"""
+        try:
+            min_info = self.get_min_order_amount(symbol)
+            min_qty = float(min_info["min_qty"])
+            min_notional = float(min_info["min_notional"])
+
+            # If no current price provided, use min_qty as fallback
+            if current_price is None:
+                return min_qty
+
+            # Calculate minimum quantity based on notional value
+            min_qty_by_notional = min_notional / current_price
+
+            # Use the larger of the two minimums
+            final_min_qty = max(min_qty, min_qty_by_notional)
+
+            # Round to the appropriate precision
+            precision = min_info["precision"]
+            final_min_qty = round(final_min_qty, precision)
+
+            return final_min_qty
+
+        except Exception as e:
+            logger.warning(f"Error calculating min order amount for {symbol}: {e}")
+            return 0.001  # Fallback to safe default
 
     def _format_quantity(self, symbol: str, quantity: float) -> str:
         """Format quantity according to symbol precision"""
@@ -463,8 +562,8 @@ class BinanceExchange:
 
         try:
             if self.client is None:
-                raise RuntimeError("Binance client not initialized")
-            account_info = await self.client.get_account()
+                raise RuntimeError("Binance Futures client not initialized")
+            account_info = self.client.futures_account()
             return {
                 "maker_commission": account_info.get("makerCommission"),
                 "taker_commission": account_info.get("takerCommission"),
@@ -473,7 +572,7 @@ class BinanceExchange:
                 "can_trade": account_info.get("canTrade"),
                 "can_withdraw": account_info.get("canWithdraw"),
                 "can_deposit": account_info.get("canDeposit"),
-                "balances": account_info.get("balances", []),
+                "assets": account_info.get("assets", []),
             }
         except Exception as e:
             logger.error(f"Failed to get account info: {e}")
@@ -486,16 +585,16 @@ class BinanceExchange:
 
         try:
             if self.client is None:
-                raise RuntimeError("Binance client not initialized")
-            ticker = await self.client.get_symbol_ticker(symbol=symbol)
+                raise RuntimeError("Binance Futures client not initialized")
+            ticker = self.client.futures_symbol_ticker(symbol=symbol)
             return float(ticker["price"])
         except Exception as e:
             logger.error(f"Failed to get price for {symbol}: {e}")
             raise
 
     async def get_price(self, symbol: str) -> float:
-        # Simulate price for now
-        return 45000.0
+        """Get current price for a symbol"""
+        return await self.get_symbol_price(symbol)
 
     async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         """Cancel an existing order"""
@@ -504,8 +603,8 @@ class BinanceExchange:
 
         try:
             if self.client is None:
-                raise RuntimeError("Binance client not initialized")
-            result = await self.client.cancel_order(symbol=symbol, orderId=order_id)
+                raise RuntimeError("Binance Futures client not initialized")
+            result = self.client.futures_cancel_order(symbol=symbol, orderId=order_id)
             return {
                 "order_id": result.get("orderId"),
                 "status": result.get("status"),
@@ -523,8 +622,8 @@ class BinanceExchange:
 
         try:
             if self.client is None:
-                raise RuntimeError("Binance client not initialized")
-            order = await self.client.get_order(symbol=symbol, orderId=order_id)
+                raise RuntimeError("Binance Futures client not initialized")
+            order = self.client.futures_get_order(symbol=symbol, orderId=order_id)
             return {
                 "order_id": order.get("orderId"),
                 "status": order.get("status"),
@@ -541,12 +640,26 @@ class BinanceExchange:
             logger.error(f"Failed to get order status for {order_id}: {e}")
             raise
 
+    async def get_position_info(self) -> list[dict[str, Any]]:
+        """Get position information"""
+        if not self.initialized:
+            await self.initialize()
+
+        try:
+            if self.client is None:
+                raise RuntimeError("Binance Futures client not initialized")
+            positions = self.client.futures_position_information()
+            # Type cast to satisfy mypy
+            return list(positions) if positions else []
+        except Exception as e:
+            logger.error(f"Failed to get position info: {e}")
+            raise
+
     async def close(self) -> None:
-        """Close the Binance client"""
-        if self.client:
-            await self.client.close_connection()
-            logger.info("Binance client connection closed")
+        """Close the Binance Futures client"""
+        # UMFutures client doesn't have a close method like AsyncClient
+        logger.info("Binance Futures client connection closed")
 
 
-# Global Binance exchange instance
-binance_exchange = BinanceExchange()
+# Global Binance Futures exchange instance
+binance_futures_exchange = BinanceFuturesExchange()

@@ -205,7 +205,7 @@ async def test_create_order_from_signal(
     assert order.symbol == "BTCUSDT"
     assert order.type == "market"
     assert order.side == "buy"
-    assert order.amount == 0.001  # Default amount
+    assert order.amount == 0.1  # Uses signal quantity when valid
 
 
 @pytest.mark.asyncio

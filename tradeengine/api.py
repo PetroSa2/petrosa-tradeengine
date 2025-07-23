@@ -13,7 +13,7 @@ from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
 from tradeengine.dispatcher import Dispatcher
-from tradeengine.exchange.binance import BinanceExchange
+from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ app = FastAPI(
 # Initialize components
 settings = Settings()
 dispatcher = Dispatcher()
-binance_exchange = BinanceExchange()
+binance_exchange = BinanceFuturesExchange()
 simulator_exchange = SimulatorExchange()
 
 logger = logging.getLogger(__name__)

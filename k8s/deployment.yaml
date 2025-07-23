@@ -77,6 +77,15 @@ spec:
               key: binance-testnet
         - name: RISK_MANAGEMENT_ENABLED
           value: "true"
+        # Futures-specific configuration
+        - name: FUTURES_TRADING_ENABLED
+          value: "true"
+        - name: DEFAULT_LEVERAGE
+          value: "10"
+        - name: MARGIN_TYPE
+          value: "isolated"
+        - name: POSITION_MODE
+          value: "hedge"
         # Risk management limits
         - name: MAX_POSITION_SIZE_PCT
           value: "0.1"
@@ -126,11 +135,11 @@ spec:
               fieldPath: status.podIP
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
             memory: "512Mi"
             cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
         livenessProbe:
           httpGet:
             path: /live

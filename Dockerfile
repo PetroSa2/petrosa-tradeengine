@@ -14,7 +14,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     APP_VERSION="${VERSION}" \
     COMMIT_SHA="${COMMIT_SHA}" \
-    BUILD_DATE="${BUILD_DATE}"
+    BUILD_DATE="${BUILD_DATE}" \
+    MONGODB_URI="mongodb://localhost:27017/test" \
+    MONGODB_DATABASE="test"
 
 # Metadata labels
 LABEL org.opencontainers.image.title="Petrosa Trading Engine" \

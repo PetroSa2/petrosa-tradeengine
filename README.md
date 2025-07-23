@@ -532,3 +532,4 @@ JWT_SECRET_KEY=test
 ```
 
 If your test runner loads `.env.test` automatically, these values will be used for local testing. This ensures the catastrophic failure logic is satisfied and tests will run successfully.
+# Trigger CI/CD pipeline for dynamic minimum amounts deployment

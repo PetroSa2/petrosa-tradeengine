@@ -9,6 +9,8 @@ import logging
 import os
 import sys
 
+from contracts.signal import SignalStrength, SignalType
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -32,14 +34,14 @@ K8S_CONFIG = {
 }
 
 
-def setup_environment():
+def setup_environment() -> None:
     """Set up environment variables to match Kubernetes configuration"""
     for key, value in K8S_CONFIG.items():
         os.environ[key] = value
         logger.info(f"Set {key} = {value}")
 
 
-def test_signal_quantity_validation():
+def test_signal_quantity_validation() -> bool:
     """Test how Signal contract handles different quantity values"""
     logger.info("🔍 Testing Signal quantity validation...")
 
@@ -79,13 +81,13 @@ def test_signal_quantity_validation():
                 signal = Signal(
                     strategy_id="test_strategy",
                     symbol="BTCUSDT",
-                    signal_type="buy",
+                    signal_type=SignalType.BUY,
                     action="buy",
                     confidence=0.8,
-                    strength="medium",
+                    strength=SignalStrength.MEDIUM,
                     timeframe="1h",
                     price=45000.0,
-                    quantity=test_case["quantity"],
+                    quantity=float(test_case["quantity"]),
                     current_price=45000.0,
                     source="test",
                     strategy="test-strategy",
@@ -102,7 +104,7 @@ def test_signal_quantity_validation():
         return False
 
 
-def test_order_quantity_validation():
+def test_order_quantity_validation() -> bool:
     """Test how TradeOrder contract handles different quantity values"""
     logger.info("🔍 Testing TradeOrder quantity validation...")
 
@@ -161,7 +163,7 @@ def test_order_quantity_validation():
         return False
 
 
-async def test_binance_exchange_quantity_validation():
+async def test_binance_exchange_quantity_validation() -> None:
     """Test how BinanceFuturesExchange handles different quantity values"""
     logger.info("🔍 Testing BinanceFuturesExchange quantity validation...")
 
@@ -235,7 +237,7 @@ async def test_binance_exchange_quantity_validation():
         return False
 
 
-async def test_dispatcher_quantity_handling():
+async def test_dispatcher_quantity_handling() -> None:
     """Test how the dispatcher handles quantity in signal-to-order conversion"""
     logger.info("🔍 Testing dispatcher quantity handling...")
 
@@ -280,13 +282,13 @@ async def test_dispatcher_quantity_handling():
                 signal = Signal(
                     strategy_id="test_strategy",
                     symbol="BTCUSDT",
-                    signal_type="buy",
+                    signal_type=SignalType.BUY,
                     action="buy",
                     confidence=0.8,
-                    strength="medium",
+                    strength=SignalStrength.MEDIUM,
                     timeframe="1h",
                     price=45000.0,
-                    quantity=test_case["signal_quantity"],
+                    quantity=float(test_case["signal_quantity"]),
                     current_price=45000.0,
                     source="test",
                     strategy="test-strategy",
@@ -303,14 +305,12 @@ async def test_dispatcher_quantity_handling():
                 logger.error(f"❌ {test_case['name']}: Failed - {e}")
 
         await dispatcher.close()
-        return True
 
     except Exception as e:
         logger.error(f"❌ Dispatcher quantity handling test failed: {e}")
-        return False
 
 
-def test_api_endpoint_quantity_handling():
+def test_api_endpoint_quantity_handling() -> bool:
     """Test how API endpoints handle quantity in requests"""
     logger.info("🔍 Testing API endpoint quantity handling...")
 
@@ -346,14 +346,11 @@ def test_api_endpoint_quantity_handling():
             else:
                 logger.info("   Quantity: None (missing)")
 
-        return True
-
     except Exception as e:
         logger.error(f"❌ API endpoint quantity handling test failed: {e}")
-        return False
 
 
-async def main():
+async def main() -> None:
     """Main test function"""
     logger.info("🚀 Testing Quantity/Volume Handling in Trading Engine")
     logger.info("=" * 70)
@@ -378,9 +375,11 @@ async def main():
         logger.info(f"\n📋 Running {test_name}...")
         try:
             if asyncio.iscoroutinefunction(test_func):
-                success = await test_func()
+                await test_func()
+                success = True
             else:
-                success = test_func()
+                test_func()
+                success = True
             results.append((test_name, success))
         except Exception as e:
             logger.error(f"Test {test_name} failed with exception: {e}")

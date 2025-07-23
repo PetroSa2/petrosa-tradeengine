@@ -9,6 +9,9 @@ import logging
 import os
 import sys
 from datetime import datetime
+from typing import Any
+
+from contracts.signal import SignalStrength, SignalType
 
 # Configure logging
 logging.basicConfig(
@@ -33,34 +36,38 @@ K8S_CONFIG = {
 }
 
 
-def setup_environment():
+def setup_environment() -> None:
     """Set up environment variables to match Kubernetes configuration"""
     for key, value in K8S_CONFIG.items():
         os.environ[key] = value
         logger.info(f"Set {key} = {value}")
 
 
-def create_test_signal():
+def create_test_signal() -> dict[str, Any]:
     """Create a test signal that would come through the API"""
     return {
         "strategy_id": "test_strategy_001",
         "symbol": "BTCUSDT",
+        "signal_type": SignalType.BUY,
         "action": "buy",
-        "order_type": "market",
+        "confidence": 0.85,
+        "strength": SignalStrength.MEDIUM,
+        "price": 118000.0,
+        "quantity": 0.001,
         "current_price": 118000.0,
-        "target_price": 118000.0,
+        "source": "test",
+        "strategy": "test-strategy",
+        "timeframe": "1h",
+        "order_type": "market",
+        "time_in_force": "GTC",
+        "position_size_pct": 0.1,
         "stop_loss": 117000.0,
         "take_profit": 119000.0,
-        "position_size_pct": 0.1,
-        "confidence": 0.85,
-        "model_confidence": 0.82,
-        "timestamp": datetime.utcnow().isoformat(),
-        "timeframe": "1h",
-        "meta": {"source": "test_api_flow", "simulate": False},
+        "timestamp": datetime.utcnow(),
     }
 
 
-def test_direct_binance_connection():
+def test_direct_binance_connection() -> bool:
     """Test direct Binance connection to verify credentials work"""
     logger.info("🔍 Testing direct Binance connection...")
 
@@ -90,7 +97,7 @@ def test_direct_binance_connection():
         return False
 
 
-async def test_binance_exchange_class():
+async def test_binance_exchange_class() -> bool:
     """Test the BinanceFuturesExchange class that the API uses"""
     logger.info("🔍 Testing BinanceFuturesExchange class...")
 
@@ -126,7 +133,7 @@ async def test_binance_exchange_class():
         return False
 
 
-async def test_api_endpoint_flow():
+async def test_api_endpoint_flow() -> bool:
     """Test the complete API endpoint flow"""
     logger.info("🔍 Testing complete API endpoint flow...")
 
@@ -157,7 +164,7 @@ async def test_api_endpoint_flow():
         return False
 
 
-async def test_signal_processing():
+async def test_signal_processing() -> bool:
     """Test signal processing through the dispatcher"""
     logger.info("🔍 Testing signal processing through dispatcher...")
 
@@ -187,7 +194,7 @@ async def test_signal_processing():
         return False
 
 
-async def test_complete_flow():
+async def test_complete_flow() -> bool:
     """Test the complete flow from signal to execution"""
     logger.info("🔍 Testing complete flow from signal to execution...")
 
@@ -203,7 +210,7 @@ async def test_complete_flow():
         return False
 
 
-async def main():
+async def main() -> None:
     """Main test function"""
     logger.info("🚀 Testing API Endpoint Flow with Binance Testnet")
     logger.info("=" * 70)

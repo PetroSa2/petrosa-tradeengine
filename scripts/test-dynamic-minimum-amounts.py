@@ -6,7 +6,8 @@ Test script to verify dynamic minimum amount calculation for different symbols
 import asyncio
 import logging
 import os
-import sys
+
+from contracts.signal import SignalStrength, SignalType
 
 # Configure logging
 logging.basicConfig(
@@ -31,14 +32,14 @@ K8S_CONFIG = {
 }
 
 
-def setup_environment():
+def setup_environment() -> None:
     """Set up environment variables to match Kubernetes configuration"""
     for key, value in K8S_CONFIG.items():
         os.environ[key] = value
         logger.info(f"Set {key} = {value}")
 
 
-async def test_binance_minimum_amounts():
+async def test_binance_minimum_amounts() -> None:
     """Test Binance minimum amount calculation for different symbols"""
     logger.info("🔍 Testing Binance minimum amount calculation...")
 
@@ -159,7 +160,7 @@ async def test_binance_minimum_amounts():
         return []
 
 
-async def test_exchange_class_minimum_amounts():
+async def test_exchange_class_minimum_amounts() -> None:
     """Test BinanceFuturesExchange minimum amount calculation"""
     logger.info("🔍 Testing BinanceFuturesExchange minimum amount calculation...")
 
@@ -226,7 +227,7 @@ async def test_exchange_class_minimum_amounts():
         return []
 
 
-async def test_dispatcher_minimum_amounts():
+async def test_dispatcher_minimum_amounts() -> None:
     """Test dispatcher minimum amount calculation"""
     logger.info("🔍 Testing dispatcher minimum amount calculation...")
 
@@ -283,13 +284,13 @@ async def test_dispatcher_minimum_amounts():
                 signal = Signal(
                     strategy_id="test_strategy",
                     symbol=test_case["symbol"],
-                    signal_type="buy",
+                    signal_type=SignalType.BUY,
                     action="buy",
                     confidence=0.8,
-                    strength="medium",
+                    strength=SignalStrength.MEDIUM,
                     timeframe="1h",
                     price=test_case["current_price"],
-                    quantity=test_case["quantity"]
+                    quantity=float(test_case["quantity"])
                     if test_case["quantity"] is not None
                     else 0.0,
                     current_price=test_case["current_price"],
@@ -329,7 +330,7 @@ async def test_dispatcher_minimum_amounts():
         return []
 
 
-async def main():
+async def main() -> None:
     """Main test function"""
     logger.info("🚀 Testing Dynamic Minimum Amount Calculation")
     logger.info("=" * 70)
@@ -382,9 +383,6 @@ async def main():
     logger.info("✅ Orders will meet Binance minimum requirements")
     logger.info("=" * 70)
 
-    return 0
-
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+    asyncio.run(main())

@@ -219,7 +219,9 @@ def test_risk_management_config():
 
 async def main():
     """Main test function"""
-    logger.info("🚀 Starting Binance Futures testnet test with Kubernetes configuration")
+    logger.info(
+        "🚀 Starting Binance Futures testnet test with Kubernetes configuration"
+    )
     logger.info("=" * 60)
 
     # Setup environment
@@ -242,7 +244,9 @@ async def main():
     logger.info(f"  Risk Config Test: {'✅ PASS' if risk_success else '❌ FAIL'}")
 
     if all([connection_success, futures_success, risk_success]):
-        logger.info("🎉 All tests passed! Binance Futures testnet is working correctly.")
+        logger.info(
+            "🎉 All tests passed! Binance Futures testnet is working correctly."
+        )
         return 0
     else:
         logger.error("❌ Some tests failed. Please check the logs above.")

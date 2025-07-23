@@ -18,11 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from binance.enums import (
-        ORDER_TYPE_LIMIT,
-        SIDE_BUY,
-        TIME_IN_FORCE_GTC,
-    )
+    from binance.enums import ORDER_TYPE_LIMIT, SIDE_BUY, TIME_IN_FORCE_GTC
     from binance.um_futures import UMFutures
 except ImportError as e:
     print(f"❌ Missing required dependencies: {e}")
@@ -31,11 +27,7 @@ except ImportError as e:
 
 # Import project constants
 try:
-    from shared.constants import (
-        BINANCE_API_KEY,
-        BINANCE_API_SECRET,
-        BINANCE_TESTNET,
-    )
+    from shared.constants import BINANCE_API_KEY, BINANCE_API_SECRET, BINANCE_TESTNET
 except ImportError:
     print("❌ Cannot import project constants. Check your environment setup.")
     sys.exit(1)

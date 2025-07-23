@@ -1,9 +1,10 @@
-# Petrosa Trading Engine MVP
+# Petrosa Trading Engine
 
-**Phase 1 MVP** of a modular, event-driven trading execution system focused on crypto trading, starting with Binance.
+**Production-ready cryptocurrency trading engine** with dynamic minimum order amounts, comprehensive CI/CD pipeline, and Kubernetes deployment.
 
 ## 🚀 Features
 
+- **Dynamic Minimum Order Amounts**: Automatically calculates minimum order requirements for each symbol
 - **Comprehensive Order Types**: Market, limit, stop, stop-limit, take-profit, and take-profit-limit orders
 - **Advanced Risk Management**: Automatic stop-loss and take-profit calculation
 - **Live Trading**: Full Binance API integration with testnet and mainnet support
@@ -11,12 +12,13 @@
 - **Signal Processing**: REST API and NATS consumer for trading signals
 - **Modular Architecture**: Clean separation of concerns with contracts, dispatcher, and exchange interfaces
 - **Monitoring**: Prometheus metrics and MongoDB audit logging
-- **Extensible**: Ready for future enhancements (risk management, multiple exchanges, AI tools)
+- **Kubernetes Ready**: Complete CI/CD pipeline with auto-incremented versioning
+- **Production Deployment**: Remote MicroK8s cluster with SSL ingress
 
 ## 🏗️ Architecture
 
 ```
-petrosa/
+petrosa-tradeengine/
 ├── contracts/         # Shared Pydantic models (Signal, TradeOrder)
 ├── tradeengine/       # Core engine (API, consumer, dispatcher, exchange)
 │   ├── exchange/      # Exchange integrations (Binance, simulator)
@@ -27,62 +29,69 @@ petrosa/
 │   ├── constants.py   # Centralized configuration and constants
 │   ├── config.py      # Backward compatibility settings
 │   └── logger.py      # Audit logging
+├── k8s/               # Kubernetes manifests for production deployment
+├── scripts/           # Automation and testing scripts
 └── examples/          # Usage examples and demonstrations
 ```
 
 ## 🔧 Tech Stack
 
-- **Python 3.10+** with Poetry for dependency management
+- **Python 3.11+** with Poetry for dependency management
 - **FastAPI** for REST API
 - **Pydantic** for data validation and schemas
 - **python-binance** for Binance API integration
 - **MongoDB** (via motor) for audit logging
 - **NATS** for event streaming
 - **Prometheus** for metrics collection
+- **Kubernetes** for production deployment
+- **Docker** for containerization
+- **GitHub Actions** for CI/CD pipeline
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.10+
-- Poetry (installed automatically)
-- MongoDB (optional - for audit logging)
-- NATS (optional - for event consumption)
-- Binance API keys (for live trading)
+- Python 3.11+
+- Docker (for containerization)
+- kubectl (for Kubernetes deployment)
+- Make (for automation)
 
 ### Installation
 
 ```bash
-# Install dependencies
-make install
+# Complete setup with all dependencies
+make setup
 
-# Or manually with poetry
-poetry install
+# Install development dependencies
+make install-dev
+
+# Run local pipeline (lint, test, build)
+make pipeline
 ```
 
 ### Configuration
 
-1. **Copy environment template**:
+1. **Environment Variables**:
    ```bash
-   cp .env.example .env
-   ```
-
-2. **Set your Binance API keys** (for live trading):
-   ```bash
+   # Binance Configuration
    BINANCE_API_KEY=your_api_key
    BINANCE_API_SECRET=your_api_secret
    BINANCE_TESTNET=true  # Set to false for mainnet
-   ```
 
-3. **Configure trading parameters**:
-   ```bash
+   # Trading Configuration
    SIMULATION_ENABLED=true  # Set to false for live trading
-   DEFAULT_BASE_AMOUNT=100.0
-   STOP_LOSS_DEFAULT=2.0  # 2% default stop loss
-   TAKE_PROFIT_DEFAULT=5.0  # 5% default take profit
+   ENVIRONMENT=production
+   LOG_LEVEL=INFO
+
+   # Database
+   MONGODB_URL=mongodb://localhost:27017
+   MONGODB_DATABASE=petrosa
+
+   # JWT
+   JWT_SECRET_KEY=your_jwt_secret
    ```
 
-### Running the API Server
+### Running Locally
 
 ```bash
 # Start the FastAPI server
@@ -93,30 +102,61 @@ make run
 # Metrics at http://localhost:8000/metrics
 ```
 
-### Running the NATS Consumer
+### Running in Docker
 
 ```bash
-# Start the signal consumer (requires NATS)
-make consumer
+# Build Docker image
+make build
+
+# Run in Docker
+make run-docker
+
+# Test container
+make container
 ```
 
-### Testing Trading Functionality
+## 🚀 Production Deployment
+
+### Kubernetes Deployment
+
+The project includes a complete CI/CD pipeline that automatically:
+
+1. **Creates versioned releases** (v1.1.21, v1.1.22, etc.)
+2. **Builds and pushes Docker images** to Docker Hub
+3. **Deploys to Kubernetes** with proper health checks
+4. **Updates with zero downtime** using rolling deployments
+
+### Deployment Commands
 
 ```bash
-# Run comprehensive trading examples
-python examples/advanced_trading_example.py
+# Deploy to Kubernetes
+make deploy
 
-# Run constants usage example
-python examples/constants_usage.py
+# Check deployment status
+make k8s-status
+
+# View logs
+make k8s-logs
+
+# Monitor deployment
+make monitor
 ```
+
+### Kubernetes Resources
+
+- **Namespace**: `petrosa-apps`
+- **Deployment**: 3 replicas with health checks
+- **Service**: ClusterIP on port 80
+- **Ingress**: SSL-enabled with Let's Encrypt
+- **HPA**: Auto-scaling based on CPU/memory
 
 ## 📊 API Endpoints
 
 ### Core Trading Endpoints
 
-#### POST `/trade`
+#### POST `/trade/signal`
 
-Process a trading signal and execute trade.
+Process a trading signal with dynamic minimum amounts.
 
 **Request Body:**
 ```json
@@ -125,17 +165,14 @@ Process a trading signal and execute trade.
   "symbol": "BTCUSDT",
   "action": "buy",
   "price": 45000.0,
+  "quantity": 0.0,  // Will use dynamic minimum if zero
   "confidence": 0.85,
   "timestamp": "2025-06-29T12:00:00Z",
   "meta": {
-    "order_type": "limit",
-    "base_amount": 0.001,
+    "order_type": "market",
     "stop_loss": 43000.0,
     "take_profit": 47000.0,
-    "time_in_force": "GTC",
-    "simulate": true,
-    "indicators": {"rsi": 65, "macd": "bullish"},
-    "rationale": "Strong momentum breakout"
+    "time_in_force": "GTC"
   }
 }
 ```
@@ -143,18 +180,18 @@ Process a trading signal and execute trade.
 **Response:**
 ```json
 {
-  "message": "Signal processed successfully",
-  "signal_id": "momentum_v1",
+  "status": "success",
+  "signal": { ... },
   "result": {
-    "order_id": "12345678",
-    "status": "filled",
-    "side": "buy",
-    "type": "limit",
-    "amount": 0.001,
-    "fill_price": 45000.0,
-    "total_value": 45.0,
-    "fees": 0.045,
-    "simulated": true
+    "status": "executed",
+    "order_params": {
+      "symbol": "BTCUSDT",
+      "side": "buy",
+      "type": "market",
+      "time_in_force": "GTC"
+    },
+    "confidence": 0.85,
+    "reason": "Deterministic rules satisfied"
   }
 }
 ```
@@ -163,31 +200,9 @@ Process a trading signal and execute trade.
 
 Get account information from Binance.
 
-**Response:**
-```json
-{
-  "message": "Account information retrieved successfully",
-  "data": {
-    "can_trade": true,
-    "maker_commission": 15,
-    "taker_commission": 15,
-    "balances": [...]
-  }
-}
-```
-
 #### GET `/price/{symbol}`
 
 Get current price for a symbol.
-
-**Response:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "price": 45000.0,
-  "timestamp": "2025-06-29T12:00:00Z"
-}
-```
 
 #### DELETE `/order/{symbol}/{order_id}`
 
@@ -197,15 +212,71 @@ Cancel an existing order.
 
 Get status of an existing order.
 
-### Utility Endpoints
+### Health Endpoints
 
-- **GET `/`** - Health check endpoint
-- **GET `/health`** - Detailed health check
-- **GET `/version`** - Application version information
-- **GET `/metrics`** - Prometheus metrics endpoint
-- **GET `/docs`** - Interactive API documentation
+- **GET `/health`** - Detailed health status
+- **GET `/ready`** - Readiness probe
+- **GET `/live`** - Liveness probe
+- **GET `/metrics`** - Prometheus metrics
 
-## 🎯 Order Types Supported
+## 🎯 Dynamic Minimum Order Amounts
+
+### The Problem
+Each cryptocurrency symbol has different minimum order requirements:
+- **BTCUSDT**: 0.00001 BTC minimum
+- **DOGEUSDT**: 100 DOGE minimum
+- **ETHUSDT**: 0.001 ETH minimum
+
+### The Solution
+The system automatically calculates the minimum order amount for each symbol:
+
+```python
+def calculate_min_order_amount(self, symbol: str, current_price: float = None) -> float:
+    """Calculate minimum order amount that meets all requirements"""
+    min_info = self.get_min_order_amount(symbol)
+    min_qty = float(min_info["min_qty"])
+    min_notional = float(min_info["min_notional"])
+
+    if current_price:
+        # Calculate minimum quantity based on price
+        min_qty_by_price = min_notional / current_price
+        return max(min_qty, min_qty_by_price)
+
+    return min_qty
+```
+
+### Usage
+- **Zero quantity**: System uses calculated minimum
+- **Valid quantity**: System uses provided quantity
+- **Invalid quantity**: System uses calculated minimum
+
+## 🔒 Risk Management Features
+
+### Automatic Stop-Loss Calculation
+```json
+{
+  "stop_loss": 43000.0,  // Custom stop loss
+  "stop_loss_pct": 2.0   // Or percentage-based
+}
+```
+
+### Automatic Take-Profit Calculation
+```json
+{
+  "take_profit": 47000.0,  // Custom take profit
+  "take_profit_pct": 5.0   // Or percentage-based
+}
+```
+
+### Position Sizing
+```json
+{
+  "quantity": 0.001,     // Fixed quantity
+  "position_size_pct": 5.0  // Or percentage of balance
+}
+```
+
+## 🎮 Order Types Supported
 
 ### 1. Market Orders
 - **Immediate execution** at current market price
@@ -237,68 +308,15 @@ Get status of an existing order.
 - **Best for**: Controlled profit taking
 - **Risk**: May not fill if price gaps through limit
 
-## 🔒 Risk Management Features
-
-### Automatic Stop-Loss Calculation
-```json
-{
-  "meta": {
-    "use_default_stop_loss": true,
-    "stop_loss": 43000.0  // Override default
-  }
-}
-```
-
-### Automatic Take-Profit Calculation
-```json
-{
-  "meta": {
-    "use_default_take_profit": true,
-    "take_profit": 47000.0  // Override default
-  }
-}
-```
-
-### Position Sizing
-```json
-{
-  "meta": {
-    "base_amount": 0.001,  // Base position size
-    "confidence": 0.85     // Scales position by confidence
-  }
-}
-```
-
-## 🎮 Signal Meta Options
-
-### Order Configuration
-- `order_type`: "market", "limit", "stop", "stop_limit", "take_profit", "take_profit_limit"
-- `base_amount`: Base position size
-- `time_in_force`: "GTC", "IOC", "FOK"
-- `quote_quantity`: Quote quantity for market orders
-
-### Risk Management
-- `stop_loss`: Custom stop loss price
-- `take_profit`: Custom take profit price
-- `use_default_stop_loss`: Use default percentage
-- `use_default_take_profit`: Use default percentage
-
-### Trading Mode
-- `simulate`: Override global simulation setting
-- `description`: Human-readable description
-- `strategy_metadata`: Additional strategy information
-
 ## 🔧 Configuration
 
-Configuration is handled via environment variables or `.env` file:
+### Environment Variables
 
 ```bash
 # Trading Configuration
 SIMULATION_ENABLED=true
-DEFAULT_BASE_AMOUNT=100.0
-DEFAULT_ORDER_TYPE=market
-STOP_LOSS_DEFAULT=2.0
-TAKE_PROFIT_DEFAULT=5.0
+ENVIRONMENT=production
+LOG_LEVEL=INFO
 
 # Binance Configuration
 BINANCE_API_KEY=your_api_key
@@ -317,59 +335,37 @@ NATS_SIGNAL_SUBJECT=signals.trading
 API_HOST=0.0.0.0
 API_PORT=8000
 
-# Environment
-ENVIRONMENT=development
-LOG_LEVEL=INFO
+# JWT
+JWT_SECRET_KEY=your_jwt_secret
 ```
 
 ## 📈 Monitoring
 
-- **Prometheus Metrics**: Available at `/metrics`
-  - `tradeengine_trades_total` - Total trades by status and type
-  - `tradeengine_errors_total` - Total errors by type
-  - `tradeengine_latency_seconds` - Trade execution latency
-  - `tradeengine_nats_messages_processed_total` - NATS message processing
+### Prometheus Metrics
+Available at `/metrics`:
+- `tradeengine_trades_total` - Total trades by status and type
+- `tradeengine_errors_total` - Total errors by type
+- `tradeengine_latency_seconds` - Trade execution latency
+- `tradeengine_nats_messages_processed_total` - NATS message processing
 
-- **MongoDB Audit Log**: All trades are logged with full context including signal metadata
+### Health Checks
+- **Readiness Probe**: `/ready` - Service is ready to receive traffic
+- **Liveness Probe**: `/live` - Service is alive and responding
+- **Health Check**: `/health` - Detailed health status
 
-## 🔄 NATS Integration
-
-Petrosa uses NATS for cloud-native event streaming, which is particularly well-suited for Kubernetes environments.
-
-### NATS Setup
-
-1. **Install NATS Server:**
-   ```bash
-   # macOS
-   brew install nats-server
-
-   # Docker
-   docker run -p 4222:4222 nats:latest
-
-   # Kubernetes
-   helm repo add nats https://nats-io.github.io/k8s/helm/charts/
-   helm install my-nats nats/nats
-   ```
-
-2. **Start NATS Server:**
-   ```bash
-   nats-server
-   ```
-
-3. **Test Signal Publishing:**
-   ```bash
-   python examples/publish_signal.py
-   ```
+### Audit Logging
+All trades are logged to MongoDB with full context including signal metadata.
 
 ## 🚦 Trade Flow
 
 1. **Signal Input**:
-   - Via REST API: `POST /trade`
+   - Via REST API: `POST /trade/signal`
    - Via NATS: Messages on `signals.trading` subject
 
 2. **Signal Processing**:
    - Validate signal schema
    - Convert to TradeOrder via dispatcher
+   - Calculate dynamic minimum amounts
    - Apply risk management rules
 
 3. **Trade Execution**:
@@ -401,29 +397,38 @@ Petrosa uses NATS for cloud-native event streaming, which is particularly well-s
 - **Signal validation**: Confidence, action, price ranges
 - **Order validation**: Symbol support, price precision
 - **Risk checks**: Position size limits, balance checks
+- **Dynamic minimums**: Symbol-specific requirements
 
-## 🔮 Future Enhancements
+## 🔄 CI/CD Pipeline
 
-- **Risk Management**: Position sizing, exposure limits, drawdown protection
-- **Multi-Exchange**: Coinbase, Kraken support
-- **Portfolio Management**: Position tracking, P&L calculation
-- **Advanced Orders**: OCO orders, trailing stops
-- **Market Data**: Real-time price feeds, order book data
-- **Backtesting**: Historical strategy testing
-- **AI Integration**: Machine learning signal generation
+### Automated Workflow
+1. **Code Push** → Triggers GitHub Actions
+2. **Lint & Test** → Code quality checks
+3. **Security Scan** → Vulnerability scanning
+4. **Create Release** → Auto-increment version (v1.1.21, v1.1.22, etc.)
+5. **Build & Push** → Docker image to Docker Hub
+6. **Deploy** → Kubernetes deployment
+7. **Verify** → Health checks and monitoring
+
+### Version Management
+- **Auto-incremented versions**: v1.1.21, v1.1.22, etc.
+- **Semantic versioning**: Major.Minor.Patch
+- **Git tags**: Automatic tag creation
+- **Docker tags**: Versioned and latest tags
 
 ## 📚 Examples
 
-### Basic Market Order
+### Basic Market Order with Dynamic Minimums
 ```python
 signal = Signal(
     strategy_id="simple_strategy",
     symbol="BTCUSDT",
     action="buy",
     price=45000.0,
+    quantity=0.0,  # Will use dynamic minimum
     confidence=0.8,
     timestamp=datetime.now(),
-    meta={"order_type": "market", "base_amount": 0.001}
+    meta={"order_type": "market"}
 )
 ```
 
@@ -434,102 +439,40 @@ signal = Signal(
     symbol="ETHUSDT",
     action="buy",
     price=3000.0,
+    quantity=0.005,  # Valid quantity, will be used
     confidence=0.9,
     timestamp=datetime.now(),
     meta={
         "order_type": "limit",
-        "base_amount": 0.1,
         "stop_loss": 2850.0,
         "take_profit": 3300.0,
         "time_in_force": "GTC"
     }
-)
+}
 ```
 
-### Stop Loss Order
+### Testing Different Symbols
 ```python
-signal = Signal(
-    strategy_id="risk_management",
-    symbol="BTCUSDT",
-    action="sell",
-    price=45000.0,
-    confidence=0.95,
-    timestamp=datetime.now(),
-    meta={
-        "order_type": "stop",
-        "base_amount": 0.001,
-        "stop_loss": 43000.0
-    }
-)
+# BTCUSDT - will use ~0.00001 BTC minimum
+signal_btc = Signal(symbol="BTCUSDT", quantity=0.0, ...)
+
+# DOGEUSDT - will use ~100 DOGE minimum
+signal_doge = Signal(symbol="DOGEUSDT", quantity=0.0, ...)
+
+# ETHUSDT - will use ~0.001 ETH minimum
+signal_eth = Signal(symbol="ETHUSDT", quantity=0.0, ...)
 ```
 
 ## 🚨 Important Notes
 
 1. **Start with Simulation**: Always test in simulation mode first
 2. **Use Testnet**: Use Binance testnet for live testing
-3. **Small Amounts**: Start with small position sizes
+3. **Dynamic Minimums**: System automatically handles symbol-specific requirements
 4. **Monitor Orders**: Always check order status and fills
 5. **Risk Management**: Always use stop losses and position sizing
 6. **API Limits**: Respect Binance API rate limits
+7. **Production Ready**: Full CI/CD pipeline with Kubernetes deployment
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-# Trigger CI/CD Pipeline
-
-## Pre-commit Enforcement
-
-This repository enforces code quality and formatting on every commit using [pre-commit](https://pre-commit.com/). **No commit can be made unless all pre-commit hooks pass.**
-
-### How It Works
-- **Automatic Installation:**
-  - `make setup` and `make install-dev` will automatically install `pre-commit` (if missing) and set up the hooks for you.
-- **Mandatory Local Checks:**
-  - A custom `.git/hooks/pre-commit` script blocks all commits if `pre-commit` is not installed, and runs all hooks before every commit.
-  - If any hook fails (black, ruff, mypy, isort, etc.), the commit is blocked until you fix the issues.
-- **No Bypassing:**
-  - You cannot commit unless pre-commit is installed and all checks pass.
-  - If you try to commit without pre-commit, you will see an error message with installation instructions.
-
-### What Developers Should Do
-1. Run `make setup` or `make install-dev` after cloning the repo.
-2. Commit as usual. If a hook fails, fix the issues and try again.
-3. If you see an error about pre-commit not being installed, run:
-   ```bash
-   pip install pre-commit
-   pre-commit install
-   ```
-
-### Hooks Enforced
-- **black** (code formatting)
-- **ruff** (linting)
-- **mypy** (type checking)
-- **isort** (import sorting)
-- **bandit** (security, if enabled)
-- **YAML/JSON/TOML checks**
-- **trailing whitespace, end-of-file, and more**
-
-See `.pre-commit-config.yaml` for the full list.
-
-## Running Tests Locally
-
-To run tests locally, you must set the required MongoDB environment variables. You can do this by exporting them in your shell:
-
-```sh
-export MONGODB_URI="mongodb://localhost:27017"
-export MONGODB_DATABASE="test"
-make pipeline
-```
-
-Or, create a `.env.test` file in the project root with the following contents:
-
-```
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=test
-BINANCE_API_KEY=test
-BINANCE_API_SECRET=test
-JWT_SECRET_KEY=test
-```
-
-If your test runner loads `.env.test` automatically, these values will be used for local testing. This ensures the catastrophic failure logic is satisfied and tests will run successfully.
-# Trigger CI/CD pipeline for dynamic minimum amounts deployment

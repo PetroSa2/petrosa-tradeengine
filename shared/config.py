@@ -59,10 +59,11 @@ class Settings(BaseSettings):
     nats_enabled: bool = False
     nats_url: str | None = None
     nats_servers: str | None = None
-    nats_signal_subject: str = "trading.signals"
+    # Align default with shared.constants default and TA bot publisher
+    nats_signal_subject: str = "signals.trading"
 
     # API Configuration (for uvicorn)
-    api_host: str = "0.0.0.0"
+
     api_port: int = 8000
 
     # MySQL Configuration (legacy support)
@@ -83,7 +84,11 @@ class Settings(BaseSettings):
             self.mongodb_uri = get_mongodb_connection_string()
 
         # Set NATS configuration from constants
-        from shared.constants import NATS_ENABLED, get_nats_connection_string
+        from shared.constants import (
+            NATS_ENABLED,
+            NATS_SIGNAL_SUBJECT,
+            get_nats_connection_string,
+        )
 
         self.nats_enabled = NATS_ENABLED
         if self.nats_enabled:
@@ -91,6 +96,10 @@ class Settings(BaseSettings):
             self.nats_servers = self.nats_url
         else:
             self.nats_servers = None
+
+        # Ensure subject aligns with shared.constants if env not set
+        if not kwargs.get("nats_signal_subject"):
+            self.nats_signal_subject = NATS_SIGNAL_SUBJECT
 
     @property
     def is_production(self) -> bool:

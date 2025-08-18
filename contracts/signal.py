@@ -87,8 +87,8 @@ class Signal(BaseModel):
 
     # Trading parameters
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
-    signal_type: SignalType = Field(
-        ..., description="Signal type (buy/sell/hold/close)"
+    signal_type: SignalType | None = Field(
+        None, description="Signal type (buy/sell/hold/close) - deprecated, use action"
     )
     action: Literal["buy", "sell", "hold", "close"] = Field(
         ..., description="Trading action"

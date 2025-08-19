@@ -75,6 +75,16 @@ spec:
             configMapKeyRef:
               name: petrosa-common-config
               key: binance-testnet
+        - name: SUPPORTED_SYMBOLS
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: DEFAULT_SYMBOLS
+        - name: SUPPORTED_TIMEFRAMES
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: SUPPORTED_INTERVALS
         - name: RISK_MANAGEMENT_ENABLED
           value: "true"
         # Futures-specific configuration

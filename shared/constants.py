@@ -220,8 +220,14 @@ SIMULATION_SLIPPAGE = float(os.getenv("SIMULATION_SLIPPAGE", "0.001"))  # 0.1%
 SIMULATION_SUCCESS_RATE = float(os.getenv("SIMULATION_SUCCESS_RATE", "0.95"))  # 95%
 SIMULATION_DELAY_MS = int(os.getenv("SIMULATION_DELAY_MS", "100"))
 
-# Supported Symbols
-SUPPORTED_SYMBOLS = os.getenv("SUPPORTED_SYMBOLS", "BTCUSDT,ETHUSDT,ADAUSDT").split(",")
+# Supported Symbols (from shared configmap)
+SUPPORTED_SYMBOLS = os.getenv(
+    "SUPPORTED_SYMBOLS",
+    "BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,DOTUSDT,LINKUSDT,LTCUSDT,BCHUSDT,XLMUSDT,XRPUSDT",
+).split(",")
+
+# Supported Timeframes (from shared configmap)
+SUPPORTED_TIMEFRAMES = os.getenv("SUPPORTED_TIMEFRAMES", "5m,15m,30m,1h,1d").split(",")
 
 # Order Types
 SUPPORTED_ORDER_TYPES = ["market", "limit", "stop", "stop_limit"]

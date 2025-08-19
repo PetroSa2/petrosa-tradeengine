@@ -1,15 +1,20 @@
-# Cursor AI Rules for Petrosa Trading Engine
+# Cursor AI Rules for Petrosa Systems
 
 ## Repository Context
-This is a Kubernetes-based cryptocurrency trading engine system with comprehensive CI/CD pipeline and local development capabilities.
+This is a unified configuration for all Petrosa systems:
+- **petrosa-bot-ta-analysis**: Technical Analysis bot for crypto trading
+- **petrosa-tradeengine**: Cryptocurrency trading engine system
+- **petrosa-binance-data-extractor**: Cryptocurrency data extraction system
+
+All systems use the same remote MicroK8s cluster, CI/CD pipeline patterns, and development workflows.
 
 ## Key Files to Reference
-- `docs/DEPLOYMENT.md` - Complete production deployment guide with Kubernetes setup
-- `docs/LOCAL_PIPELINE.md` - Local development and testing pipeline guide
+- `README.md` - Project-specific documentation and usage guide
 - `Makefile` - Complete command reference for all development tasks
 - `k8s/` - Kubernetes manifests for production deployment
 - `k8s/kubeconfig.yaml` - Remote MicroK8s cluster configuration
 - `scripts/` - Automation scripts for setup, testing, and deployment
+- `docs/` - Comprehensive documentation and guides
 
 ## Prerequisites & Installation
 - **Python 3.11+**: Required for development and runtime
@@ -18,7 +23,7 @@ This is a Kubernetes-based cryptocurrency trading engine system with comprehensi
 - **Make**: Required for using the Makefile commands
 - **Poetry**: Optional but recommended for dependency management
 
-**Note**: This project uses a **remote MicroK8s cluster** - no local Kubernetes installation required.
+**Note**: All projects use a **remote MicroK8s cluster** - no local Kubernetes installation required.
 
 ## Quick Start Commands
 ```bash
@@ -142,17 +147,18 @@ make k8s-clean
 ```
 
 ## Kubernetes Configuration
-
 ## CRITICAL: ALWAYS FOLLOW THESE RULES
 - **BEFORE making any changes**: Check `docs/REPOSITORY_SETUP_GUIDE.md` and `docs/QUICK_REFERENCE.md`
 - **WHEN suggesting kubectl commands**: Always include `--kubeconfig=k8s/kubeconfig.yaml`
 - **WHEN dealing with credentials**: ONLY use existing secret `petrosa-sensitive-credentials`
-- **WHEN dealing with configuration**: ONLY use existing configmap `petrosa-common-config`
+- **WHEN dealing with configuration**: Use `petrosa-common-config` for general settings and project-specific configmaps
 - **WHEN running GitHub CLI**: ALWAYS use file-based approach: `gh command > /tmp/file.json && cat /tmp/file.json`
 - **WHEN fixing CI/CD issues**: Continue until GitHub Actions pipeline passes
 - **WHEN writing Python code**: Follow PEP 8, use type hints, add proper error handling
 - **NEVER suggest AWS EKS commands** - this is a MicroK8s setup
 - **NEVER create new Kubernetes secrets/configmaps** - use existing ones only
+- **NEVER replace VERSION_PLACEHOLDER in Kubernetes manifests** - it's part of the deployment system
+
 ### Remote Cluster Setup
 - **Cluster Type**: Remote MicroK8s (no local installation required)
 - **Connection**: Use `k8s/kubeconfig.yaml` for cluster access
@@ -160,7 +166,7 @@ make k8s-clean
 
 ### Namespace
 - **Name**: `petrosa-apps`
-- **Labels**: `app=petrosa-tradeengine`
+- **Labels**: `app=petrosa-{project-name}`
 
 ### Components
 - **Deployment**: 3 replicas with health checks
@@ -168,52 +174,60 @@ make k8s-clean
 - **Ingress**: SSL-enabled with Let's Encrypt
 - **HPA**: Auto-scaling based on CPU/memory
 
-### Required Secrets
-```bash
-# Set kubeconfig for remote cluster
-export KUBECONFIG=k8s/kubeconfig.yaml
-
-# Create secrets for production
-kubectl --kubeconfig=k8s/kubeconfig.yaml create secret generic petrosa-secrets \
-  --namespace=petrosa-apps \
-  --from-literal=mongodb-url="your-mongodb-url" \
-  --from-literal=binance-api-key="your-api-key" \
-  --from-literal=binance-api-secret="your-api-secret" \
-  --from-literal=jwt-secret-key="your-jwt-secret"
-```
-
 ## Environment Variables
 
-### Required for Production
+### Common Variables (All Projects)
+- `ENVIRONMENT`: Environment name (default: production)
+- `LOG_LEVEL`: Logging level (default: INFO)
+
+### Project-Specific Variables
+
+#### TA Bot
+- `NATS_URL`: NATS server URL
+- `API_ENDPOINT`: REST API endpoint for signals
+
+#### Trading Engine
 - `MONGODB_URL`: MongoDB connection string
 - `BINANCE_API_KEY`: Binance API key
 - `BINANCE_API_SECRET`: Binance API secret
 - `JWT_SECRET_KEY`: JWT signing secret
 
-### Optional Configuration
-- `ENVIRONMENT`: Environment name (default: production)
-- `LOG_LEVEL`: Logging level (default: INFO)
-- `SIMULATION_ENABLED`: Enable simulation mode (default: false)
-- `BINANCE_TESTNET`: Use Binance testnet (default: false)
+#### Data Extractor
+- `DB_ADAPTER`: Database adapter (mysql, mongodb)
+- `MYSQL_URI`: MySQL connection string
+- `BINANCE_API_KEY`: Binance API key
+- `BINANCE_API_SECRET`: Binance API secret
 
-## API Endpoints
+## Testing Procedures
 
-### Health Checks
-- `/health` - Detailed health status
-- `/ready` - Readiness probe
-- `/live` - Liveness probe
+### Standard Test Commands
+```bash
+# Run all tests
+make test
 
-### Trading Endpoints
-- `POST /trade` - Process trading signals
-- `GET /account` - Get account information
-- `GET /price/{symbol}` - Get current price
-- `DELETE /order/{symbol}/{order_id}` - Cancel order
-- `GET /order/{symbol}/{order_id}` - Get order status
+# Run with coverage
+python -m pytest tests/ -v --cov=. --cov-report=term
 
-### Documentation
-- `/docs` - Interactive API documentation
-- `/openapi.json` - OpenAPI specification
-- `/metrics` - Prometheus metrics
+# Run specific test file
+python -m pytest tests/test_specific.py -v
+
+# Run linting
+make lint
+
+# Run security scan
+make security
+```
+
+### Pipeline Testing
+```bash
+# Run complete local pipeline
+make pipeline
+
+# Run specific pipeline stages
+./scripts/local-pipeline.sh lint test
+./scripts/local-pipeline.sh build container
+./scripts/local-pipeline.sh deploy
+```
 
 ## Troubleshooting Scripts
 
@@ -267,40 +281,55 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml create secret generic petrosa-secrets \
 7. **Deploy**: Kubernetes deployment
 
 ## GitHub CLI Commands
-When running GitHub CLI (`gh`) commands, always dump output to a temporary file and then read the file:
+
+### File Output Pattern
+When running GitHub CLI (`gh`) commands, always dump output to a temporary file and then read it:
 ```bash
-# Example: Get repository info
-gh repo view --json name,description,url > /tmp/repo_info.json
-cat /tmp/repo_info.json
+# Example pattern
+gh api repos/owner/repo/contents/path > /tmp/gh_output.json
+cat /tmp/gh_output.json
 
-# Example: List issues
-gh issue list --json number,title,state > /tmp/issues.json
-cat /tmp/issues.json
+# For commands that need processing
+gh repo list --json name,url > /tmp/repos.json
+jq -r '.[].name' /tmp/repos.json
 
-# Example: Get pull requests
-gh pr list --json number,title,state,author > /tmp/prs.json
-cat /tmp/prs.json
-
-# Clean up temporary files when done
-rm -f /tmp/repo_info.json /tmp/issues.json /tmp/prs.json
+# Clean up after use
+rm /tmp/gh_output.json
 ```
 
-## Always Reference
-- Check `docs/DEPLOYMENT.md` for production deployment details
-- Check `docs/LOCAL_PIPELINE.md` for local development workflow
-- Use `Makefile` for all common commands
-- Use `scripts/` directory for automation and troubleshooting
-- Use `k8s/kubeconfig.yaml` for remote MicroK8s cluster connection
-- This is a production-ready trading engine with comprehensive CI/CD
-- **Remote MicroK8s cluster** - no local Kubernetes installation required
-- Kubernetes deployment uses namespace `petrosa-apps`
-- Health checks are critical for Kubernetes probes
-- Security scanning is integrated into the pipeline
+### Common GitHub CLI Patterns
+```bash
+# Get repository info
+gh api repos/owner/repo > /tmp/repo_info.json
 
-## Pipeline Fixing Process
+# List issues
+gh issue list --repo owner/repo --json number,title,state > /tmp/issues.json
+
+# Get workflow runs
+gh run list --repo owner/repo --json id,status,conclusion > /tmp/runs.json
+
+# Read and process the output
+cat /tmp/repo_info.json | jq '.name'
+```
+
+## CI/CD Pipeline Fix Process
 When fixing the pipeline, go until it is fully green and stop only when CI/CD on GHA is fixed. This means:
 - Run all tests, lint, and build locally until everything passes
 - Only commit and push when all local checks are green
 - Check the GitHub Actions (GHA) pipeline after pushing
 - If the GHA pipeline fails, repeat the process until it is green
 - Do not stop until the CI/CD pipeline on GHA is fully fixed
+
+## Always Reference
+- Check project-specific `README.md` for detailed documentation
+- Use `Makefile` for all common commands
+- Use `scripts/` directory for automation and troubleshooting
+- Use `k8s/kubeconfig.yaml` for remote MicroK8s cluster connection
+- All projects are production-ready with comprehensive CI/CD
+- **Remote MicroK8s cluster** - no local Kubernetes installation required
+- Kubernetes deployment uses namespace `petrosa-apps`
+- Health checks are critical for Kubernetes probes
+- Security scanning is integrated into the pipeline
+- **NumPy compatibility**: Use `numpy<2.0.0` for pandas-ta compatibility
+- **GitHub CLI**: Always dump output to `/tmp` files and read from them
+- **VERSION_PLACEHOLDER**: Never replace in Kubernetes manifests - it's part of the deployment system

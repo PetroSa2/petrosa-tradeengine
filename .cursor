@@ -1,0 +1,126 @@
+# HELP: CI/CD Pipeline Fixing Process
+#
+# 1. Run the local pipeline and all tests (e.g., `./scripts/local-pipeline.sh all` or `make test`).
+# 2. Fix any errors locally until all checks pass.
+# 3. Only commit and push changes when the local pipeline is green.
+# 4. Check the GitHub Actions (GHA) CI/CD pipeline status after pushing.
+# 5. If the GHA pipeline fails, repeat: fix errors locally, commit, and push until the pipeline passes.
+# 6. Do NOT stop until the CI/CD pipeline on GitHub Actions is green.
+# 7. No need to merge to main; just ensure the PR pipeline is green.
+
+# BUG INVESTIGATION AND SQUASHING PROCEDURE
+#
+# When a bug is reported or detected, follow this systematic approach:
+#
+# PHASE 1: CONFIRMATION AND REPRODUCTION
+# 1.1. Confirm the bug behavior locally using existing scripts:
+#      - Run: `make setup` to ensure clean environment
+#      - Run: `make test` to check current state
+#      - Run: `./scripts/local-pipeline.sh all` for complete validation
+#      - If Docker is involved: `make run-docker` or `make container`
+#      - Document exact steps to reproduce the issue
+#
+# 1.2. Verify the bug exists in the expected environment:
+#      - Local Python environment (`.venv`)
+#      - Docker container (if applicable)
+#      - Kubernetes deployment (if applicable): `make k8s-status`
+#
+# PHASE 2: INVESTIGATION AND HYPOTHESIS FORMATION
+# 2.1. Read and analyze relevant files systematically:
+#      - Start with error logs and stack traces
+#      - Examine the specific module/function mentioned in the error
+#      - Review related configuration files (config.py, env.example)
+#      - Check dependencies in requirements.txt
+#      - Review test files for expected behavior
+#
+# 2.2. Form multiple hypotheses about the root cause:
+#      - Consider configuration issues (env vars, settings)
+#      - Check for dependency conflicts or version mismatches
+#      - Look for logic errors in the code
+#      - Examine data flow and state management
+#      - Consider timing or race condition issues
+#      - Review error handling and edge cases
+#
+# 2.3. Create specific conjectures and predictions:
+#      - "If X is the issue, then changing Y should fix it"
+#      - "The problem is likely in module Z because of pattern W"
+#      - "This error suggests that component A is not properly initialized"
+#      - Document your reasoning and expected outcomes
+#
+# PHASE 3: TARGETED CHANGES AND IMPLEMENTATION
+# 3.1. Make specific, surgical changes:
+#      - Change only what's necessary to fix the issue
+#      - Use precise line-by-line edits with clear context
+#      - Include proper error handling and logging
+#      - Follow existing code patterns and style
+#      - Add comments explaining the fix if not obvious
+#
+# 3.2. Be explicit about your changes:
+#      - "I'm adding null check on line X to prevent Y error"
+#      - "I'm updating the configuration to use correct Z value"
+#      - "I'm fixing the import order to resolve dependency conflict"
+#      - "I'm adding proper exception handling for edge case W"
+#
+# PHASE 4: COMPREHENSIVE TESTING AND VALIDATION
+# 4.1. Test the fix using local scripts:
+#      - Run: `make test` to verify unit tests pass
+#      - Run: `make lint` to ensure code quality
+#      - Run: `./scripts/local-pipeline.sh all` for full validation
+#      - Test the specific functionality that was broken
+#
+# 4.2. Test in Docker environment (if applicable):
+#      - Run: `make build` to rebuild image
+#      - Run: `make run-docker` to test in container
+#      - Run: `make container` for container-specific tests
+#      - Verify the bug is fixed in containerized environment
+#
+# 4.3. Verify the fix works as expected:
+#      - Confirm the original error no longer occurs
+#      - Ensure no new errors are introduced
+#      - Test related functionality to prevent regressions
+#      - Check that performance is not degraded
+#      - Validate that the fix doesn't break other services
+#
+# PHASE 5: DOCUMENTATION AND PREVENTION
+# 5.1. Document the fix:
+#      - Add comments explaining the root cause
+#      - Update relevant documentation if needed
+#      - Consider adding tests to prevent regression
+#      - Update troubleshooting guides if applicable
+#
+# 5.2. Consider preventive measures:
+#      - Add input validation to prevent similar issues
+#      - Improve error handling for edge cases
+#      - Add monitoring or logging for early detection
+#      - Consider if the fix should be applied to other services
+#
+# SERVICE-SPECIFIC TESTING COMMANDS:
+#
+# TA Bot (petrosa-bot-ta-analysis):
+# - `make setup && make test` - Basic validation
+# - `./scripts/local-pipeline.sh all` - Full pipeline
+# - `make run-docker` - Docker testing
+# - `make k8s-status` - Kubernetes status check
+#
+# Trading Engine (petrosa-tradeengine):
+# - `make setup && make test` - Basic validation
+# - `./scripts/local-pipeline.sh all` - Full pipeline
+# - `make run-docker` - Docker testing
+# - `make k8s-status` - Kubernetes status check
+# - `./scripts/test-api-endpoint-flow.py` - API testing
+#
+# Data Extractor (petrosa-binance-data-extractor):
+# - `make setup && make test` - Basic validation
+# - `./scripts/local-pipeline.sh all` - Full pipeline
+# - `make run-docker` - Docker testing
+# - `make k8s-status` - Kubernetes status check
+# - `./scripts/deploy-local.sh` - Local deployment test
+#
+# CRITICAL REMINDERS:
+# - Always test locally before pushing changes
+# - Use existing scripts and Makefile commands
+# - Follow the systematic approach: Confirm → Investigate → Fix → Test
+# - Be specific about changes and document reasoning
+# - Test in multiple environments (local, Docker, K8s)
+# - Ensure no regressions are introduced
+# - Stop only when all tests pass and the fix is validated

@@ -327,14 +327,18 @@ class DistributedLockManager:
                 return {
                     "leader_pod_id": leader_doc["pod_id"],
                     "status": leader_doc["status"],
-                    "last_heartbeat": leader_doc["last_heartbeat"].isoformat()
-                    if leader_doc["last_heartbeat"]
-                    else None,
+                    "last_heartbeat": (
+                        leader_doc["last_heartbeat"].isoformat()
+                        if leader_doc["last_heartbeat"]
+                        else None
+                    ),
                     "is_current_leader": leader_doc["pod_id"] == self.pod_id,
                     "current_pod_id": self.pod_id,
-                    "elected_at": leader_doc["elected_at"].isoformat()
-                    if leader_doc["elected_at"]
-                    else None,
+                    "elected_at": (
+                        leader_doc["elected_at"].isoformat()
+                        if leader_doc["elected_at"]
+                        else None
+                    ),
                 }
             else:
                 return {
@@ -360,9 +364,11 @@ class DistributedLockManager:
             "is_leader": self.is_leader,
             "leader_info": leader_info,
             "mongodb_connected": self.mongodb_db is not None,
-            "mongodb_uri": self.settings.mongodb_uri
-            if self.settings.mongodb_uri
-            else get_mongodb_connection_string(),
+            "mongodb_uri": (
+                self.settings.mongodb_uri
+                if self.settings.mongodb_uri
+                else get_mongodb_connection_string()
+            ),
             "lock_timeout": self.lock_timeout,
             "heartbeat_interval": self.heartbeat_interval,
         }

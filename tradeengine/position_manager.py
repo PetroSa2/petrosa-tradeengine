@@ -474,9 +474,9 @@ class PositionManager:
             "max_position_size_pct": self.max_position_size_pct,
             "max_daily_loss_pct": self.max_daily_loss_pct,
             "max_portfolio_exposure_pct": self.max_portfolio_exposure_pct,
-            "last_sync_time": self.last_sync_time.isoformat()
-            if self.last_sync_time
-            else None,
+            "last_sync_time": (
+                self.last_sync_time.isoformat() if self.last_sync_time else None
+            ),
             "mongodb_connected": self.mongodb_db is not None,
         }
 
@@ -524,13 +524,15 @@ class PositionManager:
         return {
             "status": "healthy",
             "positions_count": len(self.positions),
-            "last_sync": self.last_sync_time.isoformat()
-            if self.last_sync_time
-            else None,
+            "last_sync": (
+                self.last_sync_time.isoformat() if self.last_sync_time else None
+            ),
             "mongodb_connected": self.mongodb_db is not None,
-            "mongodb_uri": self.settings.mongodb_uri
-            if self.settings.mongodb_uri
-            else get_mongodb_connection_string(),
+            "mongodb_uri": (
+                self.settings.mongodb_uri
+                if self.settings.mongodb_uri
+                else get_mongodb_connection_string()
+            ),
         }
 
 

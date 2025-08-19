@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: petrosa-tradeengine
-        image: yurisa2/petrosa-tradeengine:v1.1.19
+        image: yurisa2/petrosa-tradeengine:VERSION_PLACEHOLDER
         imagePullPolicy: Always
         ports:
         - containerPort: 8000

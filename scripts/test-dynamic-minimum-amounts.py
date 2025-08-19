@@ -290,9 +290,11 @@ async def test_dispatcher_minimum_amounts() -> None:
                     strength=SignalStrength.MEDIUM,
                     timeframe="1h",
                     price=test_case["current_price"],
-                    quantity=float(test_case["quantity"])
-                    if test_case["quantity"] is not None
-                    else 0.0,
+                    quantity=(
+                        float(test_case["quantity"])
+                        if test_case["quantity"] is not None
+                        else 0.0
+                    ),
                     current_price=test_case["current_price"],
                     source="test",
                     strategy="test-strategy",

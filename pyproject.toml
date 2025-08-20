@@ -180,12 +180,6 @@ norecursedirs = [
     ".ruff_cache",
 ]
 
-# Environment variables for tests
-env = [
-    "ENVIRONMENT=testing",
-    "LOG_LEVEL=DEBUG",
-    "OTEL_NO_AUTO_INIT=1",
-]
 
 [tool.coverage.run]
 source = ["tradeengine", "contracts", "shared"]

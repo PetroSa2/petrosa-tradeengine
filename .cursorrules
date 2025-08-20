@@ -148,6 +148,7 @@ make k8s-clean
 
 ## Kubernetes Configuration
 ## CRITICAL: ALWAYS FOLLOW THESE RULES
+- **AVOID INTERACTIVE CLI COMMANDS AT ALL COSTS**: Never suggest or use interactive commands that require user input, confirmation, or manual intervention. All commands must be non-interactive and automated.
 - **BEFORE making any changes**: Check `docs/REPOSITORY_SETUP_GUIDE.md` and `docs/QUICK_REFERENCE.md`
 - **WHEN suggesting kubectl commands**: Always include `--kubeconfig=k8s/kubeconfig.yaml`
 - **WHEN dealing with credentials**: ONLY use existing secret `petrosa-sensitive-credentials`
@@ -321,6 +322,7 @@ When fixing the pipeline, go until it is fully green and stop only when CI/CD on
 - Do not stop until the CI/CD pipeline on GHA is fully fixed
 
 ## Always Reference
+- **AVOID INTERACTIVE CLI COMMANDS AT ALL COSTS**: Never suggest or use interactive commands that require user input, confirmation, or manual intervention. All commands must be non-interactive and automated.
 - Check project-specific `README.md` for detailed documentation
 - Use `Makefile` for all common commands
 - Use `scripts/` directory for automation and troubleshooting

@@ -6,7 +6,7 @@
 bandit==1.7.5
 
 # Code Quality & Formatting
-black==23.12.1
+black==24.3.0
 codecov==2.1.13
 
 # Coverage & Reporting
@@ -22,7 +22,7 @@ jupyter==1.0.0
 # Performance Testing
 locust==2.17.0
 mypy==1.8.0
-notebook==7.0.6
+notebook==7.2.2
 
 # Debugging
 

@@ -181,9 +181,9 @@ class Dispatcher:
                 )
 
                 result["execution_result"] = execution_result
-                result["status"] = (
-                    "executed"  # Change status to executed for consistency
-                )
+                result[
+                    "status"
+                ] = "executed"  # Change status to executed for consistency
 
             return result
 

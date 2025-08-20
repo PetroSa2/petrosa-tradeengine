@@ -1,0 +1,56 @@
+# Standardized ruff configuration for Petrosa Systems
+# Provides consistent code quality and formatting across all services
+
+# Target Python version
+target-version = "py311"
+
+# Line length
+line-length = 88
+
+# Indent width
+indent-width = 4
+
+# Import sorting
+[lint.isort]
+known-first-party = ["tradeengine", "contracts", "shared"]
+force-single-line = false
+combine-as-imports = true
+force-wrap-aliases = true
+
+# Lint rules
+[lint]
+extend-ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "B904",  # Within an `except` clause, raise exceptions with `raise ... from err`
+]
+
+# Exclude patterns
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    "htmlcov",
+    "*.egg-info",
+    "build",
+    "dist",
+    "docs",
+    "k8s",
+    "scripts",
+]
+
+# Per-file ignores
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*" = ["S101", "PLR0913", "PLR0915"]
+
+# Formatting rules
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

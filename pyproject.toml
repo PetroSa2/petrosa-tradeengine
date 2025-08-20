@@ -130,24 +130,61 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+# Standardized pytest configuration for Petrosa Systems
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+# Test execution options
 addopts = [
+    "-v",
     "--strict-markers",
     "--strict-config",
+    "--disable-warnings",
+    "--tb=short",
+    "--timeout=300",
+    "--durations=10",
+    "--maxfail=10",
     "--cov=tradeengine",
     "--cov=contracts",
     "--cov=shared",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
+    "--cov-fail-under=80",
 ]
+
+# Test markers
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
+    "unit: Unit tests (fast, isolated)",
+    "integration: Integration tests (require external services)",
+    "e2e: End-to-end tests (full workflow)",
+    "slow: Slow running tests (>5 seconds)",
+    "performance: Performance tests",
+    "security: Security tests",
+    "smoke: Smoke tests (basic functionality)",
+    "regression: Regression tests",
+]
+
+# Test discovery
+norecursedirs = [
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    "htmlcov",
+    ".mypy_cache",
+    ".ruff_cache",
+]
+
+# Environment variables for tests
+env = [
+    "ENVIRONMENT=testing",
+    "LOG_LEVEL=DEBUG",
+    "OTEL_NO_AUTO_INIT=1",
 ]
 
 [tool.coverage.run]

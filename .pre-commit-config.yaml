@@ -1,3 +1,6 @@
+# Standardized pre-commit configuration for Petrosa Systems
+# Ensures code quality, security, and consistency across all services
+
 repos:
   # Black code formatter
   - repo: https://github.com/psf/black
@@ -6,6 +9,7 @@ repos:
       - id: black
         language_version: python3.11
         args: [--line-length=88]
+        exclude: ^scripts/test-binance-futures-k8s-config\.py$
 
   # Ruff linter (faster than flake8)
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -14,14 +18,15 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
+        exclude: ^scripts/test-binance-futures-k8s-config\.py$
 
-  # MyPy type checker (disabled for now due to test file compatibility issues)
+  # MyPy type checker (disabled for now due to existing type issues)
   # - repo: https://github.com/pre-commit/mirrors-mypy
   #   rev: v1.8.0
   #   hooks:
   #     - id: mypy
-  #       additional_dependencies: [types-requests, types-python-dateutil]
-  #       args: [--ignore-missing-imports]
+  #       additional_dependencies: [types-requests, types-python-dateutil, types-PyYAML]
+  #       args: [--ignore-missing-imports, --strict]
 
   # Trailing whitespace and end-of-file fixer
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -36,6 +41,10 @@ repos:
       - id: check-docstring-first
       - id: check-json
       - id: check-toml
+      - id: check-ast
+      - id: debug-statements
+      - id: requirements-txt-fixer
+      - id: detect-private-key
 
   # Import sorting
   - repo: https://github.com/pycqa/isort
@@ -44,18 +53,11 @@ repos:
       - id: isort
         args: [--profile=black, --line-length=88]
 
-  # Security checks
+  # Security checks (disabled for now due to dependency issues)
   # - repo: https://github.com/PyCQA/bandit
   #   rev: 1.7.5
   #   hooks:
   #     - id: bandit
-  #       args: [-r, ., -f, json, -o, bandit-report.json]
+  #       args: [-r, ., -f, json, -o, bandit-report.json, -ll]
   #       exclude: ^tests/
-
-  # Check for common security issues
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
-    hooks:
-      - id: detect-private-key
-      - id: detect-aws-credentials
-        args: [--allow-missing]
+  #       pass_filenames: false

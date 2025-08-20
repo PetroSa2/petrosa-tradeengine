@@ -1,0 +1,52 @@
+[run]
+# Standardized coverage configuration for Petrosa Systems
+source = tradeengine, contracts, shared
+omit =
+    */tests/*
+    */test_*
+    */__pycache__/*
+    */venv/*
+    */.venv/*
+    */htmlcov/*
+    */.git/*
+    */migrations/*
+    */scripts/*
+    */docs/*
+    */k8s/*
+    */examples/*
+    setup.py
+
+[report]
+# Coverage reporting configuration
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.DEBUG
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.:
+    class .*\bProtocol\):
+    @(abc\.)?abstractmethod
+    # Don't complain about missing debug-only code:
+    def __repr__
+    if settings\.DEBUG
+    # Don't complain if tests don't hit defensive assertion code:
+    raise AssertionError
+    raise NotImplementedError
+    # Don't complain if non-runnable code isn't run:
+    if 0:
+    if __name__ == .__main__.:
+    # Don't complain about abstract methods
+    @(abc\.)?abstractmethod
+
+# Coverage thresholds
+fail_under = 80
+show_missing = True
+skip_covered = False
+
+[html]
+# HTML report configuration
+directory = htmlcov
+title = Petrosa Trading Engine Coverage Report

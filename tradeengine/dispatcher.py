@@ -295,7 +295,7 @@ class Dispatcher:
                 # Real order - execute on Binance
                 if self.exchange:
                     try:
-                        result = await self.exchange.execute_order(order)
+                        result = await self.exchange.execute(order)
                         await self.order_manager.track_order(order, result)
                         self.logger.info(f"Order executed on Binance: {result}")
                     except Exception as exchange_error:

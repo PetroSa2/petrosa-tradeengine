@@ -14,7 +14,7 @@ from tradeengine.signal_aggregator import SignalAggregator
 class Dispatcher:
     """Central dispatcher for trading operations with distributed state management"""
 
-    def __init__(self, exchange=None) -> None:
+    def __init__(self, exchange: Any = None) -> None:
         self.settings = Settings()
         self.order_manager = OrderManager()
         self.position_manager = PositionManager()

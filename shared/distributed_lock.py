@@ -27,8 +27,8 @@ class DistributedLockManager:
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "10"))
         self.is_leader = False
         self.leader_pod_id: str | None = None
-        self.heartbeat_task: asyncio.Task | None = None
-        self.lock_cleanup_task: asyncio.Task | None = None
+        self.heartbeat_task: asyncio.Task[None] | None = None
+        self.lock_cleanup_task: asyncio.Task[None] | None = None
         self.settings = Settings()
         self.mongodb_client: Any = None
         self.mongodb_db: Any = None

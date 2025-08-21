@@ -170,7 +170,9 @@ class TradeSimulator:
 
         return fill_price
 
-    def _generate_fills(self, order: TradeOrder, fill_price: float) -> list:
+    def _generate_fills(
+        self, order: TradeOrder, fill_price: float
+    ) -> list[dict[str, Any]]:
         """Generate simulated fill data"""
         return [
             {

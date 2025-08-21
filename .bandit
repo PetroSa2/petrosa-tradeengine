@@ -1,0 +1,12 @@
+[bandit]
+exclude_dirs = tests/, .venv/, venv/, htmlcov/, .git/, __pycache__/, *.egg-info/
+
+# Suppress false positives
+skips = B104
+
+# Suppress specific lines
+[B104:hardcoded_bind_all_interfaces]
+# These are intentional for containerized applications
+exclude_lines =
+    host: str = "0.0.0.0"
+    API_HOST = os.getenv("API_HOST", "0.0.0.0")

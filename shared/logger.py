@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     def __init__(self) -> None:
         self.engine: AsyncEngine | None = None
-        self.async_session: async_sessionmaker | None = None
+        self.async_session: async_sessionmaker[AsyncSession] | None = None
         self.initialized = False
         self.retry_attempts = 3
         self.retry_delay = 1.0

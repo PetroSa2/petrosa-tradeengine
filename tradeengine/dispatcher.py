@@ -14,11 +14,12 @@ from tradeengine.signal_aggregator import SignalAggregator
 class Dispatcher:
     """Central dispatcher for trading operations with distributed state management"""
 
-    def __init__(self) -> None:
+    def __init__(self, exchange: Any = None) -> None:
         self.settings = Settings()
         self.order_manager = OrderManager()
         self.position_manager = PositionManager()
         self.signal_aggregator = SignalAggregator()
+        self.exchange = exchange
         self.logger = logging.getLogger(__name__)
 
     async def initialize(self) -> None:
@@ -285,11 +286,26 @@ class Dispatcher:
             if audit_logger.enabled and audit_logger.connected:
                 audit_logger.log_order(order.model_dump())
 
-            # Execute order
-            await self.order_manager.track_order(order, {"status": "pending"})
-
-            # For now, assume order is pending
-            result = {"status": "pending"}
+            # Execute order on Binance exchange
+            if order.simulate:
+                # Simulated order - just track locally
+                result = {"status": "pending", "simulated": True}
+                await self.order_manager.track_order(order, result)
+            else:
+                # Real order - execute on Binance
+                if self.exchange:
+                    try:
+                        result = await self.exchange.execute_order(order)
+                        await self.order_manager.track_order(order, result)
+                        self.logger.info(f"Order executed on Binance: {result}")
+                    except Exception as exchange_error:
+                        self.logger.error(f"Binance exchange error: {exchange_error}")
+                        result = {"status": "error", "error": str(exchange_error)}
+                        await self.order_manager.track_order(order, result)
+                else:
+                    # No exchange provided, just track locally
+                    result = {"status": "pending", "no_exchange": True}
+                    await self.order_manager.track_order(order, result)
 
             # Log result
             if audit_logger.enabled and audit_logger.connected:
@@ -300,7 +316,7 @@ class Dispatcher:
                     }
                 )
 
-            return result or {"status": "pending"}
+            return result
 
         except Exception as e:
             self.logger.error(f"Order execution error: {e}")

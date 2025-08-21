@@ -83,9 +83,9 @@ app = FastAPI(
 
 # Initialize components
 settings = Settings()
-dispatcher = Dispatcher()
 binance_exchange = BinanceFuturesExchange()
 simulator_exchange = SimulatorExchange()
+dispatcher = Dispatcher(exchange=binance_exchange)
 
 logger = logging.getLogger(__name__)
 

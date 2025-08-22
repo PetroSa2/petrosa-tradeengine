@@ -9,12 +9,15 @@ metadata:
     component: common-config
 data:
   # Common environment settings
-  environment: "production"
-  log-level: "INFO"
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
 
   # NATS configuration
-  NATS_URL: "nats://192.168.194.253:4222"
+  NATS_URL: "nats://nats-server.nats.svc.cluster.local:4222"
   NATS_ENABLED: "true"
+  NATS_SUBJECT_PREFIX: "binance.extraction"
+  NATS_SUBJECT_PREFIX_PRODUCTION: "binance.extraction.production"
+  NATS_SUBJECT_PREFIX_GAP_FILLER: "binance.extraction.gap-filler"
 
   # OpenTelemetry configuration
   ENABLE_OTEL: "true"

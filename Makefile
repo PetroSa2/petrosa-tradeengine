@@ -3,7 +3,7 @@
 # Standardized Makefile for Petrosa Systems
 # Provides consistent development and testing procedures across all services
 
-.PHONY: help setup install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check
+.PHONY: help setup install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks
 
 # Default target
 help:
@@ -50,7 +50,11 @@ help:
 	@echo "  mongodb-check  - Detailed MongoDB health check"
 	@echo ""
 	@echo "📊 Utilities:"
-	@echo "  k8s-status     - Check Kubernetes deployment status"
+	@echo "🔢 Version Management:"
+	@echo "  version-check  - Check VERSION_PLACEHOLDER integrity"
+	@echo "  version-info   - Show version information"
+	@echo "  version-debug  - Debug version issues"
+	@echo "  install-git-hooks - Install VERSION_PLACEHOLDER protection hooks"	@echo "  k8s-status     - Check Kubernetes deployment status"
 	@echo "  k8s-logs       - View Kubernetes logs"
 	@echo "  k8s-clean      - Clean up Kubernetes resources"
 
@@ -259,3 +263,41 @@ dev: setup format lint type-check test
 # Quick production check
 prod: format lint type-check test security build container
 	@echo "✅ Production readiness check completed!"
+
+# Version Management
+version-check:
+	@echo "🔍 Checking VERSION_PLACEHOLDER integrity..."
+	@if [ -f "scripts/version-manager.sh" ]; then \
+		./scripts/version-manager.sh validate; \
+	else \
+		echo "❌ scripts/version-manager.sh not found"; \
+		exit 1; \
+	fi
+
+version-info:
+	@echo "📦 Version Information:"
+	@if [ -f "scripts/version-manager.sh" ]; then \
+		./scripts/version-manager.sh info; \
+	else \
+		echo "❌ scripts/version-manager.sh not found"; \
+		exit 1; \
+	fi
+
+version-debug:
+	@echo "🐛 Version Debug Information:"
+	@if [ -f "scripts/version-manager.sh" ]; then \
+		./scripts/version-manager.sh debug; \
+	else \
+		echo "❌ scripts/version-manager.sh not found"; \
+		exit 1; \
+	fi
+
+install-git-hooks:
+	@echo "🔧 Installing git hooks for VERSION_PLACEHOLDER protection..."
+	@if [ -f "scripts/install-git-hooks.sh" ]; then \
+		chmod +x scripts/install-git-hooks.sh; \
+		./scripts/install-git-hooks.sh; \
+	else \
+		echo "❌ scripts/install-git-hooks.sh not found"; \
+		exit 1; \
+	fi

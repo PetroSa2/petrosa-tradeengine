@@ -32,12 +32,12 @@ spec:
           valueFrom:
             configMapKeyRef:
               name: petrosa-common-config
-              key: environment
+              key: ENVIRONMENT
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
               name: petrosa-common-config
-              key: log-level
+              key: LOG_LEVEL
         - name: HOST
           value: "0.0.0.0"
         - name: PORT

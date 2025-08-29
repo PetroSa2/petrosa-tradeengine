@@ -51,6 +51,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Initializing dispatcher...")
         await dispatcher.initialize()
 
+        # Initialize and start NATS consumer
+        logger.info("Initializing NATS consumer...")
+        from tradeengine.consumer import signal_consumer
+
+        consumer_initialized = await signal_consumer.initialize()
+        if consumer_initialized:
+            logger.info("✅ NATS consumer initialized successfully")
+            # Start consumer in background task
+            import asyncio
+
+            asyncio.create_task(signal_consumer.start_consuming())
+            logger.info("✅ NATS consumer started in background")
+        else:
+            logger.warning("⚠️ NATS consumer not initialized (likely disabled)")
+
         logger.info("Trading engine startup completed successfully")
     except Exception as e:
         logger.error(f"CRITICAL: Startup failed - {e}")
@@ -62,6 +77,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
     try:
+        # Stop NATS consumer first
+        from tradeengine.consumer import signal_consumer
+
+        if signal_consumer.running:
+            logger.info("Stopping NATS consumer...")
+            await signal_consumer.stop_consuming()
+            logger.info("✅ NATS consumer stopped")
+
         await binance_exchange.close()
         await simulator_exchange.close()
         await dispatcher.close()

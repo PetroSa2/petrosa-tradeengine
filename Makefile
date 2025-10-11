@@ -3,7 +3,7 @@
 # Standardized Makefile for Petrosa Systems
 # Provides consistent development and testing procedures across all services
 
-.PHONY: help setup install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks
+.PHONY: help setup install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline
 
 # Default target
 help:
@@ -301,3 +301,29 @@ install-git-hooks:
 		echo "❌ scripts/install-git-hooks.sh not found"; \
 		exit 1; \
 	fi
+
+# Local CI/CD pipeline simulation
+test-ci-pipeline:
+	@echo "🧪 Running CI/CD pipeline simulation..."
+	@echo "This matches GitHub Actions workflow exactly"
+	@echo "=================================="
+	@echo ""
+	@echo "Stage 1: Dependencies"
+	$(MAKE) clean
+	$(MAKE) setup
+	@echo ""
+	@echo "Stage 2: Linting & Formatting"
+	$(MAKE) format
+	$(MAKE) lint
+	@echo ""
+	@echo "Stage 3: Tests"
+	$(MAKE) test
+	@echo ""
+	@echo "Stage 4: Docker Build"
+	$(MAKE) build
+	@echo ""
+	@echo "Stage 5: Container Test"
+	$(MAKE) container
+	@echo ""
+	@echo "✅ Local CI/CD simulation passed!"
+	@echo "Safe to push to GitHub"

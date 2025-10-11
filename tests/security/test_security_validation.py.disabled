@@ -10,9 +10,9 @@ import time
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-import jwt
 import pytest
 from fastapi.testclient import TestClient
+from jose import jwt
 
 from tradeengine.api import app
 from tradeengine.auth import create_access_token, verify_token

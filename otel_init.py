@@ -90,14 +90,13 @@ def setup_telemetry(
 
             # Create OTLP exporter
             headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-            headers = None
+            headers: dict[str, str] | None = None
             if headers_env:
                 # Parse headers as "key1=value1,key2=value2" format
-                headers = dict(
-                    tuple(h.split("=", 1))  # type: ignore[misc]
-                    for h in headers_env.split(",")
-                    if "=" in h
-                )
+                headers_list = [
+                    tuple(h.split("=", 1)) for h in headers_env.split(",") if "=" in h
+                ]
+                headers = {k: v for k, v in headers_list}
             otlp_exporter = OTLPSpanExporter(
                 endpoint=otlp_endpoint,
                 headers=headers,
@@ -119,14 +118,13 @@ def setup_telemetry(
         try:
             # Create metric reader
             headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-            headers = None
+            headers: dict[str, str] | None = None
             if headers_env:
                 # Parse headers as "key1=value1,key2=value2" format
-                headers = dict(
-                    tuple(h.split("=", 1))  # type: ignore[misc]
-                    for h in headers_env.split(",")
-                    if "=" in h
-                )
+                headers_list = [
+                    tuple(h.split("=", 1)) for h in headers_env.split(",") if "=" in h
+                ]
+                headers = {k: v for k, v in headers_list}
             metric_reader = PeriodicExportingMetricReader(
                 OTLPMetricExporter(
                     endpoint=otlp_endpoint,

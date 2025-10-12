@@ -90,16 +90,16 @@ def setup_telemetry(
 
             # Create OTLP exporter
             headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-            headers: dict[str, str] | None = None
+            span_headers: dict[str, str] | None = None
             if headers_env:
                 # Parse headers as "key1=value1,key2=value2" format
                 headers_list = [
                     tuple(h.split("=", 1)) for h in headers_env.split(",") if "=" in h
                 ]
-                headers = {k: v for k, v in headers_list}
+                span_headers = {k: v for k, v in headers_list}
             otlp_exporter = OTLPSpanExporter(
                 endpoint=otlp_endpoint,
-                headers=headers,
+                headers=span_headers,
             )
 
             # Add batch processor
@@ -117,18 +117,20 @@ def setup_telemetry(
     if enable_metrics and otlp_endpoint:
         try:
             # Create metric reader
-            headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-            headers: dict[str, str] | None = None
-            if headers_env:
+            metric_headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+            metric_headers: dict[str, str] | None = None
+            if metric_headers_env:
                 # Parse headers as "key1=value1,key2=value2" format
-                headers_list = [
-                    tuple(h.split("=", 1)) for h in headers_env.split(",") if "=" in h
+                metric_headers_list = [
+                    tuple(h.split("=", 1))
+                    for h in metric_headers_env.split(",")
+                    if "=" in h
                 ]
-                headers = {k: v for k, v in headers_list}
+                metric_headers = {k: v for k, v in metric_headers_list}
             metric_reader = PeriodicExportingMetricReader(
                 OTLPMetricExporter(
                     endpoint=otlp_endpoint,
-                    headers=headers,
+                    headers=metric_headers,
                 ),
                 export_interval_millis=int(
                     os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "60000")

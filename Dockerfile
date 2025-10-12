@@ -48,6 +48,9 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code (including otel_init.py)
+COPY . .
+
 # Install OpenTelemetry auto-instrumentation
 # This enables automatic instrumentation of Python applications
 # The opentelemetry-instrument command will be available for use
@@ -57,9 +60,6 @@ RUN pip install opentelemetry-distro opentelemetry-exporter-otlp-proto-grpc \
     opentelemetry-instrumentation-urllib3 \
     opentelemetry-instrumentation-fastapi \
     && opentelemetry-bootstrap --action=install
-
-# Copy application code
-COPY . .
 
 # Change ownership to app user
 RUN chown -R appuser:appuser /app

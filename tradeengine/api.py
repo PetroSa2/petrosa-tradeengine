@@ -8,6 +8,8 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+# Import OpenTelemetry initialization
+import otel_init
 from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
@@ -103,6 +105,9 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan,
 )
+
+# Instrument FastAPI app with OpenTelemetry
+otel_init.instrument_fastapi_app(app)
 
 # Initialize components
 settings = Settings()

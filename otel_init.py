@@ -76,7 +76,11 @@ def setup_telemetry(
                 key, value = attr.split("=", 1)
                 resource_attributes[key.strip()] = value.strip()
 
-    resource = Resource.create(resource_attributes)
+    # Filter out None values to satisfy type checker
+    filtered_attributes = {
+        k: v for k, v in resource_attributes.items() if v is not None
+    }
+    resource = Resource.create(filtered_attributes)
 
     # Set up tracing if enabled
     if enable_traces and otlp_endpoint:
@@ -85,11 +89,18 @@ def setup_telemetry(
             tracer_provider = TracerProvider(resource=resource)
 
             # Create OTLP exporter
+            headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+            headers = None
+            if headers_env:
+                # Parse headers as "key1=value1,key2=value2" format
+                headers = dict(
+                    tuple(h.split("=", 1))  # type: ignore[misc]
+                    for h in headers_env.split(",")
+                    if "=" in h
+                )
             otlp_exporter = OTLPSpanExporter(
                 endpoint=otlp_endpoint,
-                headers=os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "").split(",")
-                if os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-                else None,
+                headers=headers,
             )
 
             # Add batch processor
@@ -107,12 +118,19 @@ def setup_telemetry(
     if enable_metrics and otlp_endpoint:
         try:
             # Create metric reader
+            headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+            headers = None
+            if headers_env:
+                # Parse headers as "key1=value1,key2=value2" format
+                headers = dict(
+                    tuple(h.split("=", 1))  # type: ignore[misc]
+                    for h in headers_env.split(",")
+                    if "=" in h
+                )
             metric_reader = PeriodicExportingMetricReader(
                 OTLPMetricExporter(
                     endpoint=otlp_endpoint,
-                    headers=os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "").split(",")
-                    if os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
-                    else None,
+                    headers=headers,
                 ),
                 export_interval_millis=int(
                     os.getenv("OTEL_METRIC_EXPORT_INTERVAL", "60000")

@@ -41,6 +41,10 @@ def setup_telemetry(
         enable_traces: Whether to enable traces
         enable_logs: Whether to enable logs
     """
+    # Early return if OTEL disabled
+    if os.getenv("ENABLE_OTEL", "true").lower() not in ("true", "1", "yes"):
+        return
+
     # Get configuration from environment variables
     service_version = service_version or os.getenv("OTEL_SERVICE_VERSION", "1.0.0")
     otlp_endpoint = otlp_endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -220,6 +224,8 @@ def get_meter(name: str = None) -> metrics.Meter:
     return metrics.get_meter(name or "tradeengine")
 
 
-# Auto-setup if environment variable is set
-if os.getenv("OTEL_AUTO_SETUP", "true").lower() in ("true", "1", "yes"):
-    setup_telemetry()
+# Auto-setup if environment variable is set and not disabled
+if os.getenv("ENABLE_OTEL", "true").lower() in ("true", "1", "yes"):
+    if not os.getenv("OTEL_NO_AUTO_INIT"):
+        if os.getenv("OTEL_AUTO_SETUP", "true").lower() in ("true", "1", "yes"):
+            setup_telemetry()

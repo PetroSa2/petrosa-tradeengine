@@ -22,7 +22,7 @@ data:
   # OpenTelemetry configuration
   ENABLE_OTEL: "true"
   OTEL_SERVICE_VERSION: "VERSION_PLACEHOLDER"
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://grafana-alloy.observability.svc.cluster.local:4317"
   OTEL_METRICS_EXPORTER: "otlp"
   OTEL_TRACES_EXPORTER: "otlp"
   OTEL_LOGS_EXPORTER: "otlp"

@@ -27,6 +27,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 # Global logger provider for attaching handlers
 _global_logger_provider = None
+_otlp_logging_handler = None  # Store reference to check if it's still attached
 
 
 def setup_telemetry(
@@ -55,6 +56,20 @@ def setup_telemetry(
     # Get configuration from environment variables
     service_version = service_version or os.getenv("OTEL_SERVICE_VERSION", "1.0.0")
     otlp_endpoint = otlp_endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+    # Strip http:// or https:// prefix for gRPC OTLP endpoints
+    # gRPC exporters don't expect the protocol prefix
+    if otlp_endpoint:
+        original_endpoint = otlp_endpoint
+        if otlp_endpoint.startswith("http://"):
+            otlp_endpoint = otlp_endpoint[7:]
+        elif otlp_endpoint.startswith("https://"):
+            otlp_endpoint = otlp_endpoint[8:]
+
+        if original_endpoint != otlp_endpoint:
+            print(
+                f"ℹ️  Stripped protocol prefix from OTLP endpoint: {original_endpoint} -> {otlp_endpoint}"
+            )
     enable_metrics = enable_metrics and os.getenv("ENABLE_METRICS", "true").lower() in (
         "true",
         "1",
@@ -242,30 +257,33 @@ def attach_logging_handler():
     This should be called AFTER uvicorn/FastAPI configures logging,
     typically in the lifespan startup function.
     """
-    global _global_logger_provider
+    global _global_logger_provider, _otlp_logging_handler
 
     if _global_logger_provider is None:
         print("⚠️  Logger provider not configured - logging export not available")
         return False
 
     try:
-        # Create handler
+        # Get root logger
+        root_logger = logging.getLogger()
+
+        # Check if our handler is still attached
+        if _otlp_logging_handler is not None:
+            if _otlp_logging_handler in root_logger.handlers:
+                print("✅ OTLP logging handler already attached")
+                return True
+            else:
+                print("⚠️  OTLP handler was removed, re-attaching...")
+
+        # Create new handler
         handler = LoggingHandler(
             level=logging.NOTSET,
             logger_provider=_global_logger_provider,
         )
 
-        # Get root logger and attach handler
-        root_logger = logging.getLogger()
-
-        # Check if already attached
-        for existing_handler in root_logger.handlers:
-            if isinstance(existing_handler, LoggingHandler):
-                print("✅ OTLP logging handler already attached")
-                return True
-
         # Attach handler
         root_logger.addHandler(handler)
+        _otlp_logging_handler = handler
 
         print("✅ OTLP logging handler attached to root logger")
         print(f"   Total handlers: {len(root_logger.handlers)}")
@@ -275,6 +293,34 @@ def attach_logging_handler():
     except Exception as e:
         print(f"⚠️  Failed to attach logging handler: {e}")
         return False
+
+
+def ensure_logging_handler():
+    """
+    Ensure OTLP logging handler is attached. Re-attach if it was removed.
+
+    This is a safety mechanism to handle cases where logging configuration
+    is reset after initial setup (e.g., by logging.basicConfig()).
+
+    Returns:
+        bool: True if handler is attached, False otherwise
+    """
+    global _otlp_logging_handler
+
+    if _global_logger_provider is None:
+        return False
+
+    root_logger = logging.getLogger()
+
+    # Check if handler is still attached
+    if (
+        _otlp_logging_handler is not None
+        and _otlp_logging_handler in root_logger.handlers
+    ):
+        return True
+
+    # Handler was removed or never attached, attach it now
+    return attach_logging_handler()
 
 
 def get_tracer(name: str = None) -> trace.Tracer:

@@ -10,6 +10,9 @@ from pydantic import BaseModel
 
 # Import OpenTelemetry initialization
 import otel_init
+
+# Import Pyroscope profiling initialization
+import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
 from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger

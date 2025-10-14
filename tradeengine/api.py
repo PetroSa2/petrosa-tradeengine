@@ -33,6 +33,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Attach OTLP logging handler after uvicorn configures logging
     otel_init.attach_logging_handler()
 
+    # Start watchdog FIRST to ensure handler stays attached even if other init fails
+    async def logging_handler_watchdog() -> None:
+        """Periodically ensure OTLP logging handler stays attached"""
+        import asyncio
+
+        while True:
+            await asyncio.sleep(30)  # Check every 30 seconds
+            was_attached = otel_init.ensure_logging_handler()
+            if not was_attached:
+                logger.warning(
+                    "⚠️  OTLP logging handler was removed, re-attached by watchdog"
+                )
+
+    import asyncio
+
+    asyncio.create_task(logging_handler_watchdog())
+    logger.info("✅ OTLP logging handler watchdog started")
+
+    # Now try to initialize other components (non-critical for logs)
+    startup_success = True
     try:
         # Validate MongoDB configuration first - fail catastrophically if not configured
         logger.info("Validating MongoDB configuration...")
@@ -67,8 +87,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if consumer_initialized:
             logger.info("✅ NATS consumer initialized successfully")
             # Start consumer in background task
-            import asyncio
-
             asyncio.create_task(signal_consumer.start_consuming())
             logger.info("✅ NATS consumer started in background")
         else:
@@ -76,30 +94,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         logger.info("Trading engine startup completed successfully")
 
-        # Ensure OTLP logging handler is still attached after all initialization
-        # Some imports might have called logging.basicConfig() which clears handlers
-        otel_init.ensure_logging_handler()
-
-        # Start watchdog to keep OTLP logging handler attached
-        async def logging_handler_watchdog() -> None:
-            """Periodically ensure OTLP logging handler stays attached"""
-            import asyncio
-
-            while True:
-                await asyncio.sleep(30)  # Check every 30 seconds
-                was_attached = otel_init.ensure_logging_handler()
-                if not was_attached:
-                    logger.warning(
-                        "⚠️  OTLP logging handler was removed, re-attached by watchdog"
-                    )
-
-        asyncio.create_task(logging_handler_watchdog())
-        logger.info("✅ OTLP logging handler watchdog started")
-
     except Exception as e:
         logger.error(f"CRITICAL: Startup failed - {e}")
-        logger.error("Service will exit due to critical configuration error")
-        raise
+        logger.error("Service will continue with limited functionality")
+        startup_success = False
+
+    # Ensure OTLP logging handler is still attached after all initialization
+    # Some imports might have called logging.basicConfig() which clears handlers
+    otel_init.ensure_logging_handler()
+
+    # Don't raise exception - let service continue with watchdog running
+    if not startup_success:
+        logger.error("Service started with errors but watchdog is active")
 
     yield
 

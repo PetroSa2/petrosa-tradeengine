@@ -80,6 +80,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Some imports might have called logging.basicConfig() which clears handlers
         otel_init.ensure_logging_handler()
 
+        # Start watchdog to keep OTLP logging handler attached
+        async def logging_handler_watchdog() -> None:
+            """Periodically ensure OTLP logging handler stays attached"""
+            import asyncio
+
+            while True:
+                await asyncio.sleep(30)  # Check every 30 seconds
+                was_attached = otel_init.ensure_logging_handler()
+                if not was_attached:
+                    logger.warning(
+                        "⚠️  OTLP logging handler was removed, re-attached by watchdog"
+                    )
+
+        asyncio.create_task(logging_handler_watchdog())
+        logger.info("✅ OTLP logging handler watchdog started")
+
     except Exception as e:
         logger.error(f"CRITICAL: Startup failed - {e}")
         logger.error("Service will exit due to critical configuration error")

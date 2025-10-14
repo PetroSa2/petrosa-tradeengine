@@ -308,6 +308,34 @@ def ensure_logging_handler():
     return attach_logging_handler()
 
 
+def monitor_logging_handlers():
+    """
+    Monitor and aggressively re-attach OTLP logging handler.
+
+    This function should be called periodically to ensure the handler
+    stays attached even if other components clear logging configuration.
+    """
+    global _otlp_logging_handler
+
+    if _global_logger_provider is None:
+        return False
+
+    root_logger = logging.getLogger()
+    current_handlers = len(root_logger.handlers)
+
+    # If no handlers at all, something cleared logging completely
+    if current_handlers == 0:
+        print("⚠️  All logging handlers were cleared - re-attaching OTLP handler")
+        return attach_logging_handler()
+
+    # If our handler is missing but others exist, re-attach it
+    if _otlp_logging_handler not in root_logger.handlers:
+        print("⚠️  OTLP handler was removed - re-attaching")
+        return attach_logging_handler()
+
+    return True
+
+
 def get_tracer(name: str = None) -> trace.Tracer:
     """
     Get a tracer instance.

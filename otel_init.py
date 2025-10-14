@@ -167,9 +167,8 @@ def setup_telemetry(
         global _global_logger_provider
         try:
             # First, enrich logs with trace context using LoggingInstrumentor
-            LoggingInstrumentor().instrument(
-                set_logging_format=True, log_level=os.getenv("LOG_LEVEL", "INFO")
-            )
+            # NOTE: set_logging_format=False to avoid clearing existing handlers
+            LoggingInstrumentor().instrument(set_logging_format=False)
 
             # Create OTLP log exporter
             log_headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")

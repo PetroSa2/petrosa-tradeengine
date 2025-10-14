@@ -35,16 +35,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Start watchdog FIRST to ensure handler stays attached even if other init fails
     async def logging_handler_watchdog() -> None:
-        """Periodically ensure OTLP logging handler stays attached"""
+        """Aggressively monitor and re-attach OTLP logging handler"""
         import asyncio
 
         while True:
-            await asyncio.sleep(30)  # Check every 30 seconds
-            was_attached = otel_init.ensure_logging_handler()
-            if not was_attached:
-                logger.warning(
-                    "⚠️  OTLP logging handler was removed, re-attached by watchdog"
-                )
+            await asyncio.sleep(10)  # Check every 10 seconds (more aggressive)
+            try:
+                was_attached = otel_init.monitor_logging_handlers()
+                if not was_attached:
+                    logger.warning("⚠️  OTLP logging handler monitoring failed")
+            except Exception as e:
+                logger.error(f"⚠️  Watchdog error: {e}")
+                # Try to re-attach handler even if monitoring fails
+                try:
+                    otel_init.attach_logging_handler()
+                except Exception as reattach_error:
+                    logger.error(f"⚠️  Re-attach failed: {reattach_error}")
 
     import asyncio
 

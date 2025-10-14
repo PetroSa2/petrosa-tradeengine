@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         otel_init.ensure_logging_handler()
 
         # Start watchdog to keep OTLP logging handler attached
-        async def logging_handler_watchdog():
+        async def logging_handler_watchdog() -> None:
             """Periodically ensure OTLP logging handler stays attached"""
             import asyncio
 

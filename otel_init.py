@@ -5,16 +5,20 @@ This module sets up OpenTelemetry instrumentation for observability
 and monitoring of the trading engine service.
 """
 
+import logging
 import os
 from typing import Optional
 
 from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.urllib3 import URLLib3Instrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -154,16 +158,50 @@ def setup_telemetry(
         except Exception as e:
             print(f"⚠️  Failed to set up OpenTelemetry metrics: {e}")
 
-    # Set up logging instrumentation if enabled
-    if enable_logs:
+    # Set up logging export via OTLP if enabled
+    if enable_logs and otlp_endpoint:
         try:
+            # First, enrich logs with trace context using LoggingInstrumentor
             LoggingInstrumentor().instrument(
                 set_logging_format=True, log_level=os.getenv("LOG_LEVEL", "INFO")
             )
-            print(f"✅ OpenTelemetry logging enabled for {service_name}")
+
+            # Create OTLP log exporter
+            log_headers_env = os.getenv("OTEL_EXPORTER_OTLP_HEADERS")
+            log_headers: dict[str, str] | None = None
+            if log_headers_env:
+                # Parse headers as "key1=value1,key2=value2" format
+                log_headers_list = [
+                    tuple(h.split("=", 1))
+                    for h in log_headers_env.split(",")
+                    if "=" in h
+                ]
+                log_headers = {k: v for k, v in log_headers_list}
+
+            log_exporter = OTLPLogExporter(
+                endpoint=otlp_endpoint,
+                headers=log_headers,
+            )
+
+            # Create logger provider
+            logger_provider = LoggerProvider(resource=resource)
+            logger_provider.add_log_record_processor(
+                BatchLogRecordProcessor(log_exporter)
+            )
+
+            # Attach OTLP handler to root logger
+            handler = LoggingHandler(
+                level=logging.NOTSET,
+                logger_provider=logger_provider,
+            )
+
+            # Add handler to root logger to capture all logs
+            logging.getLogger().addHandler(handler)
+
+            print(f"✅ OpenTelemetry logging export enabled for {service_name}")
 
         except Exception as e:
-            print(f"⚠️  Failed to set up OpenTelemetry logging: {e}")
+            print(f"⚠️  Failed to set up OpenTelemetry logging export: {e}")
 
     # Set up HTTP instrumentation
     try:

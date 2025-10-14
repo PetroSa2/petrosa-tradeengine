@@ -25,6 +25,9 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+# Global logger provider for attaching handlers
+_global_logger_provider = None
+
 
 def setup_telemetry(
     service_name: str = "tradeengine",
@@ -160,6 +163,7 @@ def setup_telemetry(
 
     # Set up logging export via OTLP if enabled
     if enable_logs and otlp_endpoint:
+        global _global_logger_provider
         try:
             # First, enrich logs with trace context using LoggingInstrumentor
             LoggingInstrumentor().instrument(
@@ -189,16 +193,11 @@ def setup_telemetry(
                 BatchLogRecordProcessor(log_exporter)
             )
 
-            # Attach OTLP handler to root logger
-            handler = LoggingHandler(
-                level=logging.NOTSET,
-                logger_provider=logger_provider,
-            )
+            # Store globally for later attachment
+            _global_logger_provider = logger_provider
 
-            # Add handler to root logger to capture all logs
-            logging.getLogger().addHandler(handler)
-
-            print(f"✅ OpenTelemetry logging export enabled for {service_name}")
+            print(f"✅ OpenTelemetry logging export configured for {service_name}")
+            print("   Note: Call attach_logging_handler() after app starts to activate")
 
         except Exception as e:
             print(f"⚠️  Failed to set up OpenTelemetry logging export: {e}")
@@ -234,6 +233,48 @@ def instrument_fastapi_app(app):
         print("✅ FastAPI application instrumented")
     except Exception as e:
         print(f"⚠️  Failed to instrument FastAPI application: {e}")
+
+
+def attach_logging_handler():
+    """
+    Attach OTLP logging handler to root logger.
+
+    This should be called AFTER uvicorn/FastAPI configures logging,
+    typically in the lifespan startup function.
+    """
+    global _global_logger_provider
+
+    if _global_logger_provider is None:
+        print("⚠️  Logger provider not configured - logging export not available")
+        return False
+
+    try:
+        # Create handler
+        handler = LoggingHandler(
+            level=logging.NOTSET,
+            logger_provider=_global_logger_provider,
+        )
+
+        # Get root logger and attach handler
+        root_logger = logging.getLogger()
+
+        # Check if already attached
+        for existing_handler in root_logger.handlers:
+            if isinstance(existing_handler, LoggingHandler):
+                print("✅ OTLP logging handler already attached")
+                return True
+
+        # Attach handler
+        root_logger.addHandler(handler)
+
+        print("✅ OTLP logging handler attached to root logger")
+        print(f"   Total handlers: {len(root_logger.handlers)}")
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️  Failed to attach logging handler: {e}")
+        return False
 
 
 def get_tracer(name: str = None) -> trace.Tracer:

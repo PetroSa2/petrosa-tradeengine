@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
+    # Attach OTLP logging handler after uvicorn configures logging
+    otel_init.attach_logging_handler()
+
     try:
         # Validate MongoDB configuration first - fail catastrophically if not configured
         logger.info("Validating MongoDB configuration...")

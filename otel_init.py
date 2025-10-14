@@ -56,20 +56,6 @@ def setup_telemetry(
     # Get configuration from environment variables
     service_version = service_version or os.getenv("OTEL_SERVICE_VERSION", "1.0.0")
     otlp_endpoint = otlp_endpoint or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-    # Strip http:// or https:// prefix for gRPC OTLP endpoints
-    # gRPC exporters don't expect the protocol prefix
-    if otlp_endpoint:
-        original_endpoint = otlp_endpoint
-        if otlp_endpoint.startswith("http://"):
-            otlp_endpoint = otlp_endpoint[7:]
-        elif otlp_endpoint.startswith("https://"):
-            otlp_endpoint = otlp_endpoint[8:]
-
-        if original_endpoint != otlp_endpoint:
-            print(
-                f"ℹ️  Stripped protocol prefix from OTLP endpoint: {original_endpoint} -> {otlp_endpoint}"
-            )
     enable_metrics = enable_metrics and os.getenv("ENABLE_METRICS", "true").lower() in (
         "true",
         "1",

@@ -75,6 +75,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("⚠️ NATS consumer not initialized (likely disabled)")
 
         logger.info("Trading engine startup completed successfully")
+
+        # Ensure OTLP logging handler is still attached after all initialization
+        # Some imports might have called logging.basicConfig() which clears handlers
+        otel_init.ensure_logging_handler()
+
     except Exception as e:
         logger.error(f"CRITICAL: Startup failed - {e}")
         logger.error("Service will exit due to critical configuration error")

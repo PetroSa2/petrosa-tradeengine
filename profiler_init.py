@@ -2,11 +2,25 @@
 Pyroscope continuous profiling initialization for the Trade Engine service.
 
 This module sets up Pyroscope profiling for performance analysis and optimization.
+
+Note: Pyroscope requires compilation dependencies that are not compatible with
+Alpine Linux base image. To enable profiling, either:
+1. Switch to python:3.11-slim base image, or
+2. Add build dependencies to Alpine (gcc, g++, rust, etc.)
+
+For now, profiling is disabled until we migrate to slim base image.
 """
 
 import os
 
-import pyroscope
+try:
+    import pyroscope
+
+    PYROSCOPE_AVAILABLE = True
+except ImportError:
+    PYROSCOPE_AVAILABLE = False
+    print("⚠️  pyroscope-io not installed - profiling unavailable")
+    print("   To enable: migrate to python:3.11-slim base image")
 
 
 def setup_profiler(
@@ -20,6 +34,10 @@ def setup_profiler(
         service_name: Name of the service
         service_version: Version of the service
     """
+    # Check if pyroscope is available
+    if not PYROSCOPE_AVAILABLE:
+        return
+
     # Check if profiling is enabled
     if os.getenv("ENABLE_PROFILER", "false").lower() not in ("true", "1", "yes"):
         return
@@ -69,7 +87,8 @@ def setup_profiler(
         print(f"⚠️  Failed to set up Pyroscope profiling: {e}")
 
 
-# Auto-setup if environment variable is set
-if os.getenv("ENABLE_PROFILER", "false").lower() in ("true", "1", "yes"):
-    if not os.getenv("PYROSCOPE_NO_AUTO_INIT"):
-        setup_profiler()
+# Auto-setup if environment variable is set and pyroscope is available
+if PYROSCOPE_AVAILABLE:
+    if os.getenv("ENABLE_PROFILER", "false").lower() in ("true", "1", "yes"):
+        if not os.getenv("PYROSCOPE_NO_AUTO_INIT"):
+            setup_profiler()

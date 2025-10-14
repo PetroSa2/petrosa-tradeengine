@@ -79,6 +79,25 @@ spec:
             configMapKeyRef:
               name: petrosa-common-config
               key: OTEL_LOGS_EXPORTER
+        # Pyroscope Profiling Configuration
+        - name: ENABLE_PROFILER
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: ENABLE_PROFILER
+              optional: true
+        - name: PYROSCOPE_SERVER_ADDRESS
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: PYROSCOPE_SERVER_ADDRESS
+              optional: true
+        - name: PYROSCOPE_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: PYROSCOPE_AUTH_TOKEN
+              optional: true
         # MongoDB configuration from secret
         - name: MONGODB_URI
           valueFrom:

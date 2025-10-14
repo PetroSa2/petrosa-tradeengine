@@ -31,10 +31,16 @@ spec:
   - ports:
     - protocol: TCP
       port: 9090
-  # Allow OTLP metrics export (Grafana Alloy)
-  - ports:
+  # Allow OTLP metrics/traces/logs export to Grafana Alloy (observability namespace)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: observability
+    ports:
     - protocol: TCP
       port: 4317
+    - protocol: TCP
+      port: 4318
   # Allow NATS connection
   - ports:
     - protocol: TCP

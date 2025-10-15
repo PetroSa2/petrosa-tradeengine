@@ -237,10 +237,15 @@ def instrument_fastapi_app(app):
 
 def attach_logging_handler():
     """
-    Attach OTLP logging handler to root logger.
+    Attach OTLP logging handler to root logger and uvicorn loggers.
 
     This should be called AFTER uvicorn/FastAPI configures logging,
     typically in the lifespan startup function.
+
+    We attach to both root logger AND uvicorn-specific loggers because:
+    1. Root logger captures application logs
+    2. Uvicorn loggers (uvicorn, uvicorn.access, uvicorn.error) bypass root logger
+       and need explicit handler attachment to capture server/access logs
     """
     global _global_logger_provider, _otlp_logging_handler
 
@@ -249,10 +254,13 @@ def attach_logging_handler():
         return False
 
     try:
-        # Get root logger
+        # Get loggers
         root_logger = logging.getLogger()
+        uvicorn_logger = logging.getLogger("uvicorn")
+        uvicorn_access_logger = logging.getLogger("uvicorn.access")
+        uvicorn_error_logger = logging.getLogger("uvicorn.error")
 
-        # Check if our handler is still attached
+        # Check if our handler is still attached to root logger
         if _otlp_logging_handler is not None:
             if _otlp_logging_handler in root_logger.handlers:
                 print("✅ OTLP logging handler already attached")
@@ -266,12 +274,23 @@ def attach_logging_handler():
             logger_provider=_global_logger_provider,
         )
 
-        # Attach handler
+        # Attach handler to root logger
         root_logger.addHandler(handler)
+
+        # Also attach to uvicorn loggers to capture server/access logs
+        # These loggers don't propagate to root logger by default
+        uvicorn_logger.addHandler(handler)
+        uvicorn_access_logger.addHandler(handler)
+        uvicorn_error_logger.addHandler(handler)
+
         _otlp_logging_handler = handler
 
-        print("✅ OTLP logging handler attached to root logger")
-        print(f"   Total handlers: {len(root_logger.handlers)}")
+        print("✅ OTLP logging handler attached to root and uvicorn loggers")
+        print(f"   Root logger handlers: {len(root_logger.handlers)}")
+        print(f"   Uvicorn logger handlers: {len(uvicorn_logger.handlers)}")
+        print(
+            f"   Uvicorn access logger handlers: {len(uvicorn_access_logger.handlers)}"
+        )
 
         return True
 
@@ -314,6 +333,8 @@ def monitor_logging_handlers():
 
     This function should be called periodically to ensure the handler
     stays attached even if other components clear logging configuration.
+
+    Checks both root logger and uvicorn loggers.
     """
     global _otlp_logging_handler
 
@@ -321,16 +342,26 @@ def monitor_logging_handlers():
         return False
 
     root_logger = logging.getLogger()
-    current_handlers = len(root_logger.handlers)
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
 
-    # If no handlers at all, something cleared logging completely
-    if current_handlers == 0:
-        print("⚠️  All logging handlers were cleared - re-attaching OTLP handler")
-        return attach_logging_handler()
+    # Check if handler is missing from any logger
+    root_missing = _otlp_logging_handler not in root_logger.handlers
+    uvicorn_missing = _otlp_logging_handler not in uvicorn_logger.handlers
+    access_missing = _otlp_logging_handler not in uvicorn_access_logger.handlers
 
-    # If our handler is missing but others exist, re-attach it
-    if _otlp_logging_handler not in root_logger.handlers:
-        print("⚠️  OTLP handler was removed - re-attaching")
+    if root_missing or uvicorn_missing or access_missing:
+        missing_loggers = []
+        if root_missing:
+            missing_loggers.append("root")
+        if uvicorn_missing:
+            missing_loggers.append("uvicorn")
+        if access_missing:
+            missing_loggers.append("uvicorn.access")
+
+        print(
+            f"⚠️  OTLP handler missing from loggers: {', '.join(missing_loggers)} - re-attaching"
+        )
         return attach_logging_handler()
 
     return True

@@ -489,7 +489,9 @@ if ENVIRONMENT == Environment.PRODUCTION:
     JWT_SECRET_KEY = (
         os.getenv("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
     )  # Must be set in production
-    BINANCE_TESTNET = False
+    # REMOVED: BINANCE_TESTNET = False
+    # Reason: Allow testnet usage in production environment for testing
+    # Testnet setting should be controlled by BINANCE_TESTNET env var, not hardcoded
     COINBASE_SANDBOX = False
     KRAKEN_SANDBOX = False
 

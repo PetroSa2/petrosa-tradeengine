@@ -144,7 +144,8 @@ class BinanceFuturesExchange:
         try:
             logger.info(
                 f"Executing {order.type} {order.side} order for "
-                f"{order.amount} {order.symbol}"
+                f"{order.amount} {order.symbol} "
+                f"(reduce_only={order.reduce_only})"
             )
 
             # Validate order
@@ -175,6 +176,40 @@ class BinanceFuturesExchange:
         except Exception as e:
             logger.error(f"Order execution error: {e}")
             return self._format_error_result(str(e), order)
+
+    async def _get_current_price(self, symbol: str) -> float:
+        """Get current market price for a symbol"""
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        ticker = self.client.futures_symbol_ticker(symbol=symbol)
+        return float(ticker["price"])
+
+    async def _validate_notional(self, order: TradeOrder, price: float) -> None:
+        """Validate order meets minimum notional value requirement"""
+        # Reduce-only orders are exempt from MIN_NOTIONAL
+        if order.reduce_only:
+            logger.debug(
+                f"Skipping notional validation for reduce_only order: {order.symbol}"
+            )
+            return
+
+        # Get minimum notional for symbol
+        min_info = self.get_min_order_amount(order.symbol)
+        min_notional = float(min_info["min_notional"])
+
+        # Calculate order notional value
+        notional_value = price * order.amount
+
+        # Validate
+        if notional_value < min_notional:
+            raise ValueError(
+                f"Order notional ${notional_value:.2f} is below minimum ${min_notional:.2f} "
+                f"for {order.symbol}. Increase quantity or use reduce_only flag."
+            )
+
+        logger.debug(
+            f"Notional validation passed: ${notional_value:.2f} >= ${min_notional:.2f}"
+        )
 
     async def _validate_order(self, order: TradeOrder) -> None:
         """Validate order parameters"""
@@ -215,6 +250,17 @@ class BinanceFuturesExchange:
             if order.stop_loss is None:
                 raise ValueError("Stop loss price required for stop orders")
 
+        # Validate minimum notional value
+        # For limit orders, use target_price
+        if order.type in ["limit", "stop_limit", "take_profit_limit"]:
+            if order.target_price is None:
+                raise ValueError("Target price required for limit orders")
+            await self._validate_notional(order, order.target_price)
+        # For market orders, fetch current price
+        elif order.type in ["market", "stop", "take_profit"]:
+            current_price = await self._get_current_price(order.symbol)
+            await self._validate_notional(order, current_price)
+
     async def _execute_market_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a market order"""
         if self.client is None:
@@ -224,6 +270,7 @@ class BinanceFuturesExchange:
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
+            "reduceOnly": order.reduce_only,
         }
 
         # Add quote order quantity for market orders if specified
@@ -252,6 +299,7 @@ class BinanceFuturesExchange:
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
+            "reduceOnly": order.reduce_only,
         }
 
         result = await self._execute_with_retry(
@@ -275,6 +323,7 @@ class BinanceFuturesExchange:
             "type": FUTURE_ORDER_TYPE_STOP_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
+            "reduceOnly": order.reduce_only,
         }
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -301,6 +350,7 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
+            "reduceOnly": order.reduce_only,
         }
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -323,6 +373,7 @@ class BinanceFuturesExchange:
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
+            "reduceOnly": order.reduce_only,
         }
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -351,6 +402,7 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
+            "reduceOnly": order.reduce_only,
         }
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -371,12 +423,13 @@ class BinanceFuturesExchange:
             except BinanceAPIException as e:
                 # Don't retry on certain errors
                 if e.code in [
-                    -2010,
-                    -2011,
-                    -2013,
-                    -2014,
-                    -2015,
-                ]:  # Insufficient balance, invalid symbol, etc.
+                    -2010,  # Insufficient balance
+                    -2011,  # Invalid symbol
+                    -2013,  # Invalid order type
+                    -2014,  # Invalid price
+                    -2015,  # Invalid quantity
+                    -4164,  # MIN_NOTIONAL validation error
+                ]:
                     raise
                 last_exception = e
             except Exception as e:
@@ -419,7 +472,7 @@ class BinanceFuturesExchange:
 
         min_qty = float(lot_size_filter["minQty"]) if lot_size_filter else 0.001
         min_notional = (
-            float(min_notional_filter["notional"]) if min_notional_filter else 5.0
+            float(min_notional_filter["notional"]) if min_notional_filter else 100.0
         )
         step_size = float(lot_size_filter["stepSize"]) if lot_size_filter else 0.001
 

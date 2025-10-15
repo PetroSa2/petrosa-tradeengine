@@ -57,15 +57,15 @@ class SignalConsumer:
             return False
 
     async def start_consuming(self) -> None:
-        """Start consuming messages from NATS"""
+        """Start consuming messages from NATS with enhanced logging"""
         # Check if NATS is enabled
         if not settings.nats_enabled:
-            logger.info("NATS is disabled - consumer will not start")
+            logger.info("⚙️  NATS is disabled - consumer will not start")
             return
 
         if not self.nc:
             if not await self.initialize():
-                logger.error("Cannot start consuming - NATS consumer not initialized")
+                logger.error("❌ Cannot start consuming - NATS consumer not initialized")
                 return
         if self.nc is None:
             raise RuntimeError(
@@ -74,7 +74,8 @@ class SignalConsumer:
 
         self.running = True
         logger.info(
-            "Starting NATS consumer for subject: %s", settings.nats_signal_subject
+            "🚀 STARTING NATS CONSUMER | Subject: %s | Queue: petrosa-tradeengine",
+            settings.nats_signal_subject,
         )
 
         try:
@@ -86,7 +87,7 @@ class SignalConsumer:
             )
 
             logger.info(
-                "NATS subscription created for subject: %s",
+                "✅ NATS SUBSCRIPTION ACTIVE | Subject: %s | Waiting for signals...",
                 settings.nats_signal_subject,
             )
 
@@ -95,26 +96,51 @@ class SignalConsumer:
                 await asyncio.sleep(1)
 
         except Exception as e:
-            logger.error("Error in NATS consumer loop: %s", str(e))
+            logger.error("❌ NATS CONSUMER ERROR | Error: %s", str(e), exc_info=True)
             nats_errors.labels(type="consumer_loop").inc()
         finally:
             await self.stop_consuming()
 
     async def _message_handler(self, msg: Any) -> None:
-        """Handle incoming NATS messages"""
+        """Handle incoming NATS messages with enhanced logging"""
         try:
-            logger.info("Processing NATS message from subject: %s", msg.subject)
+            logger.info(
+                "📨 NATS MESSAGE RECEIVED | Subject: %s | Size: %d bytes",
+                msg.subject,
+                len(msg.data),
+            )
 
             # Parse message into Signal
             signal_data = json.loads(msg.data.decode())
+            logger.info(
+                "📊 PARSING SIGNAL | Strategy: %s | Symbol: %s | Action: %s",
+                signal_data.get("strategy_id", "Unknown"),
+                signal_data.get("symbol", "Unknown"),
+                signal_data.get("action", "Unknown"),
+            )
+
             signal_data["timestamp"] = datetime.fromisoformat(signal_data["timestamp"])
             signal = Signal(**signal_data)
 
+            logger.info(
+                "✅ SIGNAL PARSED SUCCESSFULLY | %s | %s %s @ %s",
+                signal.strategy_id,
+                signal.symbol,
+                signal.action.upper(),
+                signal.current_price,
+            )
+
             # Dispatch signal
+            logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
             result = await self.dispatcher.dispatch(signal)
 
             messages_processed.labels(status="success").inc()
-            logger.info("Successfully processed signal: %s", signal.strategy_id)
+            logger.info(
+                "✅ NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
+                signal.strategy_id,
+                result.get("status"),
+                result,
+            )
 
             # Send acknowledgment if reply subject is provided
             if msg.reply and self.nc:
@@ -124,9 +150,25 @@ class SignalConsumer:
                     "result": result,
                 }
                 await self.nc.publish(msg.reply, json.dumps(response).encode())
+                logger.info("📤 NATS ACK SENT to %s", msg.reply)
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                "❌ JSON DECODE ERROR | Subject: %s | Error: %s | Raw data: %s",
+                msg.subject,
+                str(e),
+                msg.data.decode()[:200],
+            )
+            messages_processed.labels(status="error").inc()
+            nats_errors.labels(type="processing").inc()
 
         except Exception as e:
-            logger.error("Failed to process NATS message: %s", str(e))
+            logger.error(
+                "❌ NATS MESSAGE PROCESSING FAILED | Subject: %s | Error: %s",
+                msg.subject,
+                str(e),
+                exc_info=True,
+            )
             messages_processed.labels(status="error").inc()
             nats_errors.labels(type="processing").inc()
 
@@ -134,6 +176,7 @@ class SignalConsumer:
             if msg.reply and self.nc:
                 error_response = {"status": "error", "error": str(e)}
                 await self.nc.publish(msg.reply, json.dumps(error_response).encode())
+                logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
 
     async def stop_consuming(self) -> None:
         """Stop the consumer"""

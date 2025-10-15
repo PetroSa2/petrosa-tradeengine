@@ -1,6 +1,8 @@
 import logging
 from typing import Any
 
+from prometheus_client import Counter, Histogram
+
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
@@ -9,6 +11,37 @@ from shared.distributed_lock import distributed_lock_manager
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import SignalAggregator
+
+# Prometheus metrics for signal flow tracking
+signals_received = Counter(
+    "tradeengine_signals_received_total",
+    "Total signals received by the dispatcher",
+    ["strategy", "symbol", "action"],
+)
+
+signals_processed = Counter(
+    "tradeengine_signals_processed_total",
+    "Total signals processed by the dispatcher",
+    ["status", "action"],
+)
+
+orders_executed = Counter(
+    "tradeengine_orders_executed_total",
+    "Total orders executed",
+    ["symbol", "side", "status"],
+)
+
+order_execution_time = Histogram(
+    "tradeengine_order_execution_seconds",
+    "Time taken to execute orders",
+    ["symbol", "side"],
+)
+
+binance_api_calls = Counter(
+    "tradeengine_binance_api_calls_total",
+    "Total Binance API calls",
+    ["operation", "status"],
+)
 
 
 class Dispatcher:
@@ -163,17 +196,48 @@ class Dispatcher:
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing with distributed state management"""
         try:
+            # Track signal reception in metrics
+            signals_received.labels(
+                strategy=signal.strategy_id, symbol=signal.symbol, action=signal.action
+            ).inc()
+
+            # Enhanced logging for signal reception
+            self.logger.info(
+                f"📩 SIGNAL RECEIVED: {signal.strategy_id} | "
+                f"{signal.symbol} {signal.action.upper()} @ {signal.current_price} | "
+                f"Confidence: {signal.confidence:.2%} | "
+                f"Timeframe: {signal.timeframe}"
+            )
+
             # Handle hold signals
             if signal.action == "hold":
+                self.logger.info(
+                    f"⏸️  HOLD SIGNAL FILTERED: {signal.strategy_id} | "
+                    f"{signal.symbol} | No action taken"
+                )
+                signals_processed.labels(status="hold", action="hold").inc()
                 return {"status": "hold", "reason": "Signal indicates hold action"}
+
+            # Log signal processing
+            self.logger.info(
+                f"⚙️  PROCESSING SIGNAL: {signal.strategy_id} | "
+                f"{signal.symbol} {signal.action.upper()}"
+            )
 
             # Process the signal
             result = await self.process_signal(signal)
 
             # If processing was successful, execute the order with distributed lock
             if result.get("status") == "success":
+                self.logger.info(
+                    f"✅ SIGNAL VALIDATED: {signal.strategy_id} | "
+                    f"Converting to order for {signal.symbol}"
+                )
                 order = self._signal_to_order(signal)
 
+                self.logger.info(
+                    f"🔐 ACQUIRING DISTRIBUTED LOCK: order_execution_{signal.symbol}"
+                )
                 # Execute order with distributed lock to ensure consensus
                 execution_result = await distributed_lock_manager.execute_with_lock(
                     f"order_execution_{signal.symbol}",
@@ -186,10 +250,26 @@ class Dispatcher:
                     "status"
                 ] = "executed"  # Change status to executed for consistency
 
+                self.logger.info(
+                    f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
+                    f"Execution status: {execution_result.get('status')}"
+                )
+                signals_processed.labels(status="executed", action=signal.action).inc()
+            else:
+                self.logger.warning(
+                    f"⚠️  SIGNAL VALIDATION FAILED: {signal.strategy_id} | "
+                    f"Status: {result.get('status')} | Reason: {result.get('reason', 'Unknown')}"
+                )
+                signals_processed.labels(status="failed", action=signal.action).inc()
+
             return result
 
         except Exception as e:
-            self.logger.error(f"Dispatch error: {e}")
+            self.logger.error(
+                f"❌ DISPATCH ERROR: {signal.strategy_id if hasattr(signal, 'strategy_id') else 'Unknown'} | "
+                f"Error: {e}",
+                exc_info=True,
+            )
             return {"status": "error", "error": str(e)}
 
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
@@ -280,8 +360,19 @@ class Dispatcher:
             return 0.001
 
     async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
-        """Execute a trading order"""
+        """Execute a trading order with detailed logging"""
+        import time
+
+        start_time = time.time()
+
         try:
+            # Enhanced logging for order execution
+            self.logger.info(
+                f"🔨 EXECUTING ORDER: {order.symbol} {order.side.upper()} "
+                f"{order.amount} @ {order.target_price} | "
+                f"Type: {order.type} | ID: {order.order_id}"
+            )
+
             # Log order
             if audit_logger.enabled and audit_logger.connected:
                 audit_logger.log_order(order.model_dump())
@@ -289,21 +380,41 @@ class Dispatcher:
             # Execute order on Binance exchange
             if order.simulate:
                 # Simulated order - just track locally
+                self.logger.info(f"🎭 SIMULATION MODE: Order {order.order_id} simulated")
                 result = {"status": "pending", "simulated": True}
                 await self.order_manager.track_order(order, result)
             else:
                 # Real order - execute on Binance
                 if self.exchange:
                     try:
+                        self.logger.info(
+                            f"📤 SENDING TO BINANCE: {order.symbol} {order.side} "
+                            f"{order.amount} @ {order.target_price}"
+                        )
                         result = await self.exchange.execute(order)
                         await self.order_manager.track_order(order, result)
-                        self.logger.info(f"Order executed on Binance: {result}")
+
+                        # Log success with details
+                        self.logger.info(
+                            f"✅ BINANCE ORDER EXECUTED: {order.symbol} {order.side} | "
+                            f"Status: {result.get('status')} | "
+                            f"Order ID: {result.get('order_id', 'N/A')} | "
+                            f"Fill Price: {result.get('fill_price', 'N/A')} | "
+                            f"Result: {result}"
+                        )
                     except Exception as exchange_error:
-                        self.logger.error(f"Binance exchange error: {exchange_error}")
+                        self.logger.error(
+                            f"❌ BINANCE EXCHANGE ERROR: {order.symbol} {order.side} | "
+                            f"Error: {exchange_error} | Order ID: {order.order_id}",
+                            exc_info=True,
+                        )
                         result = {"status": "error", "error": str(exchange_error)}
                         await self.order_manager.track_order(order, result)
                 else:
                     # No exchange provided, just track locally
+                    self.logger.warning(
+                        f"⚠️  NO EXCHANGE CONFIGURED: Order {order.order_id} tracked locally only"
+                    )
                     result = {"status": "pending", "no_exchange": True}
                     await self.order_manager.track_order(order, result)
 
@@ -316,10 +427,28 @@ class Dispatcher:
                     }
                 )
 
+            self.logger.info(
+                f"📊 ORDER EXECUTION COMPLETE: {order.order_id} | Status: {result.get('status')}"
+            )
+
+            # Track order execution metrics
+            execution_time = time.time() - start_time
+            order_execution_time.labels(symbol=order.symbol, side=order.side).observe(
+                execution_time
+            )
+            orders_executed.labels(
+                symbol=order.symbol,
+                side=order.side,
+                status=result.get("status", "unknown"),
+            ).inc()
+
             return result
 
         except Exception as e:
-            self.logger.error(f"Order execution error: {e}")
+            self.logger.error(
+                f"❌ ORDER EXECUTION FAILED: {order.order_id} | Error: {e}",
+                exc_info=True,
+            )
             if audit_logger.enabled and audit_logger.connected:
                 audit_logger.log_error(
                     {

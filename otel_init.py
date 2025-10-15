@@ -237,7 +237,7 @@ def instrument_fastapi_app(app):
 
 def attach_logging_handler():
     """
-    Attach OTLP logging handler to root logger and uvicorn loggers.
+    Attach BOTH OTLP and stdout logging handlers to root logger and uvicorn loggers.
 
     This should be called AFTER uvicorn/FastAPI configures logging,
     typically in the lifespan startup function.
@@ -246,12 +246,13 @@ def attach_logging_handler():
     1. Root logger captures application logs
     2. Uvicorn loggers (uvicorn, uvicorn.access, uvicorn.error) bypass root logger
        and need explicit handler attachment to capture server/access logs
+
+    We add BOTH OTLP and stdout handlers so logs are visible in:
+    - Grafana/Loki (via OTLP) for centralized observability
+    - kubectl logs (via stdout) for quick debugging
     """
     global _global_logger_provider, _otlp_logging_handler
-
-    if _global_logger_provider is None:
-        print("⚠️  Logger provider not configured - logging export not available")
-        return False
+    import sys
 
     try:
         # Get loggers
@@ -259,6 +260,9 @@ def attach_logging_handler():
         uvicorn_logger = logging.getLogger("uvicorn")
         uvicorn_access_logger = logging.getLogger("uvicorn.access")
         uvicorn_error_logger = logging.getLogger("uvicorn.error")
+
+        # Set log level to INFO for root logger
+        root_logger.setLevel(logging.INFO)
 
         # Check if our handler is still attached to root logger
         if _otlp_logging_handler is not None:
@@ -268,34 +272,55 @@ def attach_logging_handler():
             else:
                 print("⚠️  OTLP handler was removed, re-attaching...")
 
-        # Create new handler
-        handler = LoggingHandler(
-            level=logging.NOTSET,
-            logger_provider=_global_logger_provider,
+        # 1. Add STDOUT handler for kubectl logs visibility
+        stdout_handler = logging.StreamHandler(sys.stdout)
+        stdout_handler.setLevel(logging.INFO)
+        stdout_formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
+        stdout_handler.setFormatter(stdout_formatter)
+        root_logger.addHandler(stdout_handler)
+        print("✅ Stdout logging handler added for kubectl visibility")
 
-        # Attach handler to root logger
-        root_logger.addHandler(handler)
+        # 2. Add OTLP handler for Grafana/Loki
+        if _global_logger_provider is not None:
+            otlp_handler = LoggingHandler(
+                level=logging.NOTSET,
+                logger_provider=_global_logger_provider,
+            )
 
-        # Also attach to uvicorn loggers to capture server/access logs
-        # These loggers don't propagate to root logger by default
-        uvicorn_logger.addHandler(handler)
-        uvicorn_access_logger.addHandler(handler)
-        uvicorn_error_logger.addHandler(handler)
+            # Attach OTLP handler to root logger
+            root_logger.addHandler(otlp_handler)
 
-        _otlp_logging_handler = handler
+            # Also attach to uvicorn loggers to capture server/access logs
+            # These loggers don't propagate to root logger by default
+            uvicorn_logger.addHandler(otlp_handler)
+            uvicorn_access_logger.addHandler(otlp_handler)
+            uvicorn_error_logger.addHandler(otlp_handler)
 
-        print("✅ OTLP logging handler attached to root and uvicorn loggers")
+            _otlp_logging_handler = otlp_handler
+            print("✅ OTLP logging handler attached for Grafana export")
+        else:
+            print("⚠️  Logger provider not configured - OTLP export not available")
+            print("   Logs will still be visible in stdout")
+
+        print("📊 Logging configuration complete:")
+        print(f"   Root logger level: {logging.getLevelName(root_logger.level)}")
         print(f"   Root logger handlers: {len(root_logger.handlers)}")
-        print(f"   Uvicorn logger handlers: {len(uvicorn_logger.handlers)}")
-        print(
-            f"   Uvicorn access logger handlers: {len(uvicorn_access_logger.handlers)}"
-        )
+        print("   - Stdout: ✅ (kubectl logs)")
+        if _global_logger_provider is not None:
+            print("   - OTLP: ✅ (Grafana/Loki)")
+        else:
+            print("   - OTLP: ❌ (disabled)")
 
         return True
 
     except Exception as e:
         print(f"⚠️  Failed to attach logging handler: {e}")
+        import traceback
+
+        traceback.print_exc()
         return False
 
 

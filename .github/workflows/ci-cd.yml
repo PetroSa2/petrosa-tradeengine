@@ -60,45 +60,60 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Cache pip dependencies
+    - name: Cache pip packages and virtual environment
       uses: actions/cache@v3
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        path: |
+          ~/.cache/pip
+          .venv
+        key: ${{ runner.os }}-python-3.11-venv-${{ hashFiles('**/requirements*.txt') }}
         restore-keys: |
-          ${{ runner.os }}-pip-
+          ${{ runner.os }}-python-3.11-venv-
+          ${{ runner.os }}-python-3.11-
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        python -m venv .venv || echo "Virtual environment already exists"
+        source .venv/bin/activate
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
 
     - name: Install pre-commit
       run: |
+        source .venv/bin/activate
         pip install pre-commit
         pre-commit install
 
     - name: Run pre-commit on all files
       run: |
+        source .venv/bin/activate
         pre-commit run --all-files
 
     - name: Run flake8 linting
       run: |
+        source .venv/bin/activate
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         flake8 . --count --exit-zero --max-complexity=10 --statistics
 
     - name: Run black formatting check
-      run: black --check --diff .
+      run: |
+        source .venv/bin/activate
+        black --check --diff .
 
     - name: Run ruff linting
-      run: ruff check .
+      run: |
+        source .venv/bin/activate
+        ruff check .
 
     - name: Run mypy type checking
-      run: mypy tradeengine/ contracts/ shared/
+      run: |
+        source .venv/bin/activate
+        mypy tradeengine/ contracts/ shared/
 
     - name: Run pytest with coverage
       run: |
+        source .venv/bin/activate
         pytest --cov=tradeengine --cov=contracts --cov=shared --cov-report=xml --cov-report=term-missing
 
     - name: Upload coverage to Codecov

@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: petrosa-tradeengine-allow-ingress
+  namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+    version: VERSION_PLACEHOLDER
+spec:
+  podSelector:
+    matchLabels:
+      app: petrosa-tradeengine
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow traffic from other pods in petrosa-apps namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: petrosa-apps
+    ports:
+    - protocol: TCP
+      port: 8000  # HTTP API
+    - protocol: TCP
+      port: 9090  # Metrics
+  # Allow traffic from ingress controllers (if any)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+  # Allow traffic from observability namespace for health checks
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: observability
+    ports:
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 9090

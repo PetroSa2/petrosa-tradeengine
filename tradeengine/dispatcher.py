@@ -228,10 +228,13 @@ class Dispatcher:
             result = await self.process_signal(signal)
 
             # If processing was successful, execute the order with distributed lock
-            if result.get("status") == "success":
+            # Signal processors can return "success" or "executed" - both are valid for order execution
+            signal_status = result.get("status")
+            if signal_status in ("success", "executed"):
                 self.logger.info(
                     f"✅ SIGNAL VALIDATED: {signal.strategy_id} | "
-                    f"Converting to order for {signal.symbol}"
+                    f"Converting to order for {signal.symbol} | "
+                    f"Processing status: {signal_status}"
                 )
                 order = self._signal_to_order(signal)
 
@@ -255,10 +258,16 @@ class Dispatcher:
                     f"Execution status: {execution_result.get('status')}"
                 )
                 signals_processed.labels(status="executed", action=signal.action).inc()
+            elif signal_status == "rejected":
+                self.logger.info(
+                    f"⛔ SIGNAL REJECTED: {signal.strategy_id} | "
+                    f"Reason: {result.get('reason', 'Unknown')}"
+                )
+                signals_processed.labels(status="rejected", action=signal.action).inc()
             else:
                 self.logger.warning(
                     f"⚠️  SIGNAL VALIDATION FAILED: {signal.strategy_id} | "
-                    f"Status: {result.get('status')} | Reason: {result.get('reason', 'Unknown')}"
+                    f"Status: {signal_status} | Reason: {result.get('reason', 'Unknown')}"
                 )
                 signals_processed.labels(status="failed", action=signal.action).inc()
 

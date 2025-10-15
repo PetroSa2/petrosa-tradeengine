@@ -76,6 +76,11 @@ class TradeOrder(BaseModel):
     # Simulation flag
     simulate: bool = Field(True, description="Whether to simulate the order")
 
+    # Reduce-only flag (exempt from MIN_NOTIONAL validation)
+    reduce_only: bool = Field(
+        False, description="Reduce-only order (exempt from MIN_NOTIONAL)"
+    )
+
     # Time in force (for limit/stop orders)
     time_in_force: str | None = Field(
         None, description="Time in force policy (GTC, IOC, etc.)"

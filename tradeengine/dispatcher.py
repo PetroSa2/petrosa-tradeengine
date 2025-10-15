@@ -327,6 +327,7 @@ class Dispatcher:
             iceberg_quantity=signal.iceberg_quantity,
             client_order_id=signal.client_order_id,
             status=OrderStatus.PENDING,
+            reduce_only=False,  # Orders from signals are position-opening
             filled_amount=0.0,
             average_price=0.0,
             time_in_force=signal.time_in_force.value,

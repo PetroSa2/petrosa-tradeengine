@@ -22,7 +22,7 @@
 - Monitored `addHandler()` and `removeHandler()` calls with stack traces
 - Ran instrumented application on live Kubernetes pods
 
-**Finding**: ❌ Hypothesis REJECTED  
+**Finding**: ❌ Hypothesis REJECTED
 The handler WAS successfully attached during lifespan startup:
 ```
 ✅ OTLP logging handler attached to root logger
@@ -37,7 +37,7 @@ The handler WAS successfully attached during lifespan startup:
 - Checked for `logging.basicConfig(force=True)` or `handlers.clear()` calls
 - Analyzed complete startup sequence with stack traces
 
-**Finding**: ❌ Hypothesis REJECTED  
+**Finding**: ❌ Hypothesis REJECTED
 NO explicit `removeHandler()` calls were detected for the root logger.
 
 ### Phase 3: Root Cause Discovery
@@ -57,7 +57,7 @@ print(f'Handlers: {len(root_logger.handlers)}')  # Returns: 0
 - Uvicorn loggers: `uvicorn`, `uvicorn.access`, `uvicorn.error`
 - **These loggers do NOT propagate to the root logger by default**
 
-**ROOT CAUSE IDENTIFIED**: 🎯  
+**ROOT CAUSE IDENTIFIED**: 🎯
 1. Root logger handler gets detached (mechanism still unclear)
 2. Even if root logger handler stayed attached, uvicorn logs would still bypass it
 3. Need to attach handler to BOTH root logger AND uvicorn loggers
@@ -81,10 +81,10 @@ def attach_logging_handler():
 ```python
 def attach_logging_handler():
     handler = LoggingHandler(logger_provider=_global_logger_provider)
-    
+
     # Attach to root logger
     logging.getLogger().addHandler(handler)
-    
+
     # ALSO attach to uvicorn loggers (they don't propagate to root)
     logging.getLogger("uvicorn").addHandler(handler)
     logging.getLogger("uvicorn.access").addHandler(handler)
@@ -107,12 +107,12 @@ def monitor_logging_handlers():
     root_logger = logging.getLogger()
     uvicorn_logger = logging.getLogger("uvicorn")
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
-    
+
     # Check ALL loggers
     root_missing = _otlp_logging_handler not in root_logger.handlers
     uvicorn_missing = _otlp_logging_handler not in uvicorn_logger.handlers
     access_missing = _otlp_logging_handler not in uvicorn_access_logger.handlers
-    
+
     if root_missing or uvicorn_missing or access_missing:
         print(f"⚠️  OTLP handler missing from loggers - re-attaching")
         return attach_logging_handler()
@@ -137,7 +137,7 @@ After PR #75 is deployed, ALL logs will flow through OTLP to Grafana Cloud Loki:
 
 2. ✅ **Server Logs** (via uvicorn logger)
    - Server startup messages
-   - Server shutdown messages  
+   - Server shutdown messages
    - Server-level errors
 
 3. ✅ **Access Logs** (via uvicorn.access logger)
@@ -234,4 +234,3 @@ Check Grafana Loki for the test log within 5-10 seconds.
 - Grafana Cloud Loki: https://grafana.com/
 - OpenTelemetry Logging: https://opentelemetry.io/docs/instrumentation/python/logging/
 - Uvicorn Logging Config: https://www.uvicorn.org/settings/#logging
-

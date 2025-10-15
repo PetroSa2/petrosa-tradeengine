@@ -120,11 +120,7 @@ def track_logging_changes():
 
 def start_handler_monitoring():
     """Start monitoring logging handler changes"""
-    global \
-        _original_addHandler, \
-        _original_removeHandler, \
-        _original_basicConfig, \
-        _monitoring_active
+    global _original_addHandler, _original_removeHandler, _original_basicConfig, _monitoring_active
 
     if _monitoring_active:
         log_debug_event("MONITORING", "Handler monitoring already active")
@@ -152,11 +148,7 @@ def start_handler_monitoring():
 
 def stop_handler_monitoring():
     """Stop monitoring and restore original methods"""
-    global \
-        _original_addHandler, \
-        _original_removeHandler, \
-        _original_basicConfig, \
-        _monitoring_active
+    global _original_addHandler, _original_removeHandler, _original_basicConfig, _monitoring_active
 
     if not _monitoring_active:
         return

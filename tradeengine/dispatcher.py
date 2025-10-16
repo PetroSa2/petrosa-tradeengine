@@ -1053,11 +1053,16 @@ class Dispatcher:
                 # Use OCO logic for paired SL/TP orders
                 self.logger.info(f"🔄 PLACING OCO ORDERS FOR {order.symbol}")
 
+                # Get the filled quantity - use order.amount if result amount is 0 or None
+                filled_quantity = result.get("amount", 0) or order.amount
+                if filled_quantity == 0:
+                    filled_quantity = order.amount
+
                 oco_result = await self.oco_manager.place_oco_orders(
                     position_id=order.position_id or "",
                     symbol=order.symbol,
                     position_side=order.position_side or "",
-                    quantity=result.get("amount", order.amount),
+                    quantity=filled_quantity,
                     stop_loss_price=order.stop_loss or 0.0,
                     take_profit_price=order.take_profit or 0.0,
                 )
@@ -1119,6 +1124,11 @@ class Dispatcher:
 
             from contracts.order import OrderStatus, TradeOrder
 
+            # Get the filled quantity - use order.amount if result amount is 0 or None
+            filled_quantity = result.get("amount", 0) or order.amount
+            if filled_quantity == 0:
+                filled_quantity = order.amount
+
             # Create stop loss order
             stop_loss_order = TradeOrder(
                 order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
@@ -1127,7 +1137,7 @@ class Dispatcher:
                     "sell" if order.side == "buy" else "buy"
                 ),  # Opposite side to close position
                 type="stop",  # Stop market order
-                amount=result.get("amount", order.amount),
+                amount=filled_quantity,
                 stop_loss=order.stop_loss,
                 take_profit=None,  # Not applicable for stop loss order
                 target_price=None,  # Market order when triggered
@@ -1205,6 +1215,11 @@ class Dispatcher:
 
             from contracts.order import OrderStatus, TradeOrder
 
+            # Get the filled quantity - use order.amount if result amount is 0 or None
+            filled_quantity = result.get("amount", 0) or order.amount
+            if filled_quantity == 0:
+                filled_quantity = order.amount
+
             # Create take profit order
             take_profit_order = TradeOrder(
                 order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
@@ -1213,7 +1228,7 @@ class Dispatcher:
                     "sell" if order.side == "buy" else "buy"
                 ),  # Opposite side to close position
                 type="take_profit",  # Take profit market order
-                amount=result.get("amount", order.amount),
+                amount=filled_quantity,
                 take_profit=order.take_profit,
                 target_price=None,  # Market order when triggered
                 position_id=order.position_id,

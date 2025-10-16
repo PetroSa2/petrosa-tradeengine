@@ -2,6 +2,7 @@
 MySQL client for position tracking and persistence.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -12,6 +13,11 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1.0  # seconds
+RETRY_BACKOFF_MULTIPLIER = 2.0
 
 
 class MySQLClient:
@@ -100,74 +106,95 @@ class MySQLClient:
             logger.info("Disconnected from MySQL")
 
     async def create_position(self, position_data: dict[str, Any]) -> bool:
-        """Create a new position record in MySQL."""
+        """Create a new position record in MySQL with retry logic."""
         if not self.connection:
             logger.error("Not connected to MySQL")
             return False
 
-        try:
-            # Check if connection is still alive
+        # Retry logic for transient errors
+        for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                self.connection.ping(reconnect=True)
+                # Check if connection is still alive
+                try:
+                    self.connection.ping(reconnect=True)
+                except Exception as e:
+                    logger.warning(f"Connection lost, reconnecting: {e}")
+                    await self.connect()
+
+                sql = """
+                    INSERT INTO positions (
+                        position_id, strategy_id, exchange, symbol, position_side,
+                        entry_price, quantity, entry_time, stop_loss, take_profit,
+                        status, metadata, exchange_position_id, entry_order_id,
+                        entry_trade_ids, stop_loss_order_id, take_profit_order_id,
+                        commission_asset, commission_total
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """
+
+                # Serialize JSON fields
+                metadata_json = json.dumps(position_data.get("metadata", {}))
+                entry_trade_ids_json = json.dumps(
+                    position_data.get("entry_trade_ids", [])
+                )
+
+                with self.connection.cursor() as cursor:
+                    cursor.execute(
+                        sql,
+                        (
+                            position_data["position_id"],
+                            position_data["strategy_id"],
+                            position_data.get("exchange", "binance"),
+                            position_data["symbol"],
+                            position_data["position_side"],
+                            position_data["entry_price"],
+                            position_data["quantity"],
+                            position_data["entry_time"],
+                            position_data.get("stop_loss"),
+                            position_data.get("take_profit"),
+                            position_data.get("status", "open"),
+                            metadata_json,
+                            position_data.get("exchange_position_id"),
+                            position_data.get("entry_order_id"),
+                            entry_trade_ids_json,
+                            position_data.get("stop_loss_order_id"),
+                            position_data.get("take_profit_order_id"),
+                            position_data.get("commission_asset"),
+                            position_data.get("commission_total"),
+                        ),
+                    )
+
+                logger.info(
+                    f"Created position record {position_data['position_id']} in MySQL"
+                )
+                return True
+
+            except pymysql.err.OperationalError as e:
+                # Transient errors - retry
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
+                    logger.warning(
+                        f"MySQL operational error on attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}: {e}. "
+                        f"Retrying in {wait_time}s..."
+                    )
+                    await asyncio.sleep(wait_time)
+                    # Try to reconnect
+                    try:
+                        await self.connect()
+                    except Exception as reconnect_error:
+                        logger.error(f"Failed to reconnect: {reconnect_error}")
+                else:
+                    logger.error(
+                        f"Failed to create position after {MAX_RETRY_ATTEMPTS} attempts: {e}"
+                    )
+                    return False
             except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
+                # Non-retryable errors
+                logger.error(f"Error creating position in MySQL: {e}")
+                return False
 
-            sql = """
-                INSERT INTO positions (
-                    position_id, strategy_id, exchange, symbol, position_side,
-                    entry_price, quantity, entry_time, stop_loss, take_profit,
-                    status, metadata, exchange_position_id, entry_order_id,
-                    entry_trade_ids, stop_loss_order_id, take_profit_order_id,
-                    commission_asset, commission_total
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-            """
-
-            # Serialize JSON fields
-            metadata_json = json.dumps(position_data.get("metadata", {}))
-            entry_trade_ids_json = json.dumps(position_data.get("entry_trade_ids", []))
-
-            with self.connection.cursor() as cursor:
-                cursor.execute(
-                    sql,
-                    (
-                        position_data["position_id"],
-                        position_data["strategy_id"],
-                        position_data.get("exchange", "binance"),
-                        position_data["symbol"],
-                        position_data["position_side"],
-                        position_data["entry_price"],
-                        position_data["quantity"],
-                        position_data["entry_time"],
-                        position_data.get("stop_loss"),
-                        position_data.get("take_profit"),
-                        position_data.get("status", "open"),
-                        metadata_json,
-                        position_data.get("exchange_position_id"),
-                        position_data.get("entry_order_id"),
-                        entry_trade_ids_json,
-                        position_data.get("stop_loss_order_id"),
-                        position_data.get("take_profit_order_id"),
-                        position_data.get("commission_asset"),
-                        position_data.get("commission_total"),
-                    ),
-                )
-
-            logger.info(
-                f"Created position record {position_data['position_id']} in MySQL"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"Error creating position in MySQL: {e}")
-            # Try to reconnect on error
-            try:
-                await self.connect()
-            except Exception as reconnect_error:
-                logger.error(f"Failed to reconnect: {reconnect_error}")
-            return False
+        return False
 
     async def update_position(
         self, position_id: str, update_data: dict[str, Any]
@@ -225,59 +252,78 @@ class MySQLClient:
     async def update_position_risk_orders(
         self, position_id: str, update_data: dict[str, Any]
     ) -> bool:
-        """Update position record with stop loss and take profit order IDs."""
+        """Update position record with stop loss and take profit order IDs with retry logic."""
         if not self.connection:
             logger.error("Not connected to MySQL")
             return False
 
-        try:
-            # Check if connection is still alive
+        # Retry logic for transient errors
+        for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                self.connection.ping(reconnect=True)
-            except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
+                # Check if connection is still alive
+                try:
+                    self.connection.ping(reconnect=True)
+                except Exception as e:
+                    logger.warning(f"Connection lost, reconnecting: {e}")
+                    await self.connect()
 
-            # Build dynamic UPDATE query for risk order fields
-            set_clauses = []
-            values = []
+                # Build dynamic UPDATE query for risk order fields
+                set_clauses = []
+                values = []
 
-            for key, value in update_data.items():
-                if key in ["stop_loss_order_id", "take_profit_order_id"]:
-                    set_clauses.append(f"{key} = %s")
-                    values.append(value)
+                for key, value in update_data.items():
+                    if key in ["stop_loss_order_id", "take_profit_order_id"]:
+                        set_clauses.append(f"{key} = %s")
+                        values.append(value)
 
-            if not set_clauses:
-                logger.warning("No risk order fields to update")
+                if not set_clauses:
+                    logger.warning("No risk order fields to update")
+                    return True
+
+                # Add position_id for WHERE clause
+                values.append(position_id)
+
+                sql = f"""
+                    UPDATE positions
+                    SET {', '.join(set_clauses)}
+                    WHERE position_id = %s
+                """
+
+                with self.connection.cursor() as cursor:
+                    cursor.execute(sql, values)
+
+                logger.info(
+                    f"Updated position {position_id} risk orders in MySQL: {update_data}"
+                )
                 return True
 
-            # Add position_id for WHERE clause
-            values.append(position_id)
+            except pymysql.err.OperationalError as e:
+                # Transient errors - retry
+                if attempt < MAX_RETRY_ATTEMPTS - 1:
+                    wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
+                    logger.warning(
+                        f"MySQL operational error on attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}: {e}. "
+                        f"Retrying in {wait_time}s..."
+                    )
+                    await asyncio.sleep(wait_time)
+                    # Try to reconnect
+                    try:
+                        await self.connect()
+                    except Exception as reconnect_error:
+                        logger.error(f"Failed to reconnect: {reconnect_error}")
+                else:
+                    logger.error(
+                        f"Failed to update position risk orders after {MAX_RETRY_ATTEMPTS} attempts: {e}"
+                    )
+                    return False
+            except Exception as e:
+                # Non-retryable errors
+                logger.error(
+                    f"Error updating position risk orders {position_id} in MySQL: {e}"
+                )
+                return False
 
-            sql = f"""
-                UPDATE positions
-                SET {', '.join(set_clauses)}
-                WHERE position_id = %s
-            """
-
-            with self.connection.cursor() as cursor:
-                cursor.execute(sql, values)
-
-            logger.info(
-                f"Updated position {position_id} risk orders in MySQL: {update_data}"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(
-                f"Error updating position risk orders {position_id} in MySQL: {e}"
-            )
-            # Try to reconnect on error
-            try:
-                await self.connect()
-            except Exception as reconnect_error:
-                logger.error(f"Failed to reconnect: {reconnect_error}")
-            return False
+        return False
 
     async def get_position(self, position_id: str) -> dict[str, Any] | None:
         """Get a specific position by ID."""

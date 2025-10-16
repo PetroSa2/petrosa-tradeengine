@@ -274,8 +274,19 @@ class PositionManager:
                         "total_value": 0.0,
                     }
                 position = self.positions[symbol]
+                # Get fill price from result and ensure it's a float
                 fill_price = result.get("fill_price", order.target_price or 0)
+                if isinstance(fill_price, str):
+                    fill_price = (
+                        float(fill_price) if fill_price else (order.target_price or 0)
+                    )
+
+                # Get fill quantity and ensure it's a float
                 fill_quantity = result.get("amount", order.amount)
+                if isinstance(fill_quantity, str):
+                    fill_quantity = (
+                        float(fill_quantity) if fill_quantity else order.amount
+                    )
 
                 if order.side == "buy":
                     # Add to position
@@ -371,14 +382,26 @@ class PositionManager:
                 return
 
             # Extract data from order and result
+            # Ensure fill_price is a float, not a string
+            fill_price = result.get("fill_price", order.target_price or 0)
+            if isinstance(fill_price, str):
+                fill_price = (
+                    float(fill_price) if fill_price else (order.target_price or 0)
+                )
+
+            # Ensure amount is a float
+            amount = result.get("amount", order.amount)
+            if isinstance(amount, str):
+                amount = float(amount) if amount else order.amount
+
             position_data = {
                 "position_id": order.position_id,
                 "strategy_id": order.strategy_metadata.get("strategy_id", "unknown"),
                 "exchange": order.exchange,
                 "symbol": order.symbol,
                 "position_side": order.position_side or "LONG",
-                "entry_price": result.get("fill_price", order.target_price or 0),
-                "quantity": result.get("amount", order.amount),
+                "entry_price": fill_price,
+                "quantity": amount,
                 "entry_time": datetime.utcnow(),
                 "stop_loss": order.stop_loss,
                 "take_profit": order.take_profit,
@@ -389,11 +412,15 @@ class PositionManager:
                 "entry_order_id": result.get("order_id", order.order_id),
                 "entry_trade_ids": result.get("trade_ids", []),
                 "commission_asset": result.get("commission_asset", "USDT"),
-                "commission_total": result.get("commission", 0.0),
+                "commission_total": (
+                    float(result.get("commission", 0.0))
+                    if isinstance(result.get("commission", 0.0), str)
+                    else result.get("commission", 0.0)
+                ),
             }
 
             # Persist to MongoDB
-            if self.mongodb_db:
+            if self.mongodb_db is not None:
                 try:
                     positions_collection = self.mongodb_db.positions
                     await positions_collection.insert_one(position_data.copy())
@@ -439,7 +466,7 @@ class PositionManager:
                 return
 
             # Update MongoDB
-            if self.mongodb_db:
+            if self.mongodb_db is not None:
                 try:
                     positions_collection = self.mongodb_db.positions
                     await positions_collection.update_one(
@@ -516,7 +543,7 @@ class PositionManager:
             }
 
             # Update MongoDB
-            if self.mongodb_db:
+            if self.mongodb_db is not None:
                 try:
                     positions_collection = self.mongodb_db.positions
                     await positions_collection.update_one(

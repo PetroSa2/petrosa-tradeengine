@@ -306,7 +306,7 @@ class MySQLClient:
                     WHERE status = 'open'
                     ORDER BY entry_time DESC
                 """
-                params = ()
+                params: tuple[str, ...] = ()
 
             with self.connection.cursor() as cursor:
                 cursor.execute(sql, params)

@@ -7,6 +7,7 @@ all types of trading orders including market, limit, stop, and take-profit order
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
@@ -556,6 +557,7 @@ class BinanceFuturesExchange:
             min_info = self.get_min_order_amount(symbol)
             min_qty = float(min_info["min_qty"])
             min_notional = float(min_info["min_notional"])
+            step_size = float(min_info["step_size"])
 
             # If no current price provided, use min_qty as fallback
             if current_price is None:
@@ -570,15 +572,29 @@ class BinanceFuturesExchange:
             # Add 5% safety margin to avoid rounding errors
             final_min_qty = final_min_qty * 1.05
 
-            # Round to the appropriate precision
-            precision = min_info["precision"]
-            final_min_qty = round(final_min_qty, precision)
+            # Round UP to the next valid step_size increment
+            # This ensures we always meet the minimum notional requirement
+            if step_size > 0:
+                # Calculate how many steps we need
+                steps = math.ceil(final_min_qty / step_size)
+                final_min_qty = steps * step_size
+
+                # Round to appropriate precision to avoid floating point errors
+                precision = min_info["precision"]
+                final_min_qty = round(final_min_qty, precision)
+
+            # Verify the final quantity meets the minimum notional
+            # If not, add one more step_size increment
+            if current_price * final_min_qty < min_notional:
+                final_min_qty += step_size
+                precision = min_info["precision"]
+                final_min_qty = round(final_min_qty, precision)
 
             # Log the calculation
             logger.debug(
                 f"Calculated min order amount for {symbol}: "
                 f"{final_min_qty} (price: ${current_price:.2f}, "
-                f"min_notional: ${min_notional:.2f})"
+                f"min_notional: ${min_notional:.2f}, step_size: {step_size})"
             )
 
             return final_min_qty

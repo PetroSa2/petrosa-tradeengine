@@ -740,9 +740,9 @@ class Dispatcher:
             stop_loss_order = TradeOrder(
                 order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
                 symbol=order.symbol,
-                side="sell"
-                if order.side == "buy"
-                else "buy",  # Opposite side to close position
+                side=(
+                    "sell" if order.side == "buy" else "buy"
+                ),  # Opposite side to close position
                 type="stop",  # Stop market order
                 amount=result.get("amount", order.amount),
                 stop_loss=order.stop_loss,
@@ -816,9 +816,9 @@ class Dispatcher:
             take_profit_order = TradeOrder(
                 order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
                 symbol=order.symbol,
-                side="sell"
-                if order.side == "buy"
-                else "buy",  # Opposite side to close position
+                side=(
+                    "sell" if order.side == "buy" else "buy"
+                ),  # Opposite side to close position
                 type="take_profit",  # Take profit market order
                 amount=result.get("amount", order.amount),
                 take_profit=order.take_profit,

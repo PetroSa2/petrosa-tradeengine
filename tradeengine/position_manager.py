@@ -1,6 +1,6 @@
 """
 Position Manager - Tracks positions and enforces risk limits with distributed state
-management using MongoDB
+management using MongoDB and MySQL, with metrics export to Grafana
 """
 
 import asyncio
@@ -18,8 +18,28 @@ from shared.constants import (
     RISK_MANAGEMENT_ENABLED,
     get_mongodb_connection_string,
 )
+from tradeengine.metrics import (
+    position_commission_usd,
+    position_duration_seconds,
+    position_entry_price,
+    position_exit_price,
+    position_pnl_percentage,
+    position_pnl_usd,
+    position_roi,
+    positions_closed_total,
+    positions_losing_total,
+    positions_opened_total,
+    positions_winning_total,
+)
 
 logger = logging.getLogger(__name__)
+
+# Import MySQL client
+try:
+    from shared.mysql_client import mysql_client
+except ImportError:
+    mysql_client = None  # type: ignore
+    logger.warning("MySQL client not available - position tracking to MySQL disabled")
 
 
 class PositionManager:
@@ -42,10 +62,21 @@ class PositionManager:
         self.mongodb_db: Any = None
 
     async def initialize(self) -> None:
-        """Initialize position manager with MongoDB persistence"""
+        """Initialize position manager with MongoDB and MySQL persistence"""
         try:
             # Initialize MongoDB connection
             await self._initialize_mongodb()
+
+            # Initialize MySQL connection if available
+            if mysql_client:
+                try:
+                    await mysql_client.connect()
+                    logger.info("MySQL client connected for position tracking")
+                except Exception as mysql_error:
+                    logger.warning(
+                        f"MySQL connection failed: {mysql_error}. "
+                        "Position tracking to MySQL disabled."
+                    )
 
             # Load positions from MongoDB
             await self._load_positions_from_mongodb()
@@ -329,6 +360,264 @@ class PositionManager:
             logger.info(f"Position {symbol} marked as closed in MongoDB")
         except Exception as e:
             logger.error(f"Failed to close position {symbol} in MongoDB: {e}")
+
+    async def create_position_record(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> None:
+        """Create position record on order execution with dual persistence and metrics"""
+        try:
+            if not order.position_id:
+                logger.warning("Order missing position_id, cannot track position")
+                return
+
+            # Extract data from order and result
+            position_data = {
+                "position_id": order.position_id,
+                "strategy_id": order.strategy_metadata.get("strategy_id", "unknown"),
+                "exchange": order.exchange,
+                "symbol": order.symbol,
+                "position_side": order.position_side or "LONG",
+                "entry_price": result.get("fill_price", order.target_price or 0),
+                "quantity": result.get("amount", order.amount),
+                "entry_time": datetime.utcnow(),
+                "stop_loss": order.stop_loss,
+                "take_profit": order.take_profit,
+                "status": "open",
+                "metadata": order.strategy_metadata,
+                # Exchange-specific data
+                "exchange_position_id": result.get("position_id"),
+                "entry_order_id": result.get("order_id", order.order_id),
+                "entry_trade_ids": result.get("trade_ids", []),
+                "commission_asset": result.get("commission_asset", "USDT"),
+                "commission_total": result.get("commission", 0.0),
+            }
+
+            # Persist to MongoDB
+            if self.mongodb_db:
+                try:
+                    positions_collection = self.mongodb_db.positions
+                    await positions_collection.insert_one(position_data.copy())
+                    logger.info(
+                        f"Position {order.position_id} created in MongoDB for "
+                        f"{order.symbol} {order.position_side}"
+                    )
+                except Exception as mongo_error:
+                    logger.error(f"Failed to create position in MongoDB: {mongo_error}")
+
+            # Persist to MySQL
+            if mysql_client:
+                try:
+                    await mysql_client.create_position(position_data)
+                    logger.info(
+                        f"Position {order.position_id} created in MySQL for "
+                        f"{order.symbol} {order.position_side}"
+                    )
+                except Exception as mysql_error:
+                    logger.error(f"Failed to create position in MySQL: {mysql_error}")
+
+            # Export metrics
+            await self._export_position_opened_metrics(position_data)
+
+        except Exception as e:
+            logger.error(f"Error creating position record: {e}")
+
+    async def close_position_record(
+        self, position_id: str, exit_result: dict[str, Any]
+    ) -> None:
+        """Update position record on closure with dual persistence and metrics"""
+        try:
+            # Calculate closure data
+            exit_price = exit_result.get("exit_price", 0.0)
+            exit_time = datetime.utcnow()
+            entry_price = exit_result.get("entry_price", 0.0)
+            quantity = exit_result.get("quantity", 0.0)
+            entry_time = exit_result.get("entry_time", exit_time)
+
+            # Calculate PnL
+            pnl = (exit_price - entry_price) * quantity
+            pnl_pct = (
+                ((exit_price - entry_price) / entry_price * 100)
+                if entry_price > 0
+                else 0.0
+            )
+
+            # Calculate duration
+            duration_seconds = int((exit_time - entry_time).total_seconds())
+
+            # Get commissions
+            entry_commission = exit_result.get("entry_commission", 0.0)
+            exit_commission = exit_result.get("exit_commission", 0.0)
+            total_commission = entry_commission + exit_commission
+            pnl_after_fees = pnl - total_commission
+
+            update_data = {
+                "status": "closed",
+                "exit_price": exit_price,
+                "exit_time": exit_time,
+                "exit_order_id": exit_result.get("order_id"),
+                "exit_trade_ids": exit_result.get("trade_ids", []),
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "pnl_after_fees": pnl_after_fees,
+                "duration_seconds": duration_seconds,
+                "close_reason": exit_result.get("close_reason", "manual"),
+                "final_commission": exit_commission,
+            }
+
+            # Update MongoDB
+            if self.mongodb_db:
+                try:
+                    positions_collection = self.mongodb_db.positions
+                    await positions_collection.update_one(
+                        {"position_id": position_id},
+                        {"$set": update_data},
+                    )
+                    logger.info(f"Position {position_id} closed in MongoDB")
+                except Exception as mongo_error:
+                    logger.error(f"Failed to close position in MongoDB: {mongo_error}")
+
+            # Update MySQL
+            if mysql_client:
+                try:
+                    await mysql_client.update_position(position_id, update_data)
+                    logger.info(f"Position {position_id} closed in MySQL")
+                except Exception as mysql_error:
+                    logger.error(f"Failed to close position in MySQL: {mysql_error}")
+
+            # Export metrics
+            position_data = {**exit_result, **update_data}
+            await self._export_position_closed_metrics(position_data)
+
+        except Exception as e:
+            logger.error(f"Error closing position record: {e}")
+
+    async def _export_position_opened_metrics(
+        self, position_data: dict[str, Any]
+    ) -> None:
+        """Export metrics when position is opened"""
+        try:
+            strategy_id = position_data.get("strategy_id", "unknown")
+            symbol = position_data.get("symbol", "unknown")
+            position_side = position_data.get("position_side", "LONG")
+            exchange = position_data.get("exchange", "binance")
+            entry_price = position_data.get("entry_price", 0.0)
+
+            # Increment position opened counter
+            positions_opened_total.labels(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                position_side=position_side,
+                exchange=exchange,
+            ).inc()
+
+            # Record entry price
+            position_entry_price.labels(
+                symbol=symbol, position_side=position_side, exchange=exchange
+            ).observe(entry_price)
+
+            logger.debug(
+                f"Position opened metrics exported for {position_data.get('position_id')}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error exporting position opened metrics: {e}")
+
+    async def _export_position_closed_metrics(
+        self, position_data: dict[str, Any]
+    ) -> None:
+        """Export metrics when position is closed"""
+        try:
+            strategy_id = position_data.get("strategy_id", "unknown")
+            symbol = position_data.get("symbol", "unknown")
+            position_side = position_data.get("position_side", "LONG")
+            exchange = position_data.get("exchange", "binance")
+            close_reason = position_data.get("close_reason", "manual")
+            pnl_after_fees = position_data.get("pnl_after_fees", 0.0)
+            pnl_pct = position_data.get("pnl_pct", 0.0)
+            duration_seconds = position_data.get("duration_seconds", 0)
+            exit_price = position_data.get("exit_price", 0.0)
+            entry_commission = position_data.get("commission_total", 0.0)
+            final_commission = position_data.get("final_commission", 0.0)
+            total_commission = entry_commission + final_commission
+
+            # Increment position closed counter
+            positions_closed_total.labels(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                position_side=position_side,
+                close_reason=close_reason,
+                exchange=exchange,
+            ).inc()
+
+            # Record PnL in USD
+            position_pnl_usd.labels(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                position_side=position_side,
+                exchange=exchange,
+            ).observe(pnl_after_fees)
+
+            # Record PnL percentage
+            position_pnl_percentage.labels(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                position_side=position_side,
+                exchange=exchange,
+            ).observe(pnl_pct)
+
+            # Record duration
+            position_duration_seconds.labels(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                position_side=position_side,
+                close_reason=close_reason,
+                exchange=exchange,
+            ).observe(duration_seconds)
+
+            # Record exit price
+            position_exit_price.labels(
+                symbol=symbol, position_side=position_side, exchange=exchange
+            ).observe(exit_price)
+
+            # Record commission
+            position_commission_usd.labels(
+                strategy_id=strategy_id, symbol=symbol, exchange=exchange
+            ).observe(total_commission)
+
+            # Track win/loss
+            if pnl_after_fees > 0:
+                positions_winning_total.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange=exchange,
+                ).inc()
+            else:
+                positions_losing_total.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange=exchange,
+                ).inc()
+
+            # Calculate and record ROI
+            entry_price = position_data.get("entry_price", 0.0)
+            if entry_price > 0:
+                roi = (exit_price - entry_price) / entry_price
+                position_roi.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange=exchange,
+                ).observe(roi)
+
+            logger.debug(
+                f"Position closed metrics exported for {position_data.get('position_id')}: "
+                f"PnL=${pnl_after_fees:.2f}, Duration={duration_seconds}s"
+            )
+
+        except Exception as e:
+            logger.error(f"Error exporting position closed metrics: {e}")
 
     async def check_position_limits(self, order: TradeOrder) -> bool:
         """Check if order meets position size limits with distributed state"""

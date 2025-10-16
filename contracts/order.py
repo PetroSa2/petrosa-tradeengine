@@ -73,6 +73,16 @@ class TradeOrder(BaseModel):
     filled_amount: float = Field(0.0, description="Amount filled so far")
     average_price: float | None = Field(None, description="Average fill price")
 
+    # Position tracking for hedge mode
+    position_id: str | None = Field(None, description="Unique position ID for tracking")
+    position_side: str | None = Field(
+        None, description="Position side for hedge mode (LONG/SHORT)"
+    )
+    exchange: str = Field("binance", description="Exchange identifier")
+    strategy_metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Strategy parameters for tracking"
+    )
+
     # Simulation flag
     simulate: bool = Field(True, description="Whether to simulate the order")
 

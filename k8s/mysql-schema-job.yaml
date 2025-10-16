@@ -1,0 +1,200 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: petrosa-tradeengine-mysql-schema
+  namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+    component: mysql-schema-init
+  annotations:
+    description: "Initialize MySQL schema for hedge mode position tracking"
+spec:
+  ttlSecondsAfterFinished: 100
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: petrosa-tradeengine
+        component: mysql-schema-init
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: mysql-schema-init
+        image: yurisa2/petrosa-tradeengine:VERSION_PLACEHOLDER
+        imagePullPolicy: Always
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Starting MySQL schema initialization..."
+
+          # Extract MySQL connection details from MYSQL_URI
+          # Format: mysql+pymysql://user:pass@host:port/database
+
+          # Parse the URI using Python
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          import sys
+          from urllib.parse import urlparse
+
+          mysql_uri = os.getenv('MYSQL_URI', '')
+
+          if not mysql_uri:
+              print("ERROR: MYSQL_URI not set")
+              sys.exit(1)
+
+          # Remove mysql+pymysql:// prefix if present
+          if mysql_uri.startswith('mysql+pymysql://'):
+              mysql_uri = mysql_uri.replace('mysql+pymysql://', 'mysql://')
+
+          parsed = urlparse(mysql_uri)
+
+          host = parsed.hostname or 'localhost'
+          port = parsed.port or 3306
+          user = parsed.username or 'root'
+          password = parsed.password or ''
+          database = parsed.path.lstrip('/') or 'petrosa'
+
+          print(f"Parsed MySQL connection: {user}@{host}:{port}/{database}")
+
+          # Create connection string for mysql client
+          # Export as environment variables for the shell script
+          with open('/tmp/mysql_config.sh', 'w') as f:
+              f.write(f'export MYSQL_HOST="{host}"\n')
+              f.write(f'export MYSQL_PORT="{port}"\n')
+              f.write(f'export MYSQL_USER="{user}"\n')
+              f.write(f'export MYSQL_PASSWORD="{password}"\n')
+              f.write(f'export MYSQL_DATABASE="{database}"\n')
+
+          print("MySQL configuration exported")
+          PYTHON_SCRIPT
+
+          # Source the configuration
+          . /tmp/mysql_config.sh
+
+          # Check if mysql client is available, if not install it
+          if ! command -v mysql &> /dev/null; then
+              echo "MySQL client not found, installing..."
+              apt-get update -qq && apt-get install -y -qq default-mysql-client > /dev/null 2>&1
+          fi
+
+          echo "Testing MySQL connection..."
+          if ! mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -e "SELECT 1" > /dev/null 2>&1; then
+              echo "ERROR: Cannot connect to MySQL server"
+              exit 1
+          fi
+
+          echo "MySQL connection successful"
+
+          # Create database if it doesn't exist
+          echo "Ensuring database exists: $MYSQL_DATABASE"
+          mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+            -e "CREATE DATABASE IF NOT EXISTS \`$MYSQL_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1
+
+          # Check if positions table exists
+          echo "Checking if positions table exists..."
+          TABLE_EXISTS=$(mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+            -D"$MYSQL_DATABASE" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE' AND table_name='positions';" 2>&1)
+
+          if [ "$TABLE_EXISTS" = "1" ]; then
+              echo "✓ positions table already exists, skipping creation"
+
+              # Verify schema has all required columns
+              echo "Verifying schema..."
+              REQUIRED_COLUMNS="position_id strategy_id exchange symbol position_side entry_price quantity pnl_after_fees"
+              for col in $REQUIRED_COLUMNS; do
+                  COL_EXISTS=$(mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+                    -D"$MYSQL_DATABASE" -N -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$MYSQL_DATABASE' AND table_name='positions' AND column_name='$col';" 2>&1)
+
+                  if [ "$COL_EXISTS" != "1" ]; then
+                      echo "WARNING: Column $col is missing from positions table"
+                  fi
+              done
+
+              echo "✓ Schema verification complete"
+          else
+              echo "Creating positions table..."
+
+              # Execute the schema creation script
+              mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+                -D"$MYSQL_DATABASE" << 'SQL_SCRIPT'
+
+          CREATE TABLE IF NOT EXISTS positions (
+              id BIGINT AUTO_INCREMENT PRIMARY KEY,
+              position_id VARCHAR(255) UNIQUE NOT NULL,
+              strategy_id VARCHAR(255) NOT NULL,
+              exchange VARCHAR(50) NOT NULL DEFAULT 'binance',
+              symbol VARCHAR(50) NOT NULL,
+              position_side ENUM('LONG', 'SHORT') NOT NULL,
+              entry_price DECIMAL(20, 8) NOT NULL,
+              quantity DECIMAL(20, 8) NOT NULL,
+              entry_time DATETIME NOT NULL,
+              stop_loss DECIMAL(20, 8),
+              take_profit DECIMAL(20, 8),
+              status ENUM('open', 'closed') NOT NULL DEFAULT 'open',
+              metadata JSON,
+              exchange_position_id VARCHAR(255),
+              entry_order_id VARCHAR(255),
+              entry_trade_ids JSON,
+              stop_loss_order_id VARCHAR(255),
+              take_profit_order_id VARCHAR(255),
+              commission_asset VARCHAR(20),
+              commission_total DECIMAL(20, 8),
+              exit_price DECIMAL(20, 8),
+              exit_time DATETIME,
+              exit_order_id VARCHAR(255),
+              exit_trade_ids JSON,
+              pnl DECIMAL(20, 8),
+              pnl_pct DECIMAL(10, 4),
+              pnl_after_fees DECIMAL(20, 8),
+              duration_seconds INT,
+              close_reason VARCHAR(50),
+              final_commission DECIMAL(20, 8),
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_strategy_id (strategy_id),
+              INDEX idx_exchange (exchange),
+              INDEX idx_symbol (symbol),
+              INDEX idx_status (status),
+              INDEX idx_entry_time (entry_time),
+              INDEX idx_exchange_position_id (exchange_position_id),
+              INDEX idx_entry_order_id (entry_order_id)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+          SQL_SCRIPT
+
+              if [ $? -eq 0 ]; then
+                  echo "✓ positions table created successfully"
+              else
+                  echo "ERROR: Failed to create positions table"
+                  exit 1
+              fi
+          fi
+
+          # Verify table structure
+          echo "Verifying table structure..."
+          mysql -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+            -D"$MYSQL_DATABASE" -e "DESCRIBE positions;" 2>&1
+
+          echo ""
+          echo "============================================"
+          echo "✓ MySQL schema initialization complete"
+          echo "============================================"
+          echo "Database: $MYSQL_DATABASE"
+          echo "Table: positions"
+          echo "Status: Ready for hedge mode position tracking"
+          echo "============================================"
+
+        env:
+        - name: MYSQL_URI
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: MYSQL_URI
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

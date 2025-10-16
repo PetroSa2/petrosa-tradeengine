@@ -109,6 +109,12 @@ spec:
             secretKeyRef:
               name: petrosa-sensitive-credentials
               key: MONGODB_DATABASE
+        # MySQL configuration from secret (for position tracking)
+        - name: MYSQL_URI
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: MYSQL_URI
         # NATS configuration from configmap
         - name: NATS_ENABLED
           valueFrom:
@@ -152,6 +158,8 @@ spec:
           value: "isolated"
         - name: POSITION_MODE
           value: "hedge"
+        - name: HEDGE_MODE_ENABLED
+          value: "true"
         # Risk management limits
         - name: MAX_POSITION_SIZE_PCT
           value: "0.1"

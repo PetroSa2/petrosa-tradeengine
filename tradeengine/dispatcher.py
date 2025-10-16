@@ -378,9 +378,12 @@ class Dispatcher:
             # Execute order
             result = await self.execute_order(order)
 
-            # Update position with distributed state management
+            # Update position with distributed state management and create position record
             if result and result.get("status") in ["filled", "partially_filled"]:
                 await self.position_manager.update_position(order, result)
+
+                # Create position tracking record with dual persistence
+                await self.position_manager.create_position_record(order, result)
 
             return result
 
@@ -390,10 +393,34 @@ class Dispatcher:
 
     def _signal_to_order(self, signal: Signal) -> TradeOrder:
         """Convert a signal to a trade order with dynamic minimum amounts"""
+        import uuid
         from datetime import datetime
 
         # Calculate order amount based on signal quantity or dynamic minimum
         amount = self._calculate_order_amount(signal)
+
+        # Generate unique position ID for tracking
+        position_id = str(uuid.uuid4())
+
+        # Determine position side for hedge mode (buy=LONG, sell=SHORT)
+        position_side = "LONG" if signal.action == "buy" else "SHORT"
+
+        # Collect all signal parameters for position tracking
+        strategy_metadata = {
+            "signal_id": signal.signal_id or signal.id,
+            "strategy_id": signal.strategy_id,
+            "strategy_mode": signal.strategy_mode.value,
+            "source": signal.source,
+            "strategy": signal.strategy,
+            "timeframe": signal.timeframe,
+            "confidence": signal.confidence,
+            "strength": signal.strength.value,
+            "indicators": signal.indicators,
+            "rationale": signal.rationale,
+            "llm_reasoning": signal.llm_reasoning,
+            "metadata": signal.metadata,
+            "meta": signal.meta,
+        }
 
         # Create the order
         order = TradeOrder(
@@ -419,6 +446,11 @@ class Dispatcher:
             created_at=signal.timestamp,
             updated_at=signal.timestamp,
             simulate=signal.meta.get("simulate", False) if signal.meta else False,
+            # Hedge mode position tracking
+            position_id=position_id,
+            position_side=position_side,
+            exchange="binance",
+            strategy_metadata=strategy_metadata,
         )
 
         return order

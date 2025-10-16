@@ -27,15 +27,30 @@ nats_errors = Counter("tradeengine_nats_errors_total", "Total NATS errors", ["ty
 class SignalConsumer:
     """NATS consumer for trading signals"""
 
-    def __init__(self) -> None:
+    def __init__(self, dispatcher: Dispatcher | None = None) -> None:
         self.nc: nats.aio.client.Client | None = None
         self.running: bool = False
         self.subscription: nats.aio.subscription.Subscription | None = None
-        self.dispatcher = Dispatcher()
+        self.dispatcher = dispatcher  # Use provided dispatcher or None
+        self._dispatcher_provided = dispatcher is not None
 
-    async def initialize(self) -> bool:
+    async def initialize(self, dispatcher: Dispatcher | None = None) -> bool:
         """Initialize NATS connection"""
         try:
+            # Use provided dispatcher if given
+            if dispatcher:
+                self.dispatcher = dispatcher
+                self._dispatcher_provided = True
+                logger.info("✅ Using provided dispatcher with configured exchange")
+            elif not self.dispatcher:
+                # Create dispatcher without exchange as fallback
+                self.dispatcher = Dispatcher()
+                self._dispatcher_provided = False
+                logger.warning(
+                    "⚠️  Creating dispatcher without exchange - "
+                    "orders will be tracked locally only"
+                )
+
             # Check if NATS is enabled
             if not settings.nats_enabled:
                 logger.info("NATS is disabled - skipping NATS consumer initialization")
@@ -46,7 +61,11 @@ class SignalConsumer:
                 return False
 
             self.nc = await nats.connect(settings.nats_servers)
-            await self.dispatcher.initialize()
+
+            # Only initialize dispatcher if we created it ourselves
+            if not self._dispatcher_provided and self.dispatcher:
+                await self.dispatcher.initialize()
+
             logger.info(
                 "NATS consumer initialized, connected to: %s", settings.nats_servers
             )
@@ -132,6 +151,8 @@ class SignalConsumer:
 
             # Dispatch signal
             logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
+            if not self.dispatcher:
+                raise RuntimeError("Dispatcher not initialized")
             result = await self.dispatcher.dispatch(signal)
 
             messages_processed.labels(status="success").inc()

@@ -1,11 +1,12 @@
+import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Dict
 
 from prometheus_client import Counter, Histogram
 
-from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
+from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
+from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
 from shared.config import Settings
 from shared.distributed_lock import distributed_lock_manager
@@ -51,6 +52,328 @@ signals_duplicate = Counter(
 )
 
 
+class OCOManager:
+    """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
+
+    def __init__(self, exchange: Any, logger: logging.Logger):
+        self.exchange = exchange
+        self.logger = logger
+        self.active_oco_pairs: Dict[str, Dict[str, Any]] = {}  # position_id -> oco_info
+        self.monitoring_task: asyncio.Task | None = None
+        self.monitoring_active = False
+
+    async def place_oco_orders(
+        self,
+        position_id: str,
+        symbol: str,
+        position_side: str,
+        quantity: float,
+        stop_loss_price: float,
+        take_profit_price: float,
+    ) -> Dict[str, Any]:
+        """
+        Place SL/TP orders that will cancel each other (OCO behavior)
+
+        Args:
+            position_id: Unique identifier for the position
+            symbol: Trading symbol (e.g., BTCUSDT)
+            position_side: LONG or SHORT
+            quantity: Position size
+            stop_loss_price: Stop loss trigger price
+            take_profit_price: Take profit target price
+
+        Returns:
+            Dict with sl_order_id and tp_order_id
+        """
+
+        self.logger.info(f"🔄 PLACING OCO ORDERS FOR {symbol} {position_side}")
+        self.logger.info(f"Position ID: {position_id}")
+        self.logger.info(f"Quantity: {quantity}")
+        self.logger.info(f"Stop Loss: {stop_loss_price}")
+        self.logger.info(f"Take Profit: {take_profit_price}")
+
+        # Determine order sides based on position side
+        if position_side == "LONG":
+            sl_side = OrderSide.SELL
+            tp_side = OrderSide.SELL
+        else:  # SHORT
+            sl_side = OrderSide.BUY
+            tp_side = OrderSide.BUY
+
+        # Place Stop Loss order
+        sl_order = TradeOrder(
+            symbol=symbol,
+            side=sl_side,
+            type=OrderType.STOP,
+            amount=quantity,
+            target_price=stop_loss_price,
+            stop_loss=stop_loss_price,
+            take_profit=None,
+            conditional_price=None,
+            conditional_direction=None,
+            conditional_timeout=None,
+            iceberg_quantity=None,
+            client_order_id=None,
+            order_id=f"oco_sl_{position_id}_{int(time.time())}",
+            status=OrderStatus.PENDING,
+            filled_amount=0.0,
+            average_price=None,
+            position_id=None,
+            position_side=position_side,
+            exchange="binance",
+            reduce_only=True,
+            time_in_force=TimeInForce.GTC,
+            position_size_pct=None,
+            simulate=False,
+            updated_at=None,
+        )
+
+        # Place Take Profit order
+        tp_order = TradeOrder(
+            symbol=symbol,
+            side=tp_side,
+            type=OrderType.TAKE_PROFIT,
+            amount=quantity,
+            target_price=take_profit_price,
+            stop_loss=None,
+            take_profit=take_profit_price,
+            conditional_price=None,
+            conditional_direction=None,
+            conditional_timeout=None,
+            iceberg_quantity=None,
+            client_order_id=None,
+            order_id=f"oco_tp_{position_id}_{int(time.time())}",
+            status=OrderStatus.PENDING,
+            filled_amount=0.0,
+            average_price=None,
+            position_id=None,
+            position_side=position_side,
+            exchange="binance",
+            reduce_only=True,
+            time_in_force=TimeInForce.GTC,
+            position_size_pct=None,
+            simulate=False,
+            updated_at=None,
+        )
+
+        # Execute both orders
+        try:
+            sl_result = await self.exchange.execute(sl_order)
+            tp_result = await self.exchange.execute(tp_order)
+
+            sl_order_id = sl_result.get("order_id")
+            tp_order_id = tp_result.get("order_id")
+
+            if sl_order_id and tp_order_id:
+                # Store the OCO pair for monitoring
+                self.active_oco_pairs[position_id] = {
+                    "sl_order_id": sl_order_id,
+                    "tp_order_id": tp_order_id,
+                    "symbol": symbol,
+                    "position_side": position_side,
+                    "status": "active",
+                    "created_at": time.time(),
+                }
+
+                self.logger.info("✅ OCO ORDERS PLACED SUCCESSFULLY")
+                self.logger.info(f"  Stop Loss Order ID: {sl_order_id}")
+                self.logger.info(f"  Take Profit Order ID: {tp_order_id}")
+
+                # Start monitoring if not already active
+                if not self.monitoring_active:
+                    await self.start_monitoring()
+
+                return {
+                    "sl_order_id": sl_order_id,
+                    "tp_order_id": tp_order_id,
+                    "status": "success",
+                }
+            else:
+                self.logger.error("❌ FAILED TO PLACE OCO ORDERS")
+                self.logger.error(f"  SL Result: {sl_result}")
+                self.logger.error(f"  TP Result: {tp_result}")
+                return {"status": "failed"}
+
+        except Exception as e:
+            self.logger.error(f"❌ ERROR PLACING OCO ORDERS: {e}")
+            return {"status": "error", "error": str(e)}
+
+    async def cancel_oco_pair(self, position_id: str) -> bool:
+        """
+        Cancel both SL and TP orders for a position
+
+        Args:
+            position_id: Position identifier
+
+        Returns:
+            True if both orders were cancelled successfully
+        """
+
+        if position_id not in self.active_oco_pairs:
+            self.logger.warning(f"⚠️  No OCO pair found for position {position_id}")
+            return False
+
+        oco_info = self.active_oco_pairs[position_id]
+        sl_order_id = oco_info["sl_order_id"]
+        tp_order_id = oco_info["tp_order_id"]
+        symbol = oco_info["symbol"]
+
+        self.logger.info(f"🔄 CANCELLING OCO PAIR FOR {symbol}")
+        self.logger.info(f"Position ID: {position_id}")
+        self.logger.info(f"SL Order ID: {sl_order_id}")
+        self.logger.info(f"TP Order ID: {tp_order_id}")
+
+        try:
+            # Cancel both orders using batch cancellation
+            cancel_result = self.exchange.client.futures_cancel_batch_orders(
+                symbol=symbol, orderIdList=[sl_order_id, tp_order_id]
+            )
+
+            if cancel_result and len(cancel_result) >= 2:
+                self.logger.info("✅ OCO PAIR CANCELLED SUCCESSFULLY")
+                self.active_oco_pairs[position_id]["status"] = "cancelled"
+                return True
+            else:
+                self.logger.error(f"❌ FAILED TO CANCEL OCO PAIR: {cancel_result}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"❌ ERROR CANCELLING OCO PAIR: {e}")
+            return False
+
+    async def cancel_other_order(self, position_id: str, filled_order_id: str) -> bool:
+        """
+        Cancel the other order when one SL/TP order is filled (OCO behavior)
+
+        Args:
+            position_id: Position identifier
+            filled_order_id: ID of the order that was filled
+
+        Returns:
+            True if the other order was cancelled successfully
+        """
+
+        if position_id not in self.active_oco_pairs:
+            self.logger.warning(f"⚠️  No OCO pair found for position {position_id}")
+            return False
+
+        oco_info = self.active_oco_pairs[position_id]
+        sl_order_id = oco_info["sl_order_id"]
+        tp_order_id = oco_info["tp_order_id"]
+
+        # Determine which order to cancel
+        if filled_order_id == sl_order_id:
+            order_to_cancel = tp_order_id
+            filled_type = "Stop Loss"
+            cancel_type = "Take Profit"
+        elif filled_order_id == tp_order_id:
+            order_to_cancel = sl_order_id
+            filled_type = "Take Profit"
+            cancel_type = "Stop Loss"
+        else:
+            self.logger.warning(
+                f"⚠️  Filled order {filled_order_id} not found in OCO pair"
+            )
+            return False
+
+        self.logger.info(f"🔄 OCO TRIGGERED: {filled_type} FILLED")
+        self.logger.info(f"Position ID: {position_id}")
+        self.logger.info(f"Filled Order: {filled_order_id} ({filled_type})")
+        self.logger.info(f"Cancelling Order: {order_to_cancel} ({cancel_type})")
+
+        try:
+            # Cancel the other order
+            cancel_result = self.exchange.client.futures_cancel_order(
+                symbol=oco_info["symbol"], orderId=order_to_cancel
+            )
+
+            if cancel_result:
+                self.logger.info(f"✅ {cancel_type} ORDER CANCELLED SUCCESSFULLY")
+                self.active_oco_pairs[position_id]["status"] = "completed"
+                return True
+            else:
+                self.logger.error(f"❌ FAILED TO CANCEL {cancel_type} ORDER")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"❌ ERROR CANCELLING {cancel_type} ORDER: {e}")
+            return False
+
+    async def start_monitoring(self) -> None:
+        """Start monitoring active orders for fills and trigger OCO logic"""
+        if self.monitoring_active:
+            return
+
+        self.monitoring_active = True
+        self.monitoring_task = asyncio.create_task(self._monitor_orders())
+        self.logger.info("🔍 STARTED ORDER MONITORING")
+
+    async def stop_monitoring(self) -> None:
+        """Stop monitoring orders"""
+        self.monitoring_active = False
+        if self.monitoring_task:
+            self.monitoring_task.cancel()
+            try:
+                await self.monitoring_task
+            except asyncio.CancelledError:
+                pass
+        self.logger.info("🔍 STOPPED ORDER MONITORING")
+
+    async def _monitor_orders(self) -> None:
+        """
+        Monitor active orders for fills and trigger OCO logic
+        This runs in a separate task
+        """
+
+        self.logger.info("🔍 STARTING ORDER MONITORING")
+        self.logger.info(f"Active OCO pairs: {len(self.active_oco_pairs)}")
+
+        while self.monitoring_active and self.active_oco_pairs:
+            try:
+                # Check each active OCO pair
+                for position_id, oco_info in list(self.active_oco_pairs.items()):
+                    if oco_info["status"] != "active":
+                        continue
+
+                    # Query order status
+                    orders = self.exchange.client.futures_get_open_orders(
+                        symbol=oco_info["symbol"]
+                    )
+
+                    sl_order_id = oco_info["sl_order_id"]
+                    tp_order_id = oco_info["tp_order_id"]
+
+                    # Check if orders still exist
+                    sl_exists = any(order["orderId"] == sl_order_id for order in orders)
+                    tp_exists = any(order["orderId"] == tp_order_id for order in orders)
+
+                    # If one order is missing, it was likely filled
+                    if not sl_exists and tp_exists:
+                        await self.cancel_other_order(position_id, sl_order_id)
+                    elif sl_exists and not tp_exists:
+                        await self.cancel_other_order(position_id, tp_order_id)
+                    elif not sl_exists and not tp_exists:
+                        # Both orders are gone - OCO completed
+                        self.logger.info(f"✅ OCO COMPLETED FOR POSITION {position_id}")
+                        self.active_oco_pairs[position_id]["status"] = "completed"
+
+                # Remove completed pairs
+                self.active_oco_pairs = {
+                    pid: info
+                    for pid, info in self.active_oco_pairs.items()
+                    if info["status"] == "active"
+                }
+
+                # Wait before next check
+                await asyncio.sleep(2)  # Check every 2 seconds
+
+            except Exception as e:
+                self.logger.error(f"❌ ERROR IN ORDER MONITORING: {e}")
+                await asyncio.sleep(5)  # Wait longer on error
+
+        self.logger.info("🔍 ORDER MONITORING STOPPED")
+
+
 class Dispatcher:
     """Central dispatcher for trading operations with distributed state management"""
 
@@ -61,6 +384,9 @@ class Dispatcher:
         self.signal_aggregator = SignalAggregator()
         self.exchange = exchange
         self.logger = logging.getLogger(__name__)
+
+        # Initialize OCO Manager for SL/TP order management
+        self.oco_manager = OCOManager(exchange, self.logger)
 
         # Duplicate signal detection cache
         # Format: {signal_id: timestamp} - stores signal IDs with their reception time
@@ -379,7 +705,8 @@ class Dispatcher:
             result = await self.execute_order(order)
 
             # Update position with distributed state management and create position record
-            if result and result.get("status") in ["filled", "partially_filled"]:
+            # Market orders return "NEW" status immediately, which is valid for risk management
+            if result and result.get("status") in ["filled", "partially_filled", "NEW"]:
                 await self.position_manager.update_position(order, result)
 
                 # Create position tracking record with dual persistence
@@ -701,7 +1028,7 @@ class Dispatcher:
     async def _place_risk_management_orders(
         self, order: TradeOrder, result: dict[str, Any]
     ) -> None:
-        """Place stop loss and take profit orders after successful position execution"""
+        """Place stop loss and take profit orders with OCO behavior after successful position execution"""
         try:
             if not self.exchange:
                 self.logger.warning(
@@ -716,6 +1043,61 @@ class Dispatcher:
                 )
                 return
 
+            # Check if both SL and TP are specified for OCO behavior
+            if (
+                order.stop_loss
+                and order.stop_loss > 0
+                and order.take_profit
+                and order.take_profit > 0
+            ):
+                # Use OCO logic for paired SL/TP orders
+                self.logger.info(f"🔄 PLACING OCO ORDERS FOR {order.symbol}")
+
+                oco_result = await self.oco_manager.place_oco_orders(
+                    position_id=order.position_id or "",
+                    symbol=order.symbol,
+                    position_side=order.position_side or "",
+                    quantity=result.get("amount", order.amount),
+                    stop_loss_price=order.stop_loss or 0.0,
+                    take_profit_price=order.take_profit or 0.0,
+                )
+
+                if oco_result["status"] == "success":
+                    self.logger.info(
+                        f"✅ OCO ORDERS PLACED SUCCESSFULLY FOR {order.symbol}"
+                    )
+
+                    # Update position record with OCO order IDs
+                    if order.position_id:
+                        await self.position_manager.update_position_risk_orders(
+                            order.position_id,
+                            stop_loss_order_id=oco_result.get("sl_order_id"),
+                            take_profit_order_id=oco_result.get("tp_order_id"),
+                        )
+                else:
+                    self.logger.error(
+                        f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result}"
+                    )
+                    # Fallback to individual order placement
+                    await self._place_individual_risk_orders(order, result)
+
+            elif order.stop_loss and order.stop_loss > 0:
+                # Only stop loss specified
+                await self._place_stop_loss_order(order, result)
+            elif order.take_profit and order.take_profit > 0:
+                # Only take profit specified
+                await self._place_take_profit_order(order, result)
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to place risk management orders: {e}", exc_info=True
+            )
+
+    async def _place_individual_risk_orders(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> None:
+        """Fallback method to place individual SL/TP orders (non-OCO)"""
+        try:
             # Place stop loss order if specified
             if order.stop_loss and order.stop_loss > 0:
                 await self._place_stop_loss_order(order, result)
@@ -723,10 +1105,9 @@ class Dispatcher:
             # Place take profit order if specified
             if order.take_profit and order.take_profit > 0:
                 await self._place_take_profit_order(order, result)
-
         except Exception as e:
             self.logger.error(
-                f"Failed to place risk management orders: {e}", exc_info=True
+                f"Failed to place individual risk orders: {e}", exc_info=True
             )
 
     async def _place_stop_loss_order(
@@ -782,11 +1163,19 @@ class Dispatcher:
             else:
                 sl_result = {"status": "error", "error": "No exchange configured"}
 
-            if sl_result.get("status") in ["filled", "partially_filled", "pending"]:
+            # Check if order was successfully placed (NEW status for SL/TP orders)
+            # SL/TP orders return "NEW" status when placed, not "filled"
+            if sl_result.get("status") in [
+                "filled",
+                "partially_filled",
+                "pending",
+                "NEW",
+            ]:
                 self.logger.info(
                     f"✅ STOP LOSS PLACED: {order.symbol} | "
                     f"Order ID: {sl_result.get('order_id', 'N/A')} | "
-                    f"Stop Price: {order.stop_loss}"
+                    f"Stop Price: {order.stop_loss} | "
+                    f"Status: {sl_result.get('status')}"
                 )
 
                 # Track the stop loss order
@@ -800,6 +1189,7 @@ class Dispatcher:
             else:
                 self.logger.error(
                     f"❌ STOP LOSS FAILED: {order.symbol} | "
+                    f"Status: {sl_result.get('status', 'N/A')} | "
                     f"Error: {sl_result.get('error', 'Unknown error')}"
                 )
 
@@ -859,11 +1249,19 @@ class Dispatcher:
             else:
                 tp_result = {"status": "error", "error": "No exchange configured"}
 
-            if tp_result.get("status") in ["filled", "partially_filled", "pending"]:
+            # Check if order was successfully placed (NEW status for SL/TP orders)
+            # SL/TP orders return "NEW" status when placed, not "filled"
+            if tp_result.get("status") in [
+                "filled",
+                "partially_filled",
+                "pending",
+                "NEW",
+            ]:
                 self.logger.info(
                     f"✅ TAKE PROFIT PLACED: {order.symbol} | "
                     f"Order ID: {tp_result.get('order_id', 'N/A')} | "
-                    f"Take Profit Price: {order.take_profit}"
+                    f"Take Profit Price: {order.take_profit} | "
+                    f"Status: {tp_result.get('status')}"
                 )
 
                 # Track the take profit order
@@ -878,8 +1276,145 @@ class Dispatcher:
             else:
                 self.logger.error(
                     f"❌ TAKE PROFIT FAILED: {order.symbol} | "
+                    f"Status: {tp_result.get('status', 'N/A')} | "
                     f"Error: {tp_result.get('error', 'Unknown error')}"
                 )
 
         except Exception as e:
             self.logger.error(f"Failed to place take profit order: {e}", exc_info=True)
+
+    async def close_position_with_cleanup(
+        self,
+        position_id: str,
+        symbol: str,
+        position_side: str,
+        quantity: float,
+        reason: str = "manual",
+    ) -> dict[str, Any]:
+        """
+        Close a position and clean up all associated SL/TP orders (OCO cleanup)
+
+        Args:
+            position_id: Unique identifier for the position
+            symbol: Trading symbol (e.g., BTCUSDT)
+            position_side: LONG or SHORT
+            quantity: Position size to close
+            reason: Reason for closing (manual, sl_triggered, tp_triggered, etc.)
+
+        Returns:
+            Dict with closing result and cleanup status
+        """
+        try:
+            self.logger.info("🔄 CLOSING POSITION WITH OCO CLEANUP")
+            self.logger.info(f"Position ID: {position_id}")
+            self.logger.info(f"Symbol: {symbol}")
+            self.logger.info(f"Position Side: {position_side}")
+            self.logger.info(f"Quantity: {quantity}")
+            self.logger.info(f"Reason: {reason}")
+
+            # Step 1: Cancel associated OCO orders first
+            oco_cancelled = False
+            if position_id in self.oco_manager.active_oco_pairs:
+                self.logger.info(f"🔄 CANCELLING OCO ORDERS FOR POSITION {position_id}")
+                oco_cancelled = await self.oco_manager.cancel_oco_pair(position_id)
+                if oco_cancelled:
+                    self.logger.info("✅ OCO ORDERS CANCELLED SUCCESSFULLY")
+                else:
+                    self.logger.warning("⚠️  FAILED TO CANCEL OCO ORDERS")
+
+            # Step 2: Close the position
+            position_closed = False
+            try:
+                # Determine order side for closing (opposite of position)
+                close_side = "sell" if position_side == "LONG" else "buy"
+
+                # Create closing order
+                close_order = TradeOrder(
+                    symbol=symbol,
+                    side=close_side,
+                    type=OrderType.MARKET,
+                    amount=quantity,
+                    target_price=None,
+                    stop_loss=None,
+                    take_profit=None,
+                    conditional_price=None,
+                    conditional_direction=None,
+                    conditional_timeout=None,
+                    iceberg_quantity=None,
+                    client_order_id=None,
+                    order_id=f"close_{position_id}_{int(time.time())}",
+                    status=OrderStatus.PENDING,
+                    filled_amount=0.0,
+                    average_price=None,
+                    position_id=None,
+                    position_side=position_side,
+                    exchange="binance",
+                    reduce_only=True,  # This is a position-closing order
+                    time_in_force=TimeInForce.GTC,
+                    position_size_pct=None,
+                    simulate=False,
+                    updated_at=None,
+                )
+
+                self.logger.info(
+                    f"📤 CLOSING POSITION: {symbol} {close_side} {quantity}"
+                )
+
+                # Execute closing order
+                if self.exchange:
+                    close_result = await self.exchange.execute(close_order)
+                else:
+                    raise ValueError("Exchange not configured")
+
+                if close_result.get("status") in ["NEW", "FILLED", "PARTIALLY_FILLED"]:
+                    position_closed = True
+                    self.logger.info("✅ POSITION CLOSED SUCCESSFULLY")
+                    self.logger.info(f"  Order ID: {close_result.get('order_id')}")
+                    self.logger.info(f"  Status: {close_result.get('status')}")
+                else:
+                    self.logger.error(f"❌ FAILED TO CLOSE POSITION: {close_result}")
+
+            except Exception as e:
+                self.logger.error(f"❌ ERROR CLOSING POSITION: {e}")
+
+            # Step 3: Clean up position record
+            try:
+                if position_id:
+                    await self.position_manager.close_position_record(
+                        position_id, {"reason": reason, "manual_close": True}
+                    )
+                    self.logger.info("✅ POSITION RECORD UPDATED")
+            except Exception as e:
+                self.logger.error(f"❌ ERROR UPDATING POSITION RECORD: {e}")
+
+            return {
+                "position_closed": position_closed,
+                "oco_cancelled": oco_cancelled,
+                "close_result": close_result if position_closed else None,
+                "status": "success" if position_closed else "failed",
+            }
+
+        except Exception as e:
+            self.logger.error(
+                f"❌ ERROR IN POSITION CLOSE WITH CLEANUP: {e}", exc_info=True
+            )
+            return {
+                "position_closed": False,
+                "oco_cancelled": False,
+                "close_result": None,
+                "status": "error",
+                "error": str(e),
+            }
+
+    async def shutdown(self) -> None:
+        """Shutdown dispatcher and stop OCO monitoring"""
+        try:
+            self.logger.info("🔄 SHUTTING DOWN DISPATCHER")
+
+            # Stop OCO monitoring
+            await self.oco_manager.stop_monitoring()
+
+            self.logger.info("✅ DISPATCHER SHUTDOWN COMPLETE")
+
+        except Exception as e:
+            self.logger.error(f"❌ ERROR DURING SHUTDOWN: {e}")

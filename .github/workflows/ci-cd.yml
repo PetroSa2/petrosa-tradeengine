@@ -56,20 +56,18 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip'
 
-    - name: Cache pip packages and virtual environment
-      uses: actions/cache@v3
+    - name: Cache virtual environment
+      uses: actions/cache@v4
       with:
-        path: |
-          ~/.cache/pip
-          .venv
-        key: ${{ runner.os }}-python-3.11-venv-${{ hashFiles('**/requirements*.txt') }}
+        path: .venv
+        key: ${{ runner.os }}-venv-${{ hashFiles('**/requirements*.txt') }}
         restore-keys: |
-          ${{ runner.os }}-python-3.11-venv-
-          ${{ runner.os }}-python-3.11-
+          ${{ runner.os }}-venv-
 
     - name: Install dependencies
       run: |

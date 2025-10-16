@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from binance import Client
+from binance import Client  # noqa: E402
 
 
 async def test_real_order():

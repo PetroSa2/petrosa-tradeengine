@@ -79,7 +79,7 @@ class MySQLClient:
                 host=self.host,
                 port=self.port,
                 user=self.user,
-                password=self.password,
+                password=self.password or "",
                 database=self.database,
                 cursorclass=DictCursor,
                 autocommit=True,
@@ -299,17 +299,17 @@ class MySQLClient:
                     WHERE status = 'open' AND strategy_id = %s
                     ORDER BY entry_time DESC
                 """
-                params = (strategy_id,)
+                query_params: tuple[str, ...] = (strategy_id,)
             else:
                 sql = """
                     SELECT * FROM positions
                     WHERE status = 'open'
                     ORDER BY entry_time DESC
                 """
-                params: tuple[str, ...] = ()
+                query_params = ()
 
             with self.connection.cursor() as cursor:
-                cursor.execute(sql, params)
+                cursor.execute(sql, query_params)
                 results = cursor.fetchall()
 
                 # Parse JSON fields and convert Decimal to float

@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 from prometheus_client import Counter, Histogram
@@ -43,6 +44,12 @@ binance_api_calls = Counter(
     ["operation", "status"],
 )
 
+signals_duplicate = Counter(
+    "tradeengine_signals_duplicate_total",
+    "Total duplicate signals detected and rejected",
+    ["strategy", "symbol", "action"],
+)
+
 
 class Dispatcher:
     """Central dispatcher for trading operations with distributed state management"""
@@ -54,6 +61,15 @@ class Dispatcher:
         self.signal_aggregator = SignalAggregator()
         self.exchange = exchange
         self.logger = logging.getLogger(__name__)
+
+        # Duplicate signal detection cache
+        # Format: {signal_id: timestamp} - stores signal IDs with their reception time
+        self.signal_cache: dict[str, float] = {}
+        self.signal_cache_ttl = (
+            60  # Cache TTL in seconds (signals older than this are considered unique)
+        )
+        self.signal_cache_cleanup_interval = 300  # Cleanup every 5 minutes
+        self.last_cache_cleanup = time.time()
 
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
@@ -193,6 +209,43 @@ class Dispatcher:
                 )
             return {"status": "error", "error": str(e)}
 
+    def _generate_signal_id(self, signal: Signal) -> str:
+        """Generate a unique ID for a signal for deduplication.
+
+        Uses strategy_id, symbol, action, and timestamp (rounded to second) to identify duplicates.
+        This allows detecting signals that are sent via both HTTP and NATS within the same second.
+        """
+        # Round timestamp to second precision to catch duplicates within 1 second
+        timestamp_second = signal.timestamp.isoformat()[:19] if signal.timestamp else ""
+        return (
+            f"{signal.strategy_id}_{signal.symbol}_{signal.action}_{timestamp_second}"
+        )
+
+    def _cleanup_signal_cache(self) -> None:
+        """Remove expired entries from the signal cache."""
+        current_time = time.time()
+
+        # Only cleanup if interval has passed
+        if current_time - self.last_cache_cleanup < self.signal_cache_cleanup_interval:
+            return
+
+        # Remove entries older than TTL
+        expired_ids = [
+            signal_id
+            for signal_id, timestamp in self.signal_cache.items()
+            if current_time - timestamp > self.signal_cache_ttl
+        ]
+
+        for signal_id in expired_ids:
+            del self.signal_cache[signal_id]
+
+        if expired_ids:
+            self.logger.debug(
+                f"Cleaned up {len(expired_ids)} expired signal cache entries"
+            )
+
+        self.last_cache_cleanup = current_time
+
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing with distributed state management"""
         try:
@@ -208,6 +261,37 @@ class Dispatcher:
                 f"Confidence: {signal.confidence:.2%} | "
                 f"Timeframe: {signal.timeframe}"
             )
+
+            # Check for duplicate signals (prevents double processing from HTTP + NATS)
+            signal_id = self._generate_signal_id(signal)
+            current_time = time.time()
+
+            if signal_id in self.signal_cache:
+                age = current_time - self.signal_cache[signal_id]
+                if age < self.signal_cache_ttl:
+                    # Duplicate detected within TTL window
+                    self.logger.warning(
+                        f"🚫 DUPLICATE SIGNAL DETECTED AND REJECTED: {signal.strategy_id} | "
+                        f"{signal.symbol} {signal.action.upper()} | "
+                        f"Age: {age:.2f}s | Original received {age:.2f}s ago"
+                    )
+                    signals_duplicate.labels(
+                        strategy=signal.strategy_id,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                    ).inc()
+                    return {
+                        "status": "duplicate",
+                        "reason": f"Duplicate signal detected (age: {age:.2f}s)",
+                        "original_time": self.signal_cache[signal_id],
+                        "duplicate_age_seconds": age,
+                    }
+
+            # Store signal in cache
+            self.signal_cache[signal_id] = current_time
+
+            # Cleanup old cache entries periodically
+            self._cleanup_signal_cache()
 
             # Handle hold signals
             if signal.action == "hold":
@@ -294,9 +378,12 @@ class Dispatcher:
             # Execute order
             result = await self.execute_order(order)
 
-            # Update position with distributed state management
+            # Update position with distributed state management and create position record
             if result and result.get("status") in ["filled", "partially_filled"]:
                 await self.position_manager.update_position(order, result)
+
+                # Create position tracking record with dual persistence
+                await self.position_manager.create_position_record(order, result)
 
             return result
 
@@ -306,10 +393,34 @@ class Dispatcher:
 
     def _signal_to_order(self, signal: Signal) -> TradeOrder:
         """Convert a signal to a trade order with dynamic minimum amounts"""
+        import uuid
         from datetime import datetime
 
         # Calculate order amount based on signal quantity or dynamic minimum
         amount = self._calculate_order_amount(signal)
+
+        # Generate unique position ID for tracking
+        position_id = str(uuid.uuid4())
+
+        # Determine position side for hedge mode (buy=LONG, sell=SHORT)
+        position_side = "LONG" if signal.action == "buy" else "SHORT"
+
+        # Collect all signal parameters for position tracking
+        strategy_metadata = {
+            "signal_id": signal.signal_id or signal.id,
+            "strategy_id": signal.strategy_id,
+            "strategy_mode": signal.strategy_mode.value,
+            "source": signal.source,
+            "strategy": signal.strategy,
+            "timeframe": signal.timeframe,
+            "confidence": signal.confidence,
+            "strength": signal.strength.value,
+            "indicators": signal.indicators,
+            "rationale": signal.rationale,
+            "llm_reasoning": signal.llm_reasoning,
+            "metadata": signal.metadata,
+            "meta": signal.meta,
+        }
 
         # Create the order
         order = TradeOrder(
@@ -335,6 +446,11 @@ class Dispatcher:
             created_at=signal.timestamp,
             updated_at=signal.timestamp,
             simulate=signal.meta.get("simulate", False) if signal.meta else False,
+            # Hedge mode position tracking
+            position_id=position_id,
+            position_side=position_side,
+            exchange="binance",
+            strategy_metadata=strategy_metadata,
         )
 
         return order

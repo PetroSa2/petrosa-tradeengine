@@ -220,6 +220,10 @@ SIMULATION_SLIPPAGE = float(os.getenv("SIMULATION_SLIPPAGE", "0.001"))  # 0.1%
 SIMULATION_SUCCESS_RATE = float(os.getenv("SIMULATION_SUCCESS_RATE", "0.95"))  # 95%
 SIMULATION_DELAY_MS = int(os.getenv("SIMULATION_DELAY_MS", "100"))
 
+# Hedge Mode Configuration
+HEDGE_MODE_ENABLED = os.getenv("HEDGE_MODE_ENABLED", "true").lower() == "true"
+POSITION_MODE = os.getenv("POSITION_MODE", "hedge")  # 'hedge' or 'one-way'
+
 # Supported Symbols (from shared configmap)
 SUPPORTED_SYMBOLS = os.getenv(
     "SUPPORTED_SYMBOLS",

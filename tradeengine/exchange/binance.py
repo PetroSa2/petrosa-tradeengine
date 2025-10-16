@@ -282,6 +282,10 @@ class BinanceFuturesExchange:
             "reduceOnly": order.reduce_only,
         }
 
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         # Add quote order quantity for market orders if specified
         if hasattr(order, "quote_quantity") and order.quote_quantity:
             params["quoteOrderQty"] = order.quote_quantity
@@ -311,6 +315,10 @@ class BinanceFuturesExchange:
             "reduceOnly": order.reduce_only,
         }
 
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
         )
@@ -334,6 +342,11 @@ class BinanceFuturesExchange:
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
             "reduceOnly": order.reduce_only,
         }
+
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
         )
@@ -361,6 +374,11 @@ class BinanceFuturesExchange:
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
             "reduceOnly": order.reduce_only,
         }
+
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
         )
@@ -384,6 +402,11 @@ class BinanceFuturesExchange:
             "stopPrice": self._format_price(order.symbol, order.take_profit),
             "reduceOnly": order.reduce_only,
         }
+
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
         )
@@ -413,6 +436,11 @@ class BinanceFuturesExchange:
             "stopPrice": self._format_price(order.symbol, order.take_profit),
             "reduceOnly": order.reduce_only,
         }
+
+        # Add positionSide for hedge mode
+        if order.position_side:
+            params["positionSide"] = order.position_side
+
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
         )
@@ -759,6 +787,38 @@ class BinanceFuturesExchange:
         except Exception as e:
             logger.error(f"Failed to get position info: {e}")
             raise
+
+    async def verify_hedge_mode(self) -> dict[str, Any]:
+        """Verify if hedge mode is enabled on Binance Futures account
+
+        Returns:
+            dict with hedge_mode_enabled flag and position mode status
+        """
+        if not self.initialized:
+            await self.initialize()
+
+        try:
+            if self.client is None:
+                raise RuntimeError("Binance Futures client not initialized")
+
+            # Get position mode/dual side position setting
+            position_mode = self.client.futures_get_position_mode()
+
+            hedge_mode_enabled = position_mode.get("dualSidePosition", False)
+
+            return {
+                "hedge_mode_enabled": hedge_mode_enabled,
+                "position_mode": "hedge" if hedge_mode_enabled else "one-way",
+                "dual_side_position": hedge_mode_enabled,
+                "raw_response": position_mode,
+            }
+        except Exception as e:
+            logger.error(f"Failed to verify hedge mode: {e}")
+            return {
+                "hedge_mode_enabled": False,
+                "position_mode": "unknown",
+                "error": str(e),
+            }
 
     async def close(self) -> None:
         """Close the Binance Futures client"""

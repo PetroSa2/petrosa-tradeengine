@@ -1,7 +1,7 @@
 asyncio-mqtt==0.16.1
 
 # Development and linting
-black==23.12.1
+black==24.3.0
 
 # Trading and exchange
 ccxt==4.1.77
@@ -45,7 +45,7 @@ passlib[bcrypt]==1.7.4
 prometheus-client==0.19.0
 pydantic==2.6.1
 pydantic-settings==2.2.0
-pymongo==4.6.0
+pymongo==4.6.3
 PyMySQL==1.1.0
 
 # Testing
@@ -59,7 +59,7 @@ python-dotenv==1.0.0
 
 # Security and authentication
 python-jose[cryptography]==3.3.0
-python-multipart==0.0.6
+python-multipart==0.0.18
 ruff==0.1.15
 structlog==23.2.0
 uvicorn[standard]==0.24.0

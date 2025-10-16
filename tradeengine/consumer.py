@@ -84,7 +84,9 @@ class SignalConsumer:
 
         if not self.nc:
             if not await self.initialize():
-                logger.error("❌ Cannot start consuming - NATS consumer not initialized")
+                logger.error(
+                    "❌ Cannot start consuming - NATS consumer not initialized"
+                )
                 return
         if self.nc is None:
             raise RuntimeError(

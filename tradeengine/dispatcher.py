@@ -333,9 +333,9 @@ class Dispatcher:
                 )
 
                 result["execution_result"] = execution_result
-                result[
-                    "status"
-                ] = "executed"  # Change status to executed for consistency
+                result["status"] = (
+                    "executed"  # Change status to executed for consistency
+                )
 
                 self.logger.info(
                     f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
@@ -520,7 +520,9 @@ class Dispatcher:
             # Execute order on Binance exchange
             if order.simulate:
                 # Simulated order - just track locally
-                self.logger.info(f"🎭 SIMULATION MODE: Order {order.order_id} simulated")
+                self.logger.info(
+                    f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
+                )
                 result = {"status": "pending", "simulated": True}
                 await self.order_manager.track_order(order, result)
             else:
@@ -740,12 +742,13 @@ class Dispatcher:
             stop_loss_order = TradeOrder(
                 order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
                 symbol=order.symbol,
-                side="sell"
-                if order.side == "buy"
-                else "buy",  # Opposite side to close position
+                side=(
+                    "sell" if order.side == "buy" else "buy"
+                ),  # Opposite side to close position
                 type="stop",  # Stop market order
                 amount=result.get("amount", order.amount),
                 stop_loss=order.stop_loss,
+                take_profit=None,  # Not applicable for stop loss order
                 target_price=None,  # Market order when triggered
                 position_id=order.position_id,
                 position_side=order.position_side,
@@ -816,9 +819,9 @@ class Dispatcher:
             take_profit_order = TradeOrder(
                 order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
                 symbol=order.symbol,
-                side="sell"
-                if order.side == "buy"
-                else "buy",  # Opposite side to close position
+                side=(
+                    "sell" if order.side == "buy" else "buy"
+                ),  # Opposite side to close position
                 type="take_profit",  # Take profit market order
                 amount=result.get("amount", order.amount),
                 take_profit=order.take_profit,

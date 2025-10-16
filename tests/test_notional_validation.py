@@ -217,7 +217,7 @@ class TestNotionalValidation:
 
     @pytest.mark.asyncio
     async def test_default_min_notional_when_filter_missing(self):
-        """Test default MIN_NOTIONAL of $100 is used when filter is missing"""
+        """Test default MIN_NOTIONAL of $20 is used when filter is missing"""
         # Create exchange with symbol info missing MIN_NOTIONAL filter
         exchange = BinanceFuturesExchange()
         exchange.symbol_info = {
@@ -238,7 +238,7 @@ class TestNotionalValidation:
         }
 
         min_info = exchange.get_min_order_amount("TESTUSDT")
-        assert min_info["min_notional"] == 100.0  # Default value
+        assert min_info["min_notional"] == 20.0  # Default value (Binance standard)
 
     @pytest.mark.asyncio
     async def test_execute_market_order_with_reduce_only(self, exchange, mock_client):

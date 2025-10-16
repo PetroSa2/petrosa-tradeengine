@@ -109,17 +109,34 @@ elif order.type in ["market", "stop", "take_profit"]:
 
 ### 3. Updated Default MIN_NOTIONAL
 
-**File:** `tradeengine/exchange/binance.py` (Line 467)
+**File:** `tradeengine/exchange/binance.py` (Line 475)
 
-Changed default from $5 to $100:
+Changed default from $100 to $20:
 
 ```python
 min_notional = (
-    float(min_notional_filter["notional"]) if min_notional_filter else 100.0
+    float(min_notional_filter["notional"]) if min_notional_filter else 20.0
 )
 ```
 
-**Rationale:** Binance increased MIN_NOTIONAL to $100 for most futures contracts.
+**Rationale:**
+- Binance's standard MIN_NOTIONAL for most USDⓈ-Margined Futures is $20
+- Specific symbols may have higher values (e.g., BTCUSDT: $100 as of Nov 2023)
+- The value is fetched from exchange info when available
+- The $20 default is only used as fallback if the filter is missing
+
+### 4. Added 5% Safety Margin
+
+**File:** `tradeengine/exchange/binance.py` (`calculate_min_order_amount()`)
+
+Added 5% safety margin to prevent rounding errors:
+
+```python
+# Add 5% safety margin to avoid rounding errors
+final_min_qty = final_min_qty * 1.05
+```
+
+**Rationale:** Prevents edge cases where calculated notional value ($19.94) falls just below minimum ($20.00) due to floating-point precision.
 
 ### 4. Added reduceOnly Parameter to All Order Methods
 

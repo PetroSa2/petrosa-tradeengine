@@ -340,24 +340,35 @@ class Dispatcher:
         return order
 
     def _calculate_order_amount(self, signal: Signal) -> float:
-        """Calculate order amount based on signal and symbol requirements"""
+        """Calculate order amount ensuring MIN_NOTIONAL is met"""
         try:
             # Import here to avoid circular imports
             from tradeengine.api import binance_exchange
 
-            # Use signal quantity if valid and positive
+            # Calculate minimum amount needed to meet MIN_NOTIONAL
+            current_price = signal.current_price or 0
+            min_amount = binance_exchange.calculate_min_order_amount(
+                signal.symbol, current_price
+            )
+
+            # If signal provides quantity, validate it meets MIN_NOTIONAL
             if signal.quantity and signal.quantity > 0:
-                amount = signal.quantity
+                if signal.quantity < min_amount:
+                    self.logger.warning(
+                        f"Signal quantity {signal.quantity} is below minimum {min_amount} "
+                        f"for {signal.symbol} at ${current_price:.2f}. Using minimum."
+                    )
+                    amount = min_amount
+                else:
+                    amount = signal.quantity
             else:
-                # Calculate minimum amount for the symbol
-                current_price = signal.current_price or 0
-                amount = binance_exchange.calculate_min_order_amount(
-                    signal.symbol, current_price
-                )
+                # Use calculated minimum
+                amount = min_amount
 
             self.logger.info(
                 f"Calculated order amount for {signal.symbol}: {amount} "
-                f"(signal_qty: {signal.quantity}, current_price: {signal.current_price})"
+                f"(signal_qty: {signal.quantity}, min_required: {min_amount}, "
+                f"current_price: ${current_price:.2f})"
             )
 
             return amount

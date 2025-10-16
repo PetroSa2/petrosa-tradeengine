@@ -200,16 +200,25 @@ class BinanceFuturesExchange:
         # Calculate order notional value
         notional_value = price * order.amount
 
+        # Calculate minimum quantity needed
+        min_qty_needed = min_notional / price
+
+        # Log detailed validation info
+        logger.info(
+            f"Notional validation for {order.symbol}: "
+            f"Order=${notional_value:.2f} (qty={order.amount:.6f} × ${price:.2f}), "
+            f"Required=${min_notional:.2f} (min_qty={min_qty_needed:.6f})"
+        )
+
         # Validate
         if notional_value < min_notional:
             raise ValueError(
                 f"Order notional ${notional_value:.2f} is below minimum ${min_notional:.2f} "
-                f"for {order.symbol}. Increase quantity or use reduce_only flag."
+                f"for {order.symbol}. Need quantity >= {min_qty_needed:.6f} at ${price:.2f}. "
+                f"Current quantity: {order.amount:.6f}. Use reduce_only flag if closing position."
             )
 
-        logger.debug(
-            f"Notional validation passed: ${notional_value:.2f} >= ${min_notional:.2f}"
-        )
+        logger.info(f"✓ Notional validation passed for {order.symbol}")
 
     async def _validate_order(self, order: TradeOrder) -> None:
         """Validate order parameters"""
@@ -472,7 +481,7 @@ class BinanceFuturesExchange:
 
         min_qty = float(lot_size_filter["minQty"]) if lot_size_filter else 0.001
         min_notional = (
-            float(min_notional_filter["notional"]) if min_notional_filter else 100.0
+            float(min_notional_filter["notional"]) if min_notional_filter else 20.0
         )
         step_size = float(lot_size_filter["stepSize"]) if lot_size_filter else 0.001
 
@@ -512,15 +521,58 @@ class BinanceFuturesExchange:
             # Use the larger of the two minimums
             final_min_qty = max(min_qty, min_qty_by_notional)
 
+            # Add 5% safety margin to avoid rounding errors
+            final_min_qty = final_min_qty * 1.05
+
             # Round to the appropriate precision
             precision = min_info["precision"]
             final_min_qty = round(final_min_qty, precision)
+
+            # Log the calculation
+            logger.debug(
+                f"Calculated min order amount for {symbol}: "
+                f"{final_min_qty} (price: ${current_price:.2f}, "
+                f"min_notional: ${min_notional:.2f})"
+            )
 
             return final_min_qty
 
         except Exception as e:
             logger.warning(f"Error calculating min order amount for {symbol}: {e}")
             return 0.001  # Fallback to safe default
+
+    async def get_symbol_min_notional(self, symbol: str) -> dict[str, Any]:
+        """
+        Get MIN_NOTIONAL and calculate minimum quantity at current price.
+
+        Returns dict with:
+        - min_notional: Minimum notional value
+        - current_price: Current mark price
+        - min_quantity: Minimum quantity needed at current price
+        - notional_value: Actual notional value with min_quantity
+        """
+        if not self.initialized:
+            await self.initialize()
+
+        min_info = self.get_min_order_amount(symbol)
+        current_price = await self._get_current_price(symbol)
+        min_quantity = self.calculate_min_order_amount(symbol, current_price)
+
+        result = {
+            "symbol": symbol,
+            "min_notional": min_info["min_notional"],
+            "current_price": current_price,
+            "min_quantity": min_quantity,
+            "notional_value": min_quantity * current_price,
+        }
+
+        logger.info(
+            f"MIN_NOTIONAL info for {symbol}: "
+            f"${result['min_notional']:.2f} = "
+            f"{result['min_quantity']:.6f} qty × ${result['current_price']:.2f}"
+        )
+
+        return result
 
     def _format_quantity(self, symbol: str, quantity: float) -> str:
         """Format quantity according to symbol precision"""

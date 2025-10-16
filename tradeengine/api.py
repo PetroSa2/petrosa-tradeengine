@@ -89,9 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Initializing NATS consumer...")
         from tradeengine.consumer import signal_consumer
 
-        consumer_initialized = await signal_consumer.initialize()
+        # Pass the dispatcher with configured exchange to the consumer
+        consumer_initialized = await signal_consumer.initialize(dispatcher=dispatcher)
         if consumer_initialized:
-            logger.info("✅ NATS consumer initialized successfully")
+            logger.info("✅ NATS consumer initialized successfully with exchange")
             # Start consumer in background task
             asyncio.create_task(signal_consumer.start_consuming())
             logger.info("✅ NATS consumer started in background")

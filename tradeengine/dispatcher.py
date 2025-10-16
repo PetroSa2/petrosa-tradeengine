@@ -748,6 +748,7 @@ class Dispatcher:
                 type="stop",  # Stop market order
                 amount=result.get("amount", order.amount),
                 stop_loss=order.stop_loss,
+                take_profit=None,  # Not applicable for stop loss order
                 target_price=None,  # Market order when triggered
                 position_id=order.position_id,
                 position_side=order.position_side,

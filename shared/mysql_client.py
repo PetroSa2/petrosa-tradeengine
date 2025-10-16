@@ -222,6 +222,63 @@ class MySQLClient:
                 logger.error(f"Failed to reconnect: {reconnect_error}")
             return False
 
+    async def update_position_risk_orders(
+        self, position_id: str, update_data: dict[str, Any]
+    ) -> bool:
+        """Update position record with stop loss and take profit order IDs."""
+        if not self.connection:
+            logger.error("Not connected to MySQL")
+            return False
+
+        try:
+            # Check if connection is still alive
+            try:
+                self.connection.ping(reconnect=True)
+            except Exception as e:
+                logger.warning(f"Connection lost, reconnecting: {e}")
+                await self.connect()
+
+            # Build dynamic UPDATE query for risk order fields
+            set_clauses = []
+            values = []
+
+            for key, value in update_data.items():
+                if key in ["stop_loss_order_id", "take_profit_order_id"]:
+                    set_clauses.append(f"{key} = %s")
+                    values.append(value)
+
+            if not set_clauses:
+                logger.warning("No risk order fields to update")
+                return True
+
+            # Add position_id for WHERE clause
+            values.append(position_id)
+
+            sql = f"""
+                UPDATE positions
+                SET {', '.join(set_clauses)}
+                WHERE position_id = %s
+            """
+
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, values)
+
+            logger.info(
+                f"Updated position {position_id} risk orders in MySQL: {update_data}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Error updating position risk orders {position_id} in MySQL: {e}"
+            )
+            # Try to reconnect on error
+            try:
+                await self.connect()
+            except Exception as reconnect_error:
+                logger.error(f"Failed to reconnect: {reconnect_error}")
+            return False
+
     async def get_position(self, position_id: str) -> dict[str, Any] | None:
         """Get a specific position by ID."""
         if not self.connection:

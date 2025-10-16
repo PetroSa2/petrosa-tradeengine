@@ -421,6 +421,58 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error creating position record: {e}")
 
+    async def update_position_risk_orders(
+        self,
+        position_id: str,
+        stop_loss_order_id: str | None = None,
+        take_profit_order_id: str | None = None,
+    ) -> None:
+        """Update position record with stop loss and take profit order IDs"""
+        try:
+            update_data = {}
+            if stop_loss_order_id:
+                update_data["stop_loss_order_id"] = stop_loss_order_id
+            if take_profit_order_id:
+                update_data["take_profit_order_id"] = take_profit_order_id
+
+            if not update_data:
+                return
+
+            # Update MongoDB
+            if self.mongodb_db:
+                try:
+                    positions_collection = self.mongodb_db.positions
+                    await positions_collection.update_one(
+                        {"position_id": position_id}, {"$set": update_data}
+                    )
+                    logger.info(
+                        f"Updated position {position_id} risk orders in MongoDB: {update_data}"
+                    )
+                except Exception as mongo_error:
+                    logger.error(
+                        f"Failed to update position risk orders in MongoDB: {mongo_error}"
+                    )
+
+            # Update MySQL
+            from shared.mysql_client import get_mysql_client
+
+            mysql_client = get_mysql_client()
+            if mysql_client:
+                try:
+                    await mysql_client.update_position_risk_orders(
+                        position_id, update_data
+                    )
+                    logger.info(
+                        f"Updated position {position_id} risk orders in MySQL: {update_data}"
+                    )
+                except Exception as mysql_error:
+                    logger.error(
+                        f"Failed to update position risk orders in MySQL: {mysql_error}"
+                    )
+
+        except Exception as e:
+            logger.error(f"Error updating position risk orders: {e}")
+
     async def close_position_record(
         self, position_id: str, exit_result: dict[str, Any]
     ) -> None:

@@ -385,6 +385,9 @@ class Dispatcher:
                 # Create position tracking record with dual persistence
                 await self.position_manager.create_position_record(order, result)
 
+                # Place stop loss and take profit orders if specified
+                await self._place_risk_management_orders(order, result)
+
             return result
 
         except Exception as e:
@@ -692,3 +695,156 @@ class Dispatcher:
             "daily_pnl": self.position_manager.get_daily_pnl(),
             "total_unrealized_pnl": self.position_manager.get_total_unrealized_pnl(),
         }
+
+    async def _place_risk_management_orders(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> None:
+        """Place stop loss and take profit orders after successful position execution"""
+        try:
+            if not self.exchange:
+                self.logger.warning(
+                    "No exchange configured, cannot place risk management orders"
+                )
+                return
+
+            # Only place risk management orders for position-opening orders (not reduce_only)
+            if order.reduce_only:
+                self.logger.debug(
+                    "Skipping risk management orders for reduce_only order"
+                )
+                return
+
+            # Place stop loss order if specified
+            if order.stop_loss and order.stop_loss > 0:
+                await self._place_stop_loss_order(order, result)
+
+            # Place take profit order if specified
+            if order.take_profit and order.take_profit > 0:
+                await self._place_take_profit_order(order, result)
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to place risk management orders: {e}", exc_info=True
+            )
+
+    async def _place_stop_loss_order(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> None:
+        """Place stop loss order"""
+        try:
+            from datetime import datetime
+
+            from contracts.order import OrderStatus, TradeOrder
+
+            # Create stop loss order
+            stop_loss_order = TradeOrder(
+                order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
+                symbol=order.symbol,
+                side="sell"
+                if order.side == "buy"
+                else "buy",  # Opposite side to close position
+                type="stop",  # Stop market order
+                amount=result.get("amount", order.amount),
+                stop_loss=order.stop_loss,
+                target_price=None,  # Market order when triggered
+                position_id=order.position_id,
+                position_side=order.position_side,
+                exchange=order.exchange,
+                strategy_metadata=order.strategy_metadata,
+                reduce_only=True,  # This is a position-closing order
+                status=OrderStatus.PENDING,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+            self.logger.info(
+                f"📉 PLACING STOP LOSS: {order.symbol} {stop_loss_order.side} "
+                f"{stop_loss_order.amount} @ {order.stop_loss}"
+            )
+
+            # Execute stop loss order
+            sl_result = await self.exchange.execute(stop_loss_order)
+
+            if sl_result.get("status") in ["filled", "partially_filled", "pending"]:
+                self.logger.info(
+                    f"✅ STOP LOSS PLACED: {order.symbol} | "
+                    f"Order ID: {sl_result.get('order_id', 'N/A')} | "
+                    f"Stop Price: {order.stop_loss}"
+                )
+
+                # Track the stop loss order
+                await self.order_manager.track_order(stop_loss_order, sl_result)
+
+                # Update position record with stop loss order ID
+                await self.position_manager.update_position_risk_orders(
+                    order.position_id, stop_loss_order_id=sl_result.get("order_id")
+                )
+            else:
+                self.logger.error(
+                    f"❌ STOP LOSS FAILED: {order.symbol} | "
+                    f"Error: {sl_result.get('error', 'Unknown error')}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Failed to place stop loss order: {e}", exc_info=True)
+
+    async def _place_take_profit_order(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> None:
+        """Place take profit order"""
+        try:
+            from datetime import datetime
+
+            from contracts.order import OrderStatus, TradeOrder
+
+            # Create take profit order
+            take_profit_order = TradeOrder(
+                order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
+                symbol=order.symbol,
+                side="sell"
+                if order.side == "buy"
+                else "buy",  # Opposite side to close position
+                type="take_profit",  # Take profit market order
+                amount=result.get("amount", order.amount),
+                take_profit=order.take_profit,
+                target_price=None,  # Market order when triggered
+                position_id=order.position_id,
+                position_side=order.position_side,
+                exchange=order.exchange,
+                strategy_metadata=order.strategy_metadata,
+                reduce_only=True,  # This is a position-closing order
+                status=OrderStatus.PENDING,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+            self.logger.info(
+                f"📈 PLACING TAKE PROFIT: {order.symbol} {take_profit_order.side} "
+                f"{take_profit_order.amount} @ {order.take_profit}"
+            )
+
+            # Execute take profit order
+            tp_result = await self.exchange.execute(take_profit_order)
+
+            if tp_result.get("status") in ["filled", "partially_filled", "pending"]:
+                self.logger.info(
+                    f"✅ TAKE PROFIT PLACED: {order.symbol} | "
+                    f"Order ID: {tp_result.get('order_id', 'N/A')} | "
+                    f"Take Profit Price: {order.take_profit}"
+                )
+
+                # Track the take profit order
+                await self.order_manager.track_order(take_profit_order, tp_result)
+
+                # Update position record with take profit order ID
+                await self.position_manager.update_position_risk_orders(
+                    order.position_id, take_profit_order_id=tp_result.get("order_id")
+                )
+            else:
+                self.logger.error(
+                    f"❌ TAKE PROFIT FAILED: {order.symbol} | "
+                    f"Error: {tp_result.get('error', 'Unknown error')}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Failed to place take profit order: {e}", exc_info=True)

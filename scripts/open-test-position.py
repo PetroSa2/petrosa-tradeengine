@@ -11,8 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from binance import Client
-from binance.exceptions import BinanceAPIException
+from binance import Client  # noqa: E402
+from binance.exceptions import BinanceAPIException  # noqa: E402
 
 
 async def open_position():

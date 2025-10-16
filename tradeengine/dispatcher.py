@@ -406,7 +406,7 @@ class Dispatcher:
                 await self.order_manager.track_order(order, result)
             else:
                 # Real order - execute on Binance
-                if self.exchange:
+                if self.exchange and getattr(self.exchange, "initialized", False):
                     try:
                         self.logger.info(
                             f"📤 SENDING TO BINANCE: {order.symbol} {order.side} "
@@ -432,9 +432,14 @@ class Dispatcher:
                         result = {"status": "error", "error": str(exchange_error)}
                         await self.order_manager.track_order(order, result)
                 else:
-                    # No exchange provided, just track locally
+                    # No exchange provided or not initialized, just track locally
+                    exchange_status = (
+                        "not provided" if not self.exchange else "not initialized"
+                    )
                     self.logger.warning(
-                        f"⚠️  NO EXCHANGE CONFIGURED: Order {order.order_id} tracked locally only"
+                        f"⚠️  NO EXCHANGE CONFIGURED ({exchange_status}): "
+                        f"Order {order.order_id} tracked locally only. "
+                        f"Check BINANCE_API_KEY and BINANCE_API_SECRET are set."
                     )
                     result = {"status": "pending", "no_exchange": True}
                     await self.order_manager.track_order(order, result)

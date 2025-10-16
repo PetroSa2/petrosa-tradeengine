@@ -279,12 +279,15 @@ class BinanceFuturesExchange:
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         # Add quote order quantity for market orders if specified
         if hasattr(order, "quote_quantity") and order.quote_quantity:
@@ -312,12 +315,15 @@ class BinanceFuturesExchange:
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -340,12 +346,15 @@ class BinanceFuturesExchange:
             "type": FUTURE_ORDER_TYPE_STOP_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -372,12 +381,15 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -400,12 +412,15 @@ class BinanceFuturesExchange:
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -434,12 +449,15 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
-            "reduceOnly": order.reduce_only,
         }
 
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
+
+        # Only include reduceOnly when True (closing positions)
+        if order.reduce_only:
+            params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params

@@ -151,6 +151,8 @@ class SignalConsumer:
 
             # Dispatch signal
             logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
+            if not self.dispatcher:
+                raise RuntimeError("Dispatcher not initialized")
             result = await self.dispatcher.dispatch(signal)
 
             messages_processed.labels(status="success").inc()

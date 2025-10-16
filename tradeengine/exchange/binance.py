@@ -285,10 +285,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         # Add quote order quantity for market orders if specified
         if hasattr(order, "quote_quantity") and order.quote_quantity:
@@ -321,10 +323,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -352,10 +356,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -387,10 +393,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -418,10 +426,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -455,10 +465,12 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-
-        # Only include reduceOnly when True (closing positions)
-        if order.reduce_only:
-            params["reduceOnly"] = True
+            # In hedge mode, Binance automatically handles reduceOnly
+            # Do NOT manually set reduceOnly when positionSide is specified
+        else:
+            # Only include reduceOnly when True and NOT in hedge mode
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params

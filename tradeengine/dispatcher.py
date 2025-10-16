@@ -333,9 +333,9 @@ class Dispatcher:
                 )
 
                 result["execution_result"] = execution_result
-                result[
-                    "status"
-                ] = "executed"  # Change status to executed for consistency
+                result["status"] = (
+                    "executed"  # Change status to executed for consistency
+                )
 
                 self.logger.info(
                     f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
@@ -520,7 +520,9 @@ class Dispatcher:
             # Execute order on Binance exchange
             if order.simulate:
                 # Simulated order - just track locally
-                self.logger.info(f"🎭 SIMULATION MODE: Order {order.order_id} simulated")
+                self.logger.info(
+                    f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
+                )
                 result = {"status": "pending", "simulated": True}
                 await self.order_manager.track_order(order, result)
             else:

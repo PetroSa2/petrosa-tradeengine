@@ -108,11 +108,24 @@ class OCOManager:
             amount=quantity,
             target_price=stop_loss_price,
             stop_loss=stop_loss_price,
-            position_side=position_side,
-            time_in_force=TimeInForce.GTC,
+            take_profit=None,
+            conditional_price=None,
+            conditional_direction=None,
+            conditional_timeout=None,
+            iceberg_quantity=None,
+            client_order_id=None,
             order_id=f"oco_sl_{position_id}_{int(time.time())}",
+            status=OrderStatus.PENDING,
+            filled_amount=0.0,
+            average_price=None,
+            position_id=None,
+            position_side=position_side,
+            exchange="binance",
             reduce_only=True,
+            time_in_force=TimeInForce.GTC,
+            position_size_pct=None,
             simulate=False,
+            updated_at=None,
         )
 
         # Place Take Profit order
@@ -122,12 +135,25 @@ class OCOManager:
             type=OrderType.TAKE_PROFIT,
             amount=quantity,
             target_price=take_profit_price,
+            stop_loss=None,
             take_profit=take_profit_price,
-            position_side=position_side,
-            time_in_force=TimeInForce.GTC,
+            conditional_price=None,
+            conditional_direction=None,
+            conditional_timeout=None,
+            iceberg_quantity=None,
+            client_order_id=None,
             order_id=f"oco_tp_{position_id}_{int(time.time())}",
+            status=OrderStatus.PENDING,
+            filled_amount=0.0,
+            average_price=None,
+            position_id=None,
+            position_side=position_side,
+            exchange="binance",
             reduce_only=True,
+            time_in_force=TimeInForce.GTC,
+            position_size_pct=None,
             simulate=False,
+            updated_at=None,
         )
 
         # Execute both orders
@@ -1028,12 +1054,12 @@ class Dispatcher:
                 self.logger.info(f"🔄 PLACING OCO ORDERS FOR {order.symbol}")
 
                 oco_result = await self.oco_manager.place_oco_orders(
-                    position_id=order.position_id,
+                    position_id=order.position_id or "",
                     symbol=order.symbol,
-                    position_side=order.position_side,
+                    position_side=order.position_side or "",
                     quantity=result.get("amount", order.amount),
-                    stop_loss_price=order.stop_loss,
-                    take_profit_price=order.take_profit,
+                    stop_loss_price=order.stop_loss or 0.0,
+                    take_profit_price=order.take_profit or 0.0,
                 )
 
                 if oco_result["status"] == "success":
@@ -1045,8 +1071,8 @@ class Dispatcher:
                     if order.position_id:
                         await self.position_manager.update_position_risk_orders(
                             order.position_id,
-                            sl_order_id=oco_result.get("sl_order_id"),
-                            tp_order_id=oco_result.get("tp_order_id"),
+                            stop_loss_order_id=oco_result.get("sl_order_id"),
+                            take_profit_order_id=oco_result.get("tp_order_id"),
                         )
                 else:
                     self.logger.error(
@@ -1308,11 +1334,26 @@ class Dispatcher:
                     side=close_side,
                     type=OrderType.MARKET,
                     amount=quantity,
-                    position_side=position_side,
-                    time_in_force=TimeInForce.GTC,
+                    target_price=None,
+                    stop_loss=None,
+                    take_profit=None,
+                    conditional_price=None,
+                    conditional_direction=None,
+                    conditional_timeout=None,
+                    iceberg_quantity=None,
+                    client_order_id=None,
                     order_id=f"close_{position_id}_{int(time.time())}",
+                    status=OrderStatus.PENDING,
+                    filled_amount=0.0,
+                    average_price=None,
+                    position_id=None,
+                    position_side=position_side,
+                    exchange="binance",
                     reduce_only=True,  # This is a position-closing order
+                    time_in_force=TimeInForce.GTC,
+                    position_size_pct=None,
                     simulate=False,
+                    updated_at=None,
                 )
 
                 self.logger.info(
@@ -1320,7 +1361,10 @@ class Dispatcher:
                 )
 
                 # Execute closing order
-                close_result = await self.exchange.execute(close_order)
+                if self.exchange:
+                    close_result = await self.exchange.execute(close_order)
+                else:
+                    raise ValueError("Exchange not configured")
 
                 if close_result.get("status") in ["NEW", "FILLED", "PARTIALLY_FILLED"]:
                     position_closed = True
@@ -1337,7 +1381,7 @@ class Dispatcher:
             try:
                 if position_id:
                     await self.position_manager.close_position_record(
-                        position_id, reason
+                        position_id, {"reason": reason, "manual_close": True}
                     )
                     self.logger.info("✅ POSITION RECORD UPDATED")
             except Exception as e:

@@ -755,6 +755,17 @@ class Dispatcher:
                 status=OrderStatus.PENDING,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
+                # Optional fields with defaults
+                conditional_price=None,
+                conditional_direction=None,
+                conditional_timeout=None,
+                iceberg_quantity=None,
+                client_order_id=None,
+                filled_amount=0.0,
+                average_price=None,
+                simulate=False,
+                time_in_force="GTC",
+                position_size_pct=None,
             )
 
             self.logger.info(
@@ -763,7 +774,10 @@ class Dispatcher:
             )
 
             # Execute stop loss order
-            sl_result = await self.exchange.execute(stop_loss_order)
+            if self.exchange:
+                sl_result = await self.exchange.execute(stop_loss_order)
+            else:
+                sl_result = {"status": "error", "error": "No exchange configured"}
 
             if sl_result.get("status") in ["filled", "partially_filled", "pending"]:
                 self.logger.info(
@@ -776,9 +790,10 @@ class Dispatcher:
                 await self.order_manager.track_order(stop_loss_order, sl_result)
 
                 # Update position record with stop loss order ID
-                await self.position_manager.update_position_risk_orders(
-                    order.position_id, stop_loss_order_id=sl_result.get("order_id")
-                )
+                if order.position_id:
+                    await self.position_manager.update_position_risk_orders(
+                        order.position_id, stop_loss_order_id=sl_result.get("order_id")
+                    )
             else:
                 self.logger.error(
                     f"❌ STOP LOSS FAILED: {order.symbol} | "
@@ -816,6 +831,18 @@ class Dispatcher:
                 status=OrderStatus.PENDING,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow(),
+                # Optional fields with defaults
+                stop_loss=None,
+                conditional_price=None,
+                conditional_direction=None,
+                conditional_timeout=None,
+                iceberg_quantity=None,
+                client_order_id=None,
+                filled_amount=0.0,
+                average_price=None,
+                simulate=False,
+                time_in_force="GTC",
+                position_size_pct=None,
             )
 
             self.logger.info(
@@ -824,7 +851,10 @@ class Dispatcher:
             )
 
             # Execute take profit order
-            tp_result = await self.exchange.execute(take_profit_order)
+            if self.exchange:
+                tp_result = await self.exchange.execute(take_profit_order)
+            else:
+                tp_result = {"status": "error", "error": "No exchange configured"}
 
             if tp_result.get("status") in ["filled", "partially_filled", "pending"]:
                 self.logger.info(
@@ -837,9 +867,11 @@ class Dispatcher:
                 await self.order_manager.track_order(take_profit_order, tp_result)
 
                 # Update position record with take profit order ID
-                await self.position_manager.update_position_risk_orders(
-                    order.position_id, take_profit_order_id=tp_result.get("order_id")
-                )
+                if order.position_id:
+                    await self.position_manager.update_position_risk_orders(
+                        order.position_id,
+                        take_profit_order_id=tp_result.get("order_id"),
+                    )
             else:
                 self.logger.error(
                     f"❌ TAKE PROFIT FAILED: {order.symbol} | "

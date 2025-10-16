@@ -454,9 +454,8 @@ class PositionManager:
                     )
 
             # Update MySQL
-            from shared.mysql_client import get_mysql_client
+            from shared.mysql_client import mysql_client
 
-            mysql_client = get_mysql_client()
             if mysql_client:
                 try:
                     await mysql_client.update_position_risk_orders(

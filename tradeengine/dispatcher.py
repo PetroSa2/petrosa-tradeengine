@@ -216,7 +216,9 @@ class Dispatcher:
         This allows detecting signals that are sent via both HTTP and NATS within the same second.
         """
         # Round timestamp to second precision to catch duplicates within 1 second
-        timestamp_second = signal.timestamp[:19] if signal.timestamp else ""
+        timestamp_second = (
+            signal.timestamp.isoformat()[:19] if signal.timestamp else ""
+        )
         return (
             f"{signal.strategy_id}_{signal.symbol}_{signal.action}_{timestamp_second}"
         )

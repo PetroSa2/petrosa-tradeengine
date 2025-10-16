@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+# Enable BuildKit for advanced caching features
 # Multi-stage Dockerfile for Petrosa Trading Engine
 FROM python:3.11-alpine AS base
 
@@ -10,7 +12,6 @@ ARG BUILD_DATE=unknown
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     APP_VERSION="${VERSION}" \
     COMMIT_SHA="${COMMIT_SHA}" \
@@ -45,8 +46,9 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with BuildKit cache mount
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Copy application code (including otel_init.py)
 COPY . .
@@ -54,7 +56,8 @@ COPY . .
 # Install OpenTelemetry auto-instrumentation
 # This enables automatic instrumentation of Python applications
 # The opentelemetry-instrument command will be available for use
-RUN pip install opentelemetry-distro opentelemetry-exporter-otlp-proto-grpc \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install opentelemetry-distro opentelemetry-exporter-otlp-proto-grpc \
     opentelemetry-instrumentation-requests \
     opentelemetry-instrumentation-logging \
     opentelemetry-instrumentation-urllib3 \

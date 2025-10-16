@@ -140,7 +140,29 @@ class SignalConsumer:
                 signal_data.get("action", "Unknown"),
             )
 
-            signal_data["timestamp"] = datetime.fromisoformat(signal_data["timestamp"])
+            # Parse timestamp with better error handling
+            timestamp_raw = signal_data.get("timestamp")
+            if not timestamp_raw:
+                logger.error(
+                    "❌ MISSING TIMESTAMP | Subject: %s | Signal data: %s",
+                    msg.subject,
+                    signal_data,
+                )
+                raise ValueError("Missing timestamp in signal data")
+            
+            try:
+                signal_data["timestamp"] = datetime.fromisoformat(timestamp_raw)
+            except (ValueError, TypeError) as e:
+                logger.error(
+                    "❌ INVALID TIMESTAMP FORMAT | Subject: %s | Timestamp: %s | Type: %s | Error: %s | Full data: %s",
+                    msg.subject,
+                    timestamp_raw,
+                    type(timestamp_raw).__name__,
+                    str(e),
+                    signal_data,
+                )
+                raise ValueError(f"Invalid timestamp format: {timestamp_raw}") from e
+            
             signal = Signal(**signal_data)
 
             logger.info(

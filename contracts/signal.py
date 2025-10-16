@@ -194,16 +194,50 @@ class Signal(BaseModel):
             except ValueError:
                 # Try parsing as Unix timestamp
                 try:
-                    return datetime.fromtimestamp(float(v))
+                    timestamp_float = float(v)
+                    # Validate it's a reasonable Unix timestamp (after year 2000, before year 2100)
+                    if 946684800 <= timestamp_float <= 4102444800:
+                        return datetime.fromtimestamp(timestamp_float)
+                    else:
+                        # Invalid timestamp, log warning and use current time
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Invalid timestamp value '{v}' - using current time. "
+                            f"Timestamp should be ISO format string or Unix timestamp."
+                        )
+                        return datetime.utcnow()
                 except (ValueError, TypeError):
-                    raise ValueError("Invalid timestamp format")
+                    # Can't parse as float either, log warning and use current time
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.warning(
+                        f"Invalid timestamp format '{v}' - using current time. "
+                        f"Timestamp should be ISO format string or Unix timestamp."
+                    )
+                    return datetime.utcnow()
         elif isinstance(v, int | float):
-            # Unix timestamp
-            return datetime.fromtimestamp(v)
+            # Unix timestamp - validate range
+            if 946684800 <= v <= 4102444800:
+                return datetime.fromtimestamp(v)
+            else:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Unix timestamp {v} out of valid range - using current time"
+                )
+                return datetime.utcnow()
         elif isinstance(v, datetime):
             return v
         else:
-            raise ValueError("Invalid timestamp type")
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Invalid timestamp type {type(v)} - using current time")
+            return datetime.utcnow()
 
     @validator("confidence", "model_confidence")
     def validate_confidence(cls, v: Any) -> float | None:

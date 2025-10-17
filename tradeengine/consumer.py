@@ -101,6 +101,11 @@ class SignalConsumer:
 
         try:
             # Subscribe to the signal subject
+            logger.info(
+                "Subscribing to subject: %s with callback: %s",
+                settings.nats_signal_subject,
+                self._message_handler,
+            )
             self.subscription = await self.nc.subscribe(
                 settings.nats_signal_subject,
                 cb=self._message_handler,
@@ -111,16 +116,27 @@ class SignalConsumer:
                 "✅ NATS SUBSCRIPTION ACTIVE | Subject: %s | Waiting for signals...",
                 settings.nats_signal_subject,
             )
+            logger.info("Subscription details: %s", self.subscription)
 
             # Keep the consumer running
+            logger.info("Entering consumer loop...")
             while self.running:
                 await asyncio.sleep(1)
+                # Periodic heartbeat log every 60 seconds
+                if int(asyncio.get_event_loop().time()) % 60 == 0:
+                    logger.debug(
+                        "💓 NATS consumer heartbeat - still running and listening"
+                    )
+
+            logger.info("NATS consumer loop exited (self.running=False)")
 
         except Exception as e:
             logger.error("❌ NATS CONSUMER ERROR | Error: %s", str(e), exc_info=True)
             nats_errors.labels(type="consumer_loop").inc()
         finally:
+            logger.info("NATS consumer cleanup starting...")
             await self.stop_consuming()
+            logger.info("NATS consumer cleanup completed")
 
     async def _message_handler(self, msg: Any) -> None:
         """Handle incoming NATS messages with enhanced logging"""

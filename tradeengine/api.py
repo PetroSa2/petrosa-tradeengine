@@ -93,9 +93,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         consumer_initialized = await signal_consumer.initialize(dispatcher=dispatcher)
         if consumer_initialized:
             logger.info("✅ NATS consumer initialized successfully with exchange")
-            # Start consumer in background task
-            asyncio.create_task(signal_consumer.start_consuming())
-            logger.info("✅ NATS consumer started in background")
+            # Start consumer in background task and keep reference
+            consumer_task = asyncio.create_task(signal_consumer.start_consuming())
+
+            # Add error callback to detect if task fails
+            def task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+                try:
+                    task.result()  # This will raise any exception that occurred
+                except Exception as e:
+                    logger.error(f"❌ NATS consumer task failed: {e}", exc_info=True)
+
+            consumer_task.add_done_callback(task_done_callback)
+            logger.info("✅ NATS consumer started in background with monitoring")
         else:
             logger.warning("⚠️ NATS consumer not initialized (likely disabled)")
 

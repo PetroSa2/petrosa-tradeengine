@@ -1030,6 +1030,13 @@ class Dispatcher:
     ) -> None:
         """Place stop loss and take profit orders with OCO behavior after successful position execution"""
         try:
+            # ENTRY LOG - Always log when this method is called
+            self.logger.info(
+                f"🔧 ENTERING _place_risk_management_orders | Symbol: {order.symbol} | "
+                f"SL: {order.stop_loss} | TP: {order.take_profit} | "
+                f"Exchange: {self.exchange is not None} | Reduce_only: {order.reduce_only}"
+            )
+
             if not self.exchange:
                 self.logger.warning(
                     "No exchange configured, cannot place risk management orders"

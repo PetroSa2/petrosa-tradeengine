@@ -95,7 +95,7 @@ class SignalConsumer:
 
         self.running = True
         logger.info(
-            "🚀 STARTING NATS CONSUMER | Subject: %s | Queue: petrosa-tradeengine",
+            "🚀 STARTING NATS CONSUMER | Subject: %s | No queue group (duplicate detection in dispatcher)",
             settings.nats_signal_subject,
         )
 
@@ -106,10 +106,11 @@ class SignalConsumer:
                 settings.nats_signal_subject,
                 self._message_handler,
             )
+            # Remove queue group - it's preventing message delivery
+            # Each pod will receive all messages, but dispatcher has duplicate detection
             self.subscription = await self.nc.subscribe(
                 settings.nats_signal_subject,
                 cb=self._message_handler,
-                queue="petrosa-tradeengine",  # Load balancing across instances
             )
 
             logger.info(
@@ -120,12 +121,18 @@ class SignalConsumer:
 
             # Keep the consumer running
             logger.info("Entering consumer loop...")
+            loop_counter = 0
             while self.running:
                 await asyncio.sleep(1)
-                # Periodic heartbeat log every 60 seconds
-                if int(asyncio.get_event_loop().time()) % 60 == 0:
-                    logger.debug(
-                        "💓 NATS consumer heartbeat - still running and listening"
+                loop_counter += 1
+                # Periodic heartbeat log every 30 seconds (more frequent for debugging)
+                if loop_counter % 30 == 0:
+                    logger.info(
+                        "💓 NATS consumer heartbeat | Loop #%d | Running: %s | NC connected: %s | Subscription: %s",
+                        loop_counter,
+                        self.running,
+                        self.nc.is_connected if self.nc else False,
+                        self.subscription is not None,
                     )
 
             logger.info("NATS consumer loop exited (self.running=False)")

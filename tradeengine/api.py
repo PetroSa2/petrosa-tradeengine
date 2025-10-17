@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Now try to initialize other components (non-critical for logs)
     startup_success = True
+    consumer_task = None  # Keep reference to prevent garbage collection
     try:
         # Validate MongoDB configuration first - fail catastrophically if not configured
         logger.info("Validating MongoDB configuration...")
@@ -93,8 +94,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         consumer_initialized = await signal_consumer.initialize(dispatcher=dispatcher)
         if consumer_initialized:
             logger.info("✅ NATS consumer initialized successfully with exchange")
-            # Start consumer in background task and keep reference
+            # Start consumer in background task and keep strong reference
             consumer_task = asyncio.create_task(signal_consumer.start_consuming())
+            # Store reference in app state to prevent garbage collection
+            app.state.consumer_task = consumer_task
 
             # Add error callback to detect if task fails
             def task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
@@ -102,9 +105,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     task.result()  # This will raise any exception that occurred
                 except Exception as e:
                     logger.error(f"❌ NATS consumer task failed: {e}", exc_info=True)
+                    # Try to restart the consumer on failure
+                    logger.info("Attempting to restart NATS consumer...")
+                    try:
+                        new_task = asyncio.create_task(
+                            signal_consumer.start_consuming()
+                        )
+                        app.state.consumer_task = new_task
+                        new_task.add_done_callback(task_done_callback)
+                        logger.info("✅ NATS consumer restarted successfully")
+                    except Exception as restart_error:
+                        logger.error(
+                            f"❌ Failed to restart NATS consumer: {restart_error}"
+                        )
 
             consumer_task.add_done_callback(task_done_callback)
-            logger.info("✅ NATS consumer started in background with monitoring")
+            logger.info(
+                "✅ NATS consumer started in background with monitoring and auto-restart"
+            )
         else:
             logger.warning("⚠️ NATS consumer not initialized (likely disabled)")
 
@@ -135,6 +153,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Stopping NATS consumer...")
             await signal_consumer.stop_consuming()
             logger.info("✅ NATS consumer stopped")
+
+        # Cancel consumer task if it exists
+        if consumer_task and not consumer_task.done():
+            logger.info("Cancelling NATS consumer task...")
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except asyncio.CancelledError:
+                logger.info("NATS consumer task cancelled successfully")
 
         await binance_exchange.close()
         await simulator_exchange.close()

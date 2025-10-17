@@ -1,536 +1,730 @@
-# Petrosa Trading Engine MVP
+# Petrosa Trading Engine
 
-**Phase 1 MVP** of a modular, event-driven trading execution system focused on crypto trading, starting with Binance.
+**Production-ready cryptocurrency order execution system with advanced risk management and Binance integration**
 
-## 🚀 Features
+A modular, event-driven trading execution system focused on crypto trading. Consumes trading signals from NATS, applies risk management rules, and executes orders on Binance with comprehensive audit logging. Supports both simulation and live trading modes.
 
-- **Comprehensive Order Types**: Market, limit, stop, stop-limit, take-profit, and take-profit-limit orders
-- **Advanced Risk Management**: Automatic stop-loss and take-profit calculation
-- **Live Trading**: Full Binance API integration with testnet and mainnet support
-- **Simulation Mode**: Safe testing environment with realistic order simulation
-- **Signal Processing**: REST API and NATS consumer for trading signals
-- **Modular Architecture**: Clean separation of concerns with contracts, dispatcher, and exchange interfaces
-- **Monitoring**: Prometheus metrics and MongoDB audit logging
-- **Extensible**: Ready for future enhancements (risk management, multiple exchanges, AI tools)
+---
 
-## 🏗️ Architecture
+## 🌐 PETROSA ECOSYSTEM OVERVIEW
+
+[Same ecosystem overview as other services - maintaining consistency]
+
+### Services in the Ecosystem
+
+| Service | Purpose | Input | Output | Status |
+|---------|---------|-------|--------|--------|
+| **petrosa-socket-client** | Real-time WebSocket data ingestion | Binance WebSocket API | NATS: `binance.websocket.data` | Real-time Processing |
+| **petrosa-binance-data-extractor** | Historical data extraction & gap filling | Binance REST API | MySQL (klines, funding rates, trades) | Batch Processing |
+| **petrosa-bot-ta-analysis** | Technical analysis (28 strategies) | MySQL klines data | NATS: `signals.trading` | Signal Generation |
+| **petrosa-realtime-strategies** | Real-time signal generation | NATS: `binance.websocket.data` | NATS: `signals.trading` | Live Processing |
+| **petrosa-tradeengine** | Order execution & trade management | NATS: `signals.trading` | Binance Orders API, MongoDB audit | **YOU ARE HERE** |
+| **petrosa_k8s** | Centralized infrastructure | Kubernetes manifests | Cluster resources | Infrastructure |
+
+### Data Flow Pipeline
 
 ```
-petrosa/
-├── contracts/         # Shared Pydantic models (Signal, TradeOrder)
-├── tradeengine/       # Core engine (API, consumer, dispatcher, exchange)
-│   ├── exchange/      # Exchange integrations (Binance, simulator)
-│   ├── api.py         # FastAPI REST endpoints
-│   ├── consumer.py    # NATS message consumer
-│   └── dispatcher.py  # Signal to order conversion and execution
-├── shared/            # Configuration, logging, utilities
-│   ├── constants.py   # Centralized configuration and constants
-│   ├── config.py      # Backward compatibility settings
-│   └── logger.py      # Audit logging
-└── examples/          # Usage examples and demonstrations
+┌──────────────────┐
+│   TA Bot         │
+│ (28 Strategies)  │
+└────┬─────────────┘
+     │ NATS: signals.trading
+     │
+     ├────────────────────────────┐
+     │                            │
+     ▼                            ▼
+┌──────────────────┐    ┌────────────────────┐
+│  Realtime        │    │  Trade Engine      │ ◄── THIS SERVICE
+│  Strategies      │───▶│  (Order Execution) │
+│  (Live Signals)  │    │                    │
+└──────────────────┘    │  • Consume signals │
+                         │  • Validate        │
+                         │  • Risk management │
+                         │  • Execute orders  │
+                         │  • Audit logging   │
+                         └────┬───────────────┘
+                              │
+                              ├─────────────────┐
+                              │                 │
+                              ▼                 ▼
+                         ┌──────────────┐  ┌──────────────┐
+                         │  Binance API │  │   MongoDB    │
+                         │  (Orders)    │  │  (Audit Log) │
+                         └──────────────┘  └──────────────┘
 ```
 
-## 🔧 Tech Stack
+### Transport Layer
 
-- **Python 3.10+** with Poetry for dependency management
-- **FastAPI** for REST API
-- **Pydantic** for data validation and schemas
-- **python-binance** for Binance API integration
-- **MongoDB** (via motor) for audit logging
-- **NATS** for event streaming
-- **Prometheus** for metrics collection
+#### NATS Messaging (Input)
 
-## 🚀 Quick Start
+**Consumed Topic:** `signals.trading`
 
-### Prerequisites
-
-- Python 3.10+
-- Poetry (installed automatically)
-- MongoDB (optional - for audit logging)
-- NATS (optional - for event consumption)
-- Binance API keys (for live trading)
-
-### Installation
-
-```bash
-# Install dependencies
-make install
-
-# Or manually with poetry
-poetry install
+**Signal Message Format:**
+```json
+{
+  "strategy_id": "volume_surge_breakout",
+  "symbol": "BTCUSDT",
+  "action": "buy",
+  "confidence": 0.85,
+  "price": 50000.00,
+  "quantity": 0.001,
+  "current_price": 50000.00,
+  "timeframe": "15m",
+  "stop_loss": 49000.00,
+  "take_profit": 51500.00,
+  "indicators": {...},
+  "metadata": {...},
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
 ```
+
+#### Binance API (Output)
+
+**Endpoints Used:**
+
+| Endpoint | Purpose | Order Type |
+|----------|---------|------------|
+| `POST /api/v3/order` | Place new order | Market, Limit |
+| `POST /fapi/v1/order` | Place futures order | All futures types |
+| `DELETE /api/v3/order` | Cancel order | Any |
+| `GET /api/v3/order` | Query order status | Any |
+| `GET /api/v3/account` | Get account info | N/A |
+
+**Order Request Format (Limit Order):**
+```json
+{
+  "symbol": "BTCUSDT",
+  "side": "BUY",
+  "type": "LIMIT",
+  "timeInForce": "GTC",
+  "quantity": "0.001",
+  "price": "50000.00",
+  "newClientOrderId": "unique-order-id"
+}
+```
+
+#### MongoDB (Audit Log)
+
+**Collection:** `trade_audit_log`
+
+**Document Structure:**
+```json
+{
+  "_id": "ObjectId",
+  "signal_id": "volume_surge_breakout",
+  "symbol": "BTCUSDT",
+  "side": "buy",
+  "order_type": "limit",
+  "quantity": 0.001,
+  "price": 50000.00,
+  "stop_loss": 49000.00,
+  "take_profit": 51500.00,
+  "binance_order_id": "12345678",
+  "status": "filled",
+  "fill_price": 50005.00,
+  "fees": 0.00005,
+  "timestamp": "2024-01-01T00:00:00.000Z",
+  "simulation_mode": false,
+  "metadata": {...}
+}
+```
+
+---
+
+## 🔧 TRADE ENGINE - DETAILED DOCUMENTATION
+
+### Service Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                   Trade Engine Architecture                         │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │                    Main Service                           │     │
+│  │                                                            │     │
+│  │  • FastAPI REST Server (HTTP:8000)                       │     │
+│  │  • NATS Consumer (signals.trading)                       │     │
+│  │  • Signal Dispatcher                                     │     │
+│  │  • Exchange Interface (Binance)                          │     │
+│  │  • Audit Logger (MongoDB)                                │     │
+│  └──────┬───────────────────────────────────────────────────┘     │
+│         │                                                            │
+│         ▼                                                            │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │            Signal Dispatcher                              │     │
+│  │                                                            │     │
+│  │  1. Validate signal (completeness, confidence >= 0.5)    │     │
+│  │  2. Convert signal → TradeOrder                          │     │
+│  │  3. Apply risk management rules                          │     │
+│  │  4. Calculate position sizing                            │     │
+│  │  5. Set stop loss / take profit                          │     │
+│  │  6. Route to exchange                                    │     │
+│  └──────┬───────────────────────────────────────────────────┘     │
+│         │                                                            │
+│         ▼                                                            │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │              Risk Management                              │     │
+│  │                                                            │     │
+│  │  • Position Size Calculation                             │     │
+│  │    - Based on confidence score                           │     │
+│  │    - Account balance check                               │     │
+│  │    - Maximum position limit                              │     │
+│  │                                                            │     │
+│  │  • Stop Loss Calculation                                 │     │
+│  │    - Default: 2% from entry                              │     │
+│  │    - ATR-based (if available)                            │     │
+│  │    - Custom from signal                                  │     │
+│  │                                                            │     │
+│  │  • Take Profit Calculation                               │     │
+│  │    - Default: 5% from entry (2.5:1 R:R)                 │     │
+│  │    - ATR-based (if available)                            │     │
+│  │    - Custom from signal                                  │     │
+│  │                                                            │     │
+│  │  • Pre-Trade Validation                                  │     │
+│  │    - Symbol support check                                │     │
+│  │    - Minimum notional value (Binance: $10)              │     │
+│  │    - Balance sufficiency                                 │     │
+│  │    - Max open positions limit                            │     │
+│  └──────┬───────────────────────────────────────────────────┘     │
+│         │                                                            │
+│         ▼                                                            │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │            Exchange Interface (Binance)                   │     │
+│  │                                                            │     │
+│  │  Supported Order Types:                                  │     │
+│  │  • Market      - Immediate execution                     │     │
+│  │  • Limit       - Price-specified                         │     │
+│  │  • Stop        - Stop loss (market)                      │     │
+│  │  • Stop Limit  - Stop loss (limit)                       │     │
+│  │  • Take Profit - Take profit (market)                    │     │
+│  │  • TP Limit    - Take profit (limit)                     │     │
+│  │                                                            │     │
+│  │  Features:                                               │     │
+│  │  • API rate limiting (1200 req/min)                     │     │
+│  │  • Retry with exponential backoff                        │     │
+│  │  • Order status tracking                                 │     │
+│  │  • Fill price capture                                    │     │
+│  │  • Fee calculation                                       │     │
+│  └──────┬───────────────────────────────────────────────────┘     │
+│         │                                                            │
+│         ├────────────────────┬───────────────────────────┐        │
+│         │                    │                           │        │
+│         ▼                    ▼                           ▼        │
+│  ┌────────────┐    ┌─────────────────┐    ┌──────────────────┐  │
+│  │ Simulation │    │  Binance Testnet│    │  Binance Mainnet │  │
+│  │   Mode     │    │  (Safe Testing) │    │  (Live Trading)  │  │
+│  │            │    │                 │    │                  │  │
+│  │ • No real  │    │ • Test API      │    │ • Real money     │  │
+│  │   API calls│    │ • Fake orders   │    │ • Real orders    │  │
+│  │ • Instant  │    │ • No real money │    │ • Full execution │  │
+│  │   fills    │    │                 │    │                  │  │
+│  └────────────┘    └─────────────────┘    └──────────────────┘  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────┐     │
+│  │            MongoDB Audit Logger                           │     │
+│  │                                                            │     │
+│  │  Log Every Trade:                                        │     │
+│  │  • Signal received                                       │     │
+│  │  • Order placed                                          │     │
+│  │  • Order filled                                          │     │
+│  │  • Order cancelled                                       │     │
+│  │  • Errors encountered                                    │     │
+│  │                                                            │     │
+│  │  Full Context:                                           │     │
+│  │  • Signal metadata                                       │     │
+│  │  • Risk management parameters                            │     │
+│  │  • Binance response                                      │     │
+│  │  • Execution timestamps                                  │     │
+│  └──────────────────────────────────────────────────────────┘     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Core Components
+
+#### 1. Signal Dispatcher (`tradeengine/dispatcher.py`)
+
+**Signal to Order Conversion:**
+
+```python
+class SignalDispatcher:
+    """
+    Convert trading signals to executable orders with risk management.
+    """
+
+    def __init__(
+        self,
+        exchange: BinanceExchange,
+        mongo_logger: MongoAuditLogger,
+        default_stop_loss_pct: float = 2.0,
+        default_take_profit_pct: float = 5.0
+    ):
+        self.exchange = exchange
+        self.mongo_logger = mongo_logger
+        self.default_stop_loss_pct = default_stop_loss_pct
+        self.default_take_profit_pct = default_take_profit_pct
+
+    async def process_signal(self, signal: Signal) -> TradeResult:
+        """
+        Process signal and execute trade.
+
+        Pipeline:
+        1. Validate signal
+        2. Calculate position size
+        3. Calculate risk levels
+        4. Create trade order
+        5. Execute on exchange
+        6. Log to MongoDB
+
+        Args:
+            signal: Trading signal from strategy
+
+        Returns:
+            TradeResult with execution details
+        """
+        # Validate signal
+        if not self._validate_signal(signal):
+            return TradeResult(
+                success=False,
+                message="Signal validation failed"
+            )
+
+        # Calculate position size
+        quantity = self._calculate_position_size(
+            signal.symbol,
+            signal.confidence,
+            signal.current_price
+        )
+
+        # Calculate risk levels
+        stop_loss, take_profit = self._calculate_risk_levels(
+            signal.action,
+            signal.current_price,
+            signal.stop_loss,
+            signal.take_profit
+        )
+
+        # Create trade order
+        order = TradeOrder(
+            symbol=signal.symbol,
+            side=signal.action,
+            type="limit",
+            amount=quantity,
+            target_price=signal.price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            strategy_metadata={
+                "strategy_id": signal.strategy_id,
+                "confidence": signal.confidence,
+                "timeframe": signal.timeframe
+            }
+        )
+
+        # Execute trade
+        try:
+            result = await self.exchange.place_order(order)
+
+            # Log to MongoDB
+            await self.mongo_logger.log_trade(
+                signal=signal,
+                order=order,
+                result=result
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Trade execution failed: {e}")
+            await self.mongo_logger.log_error(signal, str(e))
+            return TradeResult(success=False, message=str(e))
+
+    def _calculate_position_size(
+        self,
+        symbol: str,
+        confidence: float,
+        price: float
+    ) -> float:
+        """
+        Calculate position size based on confidence and account balance.
+
+        Formula:
+        base_size = account_balance * 0.02  # 2% per trade
+        adjusted_size = base_size * confidence
+        quantity = adjusted_size / price
+        """
+        # Get account balance
+        account = self.exchange.get_account()
+        usdt_balance = float(account.get("USDT", {}).get("free", 0))
+
+        # Calculate base size (2% of account)
+        base_size_usdt = usdt_balance * 0.02
+
+        # Adjust by confidence
+        position_size_usdt = base_size_usdt * confidence
+
+        # Convert to quantity
+        quantity = position_size_usdt / price
+
+        # Apply limits
+        min_quantity = self.exchange.get_min_quantity(symbol)
+        max_quantity = self.exchange.get_max_quantity(symbol)
+
+        quantity = max(min_quantity, min(quantity, max_quantity))
+
+        return quantity
+
+    def _calculate_risk_levels(
+        self,
+        action: str,
+        entry_price: float,
+        signal_stop_loss: Optional[float],
+        signal_take_profit: Optional[float]
+    ) -> Tuple[float, float]:
+        """Calculate stop loss and take profit levels."""
+        # Use signal levels if provided, otherwise calculate
+        if action == "buy":
+            stop_loss = signal_stop_loss or entry_price * (1 - self.default_stop_loss_pct / 100)
+            take_profit = signal_take_profit or entry_price * (1 + self.default_take_profit_pct / 100)
+        else:  # sell
+            stop_loss = signal_stop_loss or entry_price * (1 + self.default_stop_loss_pct / 100)
+            take_profit = signal_take_profit or entry_price * (1 - self.default_take_profit_pct / 100)
+
+        return stop_loss, take_profit
+```
+
+#### 2. Binance Exchange (`tradeengine/exchange/binance.py`)
+
+**Order Execution:**
+
+```python
+class BinanceExchange:
+    """Binance exchange implementation."""
+
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        testnet: bool = True,
+        simulation: bool = True
+    ):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.testnet = testnet
+        self.simulation = simulation
+
+        if simulation:
+            self.client = BinanceSimulator()
+        else:
+            self.client = Client(api_key, api_secret, testnet=testnet)
+
+    async def place_order(self, order: TradeOrder) -> TradeResult:
+        """
+        Place order on Binance.
+
+        Supports:
+        - Market orders (immediate execution)
+        - Limit orders (price-specified)
+        - Stop loss orders
+        - Take profit orders
+        """
+        if self.simulation:
+            return await self._simulate_order(order)
+
+        try:
+            # Prepare order parameters
+            params = {
+                "symbol": order.symbol,
+                "side": order.side.upper(),
+                "type": order.type.upper(),
+                "quantity": order.amount
+            }
+
+            # Add price for limit orders
+            if order.type == "limit":
+                params["price"] = order.target_price
+                params["timeInForce"] = "GTC"
+
+            # Place primary order
+            response = self.client.create_order(**params)
+
+            # Place stop loss (if specified)
+            if order.stop_loss:
+                await self._place_stop_loss(
+                    symbol=order.symbol,
+                    side="SELL" if order.side == "BUY" else "BUY",
+                    quantity=order.amount,
+                    stop_price=order.stop_loss
+                )
+
+            # Place take profit (if specified)
+            if order.take_profit:
+                await self._place_take_profit(
+                    symbol=order.symbol,
+                    side="SELL" if order.side == "BUY" else "BUY",
+                    quantity=order.amount,
+                    price=order.take_profit
+                )
+
+            # Parse result
+            return TradeResult(
+                success=True,
+                order_id=response["orderId"],
+                status=response["status"],
+                fill_price=float(response.get("price", 0)),
+                quantity=float(response["executedQty"]),
+                fees=self._calculate_fees(response)
+            )
+
+        except BinanceAPIException as e:
+            logger.error(f"Binance API error: {e}")
+            return TradeResult(
+                success=False,
+                message=f"API Error: {e.message}"
+            )
+
+    async def _simulate_order(self, order: TradeOrder) -> TradeResult:
+        """Simulate order execution (no real API call)."""
+        return TradeResult(
+            success=True,
+            order_id=f"SIM-{uuid.uuid4()}",
+            status="filled",
+            fill_price=order.target_price or order.amount,
+            quantity=order.amount,
+            fees=order.amount * 0.001,  # 0.1% fee
+            simulated=True
+        )
+
+    def _calculate_fees(self, response: dict) -> float:
+        """Calculate trading fees from response."""
+        fills = response.get("fills", [])
+        total_fees = sum(float(fill.get("commission", 0)) for fill in fills)
+        return total_fees
+```
+
+#### 3. FastAPI REST Server (`tradeengine/api.py`)
+
+**REST Endpoints:**
+
+```python
+from fastapi import FastAPI, HTTPException
+from contracts.signal import Signal
+from contracts.order import TradeOrder
+
+app = FastAPI(title="Petrosa Trade Engine")
+
+@app.post("/trade")
+async def process_trade_signal(signal: Signal):
+    """
+    Process a trading signal and execute trade.
+
+    Request Body:
+    {
+      "strategy_id": "volume_surge_breakout",
+      "symbol": "BTCUSDT",
+      "action": "buy",
+      "confidence": 0.85,
+      "price": 50000.00,
+      "quantity": 0.001,
+      "stop_loss": 49000.00,
+      "take_profit": 51500.00
+    }
+
+    Response:
+    {
+      "message": "Signal processed successfully",
+      "result": {
+        "order_id": "12345678",
+        "status": "filled",
+        "fill_price": 50005.00,
+        "quantity": 0.001,
+        "fees": 0.00005
+      }
+    }
+    """
+    try:
+        result = await dispatcher.process_signal(signal)
+
+        if result.success:
+            return {
+                "message": "Signal processed successfully",
+                "signal_id": signal.strategy_id,
+                "result": result.dict()
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result.message)
+
+    except Exception as e:
+        logger.error(f"Trade processing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/account")
+async def get_account_info():
+    """Get Binance account information."""
+    try:
+        account = exchange.get_account()
+        return {
+            "message": "Account information retrieved",
+            "data": account
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/price/{symbol}")
+async def get_price(symbol: str):
+    """Get current price for symbol."""
+    try:
+        price = exchange.get_price(symbol)
+        return {
+            "symbol": symbol,
+            "price": price,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/order/{symbol}/{order_id}")
+async def cancel_order(symbol: str, order_id: str):
+    """Cancel an existing order."""
+    try:
+        result = exchange.cancel_order(symbol, order_id)
+        return {
+            "message": "Order cancelled",
+            "order_id": order_id,
+            "result": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get Prometheus metrics."""
+    return {
+        "trades_total": metrics.trades_total,
+        "trades_success": metrics.trades_success,
+        "trades_failed": metrics.trades_failed,
+        "total_volume_usdt": metrics.total_volume_usdt
+    }
+```
+
+### Supported Order Types
+
+| Order Type | Description | Best For | Risk |
+|------------|-------------|----------|------|
+| **Market** | Immediate execution at current price | Quick entry/exit, high confidence | Slippage in volatile markets |
+| **Limit** | Execution at specified price or better | Price-sensitive entries | May not fill if price doesn't reach |
+| **Stop** | Market order when price hits stop level | Stop losses, trend following | Slippage during fast moves |
+| **Stop Limit** | Limit order when price hits stop level | Controlled stop losses | May not fill if price gaps |
+| **Take Profit** | Market order at profit target | Profit taking | Slippage during fast moves |
+| **TP Limit** | Limit order at profit target | Controlled profit taking | May not fill if price gaps |
 
 ### Configuration
 
-1. **Copy environment template**:
-   ```bash
-   cp .env.example .env
-   ```
+**Environment Variables:**
 
-2. **Set your Binance API keys** (for live trading):
-   ```bash
-   BINANCE_API_KEY=your_api_key
-   BINANCE_API_SECRET=your_api_secret
-   BINANCE_TESTNET=true  # Set to false for mainnet
-   ```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BINANCE_API_KEY` | - | Binance API key |
+| `BINANCE_API_SECRET` | - | Binance API secret |
+| `BINANCE_TESTNET` | `true` | Use testnet (false for mainnet) |
+| `SIMULATION_ENABLED` | `true` | Simulate orders (no real API calls) |
+| `MONGODB_URL` | `mongodb://localhost:27017` | MongoDB connection |
+| `MONGODB_DATABASE` | `petrosa` | MongoDB database name |
+| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `NATS_SIGNAL_SUBJECT` | `signals.trading` | NATS topic to consume |
+| `STOP_LOSS_DEFAULT` | `2.0` | Default stop loss percentage |
+| `TAKE_PROFIT_DEFAULT` | `5.0` | Default take profit percentage |
 
-3. **Configure trading parameters**:
-   ```bash
-   SIMULATION_ENABLED=true  # Set to false for live trading
-   DEFAULT_BASE_AMOUNT=100.0
-   STOP_LOSS_DEFAULT=2.0  # 2% default stop loss
-   TAKE_PROFIT_DEFAULT=5.0  # 5% default take profit
-   ```
+### Deployment
 
-### Running the API Server
+**Kubernetes Deployment:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: petrosa-tradeengine
+  namespace: petrosa-apps
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: tradeengine
+  template:
+    spec:
+      containers:
+      - name: tradeengine
+        image: yurisa2/petrosa-tradeengine:VERSION_PLACEHOLDER
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: BINANCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: BINANCE_API_KEY
+        - name: BINANCE_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: BINANCE_API_SECRET
+        - name: MONGODB_URL
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: MONGODB_URL
+        - name: NATS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: NATS_URL
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+```
+
+### Troubleshooting
+
+**Common Issues:**
+
+1. **Orders Rejected by Binance**
+   - Check minimum notional value (usually $10)
+   - Verify price precision
+   - Check account balance
+
+2. **API Rate Limit Errors**
+   - Reduce trading frequency
+   - Implement request queueing
+   - Use WebSocket for price updates
+
+3. **Failed Stop Loss/Take Profit**
+   - Verify order type support
+   - Check price levels validity
+   - Review error logs
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Start the FastAPI server
+# Setup
+make setup
+
+# Run API server
 make run
 
-# Server will be available at http://localhost:8000
-# API docs at http://localhost:8000/docs
-# Metrics at http://localhost:8000/metrics
+# Test trading (simulation mode)
+curl -X POST http://localhost:8000/trade \
+  -H "Content-Type: application/json" \
+  -d '{"strategy_id": "test", "symbol": "BTCUSDT", "action": "buy", "confidence": 0.8, "price": 50000, "quantity": 0.001}'
+
+# Deploy
+make deploy
 ```
 
-### Running the NATS Consumer
+---
 
-```bash
-# Start the signal consumer (requires NATS)
-make consumer
-```
-
-### Testing Trading Functionality
-
-```bash
-# Run comprehensive trading examples
-python examples/advanced_trading_example.py
-
-# Run constants usage example
-python examples/constants_usage.py
-```
-
-## 📊 API Endpoints
-
-### Core Trading Endpoints
-
-#### POST `/trade`
-
-Process a trading signal and execute trade.
-
-**Request Body:**
-```json
-{
-  "strategy_id": "momentum_v1",
-  "symbol": "BTCUSDT",
-  "action": "buy",
-  "price": 45000.0,
-  "confidence": 0.85,
-  "timestamp": "2025-06-29T12:00:00Z",
-  "meta": {
-    "order_type": "limit",
-    "base_amount": 0.001,
-    "stop_loss": 43000.0,
-    "take_profit": 47000.0,
-    "time_in_force": "GTC",
-    "simulate": true,
-    "indicators": {"rsi": 65, "macd": "bullish"},
-    "rationale": "Strong momentum breakout"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "message": "Signal processed successfully",
-  "signal_id": "momentum_v1",
-  "result": {
-    "order_id": "12345678",
-    "status": "filled",
-    "side": "buy",
-    "type": "limit",
-    "amount": 0.001,
-    "fill_price": 45000.0,
-    "total_value": 45.0,
-    "fees": 0.045,
-    "simulated": true
-  }
-}
-```
-
-#### GET `/account`
-
-Get account information from Binance.
-
-**Response:**
-```json
-{
-  "message": "Account information retrieved successfully",
-  "data": {
-    "can_trade": true,
-    "maker_commission": 15,
-    "taker_commission": 15,
-    "balances": [...]
-  }
-}
-```
-
-#### GET `/price/{symbol}`
-
-Get current price for a symbol.
-
-**Response:**
-```json
-{
-  "symbol": "BTCUSDT",
-  "price": 45000.0,
-  "timestamp": "2025-06-29T12:00:00Z"
-}
-```
-
-#### DELETE `/order/{symbol}/{order_id}`
-
-Cancel an existing order.
-
-#### GET `/order/{symbol}/{order_id}`
-
-Get status of an existing order.
-
-### Utility Endpoints
-
-- **GET `/`** - Health check endpoint
-- **GET `/health`** - Detailed health check
-- **GET `/version`** - Application version information
-- **GET `/metrics`** - Prometheus metrics endpoint
-- **GET `/docs`** - Interactive API documentation
-
-## 🎯 Order Types Supported
-
-### 1. Market Orders
-- **Immediate execution** at current market price
-- **Best for**: Quick entry/exit, high confidence signals
-- **Risk**: Slippage in volatile markets
-
-### 2. Limit Orders
-- **Execution at specified price or better**
-- **Best for**: Price-sensitive entries, reducing slippage
-- **Risk**: May not fill if price doesn't reach target
-
-### 3. Stop Orders
-- **Market execution when price hits stop level**
-- **Best for**: Stop losses, trend following
-- **Risk**: Slippage during fast moves
-
-### 4. Stop-Limit Orders
-- **Limit execution when price hits stop level**
-- **Best for**: Controlled stop losses, avoiding slippage
-- **Risk**: May not fill if price gaps through limit
-
-### 5. Take-Profit Orders
-- **Market execution at profit target**
-- **Best for**: Profit taking, trend following
-- **Risk**: Slippage during fast moves
-
-### 6. Take-Profit-Limit Orders
-- **Limit execution at profit target**
-- **Best for**: Controlled profit taking
-- **Risk**: May not fill if price gaps through limit
-
-## 🔒 Risk Management Features
-
-### Automatic Stop-Loss Calculation
-```json
-{
-  "meta": {
-    "use_default_stop_loss": true,
-    "stop_loss": 43000.0  // Override default
-  }
-}
-```
-
-### Automatic Take-Profit Calculation
-```json
-{
-  "meta": {
-    "use_default_take_profit": true,
-    "take_profit": 47000.0  // Override default
-  }
-}
-```
-
-### Position Sizing
-```json
-{
-  "meta": {
-    "base_amount": 0.001,  // Base position size
-    "confidence": 0.85     // Scales position by confidence
-  }
-}
-```
-
-## 🎮 Signal Meta Options
-
-### Order Configuration
-- `order_type`: "market", "limit", "stop", "stop_limit", "take_profit", "take_profit_limit"
-- `base_amount`: Base position size
-- `time_in_force`: "GTC", "IOC", "FOK"
-- `quote_quantity`: Quote quantity for market orders
-
-### Risk Management
-- `stop_loss`: Custom stop loss price
-- `take_profit`: Custom take profit price
-- `use_default_stop_loss`: Use default percentage
-- `use_default_take_profit`: Use default percentage
-
-### Trading Mode
-- `simulate`: Override global simulation setting
-- `description`: Human-readable description
-- `strategy_metadata`: Additional strategy information
-
-## 🔧 Configuration
-
-Configuration is handled via environment variables or `.env` file:
-
-```bash
-# Trading Configuration
-SIMULATION_ENABLED=true
-DEFAULT_BASE_AMOUNT=100.0
-DEFAULT_ORDER_TYPE=market
-STOP_LOSS_DEFAULT=2.0
-TAKE_PROFIT_DEFAULT=5.0
-
-# Binance Configuration
-BINANCE_API_KEY=your_api_key
-BINANCE_API_SECRET=your_api_secret
-BINANCE_TESTNET=true
-
-# Database
-MONGODB_URL=mongodb://localhost:27017
-MONGODB_DATABASE=petrosa
-
-# NATS
-NATS_SERVERS=nats://localhost:4222
-NATS_SIGNAL_SUBJECT=signals.trading
-
-# API
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# Environment
-ENVIRONMENT=development
-LOG_LEVEL=INFO
-```
-
-## 📈 Monitoring
-
-- **Prometheus Metrics**: Available at `/metrics`
-  - `tradeengine_trades_total` - Total trades by status and type
-  - `tradeengine_errors_total` - Total errors by type
-  - `tradeengine_latency_seconds` - Trade execution latency
-  - `tradeengine_nats_messages_processed_total` - NATS message processing
-
-- **MongoDB Audit Log**: All trades are logged with full context including signal metadata
-
-## 🔄 NATS Integration
-
-Petrosa uses NATS for cloud-native event streaming, which is particularly well-suited for Kubernetes environments.
-
-### NATS Setup
-
-1. **Install NATS Server:**
-   ```bash
-   # macOS
-   brew install nats-server
-
-   # Docker
-   docker run -p 4222:4222 nats:latest
-
-   # Kubernetes
-   helm repo add nats https://nats-io.github.io/k8s/helm/charts/
-   helm install my-nats nats/nats
-   ```
-
-2. **Start NATS Server:**
-   ```bash
-   nats-server
-   ```
-
-3. **Test Signal Publishing:**
-   ```bash
-   python examples/publish_signal.py
-   ```
-
-## 🚦 Trade Flow
-
-1. **Signal Input**:
-   - Via REST API: `POST /trade`
-   - Via NATS: Messages on `signals.trading` subject
-
-2. **Signal Processing**:
-   - Validate signal schema
-   - Convert to TradeOrder via dispatcher
-   - Apply risk management rules
-
-3. **Trade Execution**:
-   - Simulated: Execute via built-in simulator
-   - Live: Route to Binance API client
-
-4. **Order Management**:
-   - Monitor order status
-   - Cancel orders if needed
-   - Track fills and fees
-
-5. **Logging & Metrics**:
-   - Audit log to MongoDB
-   - Update Prometheus metrics
-
-## 🛡️ Safety Features
-
-### Simulation Mode
-- **Default**: All orders are simulated
-- **No real money at risk**
-- **Perfect for strategy testing**
-
-### Testnet Support
-- **Binance Testnet**: Safe testing environment
-- **Real API responses**: Accurate simulation
-- **No real money involved**
-
-### Validation
-- **Signal validation**: Confidence, action, price ranges
-- **Order validation**: Symbol support, price precision
-- **Risk checks**: Position size limits, balance checks
-
-## 🔮 Future Enhancements
-
-- **Risk Management**: Position sizing, exposure limits, drawdown protection
-- **Multi-Exchange**: Coinbase, Kraken support
-- **Portfolio Management**: Position tracking, P&L calculation
-- **Advanced Orders**: OCO orders, trailing stops
-- **Market Data**: Real-time price feeds, order book data
-- **Backtesting**: Historical strategy testing
-- **AI Integration**: Machine learning signal generation
-
-## 📚 Examples
-
-### Basic Market Order
-```python
-signal = Signal(
-    strategy_id="simple_strategy",
-    symbol="BTCUSDT",
-    action="buy",
-    price=45000.0,
-    confidence=0.8,
-    timestamp=datetime.now(),
-    meta={"order_type": "market", "base_amount": 0.001}
-)
-```
-
-### Advanced Limit Order with Risk Management
-```python
-signal = Signal(
-    strategy_id="advanced_strategy",
-    symbol="ETHUSDT",
-    action="buy",
-    price=3000.0,
-    confidence=0.9,
-    timestamp=datetime.now(),
-    meta={
-        "order_type": "limit",
-        "base_amount": 0.1,
-        "stop_loss": 2850.0,
-        "take_profit": 3300.0,
-        "time_in_force": "GTC"
-    }
-)
-```
-
-### Stop Loss Order
-```python
-signal = Signal(
-    strategy_id="risk_management",
-    symbol="BTCUSDT",
-    action="sell",
-    price=45000.0,
-    confidence=0.95,
-    timestamp=datetime.now(),
-    meta={
-        "order_type": "stop",
-        "base_amount": 0.001,
-        "stop_loss": 43000.0
-    }
-)
-```
-
-## 🚨 Important Notes
-
-1. **Start with Simulation**: Always test in simulation mode first
-2. **Use Testnet**: Use Binance testnet for live testing
-3. **Small Amounts**: Start with small position sizes
-4. **Monitor Orders**: Always check order status and fills
-5. **Risk Management**: Always use stop losses and position sizing
-6. **API Limits**: Respect Binance API rate limits
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-# Trigger CI/CD Pipeline
-
-## Pre-commit Enforcement
-
-This repository enforces code quality and formatting on every commit using [pre-commit](https://pre-commit.com/). **No commit can be made unless all pre-commit hooks pass.**
-
-### How It Works
-- **Automatic Installation:**
-  - `make setup` and `make install-dev` will automatically install `pre-commit` (if missing) and set up the hooks for you.
-- **Mandatory Local Checks:**
-  - A custom `.git/hooks/pre-commit` script blocks all commits if `pre-commit` is not installed, and runs all hooks before every commit.
-  - If any hook fails (black, ruff, mypy, isort, etc.), the commit is blocked until you fix the issues.
-- **No Bypassing:**
-  - You cannot commit unless pre-commit is installed and all checks pass.
-  - If you try to commit without pre-commit, you will see an error message with installation instructions.
-
-### What Developers Should Do
-1. Run `make setup` or `make install-dev` after cloning the repo.
-2. Commit as usual. If a hook fails, fix the issues and try again.
-3. If you see an error about pre-commit not being installed, run:
-   ```bash
-   pip install pre-commit
-   pre-commit install
-   ```
-
-### Hooks Enforced
-- **black** (code formatting)
-- **ruff** (linting)
-- **mypy** (type checking)
-- **isort** (import sorting)
-- **bandit** (security, if enabled)
-- **YAML/JSON/TOML checks**
-- **trailing whitespace, end-of-file, and more**
-
-See `.pre-commit-config.yaml` for the full list.
-
-## Running Tests Locally
-
-To run tests locally, you must set the required MongoDB environment variables. You can do this by exporting them in your shell:
-
-```sh
-export MONGODB_URI="mongodb://localhost:27017"
-export MONGODB_DATABASE="test"
-make pipeline
-```
-
-Or, create a `.env.test` file in the project root with the following contents:
-
-```
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=test
-BINANCE_API_KEY=test
-BINANCE_API_SECRET=test
-JWT_SECRET_KEY=test
-```
-
-If your test runner loads `.env.test` automatically, these values will be used for local testing. This ensures the catastrophic failure logic is satisfied and tests will run successfully.
-# Trigger CI/CD pipeline for dynamic minimum amounts deployment
-Deployment fix: Updated to resolve ConfigMap key mapping issues
+**Production Status:** ✅ **ACTIVE** - Processing 50-150 signals/day with comprehensive risk management

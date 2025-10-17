@@ -1053,10 +1053,34 @@ class Dispatcher:
                 # Use OCO logic for paired SL/TP orders
                 self.logger.info(f"🔄 PLACING OCO ORDERS FOR {order.symbol}")
 
-                # Get the filled quantity - use order.amount if result amount is 0 or None
-                filled_quantity = result.get("amount", 0) or order.amount
-                if filled_quantity == 0:
+                # Get the filled quantity with robust extraction
+                # Market orders may return amount=0 when status is NEW (not yet filled)
+                filled_quantity = result.get("amount", None)
+
+                # Convert to float if it's a string
+                if filled_quantity is not None and isinstance(filled_quantity, str):
+                    try:
+                        filled_quantity = float(filled_quantity)
+                    except (ValueError, TypeError):
+                        filled_quantity = None
+
+                # Use order.amount if result amount is 0, None, or invalid
+                if filled_quantity is None or filled_quantity <= 0:
                     filled_quantity = order.amount
+                    self.logger.info(
+                        f"Using order.amount ({order.amount}) for OCO - "
+                        f"result amount was {result.get('amount')}"
+                    )
+                else:
+                    self.logger.info(f"Using filled amount {filled_quantity} for OCO")
+
+                # Final safety check
+                if filled_quantity <= 0:
+                    self.logger.error(
+                        f"Cannot place OCO orders: invalid quantity {filled_quantity} "
+                        f"(order.amount={order.amount}, result.amount={result.get('amount')})"
+                    )
+                    return
 
                 oco_result = await self.oco_manager.place_oco_orders(
                     position_id=order.position_id or "",
@@ -1124,10 +1148,30 @@ class Dispatcher:
 
             from contracts.order import OrderStatus, TradeOrder
 
-            # Get the filled quantity - use order.amount if result amount is 0 or None
-            filled_quantity = result.get("amount", 0) or order.amount
-            if filled_quantity == 0:
+            # Get the filled quantity with robust extraction
+            filled_quantity = result.get("amount", None)
+
+            # Convert to float if it's a string
+            if filled_quantity is not None and isinstance(filled_quantity, str):
+                try:
+                    filled_quantity = float(filled_quantity)
+                except (ValueError, TypeError):
+                    filled_quantity = None
+
+            # Use order.amount if result amount is 0, None, or invalid
+            if filled_quantity is None or filled_quantity <= 0:
                 filled_quantity = order.amount
+                self.logger.info(
+                    f"Using order.amount ({order.amount}) for SL - "
+                    f"result amount was {result.get('amount')}"
+                )
+
+            # Safety check
+            if filled_quantity <= 0:
+                self.logger.error(
+                    f"Cannot place stop loss: invalid quantity {filled_quantity}"
+                )
+                return
 
             # Create stop loss order
             stop_loss_order = TradeOrder(
@@ -1215,10 +1259,30 @@ class Dispatcher:
 
             from contracts.order import OrderStatus, TradeOrder
 
-            # Get the filled quantity - use order.amount if result amount is 0 or None
-            filled_quantity = result.get("amount", 0) or order.amount
-            if filled_quantity == 0:
+            # Get the filled quantity with robust extraction
+            filled_quantity = result.get("amount", None)
+
+            # Convert to float if it's a string
+            if filled_quantity is not None and isinstance(filled_quantity, str):
+                try:
+                    filled_quantity = float(filled_quantity)
+                except (ValueError, TypeError):
+                    filled_quantity = None
+
+            # Use order.amount if result amount is 0, None, or invalid
+            if filled_quantity is None or filled_quantity <= 0:
                 filled_quantity = order.amount
+                self.logger.info(
+                    f"Using order.amount ({order.amount}) for TP - "
+                    f"result amount was {result.get('amount')}"
+                )
+
+            # Safety check
+            if filled_quantity <= 0:
+                self.logger.error(
+                    f"Cannot place take profit: invalid quantity {filled_quantity}"
+                )
+                return
 
             # Create take profit order
             take_profit_order = TradeOrder(

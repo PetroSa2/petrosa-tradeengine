@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             consumer_task = asyncio.create_task(signal_consumer.start_consuming())
 
             # Add error callback to detect if task fails
-            def task_done_callback(task):
+            def task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
                 try:
                     task.result()  # This will raise any exception that occurred
                 except Exception as e:

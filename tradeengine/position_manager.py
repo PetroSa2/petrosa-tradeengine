@@ -274,19 +274,41 @@ class PositionManager:
                         "total_value": 0.0,
                     }
                 position = self.positions[symbol]
+
+                # Ensure all position numeric fields are floats (in case they were loaded as strings)
+                position["quantity"] = float(position.get("quantity", 0.0))
+                position["avg_price"] = float(position.get("avg_price", 0.0))
+                position["unrealized_pnl"] = float(position.get("unrealized_pnl", 0.0))
+                position["realized_pnl"] = float(position.get("realized_pnl", 0.0))
+                position["total_cost"] = float(position.get("total_cost", 0.0))
+                position["total_value"] = float(position.get("total_value", 0.0))
+
                 # Get fill price from result and ensure it's a float
                 fill_price = result.get("fill_price", order.target_price or 0)
                 if isinstance(fill_price, str):
-                    fill_price = (
-                        float(fill_price) if fill_price else (order.target_price or 0)
-                    )
+                    try:
+                        fill_price = (
+                            float(fill_price)
+                            if fill_price and fill_price not in ("0", "0.0", "0.00", "")
+                            else (order.target_price or 0)
+                        )
+                    except (ValueError, TypeError):
+                        fill_price = order.target_price or 0
+                fill_price = float(fill_price)
 
                 # Get fill quantity and ensure it's a float
                 fill_quantity = result.get("amount", order.amount)
                 if isinstance(fill_quantity, str):
-                    fill_quantity = (
-                        float(fill_quantity) if fill_quantity else order.amount
-                    )
+                    try:
+                        fill_quantity = (
+                            float(fill_quantity)
+                            if fill_quantity
+                            and fill_quantity not in ("0", "0.0", "0.00", "")
+                            else order.amount
+                        )
+                    except (ValueError, TypeError):
+                        fill_quantity = order.amount
+                fill_quantity = float(fill_quantity) if fill_quantity else order.amount
 
                 if order.side == "buy":
                     # Add to position
@@ -385,14 +407,56 @@ class PositionManager:
             # Ensure fill_price is a float, not a string
             fill_price = result.get("fill_price", order.target_price or 0)
             if isinstance(fill_price, str):
-                fill_price = (
-                    float(fill_price) if fill_price else (order.target_price or 0)
-                )
+                try:
+                    fill_price = (
+                        float(fill_price)
+                        if fill_price and fill_price not in ("0", "0.0", "0.00", "")
+                        else (order.target_price or 0)
+                    )
+                except (ValueError, TypeError):
+                    fill_price = order.target_price or 0
+            fill_price = float(fill_price)
 
             # Ensure amount is a float
             amount = result.get("amount", order.amount)
             if isinstance(amount, str):
-                amount = float(amount) if amount else order.amount
+                try:
+                    fill_amount = (
+                        float(amount)
+                        if amount and amount not in ("0", "0.0", "0.00", "")
+                        else order.amount
+                    )
+                except (ValueError, TypeError):
+                    fill_amount = order.amount
+            else:
+                fill_amount = amount if amount and amount > 0 else order.amount
+            fill_amount = float(fill_amount)
+
+            # Ensure stop_loss and take_profit are floats if provided
+            stop_loss = None
+            if order.stop_loss:
+                stop_loss = (
+                    float(order.stop_loss)
+                    if not isinstance(order.stop_loss, str)
+                    else float(order.stop_loss)
+                )
+
+            take_profit = None
+            if order.take_profit:
+                take_profit = (
+                    float(order.take_profit)
+                    if not isinstance(order.take_profit, str)
+                    else float(order.take_profit)
+                )
+
+            # Ensure commission is a float
+            commission = result.get("commission", 0.0)
+            if isinstance(commission, str):
+                try:
+                    commission = float(commission) if commission else 0.0
+                except (ValueError, TypeError):
+                    commission = 0.0
+            commission = float(commission)
 
             position_data = {
                 "position_id": order.position_id,
@@ -401,10 +465,10 @@ class PositionManager:
                 "symbol": order.symbol,
                 "position_side": order.position_side or "LONG",
                 "entry_price": fill_price,
-                "quantity": amount,
+                "quantity": fill_amount,
                 "entry_time": datetime.utcnow(),
-                "stop_loss": order.stop_loss,
-                "take_profit": order.take_profit,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
                 "status": "open",
                 "metadata": order.strategy_metadata,
                 # Exchange-specific data
@@ -412,11 +476,7 @@ class PositionManager:
                 "entry_order_id": result.get("order_id", order.order_id),
                 "entry_trade_ids": result.get("trade_ids", []),
                 "commission_asset": result.get("commission_asset", "USDT"),
-                "commission_total": (
-                    float(result.get("commission", 0.0))
-                    if isinstance(result.get("commission", 0.0), str)
-                    else result.get("commission", 0.0)
-                ),
+                "commission_total": commission,
             }
 
             # Persist to MongoDB

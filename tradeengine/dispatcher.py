@@ -708,13 +708,23 @@ class Dispatcher:
             # Market orders return "NEW" status immediately, which is valid for risk management
             if result and result.get("status") in ["filled", "partially_filled", "NEW"]:
                 await self.position_manager.update_position(order, result)
+                self.logger.info(f"🔥 Position updated for {order.symbol}")
 
                 # Create position tracking record with dual persistence
+                self.logger.info(
+                    f"🔥 About to create position record for {order.symbol}"
+                )
                 await self.position_manager.create_position_record(order, result)
+                self.logger.info(f"🔥 Position record created for {order.symbol}")
 
                 # Place stop loss and take profit orders if specified
+                self.logger.info(
+                    f"🔥 About to place risk management orders for {order.symbol}"
+                )
                 await self._place_risk_management_orders(order, result)
+                self.logger.info(f"🔥 Risk management orders placed for {order.symbol}")
 
+            self.logger.info("🔥 Returning result from _execute_order_with_consensus")
             return result
 
         except Exception as e:

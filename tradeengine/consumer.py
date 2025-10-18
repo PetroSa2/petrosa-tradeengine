@@ -147,6 +147,10 @@ class SignalConsumer:
 
     async def _message_handler(self, msg: Any) -> None:
         """Handle incoming NATS messages with enhanced logging"""
+        # CRITICAL: Log at the very start to see if handler is called at all
+        print(
+            f"🔥 HANDLER CALLED! Subject: {msg.subject if msg else 'None'}", flush=True
+        )
         try:
             logger.info(
                 "📨 NATS MESSAGE RECEIVED | Subject: %s | Size: %d bytes",
@@ -231,6 +235,7 @@ class SignalConsumer:
             nats_errors.labels(type="processing").inc()
 
         except Exception as e:
+            print(f"🔥 HANDLER EXCEPTION: {e}", flush=True)
             logger.error(
                 "❌ NATS MESSAGE PROCESSING FAILED | Subject: %s | Error: %s",
                 msg.subject,

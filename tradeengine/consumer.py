@@ -222,9 +222,11 @@ class SignalConsumer:
 
             # Dispatch signal
             logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
+            print(f"🔥 About to dispatch signal: {signal.strategy_id}", flush=True)
             if not self.dispatcher:
                 raise RuntimeError("Dispatcher not initialized")
             result = await self.dispatcher.dispatch(signal)
+            print(f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True)
 
             messages_processed.labels(status="success").inc()
             logger.info(
@@ -232,6 +234,10 @@ class SignalConsumer:
                 signal.strategy_id,
                 result.get("status"),
                 result,
+            )
+            print(
+                f"🔥 Handler completing successfully for: {signal.strategy_id}",
+                flush=True,
             )
 
             # Send acknowledgment if reply subject is provided

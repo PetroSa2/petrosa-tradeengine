@@ -60,15 +60,35 @@ class SignalConsumer:
                 logger.error("NATS is enabled but no servers configured")
                 return False
 
-            self.nc = await nats.connect(settings.nats_servers)
+            # Connect to NATS with proper reconnection and keep-alive settings
+            from shared.constants import (
+                NATS_CONNECT_TIMEOUT,
+                NATS_MAX_RECONNECT_ATTEMPTS,
+                NATS_RECONNECT_TIME_WAIT,
+            )
+
+            self.nc = await nats.connect(
+                servers=settings.nats_servers,
+                connect_timeout=NATS_CONNECT_TIMEOUT,
+                max_reconnect_attempts=NATS_MAX_RECONNECT_ATTEMPTS,
+                reconnect_time_wait=NATS_RECONNECT_TIME_WAIT,
+                ping_interval=60,  # Send ping every 60 seconds
+                max_outstanding_pings=3,  # Allow 3 missed pings before closing
+                allow_reconnect=True,
+                name="petrosa-tradeengine-consumer",  # Name for monitoring
+            )
+
+            logger.info(
+                "NATS consumer connected with reconnect enabled | "
+                "Server: %s | Max reconnect: %d | Ping interval: 60s",
+                settings.nats_servers,
+                NATS_MAX_RECONNECT_ATTEMPTS,
+            )
 
             # Only initialize dispatcher if we created it ourselves
             if not self._dispatcher_provided and self.dispatcher:
                 await self.dispatcher.initialize()
 
-            logger.info(
-                "NATS consumer initialized, connected to: %s", settings.nats_servers
-            )
             return True
         except Exception as e:
             logger.error("Failed to initialize NATS consumer: %s", str(e))

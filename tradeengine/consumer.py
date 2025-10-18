@@ -214,15 +214,28 @@ class SignalConsumer:
                 result,
             )
 
-            # Send acknowledgment if reply subject is provided
+            # Send acknowledgment with timeout to prevent blocking handler
             if msg.reply and self.nc:
-                response = {
-                    "status": "processed",
-                    "signal_id": signal.strategy_id,
-                    "result": result,
-                }
-                await self.nc.publish(msg.reply, json.dumps(response).encode())
-                logger.info("📤 NATS ACK SENT to %s", msg.reply)
+                try:
+                    response = {
+                        "status": "processed",
+                        "signal_id": signal.strategy_id,
+                        "result": result,
+                    }
+                    await asyncio.wait_for(
+                        self.nc.publish(msg.reply, json.dumps(response).encode()),
+                        timeout=0.5,  # 500ms timeout
+                    )
+                    logger.info("📤 NATS ACK SENT to %s", msg.reply)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ ACK publish timed out for %s - continuing anyway",
+                        msg.reply,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to send ACK to %s: %s - continuing anyway", msg.reply, e
+                    )
 
         except json.JSONDecodeError as e:
             logger.error(
@@ -245,11 +258,17 @@ class SignalConsumer:
             messages_processed.labels(status="error").inc()
             nats_errors.labels(type="processing").inc()
 
-            # Send error response if reply subject is provided
+            # Send error response with timeout to prevent blocking
             if msg.reply and self.nc:
-                error_response = {"status": "error", "error": str(e)}
-                await self.nc.publish(msg.reply, json.dumps(error_response).encode())
-                logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
+                try:
+                    error_response = {"status": "error", "error": str(e)}
+                    await asyncio.wait_for(
+                        self.nc.publish(msg.reply, json.dumps(error_response).encode()),
+                        timeout=0.5,
+                    )
+                    logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
+                except (asyncio.TimeoutError, Exception):
+                    pass  # Don't block on error ACK
 
     async def stop_consuming(self) -> None:
         """Stop the consumer"""

@@ -707,24 +707,56 @@ class Dispatcher:
             # Update position with distributed state management and create position record
             # Market orders return "NEW" status immediately, which is valid for risk management
             if result and result.get("status") in ["filled", "partially_filled", "NEW"]:
-                await self.position_manager.update_position(order, result)
-                self.logger.info(f"🔥 Position updated for {order.symbol}")
+                # CRITICAL FIX: Wrap update_position with timeout to prevent handler blocking
+                try:
+                    await asyncio.wait_for(
+                        self.position_manager.update_position(order, result),
+                        timeout=5.0,
+                    )
+                    self.logger.info(f"✅ Position updated for {order.symbol}")
+                except asyncio.TimeoutError:
+                    self.logger.error(
+                        f"⏱️ Position update timed out for {order.symbol} - continuing anyway"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Position update failed for {order.symbol}: {e} - continuing anyway"
+                    )
 
-                # Create position tracking record with dual persistence
-                self.logger.info(
-                    f"🔥 About to create position record for {order.symbol}"
-                )
-                await self.position_manager.create_position_record(order, result)
-                self.logger.info(f"🔥 Position record created for {order.symbol}")
+                # Create position tracking record with timeout wrapper
+                try:
+                    await asyncio.wait_for(
+                        self.position_manager.create_position_record(order, result),
+                        timeout=5.0,
+                    )
+                    self.logger.info(f"✅ Position record created for {order.symbol}")
+                except asyncio.TimeoutError:
+                    self.logger.error(
+                        f"⏱️ Position record creation timed out for {order.symbol} - continuing anyway"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Position record creation failed for {order.symbol}: {e} - continuing anyway"
+                    )
 
-                # Place stop loss and take profit orders if specified
-                self.logger.info(
-                    f"🔥 About to place risk management orders for {order.symbol}"
-                )
-                await self._place_risk_management_orders(order, result)
-                self.logger.info(f"🔥 Risk management orders placed for {order.symbol}")
+                # Place stop loss and take profit orders with timeout wrapper
+                try:
+                    await asyncio.wait_for(
+                        self._place_risk_management_orders(order, result),
+                        timeout=10.0,  # Longer timeout for exchange API calls
+                    )
+                    self.logger.info(
+                        f"✅ Risk management orders placed for {order.symbol}"
+                    )
+                except asyncio.TimeoutError:
+                    self.logger.error(
+                        f"⏱️ Risk management orders timed out for {order.symbol} - continuing anyway"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Risk management orders failed for {order.symbol}: {e} - continuing anyway"
+                    )
 
-            self.logger.info("🔥 Returning result from _execute_order_with_consensus")
             return result
 
         except Exception as e:

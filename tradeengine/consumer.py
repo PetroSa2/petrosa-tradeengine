@@ -60,15 +60,35 @@ class SignalConsumer:
                 logger.error("NATS is enabled but no servers configured")
                 return False
 
-            self.nc = await nats.connect(settings.nats_servers)
+            # Connect to NATS with proper reconnection and keep-alive settings
+            from shared.constants import (
+                NATS_CONNECT_TIMEOUT,
+                NATS_MAX_RECONNECT_ATTEMPTS,
+                NATS_RECONNECT_TIME_WAIT,
+            )
+
+            self.nc = await nats.connect(
+                servers=settings.nats_servers,
+                connect_timeout=NATS_CONNECT_TIMEOUT,
+                max_reconnect_attempts=NATS_MAX_RECONNECT_ATTEMPTS,
+                reconnect_time_wait=NATS_RECONNECT_TIME_WAIT,
+                ping_interval=60,  # Send ping every 60 seconds
+                max_outstanding_pings=3,  # Allow 3 missed pings before closing
+                allow_reconnect=True,
+                name="petrosa-tradeengine-consumer",  # Name for monitoring
+            )
+
+            logger.info(
+                "NATS consumer connected with reconnect enabled | "
+                "Server: %s | Max reconnect: %d | Ping interval: 60s",
+                settings.nats_servers,
+                NATS_MAX_RECONNECT_ATTEMPTS,
+            )
 
             # Only initialize dispatcher if we created it ourselves
             if not self._dispatcher_provided and self.dispatcher:
                 await self.dispatcher.initialize()
 
-            logger.info(
-                "NATS consumer initialized, connected to: %s", settings.nats_servers
-            )
             return True
         except Exception as e:
             logger.error("Failed to initialize NATS consumer: %s", str(e))
@@ -202,9 +222,11 @@ class SignalConsumer:
 
             # Dispatch signal
             logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
+            print(f"🔥 About to dispatch signal: {signal.strategy_id}", flush=True)
             if not self.dispatcher:
                 raise RuntimeError("Dispatcher not initialized")
             result = await self.dispatcher.dispatch(signal)
+            print(f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True)
 
             messages_processed.labels(status="success").inc()
             logger.info(
@@ -213,16 +235,33 @@ class SignalConsumer:
                 result.get("status"),
                 result,
             )
+            print(
+                f"🔥 Handler completing successfully for: {signal.strategy_id}",
+                flush=True,
+            )
 
-            # Send acknowledgment if reply subject is provided
+            # Send acknowledgment with timeout to prevent blocking handler
             if msg.reply and self.nc:
-                response = {
-                    "status": "processed",
-                    "signal_id": signal.strategy_id,
-                    "result": result,
-                }
-                await self.nc.publish(msg.reply, json.dumps(response).encode())
-                logger.info("📤 NATS ACK SENT to %s", msg.reply)
+                try:
+                    response = {
+                        "status": "processed",
+                        "signal_id": signal.strategy_id,
+                        "result": result,
+                    }
+                    await asyncio.wait_for(
+                        self.nc.publish(msg.reply, json.dumps(response).encode()),
+                        timeout=0.5,  # 500ms timeout
+                    )
+                    logger.info("📤 NATS ACK SENT to %s", msg.reply)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "⏱️ ACK publish timed out for %s - continuing anyway",
+                        msg.reply,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to send ACK to %s: %s - continuing anyway", msg.reply, e
+                    )
 
         except json.JSONDecodeError as e:
             logger.error(
@@ -245,11 +284,17 @@ class SignalConsumer:
             messages_processed.labels(status="error").inc()
             nats_errors.labels(type="processing").inc()
 
-            # Send error response if reply subject is provided
+            # Send error response with timeout to prevent blocking
             if msg.reply and self.nc:
-                error_response = {"status": "error", "error": str(e)}
-                await self.nc.publish(msg.reply, json.dumps(error_response).encode())
-                logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
+                try:
+                    error_response = {"status": "error", "error": str(e)}
+                    await asyncio.wait_for(
+                        self.nc.publish(msg.reply, json.dumps(error_response).encode()),
+                        timeout=0.5,
+                    )
+                    logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
+                except (asyncio.TimeoutError, Exception):
+                    pass  # Don't block on error ACK
 
     async def stop_consuming(self) -> None:
         """Stop the consumer"""

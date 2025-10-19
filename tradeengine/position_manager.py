@@ -259,116 +259,117 @@ class PositionManager:
 
     async def update_position(self, order: TradeOrder, result: dict[str, Any]) -> None:
         """Update position after order execution with distributed state management"""
-        async with self.sync_lock:
-            symbol = order.symbol
-            try:
-                if symbol not in self.positions:
-                    self.positions[symbol] = {
-                        "quantity": 0.0,
-                        "avg_price": 0.0,
-                        "unrealized_pnl": 0.0,
-                        "realized_pnl": 0.0,
-                        "last_update": datetime.utcnow(),
-                        "entry_time": datetime.utcnow(),
-                        "total_cost": 0.0,
-                        "total_value": 0.0,
-                    }
-                position = self.positions[symbol]
+        # CRITICAL FIX: Removed sync_lock to prevent blocking
+        # MongoDB sync happens asynchronously without blocking position updates
+        symbol = order.symbol
+        try:
+            if symbol not in self.positions:
+                self.positions[symbol] = {
+                    "quantity": 0.0,
+                    "avg_price": 0.0,
+                    "unrealized_pnl": 0.0,
+                    "realized_pnl": 0.0,
+                    "last_update": datetime.utcnow(),
+                    "entry_time": datetime.utcnow(),
+                    "total_cost": 0.0,
+                    "total_value": 0.0,
+                }
+            position = self.positions[symbol]
 
-                # Ensure all position numeric fields are floats (in case they were loaded as strings)
-                position["quantity"] = float(position.get("quantity", 0.0))
-                position["avg_price"] = float(position.get("avg_price", 0.0))
-                position["unrealized_pnl"] = float(position.get("unrealized_pnl", 0.0))
-                position["realized_pnl"] = float(position.get("realized_pnl", 0.0))
-                position["total_cost"] = float(position.get("total_cost", 0.0))
-                position["total_value"] = float(position.get("total_value", 0.0))
+            # Ensure all position numeric fields are floats (in case they were loaded as strings)
+            position["quantity"] = float(position.get("quantity", 0.0))
+            position["avg_price"] = float(position.get("avg_price", 0.0))
+            position["unrealized_pnl"] = float(position.get("unrealized_pnl", 0.0))
+            position["realized_pnl"] = float(position.get("realized_pnl", 0.0))
+            position["total_cost"] = float(position.get("total_cost", 0.0))
+            position["total_value"] = float(position.get("total_value", 0.0))
 
-                # Get fill price from result and ensure it's a float
-                fill_price = result.get("fill_price", order.target_price or 0)
-                if isinstance(fill_price, str):
-                    try:
-                        fill_price = (
-                            float(fill_price)
-                            if fill_price and fill_price not in ("0", "0.0", "0.00", "")
-                            else (order.target_price or 0)
+            # Get fill price from result and ensure it's a float
+            fill_price = result.get("fill_price", order.target_price or 0)
+            if isinstance(fill_price, str):
+                try:
+                    fill_price = (
+                        float(fill_price)
+                        if fill_price and fill_price not in ("0", "0.0", "0.00", "")
+                        else (order.target_price or 0)
+                    )
+                except (ValueError, TypeError):
+                    fill_price = order.target_price or 0
+            fill_price = float(fill_price)
+
+            # Get fill quantity and ensure it's a float
+            fill_quantity = result.get("amount", order.amount)
+            if isinstance(fill_quantity, str):
+                try:
+                    fill_quantity = (
+                        float(fill_quantity)
+                        if fill_quantity
+                        and fill_quantity not in ("0", "0.0", "0.00", "")
+                        else order.amount
+                    )
+                except (ValueError, TypeError):
+                    fill_quantity = order.amount
+            fill_quantity = float(fill_quantity) if fill_quantity else order.amount
+
+            if order.side == "buy":
+                # Add to position
+                new_quantity = position["quantity"] + fill_quantity
+                if new_quantity > 0:
+                    new_avg_price = (
+                        position["quantity"] * position["avg_price"]
+                        + fill_quantity * fill_price
+                    ) / new_quantity
+                    position["quantity"] = new_quantity
+                    position["avg_price"] = new_avg_price
+                    position["total_cost"] += fill_quantity * fill_price
+                    position["total_value"] = new_quantity * fill_price
+
+            elif order.side == "sell":
+                # Reduce position
+                if position["quantity"] > 0:
+                    # Calculate realized P&L
+                    realized_pnl = (fill_price - position["avg_price"]) * min(
+                        fill_quantity, position["quantity"]
+                    )
+                    position["realized_pnl"] += realized_pnl
+                    self.daily_pnl += realized_pnl
+
+                    # Update position
+                    position["quantity"] -= fill_quantity
+                    position["total_value"] = position["quantity"] * fill_price
+
+                    if position["quantity"] <= 0:
+                        # Position closed
+                        logger.info(
+                            f"Position closed for {symbol}, "
+                            f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
-                    except (ValueError, TypeError):
-                        fill_price = order.target_price or 0
-                fill_price = float(fill_price)
+                        audit_logger.log_position(position, status="closed")
+                        await self._close_position_in_mongodb(symbol, position)
+                        del self.positions[symbol]
+                        return
 
-                # Get fill quantity and ensure it's a float
-                fill_quantity = result.get("amount", order.amount)
-                if isinstance(fill_quantity, str):
-                    try:
-                        fill_quantity = (
-                            float(fill_quantity)
-                            if fill_quantity
-                            and fill_quantity not in ("0", "0.0", "0.00", "")
-                            else order.amount
-                        )
-                    except (ValueError, TypeError):
-                        fill_quantity = order.amount
-                fill_quantity = float(fill_quantity) if fill_quantity else order.amount
+            position["last_update"] = datetime.utcnow()
+            position["unrealized_pnl"] = (
+                fill_price - position["avg_price"]
+            ) * position["quantity"]
 
-                if order.side == "buy":
-                    # Add to position
-                    new_quantity = position["quantity"] + fill_quantity
-                    if new_quantity > 0:
-                        new_avg_price = (
-                            position["quantity"] * position["avg_price"]
-                            + fill_quantity * fill_price
-                        ) / new_quantity
-                        position["quantity"] = new_quantity
-                        position["avg_price"] = new_avg_price
-                        position["total_cost"] += fill_quantity * fill_price
-                        position["total_value"] = new_quantity * fill_price
+            logger.info(
+                f"Updated position for {symbol}: "
+                f"quantity={position['quantity']:.6f}, "
+                f"avg_price={position['avg_price']:.2f}"
+            )
+            audit_logger.log_position(position, status="updated")
 
-                elif order.side == "sell":
-                    # Reduce position
-                    if position["quantity"] > 0:
-                        # Calculate realized P&L
-                        realized_pnl = (fill_price - position["avg_price"]) * min(
-                            fill_quantity, position["quantity"]
-                        )
-                        position["realized_pnl"] += realized_pnl
-                        self.daily_pnl += realized_pnl
+            # Sync to MongoDB immediately for critical updates
+            await self._sync_positions_to_mongodb()
 
-                        # Update position
-                        position["quantity"] -= fill_quantity
-                        position["total_value"] = position["quantity"] * fill_price
-
-                        if position["quantity"] <= 0:
-                            # Position closed
-                            logger.info(
-                                f"Position closed for {symbol}, "
-                                f"total realized P&L: {position['realized_pnl']:.2f}"
-                            )
-                            audit_logger.log_position(position, status="closed")
-                            await self._close_position_in_mongodb(symbol, position)
-                            del self.positions[symbol]
-                            return
-
-                position["last_update"] = datetime.utcnow()
-                position["unrealized_pnl"] = (
-                    fill_price - position["avg_price"]
-                ) * position["quantity"]
-
-                logger.info(
-                    f"Updated position for {symbol}: "
-                    f"quantity={position['quantity']:.6f}, "
-                    f"avg_price={position['avg_price']:.2f}"
-                )
-                audit_logger.log_position(position, status="updated")
-
-                # Sync to MongoDB immediately for critical updates
-                await self._sync_positions_to_mongodb()
-
-            except Exception as e:
-                logger.error(f"Error updating position for {symbol}: {e}")
-                audit_logger.log_error(
-                    {"error": str(e)},
-                    context={"order": order.model_dump(), "result": result},
-                )
+        except Exception as e:
+            logger.error(f"Error updating position for {symbol}: {e}")
+            audit_logger.log_error(
+                {"error": str(e)},
+                context={"order": order.model_dump(), "result": result},
+            )
 
     async def _close_position_in_mongodb(
         self, symbol: str, position: dict[str, Any]

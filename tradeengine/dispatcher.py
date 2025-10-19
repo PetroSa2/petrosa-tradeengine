@@ -88,6 +88,24 @@ class OCOManager:
             Dict with sl_order_id and tp_order_id
         """
 
+        # CRITICAL FIX: Check if there are already active OCO pairs for this symbol
+        existing_oco_pairs = [
+            pid
+            for pid, info in self.active_oco_pairs.items()
+            if info["symbol"] == symbol and info["status"] == "active"
+        ]
+
+        if existing_oco_pairs:
+            self.logger.warning(
+                f"⚠️  DUPLICATE OCO PREVENTION: Found {len(existing_oco_pairs)} active OCO pairs "
+                f"for {symbol}. Skipping new OCO placement to prevent duplication."
+            )
+            return {
+                "status": "skipped",
+                "reason": f"Active OCO pairs already exist for {symbol}",
+                "existing_pairs": existing_oco_pairs,
+            }
+
         self.logger.info(f"🔄 PLACING OCO ORDERS FOR {symbol} {position_side}")
         self.logger.info(f"Position ID: {position_id}")
         self.logger.info(f"Quantity: {quantity}")

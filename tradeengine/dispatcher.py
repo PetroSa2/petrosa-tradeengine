@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import Any, Dict
 
 from prometheus_client import Counter, Histogram
@@ -55,9 +56,10 @@ signals_duplicate = Counter(
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
-    def __init__(self, exchange: Any, logger: logging.Logger):
+    def __init__(self, exchange: Any, logger: logging.Logger, dispatcher=None):
         self.exchange = exchange
         self.logger = logger
+        self.dispatcher = dispatcher  # Reference to dispatcher for position management
         self.active_oco_pairs: Dict[str, Dict[str, Any]] = {}  # position_id -> oco_info
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
@@ -357,6 +359,22 @@ class OCOManager:
                         self.logger.info(f"✅ OCO COMPLETED FOR POSITION {position_id}")
                         self.active_oco_pairs[position_id]["status"] = "completed"
 
+                        # CRITICAL FIX: Close the position when OCO completes
+                        # This prevents new signals from creating duplicate OCO orders
+                        try:
+                            if self.dispatcher:
+                                await self._close_position_on_oco_completion(
+                                    position_id, oco_info, self.dispatcher
+                                )
+                            else:
+                                self.logger.warning(
+                                    f"No dispatcher reference available for position {position_id}"
+                                )
+                        except Exception as e:
+                            self.logger.error(
+                                f"❌ Failed to close position {position_id}: {e}"
+                            )
+
                 # Remove completed pairs
                 self.active_oco_pairs = {
                     pid: info
@@ -373,6 +391,46 @@ class OCOManager:
 
         self.logger.info("🔍 ORDER MONITORING STOPPED")
 
+    async def _close_position_on_oco_completion(
+        self, position_id: str, oco_info: dict, dispatcher
+    ) -> None:
+        """Close position when OCO completes to prevent duplicate orders"""
+        try:
+            # Get the symbol from OCO info
+            symbol = oco_info["symbol"]
+
+            # Close position in position manager
+            if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
+                # Mark position as closed in position manager
+                if symbol in dispatcher.position_manager.positions:
+                    position = dispatcher.position_manager.positions[symbol]
+                    position["status"] = "closed"
+                    position["close_time"] = datetime.utcnow()
+
+                    # Log the position closure
+                    self.logger.info(f"🔒 POSITION CLOSED: {symbol} (OCO completed)")
+
+                    # Remove from active positions
+                    del dispatcher.position_manager.positions[symbol]
+
+                    # Sync to MongoDB
+                    await dispatcher.position_manager._close_position_in_mongodb(
+                        symbol, position
+                    )
+                else:
+                    self.logger.warning(
+                        f"Position {symbol} not found in position manager"
+                    )
+
+            # Log the completion
+            self.logger.info(
+                f"✅ POSITION {position_id} CLOSED - No more OCO orders will be placed"
+            )
+
+        except Exception as e:
+            self.logger.error(f"❌ Error closing position {position_id}: {e}")
+            raise
+
 
 class Dispatcher:
     """Central dispatcher for trading operations with distributed state management"""
@@ -386,7 +444,7 @@ class Dispatcher:
         self.logger = logging.getLogger(__name__)
 
         # Initialize OCO Manager for SL/TP order management
-        self.oco_manager = OCOManager(exchange, self.logger)
+        self.oco_manager = OCOManager(exchange, self.logger, self)
 
         # Duplicate signal detection cache
         # Format: {signal_id: timestamp} - stores signal IDs with their reception time

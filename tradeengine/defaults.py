@@ -808,15 +808,15 @@ def validate_parameters(parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
     Returns:
         Tuple of (is_valid, list_of_errors)
     """
-    errors = []
+    errors: List[str] = []
 
     for param_name, param_value in parameters.items():
         if param_name not in PARAMETER_SCHEMA:
             errors.append(f"Unknown parameter: {param_name}")
             continue
 
-        schema = PARAMETER_SCHEMA[param_name]
-        param_type = schema["type"]
+        schema: Dict[str, Any] = PARAMETER_SCHEMA[param_name]
+        param_type: str = schema["type"]
 
         # Type validation
         if param_type == "integer" and not isinstance(param_value, int):

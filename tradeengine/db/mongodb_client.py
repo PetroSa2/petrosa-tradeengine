@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 
@@ -36,8 +36,8 @@ class MongoDBClient:
         self.connection_string = connection_string
         self.database_name = database_name
         self.timeout_ms = timeout_ms
-        self.client: Optional[AsyncIOMotorClient] = None
-        self.db: Optional[AsyncIOMotorDatabase] = None
+        self.client: Optional[Any] = None  # type: AsyncIOMotorClient
+        self.db: Optional[Any] = None  # type: AsyncIOMotorDatabase
         self.connected = False
 
     async def connect(self) -> None:

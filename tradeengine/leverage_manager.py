@@ -10,7 +10,7 @@ Manages leverage configuration for futures trading with:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from binance import Client
 from binance.exceptions import BinanceAPIException
@@ -206,7 +206,7 @@ class LeverageManager:
             # Get all leverage status records
             all_status = await self.mongodb_client.get_all_leverage_status()
 
-            results = {
+            results: Dict[str, Any] = {
                 "total": len(all_status),
                 "synced": 0,
                 "failed": 0,
@@ -219,11 +219,12 @@ class LeverageManager:
                 )
 
                 if success:
-                    results["synced"] += 1
+                    results["synced"] = results["synced"] + 1  # type: ignore
                 else:
-                    results["failed"] += 1
+                    results["failed"] = results["failed"] + 1  # type: ignore
 
-                results["symbols"].append(
+                symbol_list: List[Dict[str, Any]] = results["symbols"]  # type: ignore
+                symbol_list.append(
                     {
                         "symbol": status.symbol,
                         "target": status.configured_leverage,
@@ -253,6 +254,7 @@ class LeverageManager:
         """Update leverage status in database and cache."""
         try:
             status = LeverageStatus(
+                id=None,
                 symbol=symbol,
                 configured_leverage=configured,
                 actual_leverage=actual,

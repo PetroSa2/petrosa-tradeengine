@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -17,6 +18,10 @@ from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
+from tradeengine.api_config_routes import router as config_router
+from tradeengine.api_config_routes import set_config_manager
+from tradeengine.config_manager import TradingConfigManager
+from tradeengine.db.mongodb_client import MongoDBClient
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
@@ -67,6 +72,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         validate_mongodb_config()
         logger.info("✅ MongoDB configuration validated successfully")
+
+        # Initialize trading configuration manager
+        logger.info("Initializing trading configuration manager...")
+        from shared.constants import get_mongodb_connection_string
+
+        mongodb_uri = get_mongodb_connection_string()
+        mongodb_db = os.getenv("MONGODB_DATABASE", "petrosa")
+
+        trading_config_mongodb = MongoDBClient(mongodb_uri, mongodb_db)
+        trading_config_manager = TradingConfigManager(
+            mongodb_client=trading_config_mongodb, cache_ttl_seconds=60
+        )
+        await trading_config_manager.start()
+
+        # Set global config manager for API routes
+        set_config_manager(trading_config_manager)
+
+        # Store in app state
+        app.state.trading_config_manager = trading_config_manager
+        logger.info("✅ Trading configuration manager initialized")
 
         # Initialize audit logger
         if audit_logger.enabled and audit_logger.connected:
@@ -166,6 +191,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await binance_exchange.close()
         await simulator_exchange.close()
         await dispatcher.close()
+
+        # Stop trading configuration manager
+        if hasattr(app.state, "trading_config_manager"):
+            logger.info("Stopping trading configuration manager...")
+            await app.state.trading_config_manager.stop()
+            logger.info("✅ Trading configuration manager stopped")
+
         logger.info("Trading engine shutdown completed")
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
@@ -184,6 +216,9 @@ app = FastAPI(
 
 # Instrument FastAPI app with OpenTelemetry
 otel_init.instrument_fastapi_app(app)
+
+# Include configuration API routes
+app.include_router(config_router)
 
 # Initialize components
 settings = Settings()

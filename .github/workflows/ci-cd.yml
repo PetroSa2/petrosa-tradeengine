@@ -398,6 +398,11 @@ jobs:
           echo "✅ All image references updated to versioned tag: ${IMAGE_TAG}"
         fi
 
+    - name: Delete old Job if exists
+      run: |
+        kubectl delete job petrosa-tradeengine-mysql-schema-init -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify --ignore-not-found=true
+        echo "✅ Old Job deleted (if existed)"
+
     - name: Apply Kubernetes manifests
       run: |
         kubectl apply --insecure-skip-tls-verify -f k8s/ -n ${{ env.NAMESPACE }}

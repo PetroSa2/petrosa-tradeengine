@@ -1,5 +1,4 @@
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -75,12 +74,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize trading configuration manager
         logger.info("Initializing trading configuration manager...")
-        from shared.constants import get_mongodb_connection_string
+        from shared.constants import MONGODB_DATABASE, MONGODB_URI
 
-        mongodb_uri = get_mongodb_connection_string()
-        mongodb_db = os.getenv("MONGODB_DATABASE", "petrosa")
-
-        trading_config_mongodb = MongoDBClient(mongodb_uri, mongodb_db)
+        trading_config_mongodb = MongoDBClient(MONGODB_URI, MONGODB_DATABASE)
         trading_config_manager = TradingConfigManager(
             mongodb_client=trading_config_mongodb, cache_ttl_seconds=60
         )

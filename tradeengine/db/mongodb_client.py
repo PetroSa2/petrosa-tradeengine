@@ -36,8 +36,8 @@ class MongoDBClient:
         self.connection_string = connection_string
         self.database_name = database_name
         self.timeout_ms = timeout_ms
-        self.client: Optional[Any] = None  # type: AsyncIOMotorClient
-        self.db: Optional[Any] = None  # type: AsyncIOMotorDatabase
+        self.client: Optional[Any] = None  # AsyncIOMotorClient type
+        self.db: Optional[Any] = None  # AsyncIOMotorDatabase type
         self.connected = False
 
     async def connect(self) -> None:

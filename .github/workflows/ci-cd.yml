@@ -105,10 +105,11 @@ jobs:
         ruff check .
 
     - name: Run mypy type checking
+      continue-on-error: true  # Temporary: allow mypy errors while improving type annotations
       run: |
         source .venv/bin/activate
         # Run mypy on core modules only, skip new config system modules temporarily
-        mypy tradeengine/api.py tradeengine/consumer.py tradeengine/dispatcher.py tradeengine/metrics.py tradeengine/order_manager.py tradeengine/position_manager.py tradeengine/signal_aggregator.py tradeengine/exchange/ contracts/ shared/ || true
+        mypy tradeengine/api.py tradeengine/consumer.py tradeengine/dispatcher.py tradeengine/metrics.py tradeengine/order_manager.py tradeengine/position_manager.py tradeengine/signal_aggregator.py tradeengine/exchange/ contracts/ shared/
 
     - name: Run pytest with coverage
       run: |

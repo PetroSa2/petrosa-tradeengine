@@ -144,7 +144,7 @@ class MongoDBClient:
     async def set_symbol_config(self, config: TradingConfig) -> bool:
         """Set symbol-specific trading configuration."""
         try:
-            if not self.db or not config.symbol:
+            if self.db is None or not config.symbol:
                 return False
 
             collection = self.db["trading_configs_symbol"]
@@ -210,7 +210,7 @@ class MongoDBClient:
     async def set_symbol_side_config(self, config: TradingConfig) -> bool:
         """Set symbol-side-specific trading configuration."""
         try:
-            if not self.db or not config.symbol or not config.side:
+            if self.db is None or not config.symbol or not config.side:
                 return False
 
             collection = self.db["trading_configs_symbol_side"]

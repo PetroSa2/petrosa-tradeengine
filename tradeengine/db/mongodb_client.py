@@ -72,7 +72,7 @@ class MongoDBClient:
     async def get_global_config(self) -> Optional[TradingConfig]:
         """Get global trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return None
 
             collection = self.db["trading_configs_global"]
@@ -89,7 +89,7 @@ class MongoDBClient:
     async def set_global_config(self, config: TradingConfig) -> bool:
         """Set global trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["trading_configs_global"]
@@ -108,7 +108,7 @@ class MongoDBClient:
     async def delete_global_config(self) -> bool:
         """Delete global trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["trading_configs_global"]
@@ -127,7 +127,7 @@ class MongoDBClient:
     async def get_symbol_config(self, symbol: str) -> Optional[TradingConfig]:
         """Get symbol-specific trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return None
 
             collection = self.db["trading_configs_symbol"]
@@ -167,7 +167,7 @@ class MongoDBClient:
     async def delete_symbol_config(self, symbol: str) -> bool:
         """Delete symbol-specific trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["trading_configs_symbol"]
@@ -191,7 +191,7 @@ class MongoDBClient:
     ) -> Optional[TradingConfig]:
         """Get symbol-side-specific trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return None
 
             collection = self.db["trading_configs_symbol_side"]
@@ -233,7 +233,7 @@ class MongoDBClient:
     async def delete_symbol_side_config(self, symbol: str, side: str) -> bool:
         """Delete symbol-side-specific trading configuration."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["trading_configs_symbol_side"]
@@ -255,7 +255,7 @@ class MongoDBClient:
     async def add_audit_record(self, audit: TradingConfigAudit) -> bool:
         """Add audit trail record."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["trading_configs_audit"]
@@ -273,7 +273,7 @@ class MongoDBClient:
     ) -> List[TradingConfigAudit]:
         """Get audit trail records with optional filters."""
         try:
-            if not self.db:
+            if self.db is None:
                 return []
 
             collection = self.db["trading_configs_audit"]
@@ -307,7 +307,7 @@ class MongoDBClient:
     async def get_leverage_status(self, symbol: str) -> Optional[LeverageStatus]:
         """Get leverage status for symbol."""
         try:
-            if not self.db:
+            if self.db is None:
                 return None
 
             collection = self.db["leverage_status"]
@@ -324,7 +324,7 @@ class MongoDBClient:
     async def set_leverage_status(self, status: LeverageStatus) -> bool:
         """Set leverage status for symbol."""
         try:
-            if not self.db:
+            if self.db is None:
                 return False
 
             collection = self.db["leverage_status"]
@@ -348,7 +348,7 @@ class MongoDBClient:
     async def get_all_leverage_status(self) -> List[LeverageStatus]:
         """Get all leverage status records."""
         try:
-            if not self.db:
+            if self.db is None:
                 return []
 
             collection = self.db["leverage_status"]

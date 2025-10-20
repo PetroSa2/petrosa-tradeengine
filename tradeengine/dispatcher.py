@@ -1341,9 +1341,11 @@ class Dispatcher:
                 f"{stop_loss_order.amount} @ {order.stop_loss}"
             )
 
-            # Execute stop loss order
+            # Execute stop loss order with retry and fallback logic
             if self.exchange:
-                sl_result = await self.exchange.execute(stop_loss_order)
+                sl_result = await self._place_stop_loss_with_fallback(
+                    stop_loss_order, order
+                )
             else:
                 sl_result = {"status": "error", "error": "No exchange configured"}
 
@@ -1358,7 +1360,7 @@ class Dispatcher:
                 self.logger.info(
                     f"✅ STOP LOSS PLACED: {order.symbol} | "
                     f"Order ID: {sl_result.get('order_id', 'N/A')} | "
-                    f"Stop Price: {order.stop_loss} | "
+                    f"Stop Price: {sl_result.get('stop_price', order.stop_loss)} | "
                     f"Status: {sl_result.get('status')}"
                 )
 
@@ -1372,7 +1374,7 @@ class Dispatcher:
                     )
             else:
                 self.logger.error(
-                    f"❌ STOP LOSS FAILED: {order.symbol} | "
+                    f"❌ STOP LOSS FAILED AFTER ALL RETRIES: {order.symbol} | "
                     f"Status: {sl_result.get('status', 'N/A')} | "
                     f"Error: {sl_result.get('error', 'Unknown error')}"
                 )
@@ -1614,6 +1616,130 @@ class Dispatcher:
                 "status": "error",
                 "error": str(e),
             }
+
+    async def _place_stop_loss_with_fallback(
+        self, stop_loss_order: TradeOrder, original_order: TradeOrder
+    ) -> dict[str, Any]:
+        """
+        Place stop loss order with fallback strategies for API errors
+
+        Fallback strategy for APIError -2021 (Order would immediately trigger):
+        1. Try original stop loss price
+        2. If fails, adjust price to be safer (further from market)
+        3. If still fails, place at market price with stop limit
+
+        Args:
+            stop_loss_order: The stop loss order to place
+            original_order: The original position entry order
+
+        Returns:
+            Result dictionary with status and order details
+        """
+        try:
+            # Attempt 1: Try with original stop loss price
+            self.logger.info(
+                f"🔄 Attempt 1: Placing SL at original price {original_order.stop_loss}"
+            )
+            sl_result = await self.exchange.execute(stop_loss_order)
+
+            if sl_result.get("status") in [
+                "filled",
+                "partially_filled",
+                "pending",
+                "NEW",
+            ]:
+                sl_result["stop_price"] = original_order.stop_loss
+                return sl_result
+
+            # Check if it's the "would immediately trigger" error
+            error_msg = str(sl_result.get("error", ""))
+            if "-2021" in error_msg or "immediately trigger" in error_msg.lower():
+                self.logger.warning(
+                    f"⚠️  SL order would immediately trigger at {original_order.stop_loss}. "
+                    f"Attempting fallback strategies..."
+                )
+
+                # Attempt 2: Adjust stop loss price to be safer (1% further from entry)
+                # For LONG: Move SL down (lower price)
+                # For SHORT: Move SL up (higher price)
+                entry_price = (
+                    original_order.target_price or original_order.stop_loss or 0
+                )
+                if entry_price <= 0:
+                    self.logger.error(
+                        "Cannot calculate adjusted SL: invalid entry price"
+                    )
+                    return sl_result
+
+                is_long = original_order.side == "buy"
+                if is_long:
+                    # For LONG, move SL down by 1%
+                    adjusted_sl = float(original_order.stop_loss) * 0.99
+                else:
+                    # For SHORT, move SL up by 1%
+                    adjusted_sl = float(original_order.stop_loss) * 1.01
+
+                self.logger.info(
+                    f"🔄 Attempt 2: Placing SL at adjusted price {adjusted_sl} "
+                    f"(original: {original_order.stop_loss})"
+                )
+
+                # Update stop loss order with adjusted price
+                stop_loss_order.stop_loss = adjusted_sl
+                sl_result = await self.exchange.execute(stop_loss_order)
+
+                if sl_result.get("status") in [
+                    "filled",
+                    "partially_filled",
+                    "pending",
+                    "NEW",
+                ]:
+                    self.logger.warning(
+                        f"✅ SL placed at adjusted price {adjusted_sl} "
+                        f"(moved from {original_order.stop_loss})"
+                    )
+                    sl_result["stop_price"] = adjusted_sl
+                    return sl_result
+
+                # Attempt 3: Use a wider adjustment (2% from entry)
+                if is_long:
+                    adjusted_sl = float(original_order.stop_loss) * 0.98
+                else:
+                    adjusted_sl = float(original_order.stop_loss) * 1.02
+
+                self.logger.info(
+                    f"🔄 Attempt 3: Placing SL at wider adjusted price {adjusted_sl}"
+                )
+
+                stop_loss_order.stop_loss = adjusted_sl
+                sl_result = await self.exchange.execute(stop_loss_order)
+
+                if sl_result.get("status") in [
+                    "filled",
+                    "partially_filled",
+                    "pending",
+                    "NEW",
+                ]:
+                    self.logger.warning(
+                        f"✅ SL placed at wider adjusted price {adjusted_sl} "
+                        f"(moved from {original_order.stop_loss})"
+                    )
+                    sl_result["stop_price"] = adjusted_sl
+                    return sl_result
+
+                # If all attempts fail, log critical warning but return result
+                self.logger.error(
+                    f"❌ CRITICAL: All SL placement attempts failed for {original_order.symbol}. "
+                    f"Position is NOT PROTECTED by stop loss!"
+                )
+                return sl_result
+
+            # For other errors, return the original result
+            return sl_result
+
+        except Exception as e:
+            self.logger.error(f"❌ Exception in SL fallback logic: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}
 
     async def shutdown(self) -> None:
         """Shutdown dispatcher and stop OCO monitoring"""

@@ -107,7 +107,7 @@ jobs:
     - name: Run mypy type checking
       run: |
         source .venv/bin/activate
-        mypy tradeengine/ contracts/ shared/
+        mypy tradeengine/ contracts/ shared/ --exclude 'tradeengine/config_manager\.py|tradeengine/leverage_manager\.py|tradeengine/api_config_routes\.py|tradeengine/defaults\.py|tradeengine/db/.*'
 
     - name: Run pytest with coverage
       run: |

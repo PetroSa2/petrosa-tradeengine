@@ -722,12 +722,17 @@ class Dispatcher:
                 )
                 order = self._signal_to_order(signal)
 
+                # Generate unique signal fingerprint for deduplication across replicas
+                # This prevents multiple pods from processing the same signal
+                signal_fingerprint = self._generate_signal_fingerprint(signal)
+
                 self.logger.info(
-                    f"🔐 ACQUIRING DISTRIBUTED LOCK: order_execution_{signal.symbol}"
+                    f"🔐 ACQUIRING DISTRIBUTED LOCK: signal_{signal_fingerprint}"
                 )
                 # Execute order with distributed lock to ensure consensus
+                # Lock key includes signal fingerprint to prevent duplicate processing
                 execution_result = await distributed_lock_manager.execute_with_lock(
-                    f"order_execution_{signal.symbol}",
+                    f"signal_{signal_fingerprint}",
                     self._execute_order_with_consensus,
                     order,
                 )
@@ -1616,6 +1621,54 @@ class Dispatcher:
                 "status": "error",
                 "error": str(e),
             }
+
+    def _generate_signal_fingerprint(self, signal: Signal) -> str:
+        """
+        Generate a unique fingerprint for a signal to prevent duplicate processing
+        across multiple replicas.
+
+        The fingerprint includes:
+        - Signal ID (if available)
+        - Strategy ID
+        - Symbol
+        - Action (buy/sell)
+        - Price (rounded to avoid floating point differences)
+        - Timestamp (rounded to second to catch same-second duplicates)
+
+        Args:
+            signal: The trading signal
+
+        Returns:
+            A unique fingerprint string for distributed locking
+        """
+        import hashlib
+
+        # Use signal_id if available (preferred)
+        if signal.signal_id:
+            return f"{signal.signal_id}_{signal.symbol}"
+
+        # Fallback: Generate fingerprint from signal properties
+        # Round price to 2 decimals to avoid floating point differences
+        price_str = f"{signal.price:.2f}" if signal.price else "0"
+
+        # Round timestamp to nearest second
+        timestamp_str = ""
+        if signal.timestamp:
+            timestamp_str = f"{int(signal.timestamp.timestamp())}"
+
+        # Combine key signal properties
+        fingerprint_data = (
+            f"{signal.strategy_id}|"
+            f"{signal.symbol}|"
+            f"{signal.action}|"
+            f"{price_str}|"
+            f"{timestamp_str}"
+        )
+
+        # Generate hash for shorter lock key
+        fingerprint_hash = hashlib.md5(fingerprint_data.encode()).hexdigest()[:12]
+
+        return f"{signal.strategy_id}_{signal.symbol}_{fingerprint_hash}"
 
     async def _place_stop_loss_with_fallback(
         self, stop_loss_order: TradeOrder, original_order: TradeOrder

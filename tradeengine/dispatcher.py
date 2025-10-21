@@ -497,121 +497,173 @@ class OCOManager:
                 exit_time_ms = int(time.time() * 1000)
                 self.logger.warning(f"Using fallback exit_price: {exit_price}")
 
-            # Step 2: Get position data from position manager
-            position_key = (symbol, position_side)
+            # Step 2: Get position data from DATABASE (not in-memory aggregated data)
+            # CRITICAL: We need ACTUAL entry price from the entry order, not weighted average
             position_data = None
-
+            
+            # Try MongoDB first (primary)
             if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
-                # Try to get position data
-                if hasattr(dispatcher.position_manager, "get_position_data"):
-                    position_data = await dispatcher.position_manager.get_position_data(
-                        position_id
-                    )
-                elif position_key in dispatcher.position_manager.positions:
-                    position_data = dispatcher.position_manager.positions[position_key]
+                if dispatcher.position_manager.mongodb_db is not None:
+                    try:
+                        positions_collection = dispatcher.position_manager.mongodb_db.positions
+                        position_data = await positions_collection.find_one(
+                            {"position_id": position_id}
+                        )
+                        if position_data:
+                            self.logger.info(f"✅ Found position {position_id} in MongoDB")
+                    except Exception as mongo_error:
+                        self.logger.warning(
+                            f"⚠️  MongoDB query failed, trying MySQL: {mongo_error}"
+                        )
+            
+            # Fallback to MySQL if MongoDB failed
+            if not position_data:
+                from shared.mysql_client import mysql_client
+                
+                if mysql_client:
+                    try:
+                        results = await mysql_client.execute_query(
+                            """
+                            SELECT 
+                                position_id, symbol, position_side, entry_price, 
+                                quantity, entry_time, entry_order_id, 
+                                commission_total, stop_loss, take_profit
+                            FROM positions
+                            WHERE position_id = %s
+                            """,
+                            (position_id,),
+                            fetch=True,
+                        )
+                        
+                        if results and len(results) > 0:
+                            row = results[0]
+                            position_data = {
+                                "position_id": row["position_id"],
+                                "symbol": row["symbol"],
+                                "position_side": row["position_side"],
+                                "entry_price": float(row["entry_price"]),
+                                "quantity": float(row["quantity"]),
+                                "entry_time": row["entry_time"],
+                                "entry_order_id": row["entry_order_id"],
+                                "commission_total": float(row.get("commission_total", 0)),
+                            }
+                            self.logger.info(f"✅ Found position {position_id} in MySQL")
+                    except Exception as mysql_error:
+                        self.logger.error(
+                            f"❌ MySQL query failed: {mysql_error}"
+                        )
 
-                if position_data:
-                    entry_price = float(position_data.get("avg_price", 0))
-                    entry_time = position_data.get("entry_time", datetime.utcnow())
-                    quantity = float(position_data.get("quantity", exit_quantity))
-                    entry_commission = float(position_data.get("commission", 0))
+            if position_data:
+                # Extract ACTUAL entry data from database record
+                entry_price = float(position_data.get("entry_price", 0))
+                entry_order_id = position_data.get("entry_order_id")
+                entry_time = position_data.get("entry_time", datetime.utcnow())
+                quantity = float(position_data.get("quantity", exit_quantity))
+                entry_commission = float(
+                    position_data.get("commission_total", 0)
+                    or position_data.get("commission", 0)
+                )
 
-                    self.logger.info(f"  Entry Price: {entry_price}")
-                    self.logger.info(f"  Position Quantity: {quantity}")
+                self.logger.info("  📋 Entry Data (from database):")
+                self.logger.info(f"     Entry Price: ${entry_price:.2f}")
+                self.logger.info(f"     Entry Order ID: {entry_order_id}")
+                self.logger.info(f"     Quantity: {quantity}")
+                self.logger.info(f"     Entry Commission: ${entry_commission:.4f}")
 
-                    # Step 3: Calculate PNL (hedge-mode aware)
-                    if position_side == "LONG":
-                        pnl = (exit_price - entry_price) * exit_quantity
-                    else:  # SHORT
-                        pnl = (entry_price - exit_price) * exit_quantity
+                # Step 3: Calculate PNL (hedge-mode aware)
+                if position_side == "LONG":
+                    pnl = (exit_price - entry_price) * exit_quantity
+                else:  # SHORT
+                    pnl = (entry_price - exit_price) * exit_quantity
 
-                    # Calculate exit commission (assume 0.04% maker fee for limit orders)
-                    exit_commission = exit_quantity * exit_price * 0.0004
-                    total_commission = entry_commission + exit_commission
-                    pnl_after_fees = pnl - total_commission
+                # Calculate exit commission (assume 0.04% maker fee for limit orders)
+                exit_commission = exit_quantity * exit_price * 0.0004
+                total_commission = entry_commission + exit_commission
+                pnl_after_fees = pnl - total_commission
 
-                    pnl_pct = (
-                        (pnl / (entry_price * exit_quantity) * 100)
-                        if entry_price > 0 and exit_quantity > 0
-                        else 0.0
-                    )
+                pnl_pct = (
+                    (pnl / (entry_price * exit_quantity) * 100)
+                    if entry_price > 0 and exit_quantity > 0
+                    else 0.0
+                )
 
-                    self.logger.info("  📊 PNL Calculation:")
-                    self.logger.info(f"     Gross PNL: ${pnl:.2f}")
-                    self.logger.info(f"     Commission: ${total_commission:.4f}")
-                    self.logger.info(f"     Net PNL: ${pnl_after_fees:.2f}")
-                    self.logger.info(f"     PNL %: {pnl_pct:.2f}%")
+                self.logger.info("  📊 PNL Calculation:")
+                self.logger.info(f"     Gross PNL: ${pnl:.2f}")
+                self.logger.info(f"     Commission: ${total_commission:.4f}")
+                self.logger.info(f"     Net PNL: ${pnl_after_fees:.2f}")
+                self.logger.info(f"     PNL %: {pnl_pct:.2f}%")
 
-                    # Step 4: Close exchange-level position
-                    exit_result = {
-                        "exit_price": exit_price,
-                        "exit_time": datetime.fromtimestamp(exit_time_ms / 1000),
-                        "entry_price": entry_price,
-                        "entry_time": entry_time,
-                        "quantity": exit_quantity,
-                        "pnl": pnl,
-                        "pnl_pct": pnl_pct,
-                        "pnl_after_fees": pnl_after_fees,
-                        "close_reason": close_reason,
-                        "order_id": filled_order_id,
-                        "entry_commission": entry_commission,
-                        "exit_commission": exit_commission,
-                        "position_side": position_side,
-                    }
+                # Step 4: Close exchange-level position
+                exit_result = {
+                    "exit_price": exit_price,
+                    "exit_time": datetime.fromtimestamp(exit_time_ms / 1000),
+                    "entry_price": entry_price,
+                    "entry_time": entry_time,
+                    "quantity": exit_quantity,
+                    "pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "pnl_after_fees": pnl_after_fees,
+                    "close_reason": close_reason,
+                    "order_id": filled_order_id,
+                    "entry_commission": entry_commission,
+                    "exit_commission": exit_commission,
+                    "position_side": position_side,
+                    "entry_order_id": entry_order_id,  # Track the entry order ID
+                }
 
-                    await dispatcher.position_manager.close_position_record(
-                        position_id, exit_result
-                    )
+                await dispatcher.position_manager.close_position_record(
+                    position_id, exit_result
+                )
 
-                    # Remove from active positions
+                # Remove from active positions
+                position_key = (symbol, position_side)
+                if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
                     if position_key in dispatcher.position_manager.positions:
                         del dispatcher.position_manager.positions[position_key]
 
-                    self.logger.info(f"✅ Exchange position closed: {position_id}")
+                self.logger.info(f"✅ Exchange position closed: {position_id}")
 
-                    # Step 5: Close strategy-level positions
-                    from tradeengine.strategy_position_manager import (
+                # Step 5: Close strategy-level positions
+                from tradeengine.strategy_position_manager import (
+                    strategy_position_manager,
+                )
+
+                if strategy_position_manager:
+                    exchange_position_key = f"{symbol}_{position_side}"
+
+                    # Get all open strategy positions for this exchange position
+                    if hasattr(
                         strategy_position_manager,
-                    )
+                        "get_open_strategy_positions_by_exchange_key",
+                    ):
+                        strategy_positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key(
+                            exchange_position_key
+                        )
 
-                    if strategy_position_manager:
-                        exchange_position_key = f"{symbol}_{position_side}"
+                        self.logger.info(
+                            f"  Closing {len(strategy_positions)} strategy positions"
+                        )
 
-                        # Get all open strategy positions for this exchange position
-                        if hasattr(
-                            strategy_position_manager,
-                            "get_open_strategy_positions_by_exchange_key",
-                        ):
-                            strategy_positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key(
-                                exchange_position_key
+                        for strat_pos in strategy_positions:
+                            strategy_position_id = strat_pos["strategy_position_id"]
+                            await strategy_position_manager.close_strategy_position(
+                                strategy_position_id=strategy_position_id,
+                                exit_price=exit_price,
+                                exit_quantity=strat_pos.get("entry_quantity"),
+                                close_reason=close_reason,
+                                exit_order_id=filled_order_id,
                             )
-
                             self.logger.info(
-                                f"  Closing {len(strategy_positions)} strategy positions"
+                                f"  ✅ Strategy position closed: {strategy_position_id}"
                             )
 
-                            for strat_pos in strategy_positions:
-                                strategy_position_id = strat_pos["strategy_position_id"]
-                                await strategy_position_manager.close_strategy_position(
-                                    strategy_position_id=strategy_position_id,
-                                    exit_price=exit_price,
-                                    exit_quantity=strat_pos.get("entry_quantity"),
-                                    close_reason=close_reason,
-                                    exit_order_id=filled_order_id,
-                                )
-                                self.logger.info(
-                                    f"  ✅ Strategy position closed: {strategy_position_id}"
-                                )
-
-                    self.logger.info(
-                        f"✅ POSITION {position_id} FULLY CLOSED WITH PNL CALCULATED"
-                    )
-                else:
-                    self.logger.warning(
-                        f"Position {position_id} not found in position manager"
-                    )
+                self.logger.info(
+                    f"✅ POSITION {position_id} FULLY CLOSED WITH PNL CALCULATED"
+                )
             else:
-                self.logger.warning("Position manager not available")
+                self.logger.warning(
+                    f"❌ Position {position_id} not found in database (MongoDB or MySQL)"
+                )
 
         except Exception as e:
             self.logger.error(

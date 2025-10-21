@@ -629,6 +629,55 @@ PARAMETER_SCHEMA = {
             "capture more opportunities or when testing strategies."
         ),
     },
+    "position_mode_aware_conflicts": {
+        "type": "boolean",
+        "description": (
+            "Enable position mode awareness in conflict resolution. When enabled, "
+            "conflict detection respects the position_mode setting (hedge vs one-way). "
+            "In hedge mode, opposite directions (BUY/SELL) on same symbol are NOT "
+            "treated as conflicts since both LONG and SHORT positions can exist "
+            "simultaneously. In one-way mode, opposite directions remain conflicts. "
+            "**Recommended**: Enable this for proper hedge mode support."
+        ),
+        "default": True,
+        "example": True,
+        "impact": (
+            "When enabled with hedge mode, allows simultaneous LONG and SHORT positions. "
+            "When disabled, treats opposite directions as conflicts regardless of position mode."
+        ),
+        "when_to_change": (
+            "Keep enabled for hedge mode trading. Disable only if you want to "
+            "force conflict resolution even in hedge mode."
+        ),
+    },
+    "same_direction_conflict_resolution": {
+        "type": "string",
+        "description": (
+            "How to handle multiple signals in the SAME direction (e.g., two BUY signals). "
+            "'accumulate' allows position building from multiple strategies. "
+            "'strongest_wins' only executes the highest confidence signal. "
+            "'reject_duplicates' rejects subsequent signals in same direction. "
+            "**Note**: Only applies to signals from different strategies; same strategy "
+            "duplicates are always rejected. **Recommended**: 'accumulate' for "
+            "multi-strategy portfolios, 'strongest_wins' for single strategy with variants."
+        ),
+        "default": "accumulate",
+        "allowed_values": [
+            "accumulate",
+            "strongest_wins",
+            "reject_duplicates",
+        ],
+        "example": "accumulate",
+        "impact": (
+            "Controls whether multiple strategies can build positions together or "
+            "compete for execution."
+        ),
+        "when_to_change": (
+            "Use 'accumulate' to combine multiple strategies' conviction. "
+            "Use 'strongest_wins' to avoid over-leveraging. "
+            "Use 'reject_duplicates' for conservative single-entry strategies."
+        ),
+    },
     # -------------------------------------------------------------------------
     # Strategy Weights
     # -------------------------------------------------------------------------

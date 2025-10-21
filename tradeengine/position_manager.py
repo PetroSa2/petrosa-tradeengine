@@ -134,7 +134,7 @@ class PositionManager:
             raise
 
     async def _load_positions_from_mongodb(self) -> None:
-        """Load positions from MongoDB"""
+        """Load positions from MongoDB with hedge mode support"""
         if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position load")
             return
@@ -148,16 +148,22 @@ class PositionManager:
 
             async for doc in cursor:
                 symbol = doc["symbol"]
-                positions[symbol] = {
-                    "quantity": float(doc["quantity"]),
-                    "avg_price": float(doc["avg_price"]),
-                    "unrealized_pnl": float(doc["unrealized_pnl"]),
-                    "realized_pnl": float(doc["realized_pnl"]),
-                    "total_cost": float(doc["total_cost"]),
-                    "total_value": float(doc["total_value"]),
-                    "entry_time": doc["entry_time"],
-                    "last_update": doc["last_update"],
-                    "status": doc["status"],
+                # Get position_side, default to LONG for backward compatibility
+                position_side = doc.get("position_side", "LONG")
+                position_key = (symbol, position_side)
+
+                positions[position_key] = {
+                    "symbol": symbol,
+                    "position_side": position_side,
+                    "quantity": float(doc.get("quantity", 0.0)),
+                    "avg_price": float(doc.get("avg_price", 0.0)),
+                    "unrealized_pnl": float(doc.get("unrealized_pnl", 0.0)),
+                    "realized_pnl": float(doc.get("realized_pnl", 0.0)),
+                    "total_cost": float(doc.get("total_cost", 0.0)),
+                    "total_value": float(doc.get("total_value", 0.0)),
+                    "entry_time": doc.get("entry_time", datetime.utcnow()),
+                    "last_update": doc.get("last_update", datetime.utcnow()),
+                    "status": doc.get("status", "open"),
                 }
 
             self.positions = positions
@@ -198,7 +204,7 @@ class PositionManager:
             logger.error(f"Failed to load positions from exchange: {e}")
 
     async def _sync_positions_to_mongodb(self) -> None:
-        """Sync current positions to MongoDB"""
+        """Sync current positions to MongoDB with hedge mode support"""
         if self.mongodb_db is None:
             logger.warning("MongoDB not available, skipping position sync")
             return
@@ -212,10 +218,12 @@ class PositionManager:
                 await positions_collection.delete_many({"status": "open"})
 
                 # Insert current positions
-                for symbol, position in self.positions.items():
+                for position_key, position in self.positions.items():
+                    symbol, position_side = position_key
                     await positions_collection.insert_one(
                         {
                             "symbol": symbol,
+                            "position_side": position_side,
                             "quantity": position["quantity"],
                             "avg_price": position["avg_price"],
                             "unrealized_pnl": position["unrealized_pnl"],
@@ -258,13 +266,27 @@ class PositionManager:
                 logger.error(f"Error in periodic sync: {e}")
 
     async def update_position(self, order: TradeOrder, result: dict[str, Any]) -> None:
-        """Update position after order execution with distributed state management"""
+        """Update position after order execution with distributed state management
+
+        CRITICAL: Positions are tracked by (symbol, position_side) tuple to support hedge mode.
+        This allows tracking separate LONG and SHORT positions on the same symbol.
+        """
         # CRITICAL FIX: Removed sync_lock to prevent blocking
         # MongoDB sync happens asynchronously without blocking position updates
         symbol = order.symbol
+
+        # Determine position side for hedge mode tracking
+        # buy = LONG, sell = SHORT
+        position_side = order.position_side or (
+            "LONG" if order.side == "buy" else "SHORT"
+        )
+        position_key = (symbol, position_side)
+
         try:
-            if symbol not in self.positions:
-                self.positions[symbol] = {
+            if position_key not in self.positions:
+                self.positions[position_key] = {
+                    "symbol": symbol,
+                    "position_side": position_side,
                     "quantity": 0.0,
                     "avg_price": 0.0,
                     "unrealized_pnl": 0.0,
@@ -274,7 +296,7 @@ class PositionManager:
                     "total_cost": 0.0,
                     "total_value": 0.0,
                 }
-            position = self.positions[symbol]
+            position = self.positions[position_key]
 
             # Ensure all position numeric fields are floats (in case they were loaded as strings)
             position["quantity"] = float(position.get("quantity", 0.0))
@@ -311,8 +333,15 @@ class PositionManager:
                     fill_quantity = order.amount
             fill_quantity = float(fill_quantity) if fill_quantity else order.amount
 
-            if order.side == "buy":
-                # Add to position
+            # Hedge mode aware position updates
+            # For LONG positions: buy adds, sell reduces
+            # For SHORT positions: sell adds, buy reduces
+            is_adding_to_position = (
+                position_side == "LONG" and order.side == "buy"
+            ) or (position_side == "SHORT" and order.side == "sell")
+
+            if is_adding_to_position:
+                # Add to position (opening or increasing)
                 new_quantity = position["quantity"] + fill_quantity
                 if new_quantity > 0:
                     new_avg_price = (
@@ -324,13 +353,21 @@ class PositionManager:
                     position["total_cost"] += fill_quantity * fill_price
                     position["total_value"] = new_quantity * fill_price
 
-            elif order.side == "sell":
-                # Reduce position
+            else:
+                # Reduce position (closing or decreasing)
                 if position["quantity"] > 0:
                     # Calculate realized P&L
-                    realized_pnl = (fill_price - position["avg_price"]) * min(
-                        fill_quantity, position["quantity"]
-                    )
+                    # For LONG: profit when price goes up (sell_price > avg_price)
+                    # For SHORT: profit when price goes down (avg_price > buy_price)
+                    if position_side == "LONG":
+                        realized_pnl = (fill_price - position["avg_price"]) * min(
+                            fill_quantity, position["quantity"]
+                        )
+                    else:  # SHORT
+                        realized_pnl = (position["avg_price"] - fill_price) * min(
+                            fill_quantity, position["quantity"]
+                        )
+
                     position["realized_pnl"] += realized_pnl
                     self.daily_pnl += realized_pnl
 
@@ -341,21 +378,30 @@ class PositionManager:
                     if position["quantity"] <= 0:
                         # Position closed
                         logger.info(
-                            f"Position closed for {symbol}, "
+                            f"Position closed for {symbol} {position_side}, "
                             f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
                         audit_logger.log_position(position, status="closed")
-                        await self._close_position_in_mongodb(symbol, position)
-                        del self.positions[symbol]
+                        await self._close_position_in_mongodb(position_key, position)
+                        del self.positions[position_key]
                         return
 
             position["last_update"] = datetime.utcnow()
-            position["unrealized_pnl"] = (
-                fill_price - position["avg_price"]
-            ) * position["quantity"]
+
+            # Calculate unrealized PnL (hedge mode aware)
+            # For LONG: profit when current price > avg price
+            # For SHORT: profit when current price < avg price
+            if position_side == "LONG":
+                position["unrealized_pnl"] = (
+                    fill_price - position["avg_price"]
+                ) * position["quantity"]
+            else:  # SHORT
+                position["unrealized_pnl"] = (
+                    position["avg_price"] - fill_price
+                ) * position["quantity"]
 
             logger.info(
-                f"Updated position for {symbol}: "
+                f"Updated position for {symbol} {position_side}: "
                 f"quantity={position['quantity']:.6f}, "
                 f"avg_price={position['avg_price']:.2f}"
             )
@@ -365,23 +411,24 @@ class PositionManager:
             await self._sync_positions_to_mongodb()
 
         except Exception as e:
-            logger.error(f"Error updating position for {symbol}: {e}")
+            logger.error(f"Error updating position for {symbol} {position_side}: {e}")
             audit_logger.log_error(
                 {"error": str(e)},
                 context={"order": order.model_dump(), "result": result},
             )
 
     async def _close_position_in_mongodb(
-        self, symbol: str, position: dict[str, Any]
+        self, position_key: tuple[str, str], position: dict[str, Any]
     ) -> None:
         """Mark position as closed in MongoDB"""
         if self.mongodb_db is None:
             return
 
+        symbol, position_side = position_key
         try:
             positions_collection = self.mongodb_db.positions
             await positions_collection.update_one(
-                {"symbol": symbol},
+                {"symbol": symbol, "position_side": position_side},
                 {
                     "$set": {
                         "status": "closed",
@@ -391,9 +438,13 @@ class PositionManager:
                     }
                 },
             )
-            logger.info(f"Position {symbol} marked as closed in MongoDB")
+            logger.info(
+                f"Position {symbol} {position_side} marked as closed in MongoDB"
+            )
         except Exception as e:
-            logger.error(f"Failed to close position {symbol} in MongoDB: {e}")
+            logger.error(
+                f"Failed to close position {symbol} {position_side} in MongoDB: {e}"
+            )
 
     async def create_position_record(
         self, order: TradeOrder, result: dict[str, Any]
@@ -806,7 +857,13 @@ class PositionManager:
                     logger.warning("Skipping MongoDB document without symbol")
                     continue
 
-                refreshed_positions[symbol] = {
+                # Get position_side, default to LONG for backward compatibility
+                position_side = doc.get("position_side", "LONG")
+                position_key = (symbol, position_side)
+
+                refreshed_positions[position_key] = {
+                    "symbol": symbol,
+                    "position_side": position_side,
                     "quantity": float(doc.get("quantity", 0.0)),
                     "avg_price": float(doc.get("avg_price", 0.0)),
                     "unrealized_pnl": float(doc.get("unrealized_pnl", 0.0)),
@@ -872,13 +929,51 @@ class PositionManager:
 
         return total_exposure
 
-    def get_positions(self) -> dict[str, dict[str, Any]]:
-        """Get all current positions"""
+    def get_positions(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Get all current positions
+
+        Returns:
+            Dict mapping (symbol, position_side) tuples to position data
+        """
         return self.positions.copy()
 
-    def get_position(self, symbol: str) -> dict[str, Any] | None:
-        """Get specific position"""
-        return self.positions.get(symbol)
+    def get_position(
+        self, symbol: str, position_side: str | None = None
+    ) -> dict[str, Any] | None:
+        """Get specific position
+
+        Args:
+            symbol: Trading symbol (e.g., BTCUSDT)
+            position_side: Position side (LONG or SHORT). If None, returns first found position.
+
+        Returns:
+            Position data dict or None if not found
+        """
+        if position_side:
+            # Get specific position by symbol and side
+            position_key = (symbol, position_side)
+            return self.positions.get(position_key)
+        else:
+            # Get first position for symbol (backward compatibility)
+            for (pos_symbol, pos_side), position in self.positions.items():
+                if pos_symbol == symbol:
+                    return position
+            return None
+
+    def get_positions_by_symbol(self, symbol: str) -> list[dict[str, Any]]:
+        """Get all positions for a symbol (useful in hedge mode)
+
+        Args:
+            symbol: Trading symbol (e.g., BTCUSDT)
+
+        Returns:
+            List of position dicts for the symbol (may include both LONG and SHORT)
+        """
+        return [
+            position
+            for (pos_symbol, pos_side), position in self.positions.items()
+            if pos_symbol == symbol
+        ]
 
     def get_daily_pnl(self) -> float:
         """Get current daily P&L"""

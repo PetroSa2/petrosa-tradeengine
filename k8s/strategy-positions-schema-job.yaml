@@ -1,0 +1,195 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: strategy-positions-schema-init
+  namespace: petrosa-apps
+  labels:
+    app: petrosa-tradeengine
+    component: schema-init
+spec:
+  ttlSecondsAfterFinished: 3600  # Clean up after 1 hour
+  backoffLimit: 3  # Retry up to 3 times
+  template:
+    metadata:
+      labels:
+        app: petrosa-tradeengine
+        component: schema-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: schema-init
+        image: mysql:8.0
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "🔄 Starting strategy positions schema initialization..."
+
+          # Wait for MySQL to be ready
+          echo "Waiting for MySQL to be ready..."
+          until mysql -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "SELECT 1" >/dev/null 2>&1; do
+            echo "MySQL not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ MySQL is ready!"
+
+          # Create strategy_positions table
+          echo "Creating strategy_positions table..."
+          mysql -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" <<'EOF'
+          CREATE TABLE IF NOT EXISTS strategy_positions (
+              strategy_position_id VARCHAR(255) PRIMARY KEY,
+              strategy_id VARCHAR(255) NOT NULL,
+              signal_id VARCHAR(255),
+              symbol VARCHAR(50) NOT NULL,
+              side ENUM('LONG', 'SHORT') NOT NULL,
+              entry_quantity DECIMAL(20, 8) NOT NULL,
+              entry_price DECIMAL(20, 8) NOT NULL,
+              entry_time DATETIME NOT NULL,
+              entry_order_id VARCHAR(255),
+              take_profit_price DECIMAL(20, 8),
+              stop_loss_price DECIMAL(20, 8),
+              tp_order_id VARCHAR(255),
+              sl_order_id VARCHAR(255),
+              status ENUM('open', 'closed', 'partial') NOT NULL DEFAULT 'open',
+              exit_quantity DECIMAL(20, 8),
+              exit_price DECIMAL(20, 8),
+              exit_time DATETIME,
+              exit_order_id VARCHAR(255),
+              close_reason ENUM('take_profit', 'stop_loss', 'manual', 'partial', 'liquidation'),
+              realized_pnl DECIMAL(20, 8),
+              realized_pnl_pct DECIMAL(10, 4),
+              commission_total DECIMAL(20, 8) DEFAULT 0,
+              exchange_position_key VARCHAR(255),
+              strategy_metadata JSON,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_strategy_id (strategy_id),
+              INDEX idx_symbol (symbol),
+              INDEX idx_status (status),
+              INDEX idx_exchange_position (exchange_position_key),
+              INDEX idx_created_at (created_at),
+              INDEX idx_strategy_symbol_status (strategy_id, symbol, status)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+          EOF
+          echo "✅ strategy_positions table created"
+
+          # Create position_contributions table
+          echo "Creating position_contributions table..."
+          mysql -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" <<'EOF'
+          CREATE TABLE IF NOT EXISTS position_contributions (
+              contribution_id VARCHAR(255) PRIMARY KEY,
+              strategy_position_id VARCHAR(255) NOT NULL,
+              exchange_position_key VARCHAR(255) NOT NULL,
+              strategy_id VARCHAR(255) NOT NULL,
+              symbol VARCHAR(50) NOT NULL,
+              position_side ENUM('LONG', 'SHORT') NOT NULL,
+              contribution_quantity DECIMAL(20, 8) NOT NULL,
+              contribution_entry_price DECIMAL(20, 8) NOT NULL,
+              contribution_time DATETIME NOT NULL,
+              position_sequence INT,
+              exchange_quantity_before DECIMAL(20, 8),
+              exchange_quantity_after DECIMAL(20, 8),
+              status ENUM('active', 'closed') NOT NULL DEFAULT 'active',
+              close_reason VARCHAR(50),
+              exit_time DATETIME,
+              exit_price DECIMAL(20, 8),
+              contribution_pnl DECIMAL(20, 8),
+              contribution_pnl_pct DECIMAL(10, 4),
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_strategy_position (strategy_position_id),
+              INDEX idx_exchange_position (exchange_position_key),
+              INDEX idx_strategy_id (strategy_id),
+              INDEX idx_symbol_side (symbol, position_side),
+              INDEX idx_status (status)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+          EOF
+          echo "✅ position_contributions table created"
+
+          # Create exchange_positions table
+          echo "Creating exchange_positions table..."
+          mysql -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" <<'EOF'
+          CREATE TABLE IF NOT EXISTS exchange_positions (
+              exchange_position_key VARCHAR(255) PRIMARY KEY,
+              symbol VARCHAR(50) NOT NULL,
+              side ENUM('LONG', 'SHORT') NOT NULL,
+              current_quantity DECIMAL(20, 8) NOT NULL DEFAULT 0,
+              weighted_avg_price DECIMAL(20, 8) NOT NULL DEFAULT 0,
+              unrealized_pnl DECIMAL(20, 8) DEFAULT 0,
+              first_entry_time DATETIME,
+              last_update_time DATETIME NOT NULL,
+              status ENUM('open', 'closed') NOT NULL DEFAULT 'open',
+              contributing_strategies JSON,
+              total_contributions INT DEFAULT 0,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              INDEX idx_symbol_side (symbol, side),
+              INDEX idx_status (status)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+          EOF
+          echo "✅ exchange_positions table created"
+
+          # Create views
+          echo "Creating analytics views..."
+          mysql -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" <<'EOF'
+          CREATE OR REPLACE VIEW strategy_performance AS
+          SELECT
+              strategy_id,
+              COUNT(*) as total_positions,
+              SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_positions,
+              SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_positions,
+              SUM(CASE WHEN close_reason = 'take_profit' THEN 1 ELSE 0 END) as tp_hits,
+              SUM(CASE WHEN close_reason = 'stop_loss' THEN 1 ELSE 0 END) as sl_hits,
+              SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+              SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+              AVG(realized_pnl) as avg_pnl,
+              SUM(realized_pnl) as total_pnl,
+              AVG(realized_pnl_pct) as avg_pnl_pct,
+              AVG(TIMESTAMPDIFF(SECOND, entry_time, exit_time)) as avg_duration_seconds
+          FROM strategy_positions
+          WHERE status = 'closed'
+          GROUP BY strategy_id;
+
+          CREATE OR REPLACE VIEW contribution_summary AS
+          SELECT
+              pc.strategy_id,
+              pc.symbol,
+              pc.position_side,
+              COUNT(*) as total_contributions,
+              SUM(pc.contribution_quantity) as total_quantity_contributed,
+              AVG(pc.contribution_entry_price) as avg_entry_price,
+              SUM(pc.contribution_pnl) as total_pnl_from_contributions,
+              AVG(pc.contribution_pnl_pct) as avg_pnl_pct
+          FROM position_contributions pc
+          WHERE pc.status = 'closed'
+          GROUP BY pc.strategy_id, pc.symbol, pc.position_side;
+          EOF
+          echo "✅ Analytics views created"
+
+          echo "🎉 Strategy positions schema initialization complete!"
+
+        env:
+        - name: MYSQL_HOST
+          value: "mysql-server"  # Update with your MySQL host
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: MYSQL_USER
+              optional: true
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: petrosa-sensitive-credentials
+              key: MYSQL_PASSWORD
+              optional: true
+        - name: MYSQL_DATABASE
+          value: "petrosa"  # Update with your database name
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

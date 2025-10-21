@@ -160,6 +160,11 @@ spec:
           value: "hedge"
         - name: HEDGE_MODE_ENABLED
           value: "true"
+        # Hedge mode conflict resolution configuration
+        - name: POSITION_MODE_AWARE_CONFLICTS
+          value: "true"
+        - name: SAME_DIRECTION_CONFLICT_RESOLUTION
+          value: "accumulate"
         # Risk management limits
         - name: MAX_POSITION_SIZE_PCT
           value: "0.1"

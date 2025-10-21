@@ -224,6 +224,14 @@ SIMULATION_DELAY_MS = int(os.getenv("SIMULATION_DELAY_MS", "100"))
 HEDGE_MODE_ENABLED = os.getenv("HEDGE_MODE_ENABLED", "true").lower() == "true"
 POSITION_MODE = os.getenv("POSITION_MODE", "hedge")  # 'hedge' or 'one-way'
 
+# Conflict Resolution Configuration
+POSITION_MODE_AWARE_CONFLICTS = (
+    os.getenv("POSITION_MODE_AWARE_CONFLICTS", "true").lower() == "true"
+)
+SAME_DIRECTION_CONFLICT_RESOLUTION = os.getenv(
+    "SAME_DIRECTION_CONFLICT_RESOLUTION", "accumulate"
+)  # 'accumulate', 'strongest_wins', or 'reject_duplicates'
+
 # Supported Symbols (from shared configmap)
 SUPPORTED_SYMBOLS = os.getenv(
     "SUPPORTED_SYMBOLS",

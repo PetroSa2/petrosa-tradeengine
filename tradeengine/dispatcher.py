@@ -500,33 +500,37 @@ class OCOManager:
             # Step 2: Get position data from DATABASE (not in-memory aggregated data)
             # CRITICAL: We need ACTUAL entry price from the entry order, not weighted average
             position_data = None
-            
+
             # Try MongoDB first (primary)
             if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
                 if dispatcher.position_manager.mongodb_db is not None:
                     try:
-                        positions_collection = dispatcher.position_manager.mongodb_db.positions
+                        positions_collection = (
+                            dispatcher.position_manager.mongodb_db.positions
+                        )
                         position_data = await positions_collection.find_one(
                             {"position_id": position_id}
                         )
                         if position_data:
-                            self.logger.info(f"✅ Found position {position_id} in MongoDB")
+                            self.logger.info(
+                                f"✅ Found position {position_id} in MongoDB"
+                            )
                     except Exception as mongo_error:
                         self.logger.warning(
                             f"⚠️  MongoDB query failed, trying MySQL: {mongo_error}"
                         )
-            
+
             # Fallback to MySQL if MongoDB failed
             if not position_data:
                 from shared.mysql_client import mysql_client
-                
+
                 if mysql_client:
                     try:
                         results = await mysql_client.execute_query(
                             """
-                            SELECT 
-                                position_id, symbol, position_side, entry_price, 
-                                quantity, entry_time, entry_order_id, 
+                            SELECT
+                                position_id, symbol, position_side, entry_price,
+                                quantity, entry_time, entry_order_id,
                                 commission_total, stop_loss, take_profit
                             FROM positions
                             WHERE position_id = %s
@@ -534,7 +538,7 @@ class OCOManager:
                             (position_id,),
                             fetch=True,
                         )
-                        
+
                         if results and len(results) > 0:
                             row = results[0]
                             position_data = {
@@ -545,13 +549,15 @@ class OCOManager:
                                 "quantity": float(row["quantity"]),
                                 "entry_time": row["entry_time"],
                                 "entry_order_id": row["entry_order_id"],
-                                "commission_total": float(row.get("commission_total", 0)),
+                                "commission_total": float(
+                                    row.get("commission_total", 0)
+                                ),
                             }
-                            self.logger.info(f"✅ Found position {position_id} in MySQL")
+                            self.logger.info(
+                                f"✅ Found position {position_id} in MySQL"
+                            )
                     except Exception as mysql_error:
-                        self.logger.error(
-                            f"❌ MySQL query failed: {mysql_error}"
-                        )
+                        self.logger.error(f"❌ MySQL query failed: {mysql_error}")
 
             if position_data:
                 # Extract ACTUAL entry data from database record
@@ -617,7 +623,10 @@ class OCOManager:
 
                 # Remove from active positions
                 position_key = (symbol, position_side)
-                if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
+                if (
+                    hasattr(dispatcher, "position_manager")
+                    and dispatcher.position_manager
+                ):
                     if position_key in dispatcher.position_manager.positions:
                         del dispatcher.position_manager.positions[position_key]
 

@@ -398,15 +398,29 @@ jobs:
           echo "✅ All image references updated to versioned tag: ${IMAGE_TAG}"
         fi
 
-    - name: Delete old Job if exists
+    - name: Delete old MySQL Job if exists
       run: |
         kubectl delete job petrosa-tradeengine-mysql-schema -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify --ignore-not-found=true
         kubectl delete job petrosa-tradeengine-mysql-schema-init -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify --ignore-not-found=true
-        echo "✅ Old Jobs deleted (if existed)"
+        echo "✅ Old MySQL Jobs deleted (if existed)"
+        echo "⏳ Waiting for Job cleanup..."
+        sleep 10
 
-    - name: Apply Kubernetes manifests
+    - name: Apply Kubernetes manifests (except Jobs)
       run: |
-        kubectl apply --insecure-skip-tls-verify -f k8s/ -n ${{ env.NAMESPACE }}
+        # Apply all manifests except Job files (Jobs are immutable)
+        for file in k8s/*.yaml; do
+          if [[ "$file" != *"job.yaml" ]]; then
+            kubectl apply --insecure-skip-tls-verify -f "$file" -n ${{ env.NAMESPACE }}
+          fi
+        done
+        echo "✅ Kubernetes manifests applied (excluding Jobs)"
+
+    - name: Create MySQL Schema Job
+      run: |
+        # Create the Job (Jobs should use create, not apply)
+        kubectl create --insecure-skip-tls-verify -f k8s/mysql-schema-job.yaml -n ${{ env.NAMESPACE }}
+        echo "✅ MySQL Schema Job created"
 
     - name: Wait for deployment to be ready
       run: |

@@ -1365,6 +1365,27 @@ class Dispatcher:
                 )
                 return
 
+            # Validate and adjust stop loss price against PERCENT_PRICE filter if exchange is available
+            adjusted_stop_loss = order.stop_loss
+            if self.exchange and order.stop_loss:
+                try:
+                    is_adjusted, adjusted_price, adjustment_msg = (
+                        await self.exchange.validate_and_adjust_price_for_percent_filter(
+                            order.symbol, order.stop_loss, "STOP_LOSS"
+                        )
+                    )
+                    if is_adjusted:
+                        self.logger.warning(
+                            f"🔧 STOP LOSS PRICE ADJUSTED: {adjustment_msg}"
+                        )
+                        adjusted_stop_loss = adjusted_price
+                except Exception as validation_error:
+                    # Log validation error but continue (fail open)
+                    self.logger.warning(
+                        f"Failed to validate stop loss price for {order.symbol}: {validation_error}. "
+                        f"Proceeding with original price."
+                    )
+
             # Create stop loss order
             stop_loss_order = TradeOrder(
                 order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
@@ -1374,7 +1395,7 @@ class Dispatcher:
                 ),  # Opposite side to close position
                 type="stop",  # Stop market order
                 amount=filled_quantity,
-                stop_loss=order.stop_loss,
+                stop_loss=adjusted_stop_loss,
                 take_profit=None,  # Not applicable for stop loss order
                 target_price=None,  # Market order when triggered
                 position_id=order.position_id,
@@ -1400,7 +1421,7 @@ class Dispatcher:
 
             self.logger.info(
                 f"📉 PLACING STOP LOSS: {order.symbol} {stop_loss_order.side} "
-                f"{stop_loss_order.amount} @ {order.stop_loss}"
+                f"{stop_loss_order.amount} @ {adjusted_stop_loss}"
             )
 
             # Execute stop loss order with retry and fallback logic
@@ -1478,6 +1499,27 @@ class Dispatcher:
                 )
                 return
 
+            # Validate and adjust take profit price against PERCENT_PRICE filter if exchange is available
+            adjusted_take_profit = order.take_profit
+            if self.exchange and order.take_profit:
+                try:
+                    is_adjusted, adjusted_price, adjustment_msg = (
+                        await self.exchange.validate_and_adjust_price_for_percent_filter(
+                            order.symbol, order.take_profit, "TAKE_PROFIT"
+                        )
+                    )
+                    if is_adjusted:
+                        self.logger.warning(
+                            f"🔧 TAKE PROFIT PRICE ADJUSTED: {adjustment_msg}"
+                        )
+                        adjusted_take_profit = adjusted_price
+                except Exception as validation_error:
+                    # Log validation error but continue (fail open)
+                    self.logger.warning(
+                        f"Failed to validate take profit price for {order.symbol}: {validation_error}. "
+                        f"Proceeding with original price."
+                    )
+
             # Create take profit order
             take_profit_order = TradeOrder(
                 order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
@@ -1487,7 +1529,7 @@ class Dispatcher:
                 ),  # Opposite side to close position
                 type="take_profit",  # Take profit market order
                 amount=filled_quantity,
-                take_profit=order.take_profit,
+                take_profit=adjusted_take_profit,
                 target_price=None,  # Market order when triggered
                 position_id=order.position_id,
                 position_side=order.position_side,
@@ -1513,7 +1555,7 @@ class Dispatcher:
 
             self.logger.info(
                 f"📈 PLACING TAKE PROFIT: {order.symbol} {take_profit_order.side} "
-                f"{take_profit_order.amount} @ {order.take_profit}"
+                f"{take_profit_order.amount} @ {adjusted_take_profit}"
             )
 
             # Execute take profit order

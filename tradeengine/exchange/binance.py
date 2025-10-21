@@ -311,6 +311,14 @@ class BinanceFuturesExchange:
             raise RuntimeError("Binance Futures client not initialized")
         if order.target_price is None:
             raise ValueError("Target price required for limit orders")
+
+        # Validate price against PERCENT_PRICE filter
+        is_valid, error_msg = await self.validate_price_within_percent_filter(
+            order.symbol, order.target_price, "LIMIT"
+        )
+        if not is_valid:
+            raise ValueError(error_msg)
+
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
@@ -380,6 +388,14 @@ class BinanceFuturesExchange:
             raise ValueError("Target price required for stop limit orders")
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop limit orders")
+
+        # Validate limit price against PERCENT_PRICE filter
+        is_valid, error_msg = await self.validate_price_within_percent_filter(
+            order.symbol, order.target_price, "STOP_LIMIT"
+        )
+        if not is_valid:
+            raise ValueError(error_msg)
+
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
@@ -452,6 +468,14 @@ class BinanceFuturesExchange:
             raise ValueError("Target price required for take profit limit orders")
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit limit orders")
+
+        # Validate limit price against PERCENT_PRICE filter
+        is_valid, error_msg = await self.validate_price_within_percent_filter(
+            order.symbol, order.target_price, "TAKE_PROFIT_LIMIT"
+        )
+        if not is_valid:
+            raise ValueError(error_msg)
+
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
@@ -489,15 +513,21 @@ class BinanceFuturesExchange:
             try:
                 return func(**kwargs)  # Futures client is synchronous
             except BinanceAPIException as e:
-                # Don't retry on certain errors
+                # Don't retry on certain errors that won't be fixed by retrying
                 if e.code in [
                     -2010,  # Insufficient balance
                     -2011,  # Invalid symbol
                     -2013,  # Invalid order type
                     -2014,  # Invalid price
                     -2015,  # Invalid quantity
+                    -4131,  # PERCENT_PRICE filter violation - price too far from market
                     -4164,  # MIN_NOTIONAL validation error
                 ]:
+                    # Log the non-retryable error with details
+                    logger.error(
+                        f"Non-retryable Binance API error (code {e.code}): {e}. "
+                        f"This error cannot be fixed by retrying."
+                    )
                     raise
                 last_exception = e
             except Exception as e:
@@ -560,6 +590,183 @@ class BinanceFuturesExchange:
             "base_asset": symbol_data["baseAsset"],
             "quote_asset": symbol_data["quoteAsset"],
         }
+
+    def get_percent_price_filter(self, symbol: str) -> dict[str, Any]:
+        """Get PERCENT_PRICE filter info for a symbol.
+
+        PERCENT_PRICE filter limits how far an order price can deviate from
+        the current market price. Typical values are ±5% (0.95 - 1.05).
+
+        Args:
+            symbol: Trading symbol (e.g., BTCUSDT)
+
+        Returns:
+            dict with multiplierUp, multiplierDown, and avgPriceMins
+
+        Raises:
+            ValueError: If symbol not found or filter not available
+        """
+        if symbol not in self.symbol_info:
+            raise ValueError(f"Symbol {symbol} not found in exchange info")
+
+        symbol_data = self.symbol_info[symbol]
+        filters = symbol_data["filters"]
+
+        # Find PERCENT_PRICE filter
+        percent_price_filter = next(
+            (f for f in filters if f["filterType"] == "PERCENT_PRICE"), None
+        )
+
+        if not percent_price_filter:
+            # Default to ±10% if filter not found
+            logger.warning(
+                f"PERCENT_PRICE filter not found for {symbol}, using default ±10%"
+            )
+            return {
+                "multiplierUp": "1.1000",
+                "multiplierDown": "0.9000",
+                "avgPriceMins": 5,
+            }
+
+        return {
+            "multiplierUp": percent_price_filter.get("multiplierUp", "1.1000"),
+            "multiplierDown": percent_price_filter.get("multiplierDown", "0.9000"),
+            "avgPriceMins": percent_price_filter.get("avgPriceMins", 5),
+        }
+
+    async def validate_and_adjust_price_for_percent_filter(
+        self, symbol: str, price: float, order_type: str
+    ) -> tuple[bool, float, str]:
+        """Validate and intelligently adjust order price to be within PERCENT_PRICE filter limits.
+
+        If the price violates the filter, it will be automatically adjusted to the nearest
+        valid price with a safety margin to avoid rejection.
+
+        Args:
+            symbol: Trading symbol
+            price: Order price to validate/adjust
+            order_type: Type of order (for logging)
+
+        Returns:
+            tuple: (is_adjusted, adjusted_price, message)
+                   (False, original_price, "") if already valid
+                   (True, adjusted_price, "adjustment description") if adjusted
+        """
+        try:
+            # Get current market price
+            current_price = await self._get_current_price(symbol)
+
+            # Get PERCENT_PRICE filter
+            filter_info = self.get_percent_price_filter(symbol)
+            multiplier_up = float(filter_info["multiplierUp"])
+            multiplier_down = float(filter_info["multiplierDown"])
+
+            # Calculate allowed price range with 1% safety margin to avoid edge cases
+            safety_margin = 0.01  # 1% safety margin
+            max_price = current_price * multiplier_up * (1 - safety_margin)
+            min_price = current_price * multiplier_down * (1 + safety_margin)
+
+            # Calculate deviation percentage
+            deviation_pct = ((price - current_price) / current_price) * 100
+
+            # Check if adjustment is needed
+            if price < min_price:
+                # Price too low - adjust to minimum with safety margin
+                adjusted_price = min_price
+                adjustment_msg = (
+                    f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
+                    f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
+                    f"to meet PERCENT_PRICE filter (market: ${current_price:.2f}, "
+                    f"allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                )
+                logger.warning(adjustment_msg)
+                return (True, adjusted_price, adjustment_msg)
+
+            elif price > max_price:
+                # Price too high - adjust to maximum with safety margin
+                adjusted_price = max_price
+                adjustment_msg = (
+                    f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
+                    f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
+                    f"to meet PERCENT_PRICE filter (market: ${current_price:.2f}, "
+                    f"allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                )
+                logger.warning(adjustment_msg)
+                return (True, adjusted_price, adjustment_msg)
+
+            # Price is valid - no adjustment needed
+            logger.info(
+                f"✓ PERCENT_PRICE validation passed for {symbol} {order_type}: "
+                f"${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f} "
+                f"(allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+            )
+            return (False, price, "")
+
+        except Exception as e:
+            error_msg = f"Error validating PERCENT_PRICE for {symbol}: {e}"
+            logger.error(error_msg, exc_info=True)
+            # Return original price if validation fails (fail open)
+            return (False, price, "")
+
+    async def validate_price_within_percent_filter(
+        self, symbol: str, price: float, order_type: str
+    ) -> tuple[bool, str]:
+        """Validate that order price is within PERCENT_PRICE filter limits.
+
+        DEPRECATED: Use validate_and_adjust_price_for_percent_filter() instead for
+        intelligent price adjustment.
+
+        Args:
+            symbol: Trading symbol
+            price: Order price to validate
+            order_type: Type of order (for logging)
+
+        Returns:
+            tuple: (is_valid, error_message)
+                   (True, "") if valid
+                   (False, "error description") if invalid
+        """
+        try:
+            # Get current market price
+            current_price = await self._get_current_price(symbol)
+
+            # Get PERCENT_PRICE filter
+            filter_info = self.get_percent_price_filter(symbol)
+            multiplier_up = float(filter_info["multiplierUp"])
+            multiplier_down = float(filter_info["multiplierDown"])
+
+            # Calculate allowed price range
+            max_price = current_price * multiplier_up
+            min_price = current_price * multiplier_down
+
+            # Calculate deviation percentage
+            deviation_pct = ((price - current_price) / current_price) * 100
+
+            # Validate
+            if price < min_price or price > max_price:
+                error_msg = (
+                    f"PERCENT_PRICE filter violation for {symbol} {order_type} order: "
+                    f"Order price ${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f}. "
+                    f"Allowed range: ${min_price:.2f} to ${max_price:.2f} "
+                    f"({(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%). "
+                    f"This order would be rejected by Binance with error -4131."
+                )
+                logger.error(error_msg)
+                return (False, error_msg)
+
+            # Log successful validation
+            logger.info(
+                f"✓ PERCENT_PRICE validation passed for {symbol} {order_type}: "
+                f"${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f} "
+                f"(allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+            )
+            return (True, "")
+
+        except Exception as e:
+            error_msg = f"Error validating PERCENT_PRICE for {symbol}: {e}"
+            logger.error(error_msg, exc_info=True)
+            # Allow order to proceed if validation fails (fail open)
+            return (True, "")
 
     def calculate_min_order_amount(
         self, symbol: str, current_price: float | None = None

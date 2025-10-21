@@ -6,7 +6,9 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any
+from datetime import datetime
+from functools import wraps
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import pymysql
@@ -18,6 +20,60 @@ logger = logging.getLogger(__name__)
 MAX_RETRY_ATTEMPTS = 3
 RETRY_DELAY = 1.0  # seconds
 RETRY_BACKOFF_MULTIPLIER = 2.0
+
+# Connection metrics
+connection_attempts = 0
+connection_failures = 0
+reconnections = 0
+queries_executed = 0
+queries_failed = 0
+last_successful_connection: datetime | None = None
+
+
+def ensure_connected(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator to ensure MySQL connection is alive before executing methods.
+
+    Automatically checks connection health and attempts reconnection if needed.
+    """
+
+    @wraps(func)
+    async def wrapper(self: "MySQLClient", *args: Any, **kwargs: Any) -> Any:
+        global reconnections, queries_executed, queries_failed
+
+        # Check if connection exists and is alive
+        if not self._is_connection_alive():
+            logger.warning(
+                f"MySQL connection lost to {self.host}:{self.port}/{self.database} "
+                f"(user: {self.user}). Attempting reconnection..."
+            )
+            try:
+                reconnections += 1
+                await self.connect()
+                logger.info(
+                    f"MySQL reconnection successful to {self.host}:{self.port}/{self.database}"
+                )
+            except Exception as e:
+                queries_failed += 1
+                logger.error(
+                    f"MySQL reconnection failed to {self.host}:{self.port}/{self.database}: {e}",
+                    exc_info=True,
+                )
+                raise
+
+        # Execute the wrapped method
+        try:
+            queries_executed += 1
+            result = await func(self, *args, **kwargs)
+            return result
+        except Exception as e:
+            queries_failed += 1
+            logger.error(
+                f"MySQL query failed on {self.host}:{self.port}/{self.database}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    return wrapper
 
 
 class MySQLClient:
@@ -76,15 +132,41 @@ class MySQLClient:
 
         self.connection: Any = None
 
+    def _is_connection_alive(self) -> bool:
+        """Check if MySQL connection is alive and healthy.
+
+        Returns:
+            bool: True if connection is alive, False otherwise
+        """
+        if not self.connection:
+            logger.debug(
+                f"MySQL connection check: No connection to {self.host}:{self.port}/{self.database}"
+            )
+            return False
+
+        try:
+            # Use ping to check if connection is alive
+            self.connection.ping(reconnect=False)
+            return True
+        except Exception as e:
+            logger.debug(
+                f"MySQL connection check failed for {self.host}:{self.port}/{self.database}: {e}"
+            )
+            return False
+
     async def connect(self) -> None:
-        """Connect to MySQL database with retry logic."""
+        """Connect to MySQL database with retry logic and metrics tracking."""
+        global connection_attempts, connection_failures, last_successful_connection
+
         max_retries = 3
         retry_delay = 2.0
 
         for attempt in range(max_retries):
             try:
+                connection_attempts += 1
                 logger.info(
-                    f"Attempting to connect to MySQL (attempt {attempt + 1}/{max_retries})..."
+                    f"Attempting to connect to MySQL {self.host}:{self.port}/{self.database} "
+                    f"(attempt {attempt + 1}/{max_retries}, user: {self.user})..."
                 )
 
                 self.connection = pymysql.connect(
@@ -100,19 +182,30 @@ class MySQLClient:
                     write_timeout=60,  # Increased from 30s to 60s
                     charset="utf8mb4",
                 )
-                logger.info("Connected to MySQL successfully")
+                last_successful_connection = datetime.utcnow()
+                logger.info(
+                    f"✓ Connected to MySQL successfully: {self.host}:{self.port}/{self.database} "
+                    f"(Total attempts: {connection_attempts}, Failures: {connection_failures}, "
+                    f"Reconnections: {reconnections})"
+                )
                 return
             except Exception as e:
+                connection_failures += 1
                 if attempt < max_retries - 1:
                     backoff = retry_delay * (2**attempt)
                     logger.warning(
-                        f"Failed to connect to MySQL (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Failed to connect to MySQL {self.host}:{self.port}/{self.database} "
+                        f"(attempt {attempt + 1}/{max_retries}): {e}. "
                         f"Retrying in {backoff}s..."
                     )
                     await asyncio.sleep(backoff)
                 else:
                     logger.error(
-                        f"Failed to connect to MySQL after {max_retries} attempts: {e}"
+                        f"✗ Failed to connect to MySQL {self.host}:{self.port}/{self.database} "
+                        f"after {max_retries} attempts. Error: {e}. "
+                        f"Connection info: host={self.host}, port={self.port}, user={self.user}, "
+                        f"database={self.database}",
+                        exc_info=True,
                     )
                     raise
 
@@ -120,8 +213,11 @@ class MySQLClient:
         """Disconnect from MySQL database."""
         if self.connection:
             self.connection.close()
-            logger.info("Disconnected from MySQL")
+            logger.info(
+                f"Disconnected from MySQL: {self.host}:{self.port}/{self.database}"
+            )
 
+    @ensure_connected
     async def execute_query(
         self, query: str, params: tuple[Any, ...] | None = None, fetch: bool = True
     ) -> list[dict[str, Any]] | int:
@@ -135,18 +231,7 @@ class MySQLClient:
         Returns:
             List of result dicts for SELECT queries, or rowcount for INSERT/UPDATE
         """
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return [] if fetch else 0
-
         try:
-            # Check connection is alive
-            try:
-                self.connection.ping(reconnect=True)
-            except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
-
             with self.connection.cursor() as cursor:
                 cursor.execute(query, params or ())
 
@@ -159,28 +244,21 @@ class MySQLClient:
                     return cursor.rowcount
 
         except Exception as e:
-            logger.error(f"Error executing query: {e}")
+            logger.error(
+                f"Error executing query on {self.host}:{self.port}/{self.database}: {e}",
+                exc_info=True,
+            )
             if fetch:
                 return []
             else:
                 return 0
 
+    @ensure_connected
     async def create_position(self, position_data: dict[str, Any]) -> bool:
         """Create a new position record in MySQL with retry logic."""
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return False
-
         # Retry logic for transient errors
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                # Check if connection is still alive
-                try:
-                    self.connection.ping(reconnect=True)
-                except Exception as e:
-                    logger.warning(f"Connection lost, reconnecting: {e}")
-                    await self.connect()
-
                 sql = """
                     INSERT INTO positions (
                         position_id, strategy_id, exchange, symbol, position_side,
@@ -226,7 +304,8 @@ class MySQLClient:
                     )
 
                 logger.info(
-                    f"Created position record {position_data['position_id']} in MySQL"
+                    f"✓ Created position record {position_data['position_id']} in MySQL "
+                    f"({self.host}:{self.port}/{self.database})"
                 )
                 return True
 
@@ -235,7 +314,8 @@ class MySQLClient:
                 if attempt < MAX_RETRY_ATTEMPTS - 1:
                     wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
                     logger.warning(
-                        f"MySQL operational error on attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}: {e}. "
+                        f"MySQL operational error on {self.host}:{self.port}/{self.database} "
+                        f"(attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}): {e}. "
                         f"Retrying in {wait_time}s..."
                     )
                     await asyncio.sleep(wait_time)
@@ -243,35 +323,33 @@ class MySQLClient:
                     try:
                         await self.connect()
                     except Exception as reconnect_error:
-                        logger.error(f"Failed to reconnect: {reconnect_error}")
+                        logger.error(
+                            f"Failed to reconnect to {self.host}:{self.port}/{self.database}: "
+                            f"{reconnect_error}"
+                        )
                 else:
                     logger.error(
-                        f"Failed to create position after {MAX_RETRY_ATTEMPTS} attempts: {e}"
+                        f"✗ Failed to create position on {self.host}:{self.port}/{self.database} "
+                        f"after {MAX_RETRY_ATTEMPTS} attempts: {e}",
+                        exc_info=True,
                     )
                     return False
             except Exception as e:
                 # Non-retryable errors
-                logger.error(f"Error creating position in MySQL: {e}")
+                logger.error(
+                    f"✗ Error creating position in MySQL {self.host}:{self.port}/{self.database}: {e}",
+                    exc_info=True,
+                )
                 return False
 
         return False
 
+    @ensure_connected
     async def update_position(
         self, position_id: str, update_data: dict[str, Any]
     ) -> bool:
         """Update an existing position record in MySQL."""
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return False
-
         try:
-            # Check if connection is still alive
-            try:
-                self.connection.ping(reconnect=True)
-            except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
-
             # Build dynamic UPDATE query based on provided fields
             set_clauses = []
             values = []
@@ -297,36 +375,28 @@ class MySQLClient:
             with self.connection.cursor() as cursor:
                 cursor.execute(sql, values)
 
-            logger.info(f"Updated position record {position_id} in MySQL")
+            logger.info(
+                f"✓ Updated position record {position_id} in MySQL "
+                f"({self.host}:{self.port}/{self.database})"
+            )
             return True
 
         except Exception as e:
-            logger.error(f"Error updating position {position_id} in MySQL: {e}")
-            # Try to reconnect on error
-            try:
-                await self.connect()
-            except Exception as reconnect_error:
-                logger.error(f"Failed to reconnect: {reconnect_error}")
+            logger.error(
+                f"✗ Error updating position {position_id} on MySQL "
+                f"{self.host}:{self.port}/{self.database}: {e}",
+                exc_info=True,
+            )
             return False
 
+    @ensure_connected
     async def update_position_risk_orders(
         self, position_id: str, update_data: dict[str, Any]
     ) -> bool:
         """Update position record with stop loss and take profit order IDs with retry logic."""
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return False
-
         # Retry logic for transient errors
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                # Check if connection is still alive
-                try:
-                    self.connection.ping(reconnect=True)
-                except Exception as e:
-                    logger.warning(f"Connection lost, reconnecting: {e}")
-                    await self.connect()
-
                 # Build dynamic UPDATE query for risk order fields
                 set_clauses = []
                 values = []
@@ -353,7 +423,8 @@ class MySQLClient:
                     cursor.execute(sql, values)
 
                 logger.info(
-                    f"Updated position {position_id} risk orders in MySQL: {update_data}"
+                    f"✓ Updated position {position_id} risk orders in MySQL "
+                    f"({self.host}:{self.port}/{self.database}): {update_data}"
                 )
                 return True
 
@@ -362,7 +433,8 @@ class MySQLClient:
                 if attempt < MAX_RETRY_ATTEMPTS - 1:
                     wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
                     logger.warning(
-                        f"MySQL operational error on attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}: {e}. "
+                        f"MySQL operational error on {self.host}:{self.port}/{self.database} "
+                        f"(attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}): {e}. "
                         f"Retrying in {wait_time}s..."
                     )
                     await asyncio.sleep(wait_time)
@@ -370,35 +442,33 @@ class MySQLClient:
                     try:
                         await self.connect()
                     except Exception as reconnect_error:
-                        logger.error(f"Failed to reconnect: {reconnect_error}")
+                        logger.error(
+                            f"Failed to reconnect to {self.host}:{self.port}/{self.database}: "
+                            f"{reconnect_error}"
+                        )
                 else:
                     logger.error(
-                        f"Failed to update position risk orders after {MAX_RETRY_ATTEMPTS} attempts: {e}"
+                        f"✗ Failed to update position risk orders on "
+                        f"{self.host}:{self.port}/{self.database} "
+                        f"after {MAX_RETRY_ATTEMPTS} attempts: {e}",
+                        exc_info=True,
                     )
                     return False
             except Exception as e:
                 # Non-retryable errors
                 logger.error(
-                    f"Error updating position risk orders {position_id} in MySQL: {e}"
+                    f"✗ Error updating position risk orders {position_id} on MySQL "
+                    f"{self.host}:{self.port}/{self.database}: {e}",
+                    exc_info=True,
                 )
                 return False
 
         return False
 
+    @ensure_connected
     async def get_position(self, position_id: str) -> dict[str, Any] | None:
         """Get a specific position by ID."""
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return None
-
         try:
-            # Check if connection is still alive
-            try:
-                self.connection.ping(reconnect=True)
-            except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
-
             sql = """
                 SELECT * FROM positions WHERE position_id = %s
             """
@@ -437,25 +507,19 @@ class MySQLClient:
                 return result
 
         except Exception as e:
-            logger.error(f"Error fetching position {position_id} from MySQL: {e}")
+            logger.error(
+                f"✗ Error fetching position {position_id} from MySQL "
+                f"{self.host}:{self.port}/{self.database}: {e}",
+                exc_info=True,
+            )
             return None
 
+    @ensure_connected
     async def get_open_positions(
         self, strategy_id: str | None = None
     ) -> list[dict[str, Any]]:
         """Get all open positions, optionally filtered by strategy."""
-        if not self.connection:
-            logger.error("Not connected to MySQL")
-            return []
-
         try:
-            # Check if connection is still alive
-            try:
-                self.connection.ping(reconnect=True)
-            except Exception as e:
-                logger.warning(f"Connection lost, reconnecting: {e}")
-                await self.connect()
-
             if strategy_id:
                 sql = """
                     SELECT * FROM positions
@@ -497,7 +561,11 @@ class MySQLClient:
                 return results
 
         except Exception as e:
-            logger.error(f"Error fetching open positions from MySQL: {e}")
+            logger.error(
+                f"✗ Error fetching open positions from MySQL "
+                f"{self.host}:{self.port}/{self.database}: {e}",
+                exc_info=True,
+            )
             return []
 
     async def health_check(self) -> dict[str, Any]:

@@ -801,17 +801,21 @@ class PositionManager:
             refreshed_positions = {}
 
             async for doc in cursor:
-                symbol = doc["symbol"]
+                symbol = doc.get("symbol")
+                if not symbol:
+                    logger.warning("Skipping MongoDB document without symbol")
+                    continue
+
                 refreshed_positions[symbol] = {
-                    "quantity": float(doc["quantity"]),
-                    "avg_price": float(doc["avg_price"]),
-                    "unrealized_pnl": float(doc["unrealized_pnl"]),
-                    "realized_pnl": float(doc["realized_pnl"]),
-                    "total_cost": float(doc["total_cost"]),
-                    "total_value": float(doc["total_value"]),
-                    "entry_time": doc["entry_time"],
-                    "last_update": doc["last_update"],
-                    "status": doc["status"],
+                    "quantity": float(doc.get("quantity", 0.0)),
+                    "avg_price": float(doc.get("avg_price", 0.0)),
+                    "unrealized_pnl": float(doc.get("unrealized_pnl", 0.0)),
+                    "realized_pnl": float(doc.get("realized_pnl", 0.0)),
+                    "total_cost": float(doc.get("total_cost", 0.0)),
+                    "total_value": float(doc.get("total_value", 0.0)),
+                    "entry_time": doc.get("entry_time", datetime.utcnow()),
+                    "last_update": doc.get("last_update", datetime.utcnow()),
+                    "status": doc.get("status", "open"),
                 }
 
             # Only update if positions have changed

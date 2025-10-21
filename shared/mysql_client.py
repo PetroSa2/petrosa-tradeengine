@@ -77,27 +77,44 @@ class MySQLClient:
         self.connection: Any = None
 
     async def connect(self) -> None:
-        """Connect to MySQL database."""
-        try:
-            logger.info("Attempting to connect to MySQL...")
+        """Connect to MySQL database with retry logic."""
+        max_retries = 3
+        retry_delay = 2.0
 
-            self.connection = pymysql.connect(
-                host=self.host,
-                port=self.port,
-                user=self.user,
-                password=self.password or "",
-                database=self.database,
-                cursorclass=DictCursor,
-                autocommit=True,
-                connect_timeout=30,
-                read_timeout=30,
-                write_timeout=30,
-                charset="utf8mb4",
-            )
-            logger.info("Connected to MySQL successfully")
-        except Exception as e:
-            logger.error(f"Failed to connect to MySQL: {e}")
-            raise
+        for attempt in range(max_retries):
+            try:
+                logger.info(
+                    f"Attempting to connect to MySQL (attempt {attempt + 1}/{max_retries})..."
+                )
+
+                self.connection = pymysql.connect(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password or "",
+                    database=self.database,
+                    cursorclass=DictCursor,
+                    autocommit=True,
+                    connect_timeout=60,  # Increased from 30s to 60s
+                    read_timeout=60,  # Increased from 30s to 60s
+                    write_timeout=60,  # Increased from 30s to 60s
+                    charset="utf8mb4",
+                )
+                logger.info("Connected to MySQL successfully")
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    backoff = retry_delay * (2**attempt)
+                    logger.warning(
+                        f"Failed to connect to MySQL (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {backoff}s..."
+                    )
+                    await asyncio.sleep(backoff)
+                else:
+                    logger.error(
+                        f"Failed to connect to MySQL after {max_retries} attempts: {e}"
+                    )
+                    raise
 
     async def disconnect(self) -> None:
         """Disconnect from MySQL database."""

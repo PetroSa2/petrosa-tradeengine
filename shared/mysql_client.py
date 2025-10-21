@@ -122,6 +122,49 @@ class MySQLClient:
             self.connection.close()
             logger.info("Disconnected from MySQL")
 
+    async def execute_query(
+        self, query: str, params: tuple[Any, ...] | None = None, fetch: bool = True
+    ) -> list[dict[str, Any]] | int:
+        """Execute a generic SQL query with optional parameters
+
+        Args:
+            query: SQL query to execute
+            params: Query parameters (optional)
+            fetch: Whether to fetch results (SELECT) or just get rowcount (INSERT/UPDATE)
+
+        Returns:
+            List of result dicts for SELECT queries, or rowcount for INSERT/UPDATE
+        """
+        if not self.connection:
+            logger.error("Not connected to MySQL")
+            return [] if fetch else 0
+
+        try:
+            # Check connection is alive
+            try:
+                self.connection.ping(reconnect=True)
+            except Exception as e:
+                logger.warning(f"Connection lost, reconnecting: {e}")
+                await self.connect()
+
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, params or ())
+
+                if fetch:
+                    # Return fetched results for SELECT queries
+                    results = cursor.fetchall()
+                    return results if results else []
+                else:
+                    # Return rowcount for INSERT/UPDATE/DELETE
+                    return cursor.rowcount
+
+        except Exception as e:
+            logger.error(f"Error executing query: {e}")
+            if fetch:
+                return []
+            else:
+                return 0
+
     async def create_position(self, position_data: dict[str, Any]) -> bool:
         """Create a new position record in MySQL with retry logic."""
         if not self.connection:

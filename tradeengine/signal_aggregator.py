@@ -144,6 +144,18 @@ class SignalAggregator:
 class DeterministicProcessor:
     """Deterministic rule-based signal processor"""
 
+    def __init__(self) -> None:
+        """Initialize processor with configuration"""
+        from shared.constants import (
+            POSITION_MODE,
+            POSITION_MODE_AWARE_CONFLICTS,
+            SAME_DIRECTION_CONFLICT_RESOLUTION,
+        )
+
+        self.position_mode = POSITION_MODE
+        self.position_mode_aware_conflicts = POSITION_MODE_AWARE_CONFLICTS
+        self.same_direction_resolution = SAME_DIRECTION_CONFLICT_RESOLUTION
+
     async def process(
         self, signal: Signal, active_signals: dict[str, Signal]
     ) -> dict[str, Any]:
@@ -152,12 +164,8 @@ class DeterministicProcessor:
         if signal.confidence < 0.6:
             return {"status": "rejected", "reason": "Confidence below threshold"}
 
-        # Check for conflicting signals
-        conflicting_signals = [
-            s
-            for s in active_signals.values()
-            if s.symbol == signal.symbol and s.action != signal.action
-        ]
+        # Check for conflicting signals with hedge mode awareness
+        conflicting_signals = self._get_conflicting_signals(signal, active_signals)
 
         if conflicting_signals:
             # Use simple rule: higher confidence wins
@@ -168,16 +176,91 @@ class DeterministicProcessor:
                     "reason": "Lower confidence than conflicting signal",
                 }
 
+        # Check for same-direction signals
+        same_direction_result = self._handle_same_direction_signals(
+            signal, active_signals
+        )
+        if same_direction_result.get("status") == "rejected":
+            return same_direction_result
+
         # Calculate order parameters
         order_params = self._calculate_order_parameters(signal)
+
+        # Build reason with same-direction info if applicable
+        reason = "Deterministic rules satisfied"
+        if (
+            same_direction_result.get("reason")
+            and same_direction_result["status"] == "ok"
+        ):
+            reason = f"{reason}. {same_direction_result['reason']}"
 
         return {
             "status": "executed",
             "signal": signal,
             "order_params": order_params,
             "confidence": signal.confidence,
-            "reason": "Deterministic rules satisfied",
+            "reason": reason,
         }
+
+    def _get_conflicting_signals(
+        self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> list[Signal]:
+        """Get conflicting signals with hedge mode awareness"""
+        # In hedge mode with position_mode_aware_conflicts enabled,
+        # opposite directions are NOT conflicts (can have both LONG and SHORT)
+        if self.position_mode_aware_conflicts and self.position_mode == "hedge":
+            # No opposite-direction conflicts in hedge mode
+            return []
+
+        # In one-way mode, opposite directions ARE conflicts
+        return [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol and s.action != signal.action
+        ]
+
+    def _handle_same_direction_signals(
+        self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> dict[str, Any]:
+        """Handle signals in the same direction based on configuration"""
+        # Find same-direction signals from DIFFERENT strategies
+        same_direction_signals = [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol
+            and s.action == signal.action
+            and s.strategy_id != signal.strategy_id  # Different strategy
+        ]
+
+        if not same_direction_signals:
+            return {"status": "ok"}
+
+        # Handle based on configuration
+        if self.same_direction_resolution == "accumulate":
+            # Allow multiple strategies to build positions
+            return {
+                "status": "ok",
+                "reason": "Accumulating position from multiple strategies",
+            }
+
+        elif self.same_direction_resolution == "strongest_wins":
+            # Only execute if this signal is strongest
+            max_confidence = max(s.confidence for s in same_direction_signals)
+            if signal.confidence <= max_confidence:
+                return {
+                    "status": "rejected",
+                    "reason": f"Weaker than existing same-direction signal (confidence: {max_confidence})",
+                }
+            return {"status": "ok", "reason": "Strongest signal in same direction"}
+
+        elif self.same_direction_resolution == "reject_duplicates":
+            # Reject any same-direction signals
+            return {
+                "status": "rejected",
+                "reason": f"Same-direction signal already exists from {same_direction_signals[0].strategy_id}",
+            }
+
+        return {"status": "ok"}
 
     def _calculate_order_parameters(self, signal: Signal) -> dict[str, Any]:
         """Calculate order parameters using deterministic rules"""
@@ -211,6 +294,17 @@ class MLProcessor:
         self.model_loaded = False
         self.last_model_update = 0
 
+        # Load configuration
+        from shared.constants import (
+            POSITION_MODE,
+            POSITION_MODE_AWARE_CONFLICTS,
+            SAME_DIRECTION_CONFLICT_RESOLUTION,
+        )
+
+        self.position_mode = POSITION_MODE
+        self.position_mode_aware_conflicts = POSITION_MODE_AWARE_CONFLICTS
+        self.same_direction_resolution = SAME_DIRECTION_CONFLICT_RESOLUTION
+
     async def process(
         self, signal: Signal, active_signals: dict[str, Signal]
     ) -> dict[str, Any]:
@@ -221,8 +315,18 @@ class MLProcessor:
         if not self.model_loaded:
             return {"status": "rejected", "reason": "ML model not available"}
 
+        # Check for conflicting signals with hedge mode awareness
+        conflicting_signals = self._get_conflicting_signals(signal, active_signals)
+
+        # Check for same-direction signals
+        same_direction_result = self._handle_same_direction_signals(
+            signal, active_signals
+        )
+        if same_direction_result.get("status") == "rejected":
+            return same_direction_result
+
         # Extract features
-        features = self._extract_features(signal, active_signals)
+        features = self._extract_features(signal, active_signals, conflicting_signals)
 
         # Make prediction
         prediction = await self._make_prediction(features)
@@ -242,13 +346,70 @@ class MLProcessor:
             "ml_prediction": prediction,
         }
 
+    def _get_conflicting_signals(
+        self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> list[Signal]:
+        """Get conflicting signals with hedge mode awareness"""
+        # In hedge mode with position_mode_aware_conflicts enabled,
+        # opposite directions are NOT conflicts (can have both LONG and SHORT)
+        if self.position_mode_aware_conflicts and self.position_mode == "hedge":
+            return []
+
+        # In one-way mode, opposite directions ARE conflicts
+        return [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol and s.action != signal.action
+        ]
+
+    def _handle_same_direction_signals(
+        self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> dict[str, Any]:
+        """Handle signals in the same direction based on configuration"""
+        # Find same-direction signals from DIFFERENT strategies
+        same_direction_signals = [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol
+            and s.action == signal.action
+            and s.strategy_id != signal.strategy_id
+        ]
+
+        if not same_direction_signals:
+            return {"status": "ok"}
+
+        # Handle based on configuration
+        if self.same_direction_resolution == "accumulate":
+            return {
+                "status": "ok",
+                "reason": "Accumulating position from multiple strategies",
+            }
+        elif self.same_direction_resolution == "strongest_wins":
+            max_confidence = max(s.confidence for s in same_direction_signals)
+            if signal.confidence <= max_confidence:
+                return {
+                    "status": "rejected",
+                    "reason": f"Weaker than existing same-direction signal (confidence: {max_confidence})",
+                }
+            return {"status": "ok", "reason": "Strongest signal in same direction"}
+        elif self.same_direction_resolution == "reject_duplicates":
+            return {
+                "status": "rejected",
+                "reason": f"Same-direction signal already exists from {same_direction_signals[0].strategy_id}",
+            }
+
+        return {"status": "ok"}
+
     async def _ensure_model_loaded(self) -> None:
         """Ensure ML model is loaded"""
         # Placeholder for ML model loading
         self.model_loaded = True
 
     def _extract_features(
-        self, signal: Signal, active_signals: dict[str, Signal]
+        self,
+        signal: Signal,
+        active_signals: dict[str, Signal],
+        conflicting_signals: list[Signal],
     ) -> dict[str, Any]:
         """Extract features for ML model"""
         features = {
@@ -267,15 +428,8 @@ class MLProcessor:
         if signal.indicators:
             features.update(signal.indicators)
 
-        # Add conflicting signals count
-        conflicting_count = len(
-            [
-                s
-                for s in active_signals.values()
-                if s.symbol == signal.symbol and s.action != signal.action
-            ]
-        )
-        features["conflicting_signals"] = conflicting_count
+        # Add conflicting signals count (only counts if not in hedge mode)
+        features["conflicting_signals"] = len(conflicting_signals)
 
         return features
 
@@ -317,6 +471,17 @@ class LLMProcessor:
     def __init__(self) -> None:
         self.llm_available = False
 
+        # Load configuration
+        from shared.constants import (
+            POSITION_MODE,
+            POSITION_MODE_AWARE_CONFLICTS,
+            SAME_DIRECTION_CONFLICT_RESOLUTION,
+        )
+
+        self.position_mode = POSITION_MODE
+        self.position_mode_aware_conflicts = POSITION_MODE_AWARE_CONFLICTS
+        self.same_direction_resolution = SAME_DIRECTION_CONFLICT_RESOLUTION
+
     async def process(
         self, signal: Signal, active_signals: dict[str, Signal]
     ) -> dict[str, Any]:
@@ -325,8 +490,18 @@ class LLMProcessor:
         if not self.llm_available:
             return {"status": "rejected", "reason": "LLM not available"}
 
+        # Check for conflicting signals with hedge mode awareness
+        conflicting_signals = self._get_conflicting_signals(signal, active_signals)
+
+        # Check for same-direction signals
+        same_direction_result = self._handle_same_direction_signals(
+            signal, active_signals
+        )
+        if same_direction_result.get("status") == "rejected":
+            return same_direction_result
+
         # Prepare context for LLM
-        context = self._prepare_llm_context(signal, active_signals)
+        context = self._prepare_llm_context(signal, active_signals, conflicting_signals)
 
         # Get LLM reasoning
         reasoning = await self._get_llm_reasoning(context)
@@ -350,8 +525,65 @@ class LLMProcessor:
             "llm_reasoning": reasoning,
         }
 
-    def _prepare_llm_context(
+    def _get_conflicting_signals(
         self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> list[Signal]:
+        """Get conflicting signals with hedge mode awareness"""
+        # In hedge mode with position_mode_aware_conflicts enabled,
+        # opposite directions are NOT conflicts (can have both LONG and SHORT)
+        if self.position_mode_aware_conflicts and self.position_mode == "hedge":
+            return []
+
+        # In one-way mode, opposite directions ARE conflicts
+        return [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol and s.action != signal.action
+        ]
+
+    def _handle_same_direction_signals(
+        self, signal: Signal, active_signals: dict[str, Signal]
+    ) -> dict[str, Any]:
+        """Handle signals in the same direction based on configuration"""
+        # Find same-direction signals from DIFFERENT strategies
+        same_direction_signals = [
+            s
+            for s in active_signals.values()
+            if s.symbol == signal.symbol
+            and s.action == signal.action
+            and s.strategy_id != signal.strategy_id
+        ]
+
+        if not same_direction_signals:
+            return {"status": "ok"}
+
+        # Handle based on configuration
+        if self.same_direction_resolution == "accumulate":
+            return {
+                "status": "ok",
+                "reason": "Accumulating position from multiple strategies",
+            }
+        elif self.same_direction_resolution == "strongest_wins":
+            max_confidence = max(s.confidence for s in same_direction_signals)
+            if signal.confidence <= max_confidence:
+                return {
+                    "status": "rejected",
+                    "reason": f"Weaker than existing same-direction signal (confidence: {max_confidence})",
+                }
+            return {"status": "ok", "reason": "Strongest signal in same direction"}
+        elif self.same_direction_resolution == "reject_duplicates":
+            return {
+                "status": "rejected",
+                "reason": f"Same-direction signal already exists from {same_direction_signals[0].strategy_id}",
+            }
+
+        return {"status": "ok"}
+
+    def _prepare_llm_context(
+        self,
+        signal: Signal,
+        active_signals: dict[str, Signal],
+        conflicting_signals: list[Signal],
     ) -> dict[str, Any]:
         """Prepare context for LLM reasoning"""
         context = {
@@ -375,9 +607,10 @@ class LLMProcessor:
                         "action": s.action,
                         "confidence": s.confidence,
                     }
-                    for s in active_signals.values()
-                    if s.symbol == signal.symbol and s.action != signal.action
+                    for s in conflicting_signals
                 ],
+                "position_mode": self.position_mode,
+                "hedge_mode_enabled": (self.position_mode == "hedge"),
             },
         }
 

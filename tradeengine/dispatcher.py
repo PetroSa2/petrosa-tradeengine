@@ -14,6 +14,7 @@ from shared.distributed_lock import distributed_lock_manager
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import SignalAggregator
+from tradeengine.strategy_position_manager import strategy_position_manager
 
 # Prometheus metrics for signal flow tracking
 signals_received = Counter(
@@ -471,6 +472,10 @@ class Dispatcher:
         self.signal_cache_cleanup_interval = 300  # Cleanup every 5 minutes
         self.last_cache_cleanup = time.time()
 
+        # Signal to order mapping for strategy position tracking
+        # Format: {order_id: Signal} - stores signals for strategy position creation
+        self.order_to_signal: dict[str, Signal] = {}
+
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
         try:
@@ -480,6 +485,7 @@ class Dispatcher:
             # Initialize components
             await self.order_manager.initialize()
             await self.position_manager.initialize()
+            await strategy_position_manager.initialize()
 
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"
@@ -722,6 +728,9 @@ class Dispatcher:
                 )
                 order = self._signal_to_order(signal)
 
+                # Store signal for strategy position creation later
+                self.order_to_signal[order.order_id] = signal
+
                 # Generate unique signal fingerprint for deduplication across replicas
                 # This prevents multiple pods from processing the same signal
                 signal_fingerprint = self._generate_signal_fingerprint(signal)
@@ -843,6 +852,34 @@ class Dispatcher:
                     except Exception as e:
                         self.logger.error(
                             f"❌ Position record creation failed for {order.symbol}: {e} - continuing anyway"
+                        )
+
+                    # Create strategy position for advanced analytics
+                    try:
+                        signal = self.order_to_signal.get(order.order_id)
+                        if signal:
+                            strategy_position_id = await asyncio.wait_for(
+                                strategy_position_manager.create_strategy_position(
+                                    signal, order, result
+                                ),
+                                timeout=5.0,
+                            )
+                            self.logger.info(
+                                f"✅ Strategy position {strategy_position_id} created for {signal.strategy_id}"
+                            )
+                            # Clean up mapping
+                            del self.order_to_signal[order.order_id]
+                        else:
+                            self.logger.warning(
+                                f"⚠️  No signal found for order {order.order_id} - skipping strategy position creation"
+                            )
+                    except asyncio.TimeoutError:
+                        self.logger.error(
+                            f"⏱️ Strategy position creation timed out for {order.symbol} - continuing anyway"
+                        )
+                    except Exception as e:
+                        self.logger.error(
+                            f"❌ Strategy position creation failed for {order.symbol}: {e} - continuing anyway"
                         )
 
                     # Only place risk management orders if position was successfully updated

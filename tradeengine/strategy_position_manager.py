@@ -263,6 +263,90 @@ class StrategyPositionManager:
             logger.error(f"Error closing strategy position: {e}")
             raise
 
+    async def get_open_strategy_positions_by_exchange_key(
+        self, exchange_position_key: str
+    ) -> list[dict[str, Any]]:
+        """Get all open strategy positions for a given exchange position
+
+        Args:
+            exchange_position_key: Exchange position key (e.g., "BTCUSDT_LONG")
+
+        Returns:
+            List of open strategy position dicts
+        """
+        try:
+            open_positions = []
+
+            # First, check in-memory strategy positions
+            for strategy_position_id, position in self.strategy_positions.items():
+                if (
+                    position.get("exchange_position_key") == exchange_position_key
+                    and position.get("status") == "open"
+                ):
+                    open_positions.append(position)
+
+            # If MySQL is available, query for any we might have missed
+            if mysql_client and len(open_positions) == 0:
+                try:
+                    results = await mysql_client.execute_query(
+                        """
+                        SELECT
+                            strategy_position_id, strategy_id, signal_id, symbol, side,
+                            entry_quantity, entry_price, entry_time, entry_order_id,
+                            take_profit_price, stop_loss_price, tp_order_id, sl_order_id,
+                            status, exchange_position_key, strategy_metadata
+                        FROM strategy_positions
+                        WHERE exchange_position_key = %s AND status = 'open'
+                        """,
+                        (exchange_position_key,),
+                        fetch=True,
+                    )
+
+                    for row in results:
+                        open_positions.append(
+                            {
+                                "strategy_position_id": row["strategy_position_id"],
+                                "strategy_id": row["strategy_id"],
+                                "signal_id": row.get("signal_id"),
+                                "symbol": row["symbol"],
+                                "side": row["side"],
+                                "entry_quantity": float(row["entry_quantity"]),
+                                "entry_price": float(row["entry_price"]),
+                                "entry_time": row["entry_time"],
+                                "entry_order_id": row.get("entry_order_id"),
+                                "take_profit_price": (
+                                    float(row["take_profit_price"])
+                                    if row.get("take_profit_price")
+                                    else None
+                                ),
+                                "stop_loss_price": (
+                                    float(row["stop_loss_price"])
+                                    if row.get("stop_loss_price")
+                                    else None
+                                ),
+                                "tp_order_id": row.get("tp_order_id"),
+                                "sl_order_id": row.get("sl_order_id"),
+                                "status": row["status"],
+                                "exchange_position_key": row["exchange_position_key"],
+                            }
+                        )
+
+                except Exception as mysql_error:
+                    logger.warning(
+                        f"Failed to query strategy positions from MySQL: {mysql_error}"
+                    )
+
+            logger.info(
+                f"Found {len(open_positions)} open strategy positions for {exchange_position_key}"
+            )
+            return open_positions
+
+        except Exception as e:
+            logger.error(
+                f"Error getting open strategy positions for {exchange_position_key}: {e}"
+            )
+            return []
+
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
         """Persist strategy position to MySQL"""
         if not mysql_client:

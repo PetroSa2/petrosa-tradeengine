@@ -260,7 +260,9 @@ class OCOManager:
             self.logger.error(f"❌ ERROR CANCELLING OCO PAIR: {e}")
             return False
 
-    async def cancel_other_order(self, position_id: str, filled_order_id: str) -> bool:
+    async def cancel_other_order(
+        self, position_id: str, filled_order_id: str
+    ) -> tuple[bool, str]:
         """
         Cancel the other order when one SL/TP order is filled (OCO behavior)
 
@@ -269,36 +271,41 @@ class OCOManager:
             filled_order_id: ID of the order that was filled
 
         Returns:
-            True if the other order was cancelled successfully
+            Tuple of (success: bool, close_reason: str)
+            close_reason will be 'take_profit', 'stop_loss', or 'unknown'
         """
 
         if position_id not in self.active_oco_pairs:
             self.logger.warning(f"⚠️  No OCO pair found for position {position_id}")
-            return False
+            return False, "unknown"
 
         oco_info = self.active_oco_pairs[position_id]
         sl_order_id = oco_info["sl_order_id"]
         tp_order_id = oco_info["tp_order_id"]
 
-        # Determine which order to cancel
+        # Determine which order to cancel and the close reason
+        close_reason = "unknown"
         if filled_order_id == sl_order_id:
             order_to_cancel = tp_order_id
             filled_type = "Stop Loss"
             cancel_type = "Take Profit"
+            close_reason = "stop_loss"
         elif filled_order_id == tp_order_id:
             order_to_cancel = sl_order_id
             filled_type = "Take Profit"
             cancel_type = "Stop Loss"
+            close_reason = "take_profit"
         else:
             self.logger.warning(
                 f"⚠️  Filled order {filled_order_id} not found in OCO pair"
             )
-            return False
+            return False, "unknown"
 
         self.logger.info(f"🔄 OCO TRIGGERED: {filled_type} FILLED")
         self.logger.info(f"Position ID: {position_id}")
         self.logger.info(f"Filled Order: {filled_order_id} ({filled_type})")
         self.logger.info(f"Cancelling Order: {order_to_cancel} ({cancel_type})")
+        self.logger.info(f"Close Reason: {close_reason}")
 
         try:
             # Cancel the other order
@@ -309,14 +316,15 @@ class OCOManager:
             if cancel_result:
                 self.logger.info(f"✅ {cancel_type} ORDER CANCELLED SUCCESSFULLY")
                 self.active_oco_pairs[position_id]["status"] = "completed"
-                return True
+                self.active_oco_pairs[position_id]["close_reason"] = close_reason
+                return True, close_reason
             else:
                 self.logger.error(f"❌ FAILED TO CANCEL {cancel_type} ORDER")
-                return False
+                return False, close_reason
 
         except Exception as e:
             self.logger.error(f"❌ ERROR CANCELLING {cancel_type} ORDER: {e}")
-            return False
+            return False, close_reason
 
     async def start_monitoring(self) -> None:
         """Start monitoring active orders for fills and trigger OCO logic"""
@@ -367,30 +375,57 @@ class OCOManager:
                     tp_exists = any(order["orderId"] == tp_order_id for order in orders)
 
                     # If one order is missing, it was likely filled
+                    filled_order_id = None
+                    close_reason = "unknown"
+
                     if not sl_exists and tp_exists:
-                        await self.cancel_other_order(position_id, sl_order_id)
+                        # Stop loss filled
+                        filled_order_id = sl_order_id
+                        success, close_reason = await self.cancel_other_order(
+                            position_id, sl_order_id
+                        )
                     elif sl_exists and not tp_exists:
-                        await self.cancel_other_order(position_id, tp_order_id)
+                        # Take profit filled
+                        filled_order_id = tp_order_id
+                        success, close_reason = await self.cancel_other_order(
+                            position_id, tp_order_id
+                        )
                     elif not sl_exists and not tp_exists:
                         # Both orders are gone - OCO completed
                         self.logger.info(f"✅ OCO COMPLETED FOR POSITION {position_id}")
                         self.active_oco_pairs[position_id]["status"] = "completed"
 
-                        # CRITICAL FIX: Close the position when OCO completes
-                        # This prevents new signals from creating duplicate OCO orders
+                        # Try to determine which filled first (check oco_info for close_reason)
+                        close_reason = oco_info.get("close_reason", "unknown")
+                        filled_order_id = oco_info.get("filled_order_id")
+
+                        # CRITICAL: Close the position with full PNL calculation
                         try:
-                            if self.dispatcher:
+                            if self.dispatcher and filled_order_id:
                                 await self._close_position_on_oco_completion(
-                                    position_id, oco_info, self.dispatcher
+                                    position_id,
+                                    filled_order_id,
+                                    close_reason,
+                                    oco_info,
+                                    self.dispatcher,
                                 )
                             else:
                                 self.logger.warning(
-                                    f"No dispatcher reference available for position {position_id}"
+                                    f"No dispatcher reference or filled_order_id for position {position_id}"
                                 )
                         except Exception as e:
                             self.logger.error(
                                 f"❌ Failed to close position {position_id}: {e}"
                             )
+
+                    # Store filled order info for later use
+                    if filled_order_id and close_reason != "unknown":
+                        self.active_oco_pairs[position_id][
+                            "filled_order_id"
+                        ] = filled_order_id
+                        self.active_oco_pairs[position_id][
+                            "close_reason"
+                        ] = close_reason
 
                 # Remove completed pairs
                 self.active_oco_pairs = {
@@ -409,43 +444,179 @@ class OCOManager:
         self.logger.info("🔍 ORDER MONITORING STOPPED")
 
     async def _close_position_on_oco_completion(
-        self, position_id: str, oco_info: dict, dispatcher
+        self,
+        position_id: str,
+        filled_order_id: str,
+        close_reason: str,
+        oco_info: dict,
+        dispatcher,
     ) -> None:
-        """Close position when OCO completes to prevent duplicate orders"""
+        """Close position with full PNL calculation when OCO completes
+
+        Args:
+            position_id: Position identifier
+            filled_order_id: The order ID that was filled (SL or TP)
+            close_reason: 'take_profit' or 'stop_loss'
+            oco_info: OCO pair information
+            dispatcher: Dispatcher instance
+        """
         try:
-            # Get the symbol from OCO info
             symbol = oco_info["symbol"]
+            position_side = oco_info["position_side"]
 
-            # Close position in position manager
+            self.logger.info("🔄 CLOSING POSITION WITH PNL CALCULATION")
+            self.logger.info(f"  Position ID: {position_id}")
+            self.logger.info(f"  Symbol: {symbol}")
+            self.logger.info(f"  Position Side: {position_side}")
+            self.logger.info(f"  Close Reason: {close_reason}")
+            self.logger.info(f"  Filled Order ID: {filled_order_id}")
+
+            # Step 1: Fetch filled order details from Binance
+            try:
+                order_details = self.exchange.client.futures_get_order(
+                    symbol=symbol, orderId=filled_order_id
+                )
+
+                # Extract exit data
+                exit_price = float(order_details.get("avgPrice", 0))
+                exit_quantity = float(order_details.get("executedQty", 0))
+                exit_time_ms = order_details.get("updateTime")
+
+                self.logger.info(f"  Exit Price: {exit_price}")
+                self.logger.info(f"  Exit Quantity: {exit_quantity}")
+
+            except Exception as e:
+                self.logger.error(f"❌ Failed to fetch order details: {e}")
+                # Fallback to estimated values from oco_info
+                exit_price = (
+                    oco_info.get("stop_loss_price")
+                    if close_reason == "stop_loss"
+                    else oco_info.get("take_profit_price")
+                ) or 0
+                exit_quantity = 0
+                exit_time_ms = int(time.time() * 1000)
+                self.logger.warning(f"Using fallback exit_price: {exit_price}")
+
+            # Step 2: Get position data from position manager
+            position_key = (symbol, position_side)
+            position_data = None
+
             if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
-                # Mark position as closed in position manager
-                if symbol in dispatcher.position_manager.positions:
-                    position = dispatcher.position_manager.positions[symbol]
-                    position["status"] = "closed"
-                    position["close_time"] = datetime.utcnow()
+                # Try to get position data
+                if hasattr(dispatcher.position_manager, "get_position_data"):
+                    position_data = await dispatcher.position_manager.get_position_data(
+                        position_id
+                    )
+                elif position_key in dispatcher.position_manager.positions:
+                    position_data = dispatcher.position_manager.positions[position_key]
 
-                    # Log the position closure
-                    self.logger.info(f"🔒 POSITION CLOSED: {symbol} (OCO completed)")
+                if position_data:
+                    entry_price = float(position_data.get("avg_price", 0))
+                    entry_time = position_data.get("entry_time", datetime.utcnow())
+                    quantity = float(position_data.get("quantity", exit_quantity))
+                    entry_commission = float(position_data.get("commission", 0))
+
+                    self.logger.info(f"  Entry Price: {entry_price}")
+                    self.logger.info(f"  Position Quantity: {quantity}")
+
+                    # Step 3: Calculate PNL (hedge-mode aware)
+                    if position_side == "LONG":
+                        pnl = (exit_price - entry_price) * exit_quantity
+                    else:  # SHORT
+                        pnl = (entry_price - exit_price) * exit_quantity
+
+                    # Calculate exit commission (assume 0.04% maker fee for limit orders)
+                    exit_commission = exit_quantity * exit_price * 0.0004
+                    total_commission = entry_commission + exit_commission
+                    pnl_after_fees = pnl - total_commission
+
+                    pnl_pct = (
+                        (pnl / (entry_price * exit_quantity) * 100)
+                        if entry_price > 0 and exit_quantity > 0
+                        else 0.0
+                    )
+
+                    self.logger.info("  📊 PNL Calculation:")
+                    self.logger.info(f"     Gross PNL: ${pnl:.2f}")
+                    self.logger.info(f"     Commission: ${total_commission:.4f}")
+                    self.logger.info(f"     Net PNL: ${pnl_after_fees:.2f}")
+                    self.logger.info(f"     PNL %: {pnl_pct:.2f}%")
+
+                    # Step 4: Close exchange-level position
+                    exit_result = {
+                        "exit_price": exit_price,
+                        "exit_time": datetime.fromtimestamp(exit_time_ms / 1000),
+                        "entry_price": entry_price,
+                        "entry_time": entry_time,
+                        "quantity": exit_quantity,
+                        "pnl": pnl,
+                        "pnl_pct": pnl_pct,
+                        "pnl_after_fees": pnl_after_fees,
+                        "close_reason": close_reason,
+                        "order_id": filled_order_id,
+                        "entry_commission": entry_commission,
+                        "exit_commission": exit_commission,
+                        "position_side": position_side,
+                    }
+
+                    await dispatcher.position_manager.close_position_record(
+                        position_id, exit_result
+                    )
 
                     # Remove from active positions
-                    del dispatcher.position_manager.positions[symbol]
+                    if position_key in dispatcher.position_manager.positions:
+                        del dispatcher.position_manager.positions[position_key]
 
-                    # Sync to MongoDB
-                    await dispatcher.position_manager._close_position_in_mongodb(
-                        symbol, position
+                    self.logger.info(f"✅ Exchange position closed: {position_id}")
+
+                    # Step 5: Close strategy-level positions
+                    from tradeengine.strategy_position_manager import (
+                        strategy_position_manager,
+                    )
+
+                    if strategy_position_manager:
+                        exchange_position_key = f"{symbol}_{position_side}"
+
+                        # Get all open strategy positions for this exchange position
+                        if hasattr(
+                            strategy_position_manager,
+                            "get_open_strategy_positions_by_exchange_key",
+                        ):
+                            strategy_positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key(
+                                exchange_position_key
+                            )
+
+                            self.logger.info(
+                                f"  Closing {len(strategy_positions)} strategy positions"
+                            )
+
+                            for strat_pos in strategy_positions:
+                                strategy_position_id = strat_pos["strategy_position_id"]
+                                await strategy_position_manager.close_strategy_position(
+                                    strategy_position_id=strategy_position_id,
+                                    exit_price=exit_price,
+                                    exit_quantity=strat_pos.get("entry_quantity"),
+                                    close_reason=close_reason,
+                                    exit_order_id=filled_order_id,
+                                )
+                                self.logger.info(
+                                    f"  ✅ Strategy position closed: {strategy_position_id}"
+                                )
+
+                    self.logger.info(
+                        f"✅ POSITION {position_id} FULLY CLOSED WITH PNL CALCULATED"
                     )
                 else:
                     self.logger.warning(
-                        f"Position {symbol} not found in position manager"
+                        f"Position {position_id} not found in position manager"
                     )
-
-            # Log the completion
-            self.logger.info(
-                f"✅ POSITION {position_id} CLOSED - No more OCO orders will be placed"
-            )
+            else:
+                self.logger.warning("Position manager not available")
 
         except Exception as e:
-            self.logger.error(f"❌ Error closing position {position_id}: {e}")
+            self.logger.error(
+                f"❌ Error closing position {position_id}: {e}", exc_info=True
+            )
             raise
 
 

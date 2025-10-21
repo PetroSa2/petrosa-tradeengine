@@ -400,8 +400,9 @@ jobs:
 
     - name: Delete old Job if exists
       run: |
+        kubectl delete job petrosa-tradeengine-mysql-schema -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify --ignore-not-found=true
         kubectl delete job petrosa-tradeengine-mysql-schema-init -n ${{ env.NAMESPACE }} --insecure-skip-tls-verify --ignore-not-found=true
-        echo "✅ Old Job deleted (if existed)"
+        echo "✅ Old Jobs deleted (if existed)"
 
     - name: Apply Kubernetes manifests
       run: |

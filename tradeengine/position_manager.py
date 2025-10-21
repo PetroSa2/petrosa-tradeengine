@@ -611,34 +611,91 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error updating position risk orders: {e}")
 
+    async def get_position_data(self, position_id: str) -> dict[str, Any] | None:
+        """Get position data by position_id
+
+        Args:
+            position_id: The position ID to lookup
+
+        Returns:
+            Position data dict or None if not found
+        """
+        try:
+            # First try MongoDB
+            if self.mongodb_db is not None:
+                try:
+                    positions_collection = self.mongodb_db.positions
+                    position = await positions_collection.find_one(
+                        {"position_id": position_id}
+                    )
+                    if position:
+                        logger.debug(f"Found position {position_id} in MongoDB")
+                        return position
+                except Exception as mongo_error:
+                    logger.warning(
+                        f"Failed to get position from MongoDB: {mongo_error}"
+                    )
+
+            # Fallback to in-memory positions (search by position_id in metadata)
+            for position_key, position in self.positions.items():
+                if position.get("position_id") == position_id:
+                    logger.debug(f"Found position {position_id} in memory")
+                    return position
+
+            logger.warning(f"Position {position_id} not found")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting position data: {e}")
+            return None
+
     async def close_position_record(
         self, position_id: str, exit_result: dict[str, Any]
     ) -> None:
-        """Update position record on closure with dual persistence and metrics"""
+        """Update position record on closure with dual persistence and metrics
+
+        Supports hedge mode with proper PNL calculation for LONG and SHORT positions.
+        """
         try:
             # Calculate closure data
             exit_price = exit_result.get("exit_price", 0.0)
-            exit_time = datetime.utcnow()
+            exit_time = exit_result.get("exit_time", datetime.utcnow())
             entry_price = exit_result.get("entry_price", 0.0)
             quantity = exit_result.get("quantity", 0.0)
             entry_time = exit_result.get("entry_time", exit_time)
+            position_side = exit_result.get("position_side", "LONG")
 
-            # Calculate PnL
-            pnl = (exit_price - entry_price) * quantity
-            pnl_pct = (
-                ((exit_price - entry_price) / entry_price * 100)
-                if entry_price > 0
-                else 0.0
-            )
+            # Calculate PnL (use provided values if already calculated, else calculate)
+            if "pnl" in exit_result and "pnl_pct" in exit_result:
+                # Already calculated (e.g., from OCO completion)
+                pnl = exit_result["pnl"]
+                pnl_pct = exit_result["pnl_pct"]
+                pnl_after_fees = exit_result.get("pnl_after_fees")
+            else:
+                # Calculate based on position side (hedge-mode aware)
+                if position_side == "LONG":
+                    pnl = (exit_price - entry_price) * quantity
+                else:  # SHORT
+                    pnl = (entry_price - exit_price) * quantity
+
+                pnl_pct = (
+                    (pnl / (entry_price * quantity) * 100)
+                    if entry_price > 0 and quantity > 0
+                    else 0.0
+                )
+
+                # Get commissions
+                entry_commission = exit_result.get("entry_commission", 0.0)
+                exit_commission = exit_result.get("exit_commission", 0.0)
+                total_commission = entry_commission + exit_commission
+                pnl_after_fees = pnl - total_commission
 
             # Calculate duration
             duration_seconds = int((exit_time - entry_time).total_seconds())
 
-            # Get commissions
+            # Get commissions (handle both cases)
             entry_commission = exit_result.get("entry_commission", 0.0)
             exit_commission = exit_result.get("exit_commission", 0.0)
-            total_commission = entry_commission + exit_commission
-            pnl_after_fees = pnl - total_commission
 
             update_data = {
                 "status": "closed",

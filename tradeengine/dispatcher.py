@@ -786,25 +786,45 @@ class Dispatcher:
             # Update position with distributed state management and create position record
             # Market orders return "NEW" status immediately, which is valid for risk management
             if result and result.get("status") in ["filled", "partially_filled", "NEW"]:
-                # CRITICAL FIX: Position update must succeed before placing risk management orders
+                # CRITICAL FIX: Position update with retry logic
                 position_updated = False
-                try:
-                    await asyncio.wait_for(
-                        self.position_manager.update_position(order, result),
-                        timeout=5.0,
-                    )
-                    self.logger.info(f"✅ Position updated for {order.symbol}")
-                    position_updated = True
-                except asyncio.TimeoutError:
-                    self.logger.error(
-                        f"⏱️ Position update timed out for {order.symbol} - ABORTING risk management"
-                    )
-                    return result  # Exit without placing risk management orders
-                except Exception as e:
-                    self.logger.error(
-                        f"❌ Position update failed for {order.symbol}: {e} - ABORTING risk management"
-                    )
-                    return result  # Exit without placing risk management orders
+                max_retries = 3
+
+                for attempt in range(max_retries):
+                    try:
+                        await asyncio.wait_for(
+                            self.position_manager.update_position(order, result),
+                            timeout=10.0,  # Increased from 5s to 10s
+                        )
+                        self.logger.info(f"✅ Position updated for {order.symbol}")
+                        position_updated = True
+                        break  # Success, exit retry loop
+                    except asyncio.TimeoutError:
+                        if attempt < max_retries - 1:
+                            backoff = 2**attempt
+                            self.logger.warning(
+                                f"⏱️ Position update timed out for {order.symbol} "
+                                f"(attempt {attempt + 1}/{max_retries}), retrying in {backoff}s..."
+                            )
+                            await asyncio.sleep(backoff)
+                        else:
+                            self.logger.error(
+                                f"⏱️ Position update failed after {max_retries} attempts for {order.symbol} - ABORTING risk management"
+                            )
+                            return result  # Exit without placing risk management orders
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            backoff = 2**attempt
+                            self.logger.warning(
+                                f"❌ Position update failed for {order.symbol}: {e} "
+                                f"(attempt {attempt + 1}/{max_retries}), retrying in {backoff}s..."
+                            )
+                            await asyncio.sleep(backoff)
+                        else:
+                            self.logger.error(
+                                f"❌ Position update failed after {max_retries} attempts for {order.symbol}: {e} - ABORTING risk management"
+                            )
+                            return result  # Exit without placing risk management orders
 
                 # Only create position record if position update succeeded
                 if position_updated:

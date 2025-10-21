@@ -187,28 +187,27 @@ class SignalConsumer:
                 signal_data.get("action", "Unknown"),
             )
 
-            # Parse timestamp with better error handling
+            # Parse timestamp with better error handling and fallback
             timestamp_raw = signal_data.get("timestamp")
             if not timestamp_raw:
-                logger.error(
-                    "❌ MISSING TIMESTAMP | Subject: %s | Signal data: %s",
+                logger.warning(
+                    "⚠️ MISSING TIMESTAMP | Subject: %s | Using current time as fallback",
                     msg.subject,
-                    signal_data,
                 )
-                raise ValueError("Missing timestamp in signal data")
-
-            try:
-                signal_data["timestamp"] = datetime.fromisoformat(timestamp_raw)
-            except (ValueError, TypeError) as e:
-                logger.error(
-                    "❌ INVALID TIMESTAMP FORMAT | Subject: %s | Timestamp: %s | Type: %s | Error: %s | Full data: %s",
-                    msg.subject,
-                    timestamp_raw,
-                    type(timestamp_raw).__name__,
-                    str(e),
-                    signal_data,
-                )
-                raise ValueError(f"Invalid timestamp format: {timestamp_raw}") from e
+                signal_data["timestamp"] = datetime.utcnow()
+            else:
+                try:
+                    signal_data["timestamp"] = datetime.fromisoformat(timestamp_raw)
+                except (ValueError, TypeError) as e:
+                    logger.warning(
+                        "⚠️ INVALID TIMESTAMP FORMAT | Subject: %s | Timestamp: %s | Type: %s | Error: %s | Using current time as fallback",
+                        msg.subject,
+                        timestamp_raw,
+                        type(timestamp_raw).__name__,
+                        str(e),
+                    )
+                    # Use current time as fallback instead of raising error
+                    signal_data["timestamp"] = datetime.utcnow()
 
             signal = Signal(**signal_data)
 

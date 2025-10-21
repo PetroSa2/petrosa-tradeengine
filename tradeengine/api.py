@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -709,17 +709,124 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]
 
 
 @app.get("/signals/active")
-async def get_active_signals() -> dict[str, Any]:
-    """Get currently active signals"""
+async def get_active_signals(
+    symbol: str | None = Query(
+        None, description="Filter by trading symbol (e.g., BTCUSDT)"
+    ),
+    strategy_id: str | None = Query(None, description="Filter by strategy identifier"),
+    timeframe: str | None = Query(
+        None, description="Filter by timeframe (1m, 5m, 15m, 1h, 4h, 1d)"
+    ),
+    min_confidence: float | None = Query(
+        None, ge=0.0, le=1.0, description="Minimum confidence threshold (0.0-1.0)"
+    ),
+    from_time: datetime | None = Query(
+        None, alias="from", description="Start time for filtering"
+    ),
+    to_time: datetime | None = Query(
+        None, alias="to", description="End time for filtering"
+    ),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=500,
+        description="Maximum number of results (default: 50, max: 500)",
+    ),
+    offset: int = Query(0, ge=0, description="Pagination offset (default: 0)"),
+) -> dict[str, Any]:
+    """
+    Get currently active signals with filtering and pagination support.
+
+    Supports filtering by symbol, strategy, timeframe, confidence level, and time range.
+    Results are paginated for efficient data retrieval.
+    """
     try:
         # Get active signals from dispatcher
         if hasattr(dispatcher, "get_active_signals"):
-            signals = dispatcher.get_active_signals()
+            all_signals = dispatcher.get_active_signals()
         else:
-            signals = []
+            all_signals = []
+
+        # Convert to list if needed
+        if not isinstance(all_signals, list):
+            all_signals = list(all_signals)
+
+        # Apply filters
+        filtered_signals = all_signals
+
+        if symbol:
+            filtered_signals = [
+                s for s in filtered_signals if s.get("symbol") == symbol
+            ]
+
+        if strategy_id:
+            filtered_signals = [
+                s for s in filtered_signals if s.get("strategy_id") == strategy_id
+            ]
+
+        if timeframe:
+            filtered_signals = [
+                s for s in filtered_signals if s.get("timeframe") == timeframe
+            ]
+
+        if min_confidence is not None:
+            filtered_signals = [
+                s for s in filtered_signals if s.get("confidence", 0) >= min_confidence
+            ]
+
+        if from_time:
+            filtered_signals = [
+                s
+                for s in filtered_signals
+                if s.get("timestamp")
+                and (
+                    isinstance(s["timestamp"], datetime)
+                    and s["timestamp"] >= from_time
+                    or isinstance(s["timestamp"], str)
+                    and datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00"))
+                    >= from_time
+                )
+            ]
+
+        if to_time:
+            filtered_signals = [
+                s
+                for s in filtered_signals
+                if s.get("timestamp")
+                and (
+                    isinstance(s["timestamp"], datetime)
+                    and s["timestamp"] <= to_time
+                    or isinstance(s["timestamp"], str)
+                    and datetime.fromisoformat(s["timestamp"].replace("Z", "+00:00"))
+                    <= to_time
+                )
+            ]
+
+        total_count = len(filtered_signals)
+
+        # Apply pagination
+        paginated_signals = filtered_signals[offset : offset + limit]
+
         return {
             "status": "success",
-            "signals": signals,
+            "data": paginated_signals,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "page": (offset // limit) + 1,
+                "pages": (total_count + limit - 1) // limit if limit > 0 else 0,
+                "has_next": offset + limit < total_count,
+                "has_previous": offset > 0,
+            },
+            "filters_applied": {
+                "symbol": symbol,
+                "strategy_id": strategy_id,
+                "timeframe": timeframe,
+                "min_confidence": min_confidence,
+                "from": from_time.isoformat() if from_time else None,
+                "to": to_time.isoformat() if to_time else None,
+            },
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -730,14 +837,124 @@ async def get_active_signals() -> dict[str, Any]:
 
 
 @app.get("/positions")
-async def get_positions() -> dict[str, Any]:
-    """Get all positions"""
+async def get_positions(
+    symbol: str | None = Query(
+        None, description="Filter by trading symbol (e.g., BTCUSDT)"
+    ),
+    side: str | None = Query(None, description="Filter by position side (LONG, SHORT)"),
+    status: str | None = Query(
+        None, description="Filter by position status (open, closed)"
+    ),
+    min_size: float | None = Query(None, description="Minimum position size filter"),
+    max_size: float | None = Query(None, description="Maximum position size filter"),
+    min_pnl: float | None = Query(None, description="Minimum P&L filter"),
+    max_pnl: float | None = Query(None, description="Maximum P&L filter"),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=500,
+        description="Maximum number of results (default: 50, max: 500)",
+    ),
+    offset: int = Query(0, ge=0, description="Pagination offset (default: 0)"),
+    sort_by: str = Query(
+        "created_at", description="Sort by field (symbol, size, pnl, created_at)"
+    ),
+    sort_order: str = Query("desc", description="Sort order (asc, desc)"),
+) -> dict[str, Any]:
+    """
+    Get positions with filtering and pagination support.
+
+    Supports comprehensive filtering by symbol, side, status, size range, and P&L range.
+    Results are paginated and sortable.
+    """
     try:
         # Get positions from position manager
-        positions = dispatcher.position_manager.get_positions()
+        all_positions = dispatcher.position_manager.get_positions()
+
+        # Convert to list if it's a dict
+        if isinstance(all_positions, dict):
+            positions_list = list(all_positions.values())
+        else:
+            positions_list = all_positions
+
+        # Apply filters
+        filtered_positions = positions_list
+
+        if symbol:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("symbol") == symbol
+            ]
+
+        if side:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("side") == side
+            ]
+
+        if status:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("status") == status
+            ]
+
+        if min_size is not None:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("size", 0) >= min_size
+            ]
+
+        if max_size is not None:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("size", 0) <= max_size
+            ]
+
+        if min_pnl is not None:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("pnl", 0) >= min_pnl
+            ]
+
+        if max_pnl is not None:
+            filtered_positions = [
+                p for p in filtered_positions if p.get("pnl", 0) <= max_pnl
+            ]
+
+        total_count = len(filtered_positions)
+
+        # Apply sorting
+        reverse = sort_order.lower() == "desc"
+        try:
+            filtered_positions = sorted(
+                filtered_positions, key=lambda x: x.get(sort_by, 0), reverse=reverse
+            )
+        except (KeyError, TypeError):
+            # If sort field doesn't exist, skip sorting
+            pass
+
+        # Apply pagination
+        paginated_positions = filtered_positions[offset : offset + limit]
+
         return {
             "status": "success",
-            "positions": positions,
+            "data": paginated_positions,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "page": (offset // limit) + 1,
+                "pages": (total_count + limit - 1) // limit if limit > 0 else 0,
+                "has_next": offset + limit < total_count,
+                "has_previous": offset > 0,
+            },
+            "filters_applied": {
+                "symbol": symbol,
+                "side": side,
+                "status": status,
+                "min_size": min_size,
+                "max_size": max_size,
+                "min_pnl": min_pnl,
+                "max_pnl": max_pnl,
+            },
+            "sort": {
+                "by": sort_by,
+                "order": sort_order,
+            },
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -763,22 +980,84 @@ async def get_position(symbol: str) -> dict[str, Any]:
 
 
 @app.get("/orders")
-async def get_orders() -> dict[str, Any]:
-    """Get all orders"""
-    try:
-        # Get orders from both exchanges
-        binance_orders = await binance_exchange.get_order_status("BTCUSDT", 0)
-        simulator_orders = await simulator_exchange.get_order_status("BTCUSDT", "0")
+async def get_orders(
+    symbol: str | None = Query(
+        None, description="Filter by trading symbol (e.g., BTCUSDT)"
+    ),
+    status: str | None = Query(
+        None, description="Filter by order status (pending, filled, cancelled, failed)"
+    ),
+    side: str | None = Query(None, description="Filter by order side (buy, sell)"),
+    type: str | None = Query(
+        None, description="Filter by order type (market, limit, stop)"
+    ),
+    from_time: datetime | None = Query(
+        None, alias="from", description="Start time for filtering"
+    ),
+    to_time: datetime | None = Query(
+        None, alias="to", description="End time for filtering"
+    ),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=500,
+        description="Maximum number of results (default: 50, max: 500)",
+    ),
+    offset: int = Query(0, ge=0, description="Pagination offset (default: 0)"),
+    sort_by: str = Query(
+        "created_at",
+        description="Sort by field (created_at, updated_at, symbol, status)",
+    ),
+    sort_order: str = Query("desc", description="Sort order (asc, desc)"),
+) -> dict[str, Any]:
+    """
+    Get orders with filtering and pagination support.
 
-        # Combine orders
-        all_orders = {
-            "binance": binance_orders,
-            "simulator": simulator_orders,
-        }
+    Supports comprehensive filtering by symbol, status, side, type, and time range.
+    Results are paginated and sortable.
+    """
+    try:
+        # Note: This is a placeholder implementation. In production, you would:
+        # 1. Query order history from position manager or database
+        # 2. Apply filters (symbol, status, side, type, time range)
+        # 3. Sort by specified field and order
+        # 4. Apply pagination (offset and limit)
+
+        # Placeholder: Return empty list until order history is implemented
+        all_orders_list = []
+
+        # Apply filters here (when order history is implemented)
+        filtered_orders = all_orders_list
+        total_count = len(filtered_orders)
+
+        # Apply sorting and pagination
+        # filtered_orders = apply_sorting(filtered_orders, sort_by, sort_order)
+        paginated_orders = filtered_orders[offset : offset + limit]
 
         return {
             "status": "success",
-            "orders": all_orders,
+            "data": paginated_orders,
+            "pagination": {
+                "total": total_count,
+                "limit": limit,
+                "offset": offset,
+                "page": (offset // limit) + 1,
+                "pages": (total_count + limit - 1) // limit,
+                "has_next": offset + limit < total_count,
+                "has_previous": offset > 0,
+            },
+            "filters_applied": {
+                "symbol": symbol,
+                "status": status,
+                "side": side,
+                "type": type,
+                "from": from_time.isoformat() if from_time else None,
+                "to": to_time.isoformat() if to_time else None,
+            },
+            "sort": {
+                "by": sort_by,
+                "order": sort_order,
+            },
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:

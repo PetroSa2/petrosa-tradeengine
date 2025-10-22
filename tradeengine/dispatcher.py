@@ -1077,6 +1077,9 @@ class Dispatcher:
                         )
                         self.logger.info(f"✅ Position updated for {order.symbol}")
                         position_updated = True
+                        self.logger.info(
+                            f"🔍 DEBUG: position_updated={position_updated}, breaking from retry loop"
+                        )
                         break  # Success, exit retry loop
                     except asyncio.TimeoutError:
                         if attempt < max_retries - 1:
@@ -1106,7 +1109,16 @@ class Dispatcher:
                             return result  # Exit without placing risk management orders
 
                 # Only create position record if position update succeeded
+                self.logger.info(
+                    f"🔍 DEBUG: Exited retry loop for {order.symbol}, position_updated={position_updated}"
+                )
+                self.logger.info(
+                    f"🔍 DEBUG: About to check position_updated={position_updated} for {order.symbol}"
+                )
                 if position_updated:
+                    self.logger.info(
+                        f"🔍 DEBUG: ENTERED if position_updated block for {order.symbol}"
+                    )
                     try:
                         await asyncio.wait_for(
                             self.position_manager.create_position_record(order, result),
@@ -1153,6 +1165,9 @@ class Dispatcher:
                         )
 
                     # Only place risk management orders if position was successfully updated
+                    self.logger.info(
+                        f"🔍 DEBUG: About to place risk management orders for {order.symbol}"
+                    )
                     self.logger.info(
                         f"🛡️ ATTEMPTING TO PLACE RISK MANAGEMENT ORDERS for {order.symbol} | position_updated={position_updated}"
                     )

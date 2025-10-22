@@ -407,8 +407,18 @@ class PositionManager:
             )
             audit_logger.log_position(position, status="updated")
 
-            # Sync to MongoDB immediately for critical updates
-            await self._sync_positions_to_mongodb()
+            # CRITICAL FIX: MongoDB sync must NOT block risk management orders
+            # Use short timeout to prevent hanging - position already updated in memory
+            try:
+                await asyncio.wait_for(self._sync_positions_to_mongodb(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"⚠️  MongoDB sync timed out for {symbol} {position_side} (non-critical, continuing)"
+                )
+            except Exception as mongo_error:
+                logger.warning(
+                    f"⚠️  MongoDB sync failed for {symbol} {position_side} (non-critical): {mongo_error}"
+                )
 
         except Exception as e:
             logger.error(f"Error updating position for {symbol} {position_side}: {e}")

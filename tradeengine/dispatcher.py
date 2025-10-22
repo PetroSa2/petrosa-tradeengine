@@ -1054,13 +1054,23 @@ class Dispatcher:
 
             # Update position with distributed state management and create position record
             # Market orders return "NEW" status immediately, which is valid for risk management
+            self.logger.info(
+                f"🔍 ORDER RESULT CHECK: status={result.get('status') if result else None}, has_result={result is not None}"
+            )
+
             if result and result.get("status") in ["filled", "partially_filled", "NEW"]:
+                self.logger.info(
+                    f"✅ ORDER STATUS VALID FOR POSITION UPDATE: {order.symbol}"
+                )
                 # CRITICAL FIX: Position update with retry logic
                 position_updated = False
                 max_retries = 3
 
                 for attempt in range(max_retries):
                     try:
+                        self.logger.info(
+                            f"🔄 Updating position for {order.symbol} (attempt {attempt+1}/{max_retries})"
+                        )
                         await asyncio.wait_for(
                             self.position_manager.update_position(order, result),
                             timeout=10.0,  # Increased from 5s to 10s
@@ -1143,7 +1153,13 @@ class Dispatcher:
                         )
 
                     # Only place risk management orders if position was successfully updated
+                    self.logger.info(
+                        f"🛡️ ATTEMPTING TO PLACE RISK MANAGEMENT ORDERS for {order.symbol} | position_updated={position_updated}"
+                    )
                     try:
+                        self.logger.info(
+                            f"🔧 Calling _place_risk_management_orders() for {order.symbol}"
+                        )
                         await asyncio.wait_for(
                             self._place_risk_management_orders(order, result),
                             timeout=10.0,  # Longer timeout for exchange API calls

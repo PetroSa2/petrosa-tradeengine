@@ -718,20 +718,34 @@ class Dispatcher:
             await self.order_manager.initialize()
             await self.position_manager.initialize()
 
-            # CRITICAL FIX: Don't let MySQL connection failures block startup
-            # Strategy position manager initialization can fail if MySQL is unavailable
-            # but this shouldn't prevent NATS consumer from starting
-            try:
-                await strategy_position_manager.initialize()
-                self.logger.info("Strategy position manager initialized successfully")
-            except Exception as mysql_error:
-                self.logger.warning(
-                    f"Strategy position manager initialization failed (MySQL unavailable?): {mysql_error}"
-                )
-                self.logger.warning(
-                    "Continuing startup without strategy position manager - "
-                    "positions will still work via MongoDB"
-                )
+            # CRITICAL FIX: Initialize strategy position manager in background
+            # MySQL connection attempts can take 3+ minutes and will block startup
+            # Move to background task so NATS consumer can start immediately
+            import asyncio
+
+            async def init_strategy_position_manager_async() -> None:
+                """Initialize strategy position manager in background"""
+                try:
+                    self.logger.info(
+                        "Starting strategy position manager initialization in background..."
+                    )
+                    await strategy_position_manager.initialize()
+                    self.logger.info(
+                        "✅ Strategy position manager initialized successfully"
+                    )
+                except Exception as mysql_error:
+                    self.logger.warning(
+                        f"⚠️ Strategy position manager initialization failed (MySQL unavailable): {mysql_error}"
+                    )
+                    self.logger.warning(
+                        "Positions will still work via MongoDB fallback"
+                    )
+
+            # Start initialization in background (don't await)
+            asyncio.create_task(init_strategy_position_manager_async())
+            self.logger.info(
+                "Strategy position manager initialization started in background"
+            )
 
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"

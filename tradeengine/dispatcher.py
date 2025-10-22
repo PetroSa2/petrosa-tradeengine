@@ -717,7 +717,21 @@ class Dispatcher:
             # Initialize components
             await self.order_manager.initialize()
             await self.position_manager.initialize()
-            await strategy_position_manager.initialize()
+
+            # CRITICAL FIX: Don't let MySQL connection failures block startup
+            # Strategy position manager initialization can fail if MySQL is unavailable
+            # but this shouldn't prevent NATS consumer from starting
+            try:
+                await strategy_position_manager.initialize()
+                self.logger.info("Strategy position manager initialized successfully")
+            except Exception as mysql_error:
+                self.logger.warning(
+                    f"Strategy position manager initialization failed (MySQL unavailable?): {mysql_error}"
+                )
+                self.logger.warning(
+                    "Continuing startup without strategy position manager - "
+                    "positions will still work via MongoDB"
+                )
 
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"

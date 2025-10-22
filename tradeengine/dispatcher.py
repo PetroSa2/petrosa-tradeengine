@@ -1169,6 +1169,13 @@ class Dispatcher:
             "meta": signal.meta,
         }
 
+        # CRITICAL DEBUG: Log TP/SL values from signal
+        self.logger.info(
+            f"🔍 SIGNAL TO ORDER CONVERSION | Symbol: {signal.symbol} | "
+            f"Signal SL: {signal.stop_loss} | Signal TP: {signal.take_profit} | "
+            f"Signal SL_pct: {signal.stop_loss_pct} | Signal TP_pct: {signal.take_profit_pct}"
+        )
+
         # Create the order
         order = TradeOrder(
             order_id=f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}",

@@ -91,13 +91,25 @@ class StrategyPositionManager:
             take_profit_price = None
             stop_loss_price = None
 
-            if signal.take_profit_pct:
+            # CRITICAL FIX: Check for absolute price values first, then percentages
+            # Signals from TA Bot send absolute prices (stop_loss, take_profit)
+            # Some signals may still use percentages (stop_loss_pct, take_profit_pct)
+
+            if signal.take_profit:
+                # Use absolute take profit price from signal
+                take_profit_price = float(signal.take_profit)
+            elif signal.take_profit_pct:
+                # Calculate from percentage
                 if position_side == "LONG":
                     take_profit_price = entry_price * (1 + signal.take_profit_pct)
                 else:
                     take_profit_price = entry_price * (1 - signal.take_profit_pct)
 
-            if signal.stop_loss_pct:
+            if signal.stop_loss:
+                # Use absolute stop loss price from signal
+                stop_loss_price = float(signal.stop_loss)
+            elif signal.stop_loss_pct:
+                # Calculate from percentage
                 if position_side == "LONG":
                     stop_loss_price = entry_price * (1 - signal.stop_loss_pct)
                 else:

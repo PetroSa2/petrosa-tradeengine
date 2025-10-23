@@ -91,27 +91,33 @@ MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))
 MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
 
-# MongoDB validation
+# MongoDB validation (optional since we use Data Manager service)
 def validate_mongodb_config() -> None:
-    """Validate MongoDB configuration"""
+    """Validate MongoDB configuration (optional for Data Manager service)"""
+    # Skip validation if using Data Manager service
     if not MONGODB_URI:
-        raise ValueError(
-            "CRITICAL: MongoDB URI is not configured. "
-            "The MONGODB_URI environment variable must be set from the Kubernetes "
-            "secret. Check that the secret 'petrosa-sensitive-credentials' with "
-            "key 'mongodb-connection-string' exists."
+        # Log warning instead of raising error since we use Data Manager
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "MongoDB URI not configured - using Data Manager service instead. "
+            "This is expected when using the new Data Manager architecture."
         )
+        return
 
     if not MONGODB_DATABASE:
-        raise ValueError(
-            "CRITICAL: MongoDB database name is not configured. "
-            "The MONGODB_DATABASE environment variable must be set from the Kubernetes "
-            "configmap. Check that the configmap 'petrosa-common-config' with key "
-            "'MONGODB_DATABASE' exists."
-        )
+        import logging
 
-    # Validate URL format
-    if not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "MongoDB database not configured - using Data Manager service instead. "
+            "This is expected when using the new Data Manager architecture."
+        )
+        return
+
+    # Validate URL format only if URI is provided
+    if MONGODB_URI and not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
         raise ValueError(
             f"CRITICAL: Invalid MongoDB URI format: {MONGODB_URI}. "
             "Must start with 'mongodb://' or 'mongodb+srv://'"
@@ -121,6 +127,11 @@ def validate_mongodb_config() -> None:
 def get_mongodb_connection_string() -> str:
     """Get MongoDB connection string with validation"""
     validate_mongodb_config()
+
+    # Return empty string if using Data Manager service
+    if not MONGODB_URI:
+        return ""
+
     return f"{MONGODB_URI}/{MONGODB_DATABASE}"
 
 

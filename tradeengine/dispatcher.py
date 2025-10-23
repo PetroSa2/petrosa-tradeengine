@@ -702,6 +702,10 @@ class Dispatcher:
             60  # Cache TTL in seconds (signals older than this are considered unique)
         )
         self.signal_cache_cleanup_interval = 300  # Cleanup every 5 minutes
+        
+        # NEW: Accumulation cooldown tracking
+        # Format: {(symbol, side): timestamp} - tracks last accumulation time per position
+        self.last_accumulation_time: dict[tuple[str, str], float] = {}
         self.last_cache_cleanup = time.time()
 
         # Signal to order mapping for strategy position tracking
@@ -968,6 +972,30 @@ class Dispatcher:
                 signals_processed.labels(status="hold", action="hold").inc()
                 return {"status": "hold", "reason": "Signal indicates hold action"}
 
+            # NEW: Check accumulation cooldown
+            position_side = "LONG" if signal.action == "buy" else "SHORT"
+            position_key = (signal.symbol, position_side)
+            
+            if position_key in self.position_manager.positions:
+                existing_quantity = self.position_manager.positions[position_key]["quantity"]
+                
+                if existing_quantity > 0:  # Position exists
+                    # Check cooldown
+                    if position_key in self.last_accumulation_time:
+                        from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
+                        elapsed = time.time() - self.last_accumulation_time[position_key]
+                        
+                        if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
+                            remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
+                            self.logger.info(
+                                f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
+                                f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
+                            )
+                            return {
+                                "status": "rejected",
+                                "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)"
+                            }
+
             # Log signal processing
             self.logger.info(
                 f"⚙️  PROCESSING SIGNAL: {signal.strategy_id} | "
@@ -1028,6 +1056,12 @@ class Dispatcher:
                 result["status"] = (
                     "executed"  # Change status to executed for consistency
                 )
+
+                # NEW: Update last accumulation time if order was executed successfully
+                if execution_result.get("status") in ("filled", "partially_filled", "NEW"):
+                    if position_key in self.position_manager.positions:
+                        if self.position_manager.positions[position_key]["quantity"] > 0:
+                            self.last_accumulation_time[position_key] = time.time()
 
                 self.logger.info(
                     f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "

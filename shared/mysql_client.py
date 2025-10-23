@@ -208,6 +208,132 @@ class DataManagerPositionClient:
             logger.error(f"Failed to get open positions via Data Manager: {e}")
             return []
 
+    async def upsert_position(self, position_data: Dict[str, Any]) -> bool:
+        """
+        Upsert a position record via Data Manager.
+        
+        Args:
+            position_data: Position data dictionary
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Use Data Manager to upsert position
+            symbol = position_data.get("symbol")
+            position_side = position_data.get("position_side", "LONG")
+            
+            response = await self.data_manager_client._client.update_one(
+                database="mysql",
+                collection="positions",
+                filter={"symbol": symbol, "position_side": position_side, "status": "open"},
+                update={"$set": position_data},
+                upsert=True
+            )
+            
+            logger.info(f"✓ Upserted position {symbol} {position_side} via Data Manager")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to upsert position via Data Manager: {e}")
+            return False
+
+    async def close_position(
+        self, symbol: str, position_side: str, update_data: Dict[str, Any]
+    ) -> bool:
+        """
+        Close a position via Data Manager.
+        
+        Args:
+            symbol: Trading symbol
+            position_side: Position side (LONG/SHORT)
+            update_data: Data to update for closure
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = await self.data_manager_client._client.update_one(
+                database="mysql",
+                collection="positions",
+                filter={"symbol": symbol, "position_side": position_side, "status": "open"},
+                update={"$set": update_data}
+            )
+            
+            if response.get("modified_count", 0) > 0:
+                logger.info(f"✓ Closed position {symbol} {position_side} via Data Manager")
+                return True
+            else:
+                logger.warning(f"No position found to close: {symbol} {position_side}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to close position {symbol} {position_side} via Data Manager: {e}")
+            return False
+
+    async def get_daily_pnl(self, date: str) -> Optional[float]:
+        """
+        Get daily P&L for a specific date via Data Manager.
+        
+        Args:
+            date: Date string in ISO format
+            
+        Returns:
+            Daily P&L value or None if not found
+        """
+        try:
+            response = await self.data_manager_client._client.query(
+                database="mysql",
+                collection="daily_pnl",
+                params={"filter": {"date": date}, "limit": 1}
+            )
+            
+            if response and response.get("data"):
+                daily_pnl = response["data"][0].get("daily_pnl")
+                logger.info(f"Retrieved daily P&L for {date} via Data Manager: {daily_pnl}")
+                return daily_pnl
+            else:
+                logger.info(f"No daily P&L found for {date} via Data Manager")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get daily P&L for {date} via Data Manager: {e}")
+            return None
+
+    async def update_daily_pnl(self, date: str, daily_pnl: float) -> bool:
+        """
+        Update daily P&L for a specific date via Data Manager.
+        
+        Args:
+            date: Date string in ISO format
+            daily_pnl: Daily P&L value to set
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            from datetime import datetime
+            
+            response = await self.data_manager_client._client.update_one(
+                database="mysql",
+                collection="daily_pnl",
+                filter={"date": date},
+                update={
+                    "$set": {
+                        "daily_pnl": daily_pnl,
+                        "updated_at": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+            
+            logger.info(f"✓ Updated daily P&L for {date} via Data Manager: {daily_pnl}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update daily P&L for {date} via Data Manager: {e}")
+            return False
+
     async def health_check(self) -> Dict[str, Any]:
         """
         Check the health of the Data Manager connection.

@@ -530,3 +530,202 @@ async def config_health_check():
         }
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+
+# =============================================================================
+# Position Limit Management Endpoints
+# =============================================================================
+
+
+@router.put("/config/limits/global", response_model=APIResponse)
+async def set_global_limits(
+    max_position_size: Optional[float] = None,
+    max_accumulations: Optional[int] = None,
+    accumulation_cooldown_seconds: Optional[int] = None,
+) -> APIResponse:
+    """
+    Set global position limits (applies to all symbols unless overridden).
+    
+    Args:
+        max_position_size: Maximum quantity per position (e.g., 100.0)
+        max_accumulations: Maximum accumulation count (e.g., 3)
+        accumulation_cooldown_seconds: Cooldown between accumulations (e.g., 300)
+    """
+    try:
+        manager = get_config_manager()
+        
+        # Get existing global config or create new
+        config = await manager.get_config() or TradingConfig(
+            id="global",
+            parameters={},
+            created_by="api"
+        )
+        
+        # Update limits
+        if max_position_size is not None:
+            config.parameters["max_position_size"] = max_position_size
+        if max_accumulations is not None:
+            config.parameters["max_accumulations"] = max_accumulations
+        if accumulation_cooldown_seconds is not None:
+            config.parameters["accumulation_cooldown_seconds"] = accumulation_cooldown_seconds
+        
+        # Save config
+        success = await manager.set_config(config)
+        
+        if success:
+            return APIResponse(
+                success=True,
+                data={
+                    "config": {
+                        "id": config.id,
+                        "parameters": config.parameters,
+                        "created_at": config.created_at.isoformat(),
+                        "updated_at": config.updated_at.isoformat(),
+                    }
+                },
+                message="Global limits updated successfully",
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update global limits")
+    
+    except Exception as e:
+        logger.error(f"Error setting global limits: {e}")
+        return APIResponse(
+            success=False, 
+            error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.put("/config/limits/symbol/{symbol}", response_model=APIResponse)
+async def set_symbol_limits(
+    symbol: str,
+    max_position_size: Optional[float] = None,
+    max_accumulations: Optional[int] = None,
+    accumulation_cooldown_seconds: Optional[int] = None,
+) -> APIResponse:
+    """
+    Set position limits for specific symbol (overrides global limits).
+    
+    Args:
+        symbol: Trading symbol (e.g., BTCUSDT)
+        max_position_size: Maximum quantity per position
+        max_accumulations: Maximum accumulation count
+        accumulation_cooldown_seconds: Cooldown between accumulations
+    """
+    try:
+        manager = get_config_manager()
+        
+        # Get existing symbol config or create new
+        config = await manager.get_config(symbol=symbol) or TradingConfig(
+            id=f"symbol_{symbol}",
+            symbol=symbol,
+            parameters={},
+            created_by="api"
+        )
+        
+        # Update limits
+        if max_position_size is not None:
+            config.parameters["max_position_size"] = max_position_size
+        if max_accumulations is not None:
+            config.parameters["max_accumulations"] = max_accumulations
+        if accumulation_cooldown_seconds is not None:
+            config.parameters["accumulation_cooldown_seconds"] = accumulation_cooldown_seconds
+        
+        # Save config
+        success = await manager.set_config(config, symbol=symbol)
+        
+        if success:
+            return APIResponse(
+                success=True,
+                data={
+                    "config": {
+                        "id": config.id,
+                        "symbol": config.symbol,
+                        "parameters": config.parameters,
+                        "created_at": config.created_at.isoformat(),
+                        "updated_at": config.updated_at.isoformat(),
+                    }
+                },
+                message=f"Symbol limits updated for {symbol}",
+            )
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to update limits for {symbol}")
+    
+    except Exception as e:
+        logger.error(f"Error setting symbol limits: {e}")
+        return APIResponse(
+            success=False, 
+            error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.get("/config/limits", response_model=APIResponse)
+async def get_all_limits() -> APIResponse:
+    """Get all position limits (global and symbol-specific)."""
+    try:
+        manager = get_config_manager()
+        limits = {
+            "global": None,
+            "symbols": {}
+        }
+        
+        # Get global config
+        global_config = await manager.get_config()
+        if global_config:
+            limits["global"] = {
+                "max_position_size": global_config.parameters.get("max_position_size"),
+                "max_accumulations": global_config.parameters.get("max_accumulations"),
+                "accumulation_cooldown_seconds": global_config.parameters.get("accumulation_cooldown_seconds"),
+            }
+        
+        # Get all symbol configs
+        # Note: This requires listing all symbols or iterating through configs
+        from shared.constants import SUPPORTED_SYMBOLS
+        for symbol in SUPPORTED_SYMBOLS:
+            symbol_config = await manager.get_config(symbol=symbol)
+            if symbol_config and (
+                symbol_config.parameters.get("max_position_size") or 
+                symbol_config.parameters.get("max_accumulations") or 
+                symbol_config.parameters.get("accumulation_cooldown_seconds")
+            ):
+                limits["symbols"][symbol] = {
+                    "max_position_size": symbol_config.parameters.get("max_position_size"),
+                    "max_accumulations": symbol_config.parameters.get("max_accumulations"),
+                    "accumulation_cooldown_seconds": symbol_config.parameters.get("accumulation_cooldown_seconds"),
+                }
+        
+        return APIResponse(
+            success=True,
+            data={"limits": limits},
+            message="Position limits retrieved successfully"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error getting limits: {e}")
+        return APIResponse(
+            success=False, 
+            error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.delete("/config/limits/symbol/{symbol}", response_model=APIResponse)
+async def delete_symbol_limits(symbol: str) -> APIResponse:
+    """Delete symbol-specific limits (revert to global limits)."""
+    try:
+        manager = get_config_manager()
+        success = await manager.delete_config(symbol=symbol)
+        
+        if success:
+            return APIResponse(
+                success=True,
+                message=f"Symbol limits deleted for {symbol}, using global limits",
+            )
+        else:
+            raise HTTPException(status_code=404, detail=f"No limits found for {symbol}")
+    
+    except Exception as e:
+        logger.error(f"Error deleting symbol limits: {e}")
+        return APIResponse(
+            success=False, 
+            error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )

@@ -59,19 +59,23 @@ class TestMongoDBValidation:
     """Test MongoDB configuration validation"""
 
     def test_validate_mongodb_config_missing_uri(self):
-        """Test MongoDB validation fails when URI is missing"""
+        """Test MongoDB validation logs warning when URI is missing (Data Manager mode)"""
         with patch("shared.constants.MONGODB_URI", None):
-            with pytest.raises(ValueError, match="MongoDB URI is not configured"):
+            with patch("logging.getLogger") as mock_get_logger:
+                mock_logger = mock_get_logger.return_value
                 validate_mongodb_config()
+                mock_logger.warning.assert_called_once()
+                assert "MongoDB URI not configured" in str(mock_logger.warning.call_args)
 
     def test_validate_mongodb_config_missing_database(self):
-        """Test MongoDB validation fails when database is missing"""
+        """Test MongoDB validation logs warning when database is missing (Data Manager mode)"""
         with patch("shared.constants.MONGODB_URI", "mongodb://localhost:27017"):
             with patch("shared.constants.MONGODB_DATABASE", None):
-                with pytest.raises(
-                    ValueError, match="MongoDB database name is not configured"
-                ):
+                with patch("logging.getLogger") as mock_get_logger:
+                    mock_logger = mock_get_logger.return_value
                     validate_mongodb_config()
+                    mock_logger.warning.assert_called_once()
+                    assert "MongoDB database not configured" in str(mock_logger.warning.call_args)
 
     def test_validate_mongodb_config_invalid_uri_format(self):
         """Test MongoDB validation fails with invalid URI format"""

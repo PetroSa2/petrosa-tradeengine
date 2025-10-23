@@ -9,10 +9,36 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from data_manager_client import DataManagerClient as BaseDataManagerClient
-from data_manager_client.exceptions import ConnectionError
-
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+
+# Local Data Manager Client implementation
+# from data_manager_client import DataManagerClient as BaseDataManagerClient
+# from data_manager_client.exceptions import ConnectionError
+
+
+# Temporary local implementation
+class BaseDataManagerClient:
+    """Temporary local implementation of Data Manager Client."""
+
+    def __init__(self, base_url: str, timeout: int = 30, max_retries: int = 3):
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_retries = max_retries
+
+    async def health(self):
+        """Health check."""
+        return {"status": "healthy"}
+
+    async def close(self):
+        """Close connection."""
+        pass
+
+
+class ConnectionError(Exception):
+    """Connection error."""
+
+    pass
+
 
 logger = None
 

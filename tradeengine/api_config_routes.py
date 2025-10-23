@@ -11,6 +11,7 @@ from typing import Any, Dict, Literal, Optional
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
+from contracts.trading_config import TradingConfig
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.defaults import get_default_parameters, get_parameter_schema
 

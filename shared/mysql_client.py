@@ -223,7 +223,7 @@ class DataManagerPositionClient:
             symbol = position_data.get("symbol")
             position_side = position_data.get("position_side", "LONG")
             
-            response = await self.data_manager_client._client.update_one(
+            await self.data_manager_client._client.update_one(
                 database="mysql",
                 collection="positions",
                 filter={"symbol": symbol, "position_side": position_side, "status": "open"},
@@ -314,7 +314,7 @@ class DataManagerPositionClient:
         try:
             from datetime import datetime
             
-            response = await self.data_manager_client._client.update_one(
+            await self.data_manager_client._client.update_one(
                 database="mysql",
                 collection="daily_pnl",
                 filter={"date": date},

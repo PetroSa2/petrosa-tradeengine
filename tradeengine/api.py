@@ -74,9 +74,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize trading configuration manager
         logger.info("Initializing trading configuration manager...")
-        from shared.constants import MONGODB_DATABASE, MONGODB_URI
+        from shared.constants import MONGODB_DATABASE, MONGODB_URI, USE_DATA_MANAGER
 
-        trading_config_mongodb = MongoDBClient(MONGODB_URI, MONGODB_DATABASE)
+        trading_config_mongodb = MongoDBClient(
+            MONGODB_URI, MONGODB_DATABASE, use_data_manager=USE_DATA_MANAGER
+        )
         trading_config_manager = TradingConfigManager(
             mongodb_client=trading_config_mongodb, cache_ttl_seconds=60
         )

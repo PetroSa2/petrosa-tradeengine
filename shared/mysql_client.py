@@ -1,5 +1,8 @@
 """
 MySQL client for position tracking and persistence.
+
+Supports both direct MySQL connections and Data Manager API.
+Data Manager is the recommended approach for new deployments.
 """
 
 import asyncio
@@ -13,6 +16,15 @@ from urllib.parse import urlparse
 
 import pymysql
 from pymysql.cursors import DictCursor
+
+# Import Data Manager client
+try:
+    from ..tradeengine.services.data_manager_client import DataManagerClient
+
+    DATA_MANAGER_AVAILABLE = True
+except ImportError:
+    DATA_MANAGER_AVAILABLE = False
+    DataManagerClient = None
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +89,12 @@ def ensure_connected(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 class MySQLClient:
-    """MySQL client for position tracking operations."""
+    """
+    MySQL client for position tracking operations.
+
+    Supports both direct MySQL connections and Data Manager API.
+    Data Manager is the recommended approach for new deployments.
+    """
 
     def __init__(
         self,
@@ -87,8 +104,25 @@ class MySQLClient:
         password: str | None = None,
         database: str | None = None,
         uri: str | None = None,
+        use_data_manager: bool = True,
     ):
-        """Initialize MySQL client."""
+        """
+        Initialize MySQL client.
+
+        Args:
+            use_data_manager: If True, use Data Manager API instead of direct MySQL
+        """
+        self.use_data_manager = use_data_manager and DATA_MANAGER_AVAILABLE
+
+        if self.use_data_manager:
+            # Initialize Data Manager client
+            self.data_manager_client = DataManagerClient()
+            self.connection = None  # No direct MySQL connection needed
+            logger.info("Using Data Manager for position tracking")
+            return
+
+        # Fallback to direct MySQL connection
+        logger.info("Using direct MySQL connection")
         # Try to get URI from environment first
         mysql_uri = uri or os.getenv("MYSQL_URI")
 
@@ -155,7 +189,12 @@ class MySQLClient:
             return False
 
     async def connect(self) -> None:
-        """Connect to MySQL database with retry logic and metrics tracking."""
+        """Connect to MySQL database or Data Manager with retry logic and metrics tracking."""
+        if self.use_data_manager:
+            # Use Data Manager - no direct connection needed
+            await self.data_manager_client.connect()
+            return
+
         global connection_attempts, connection_failures, last_successful_connection
 
         max_retries = 3
@@ -585,4 +624,6 @@ class MySQLClient:
 
 
 # Global MySQL client instance
-mysql_client = MySQLClient()
+mysql_client = MySQLClient(
+    use_data_manager=os.getenv("USE_DATA_MANAGER", "true").lower() == "true"
+)

@@ -20,7 +20,7 @@ from shared.config import Settings
 from tradeengine.api_config_routes import router as config_router
 from tradeengine.api_config_routes import set_config_manager
 from tradeengine.config_manager import TradingConfigManager
-from tradeengine.db.mongodb_client import MongoDBClient
+from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
@@ -74,13 +74,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize trading configuration manager
         logger.info("Initializing trading configuration manager...")
-        from shared.constants import MONGODB_DATABASE, MONGODB_URI, USE_DATA_MANAGER
 
-        trading_config_mongodb = MongoDBClient(
-            MONGODB_URI, MONGODB_DATABASE, use_data_manager=USE_DATA_MANAGER
-        )
         trading_config_manager = TradingConfigManager(
-            mongodb_client=trading_config_mongodb, cache_ttl_seconds=60
+            mongodb_client=config_client, cache_ttl_seconds=60
         )
         await trading_config_manager.start()
 

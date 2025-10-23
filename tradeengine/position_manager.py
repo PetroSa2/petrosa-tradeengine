@@ -18,6 +18,9 @@ from shared.constants import (
     RISK_MANAGEMENT_ENABLED,
     get_mongodb_connection_string,
 )
+
+# Import Data Manager position client
+from shared.mysql_client import position_client
 from tradeengine.metrics import (
     position_commission_usd,
     position_duration_seconds,
@@ -33,13 +36,6 @@ from tradeengine.metrics import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Import MySQL client
-try:
-    from shared.mysql_client import mysql_client
-except ImportError:
-    mysql_client = None  # type: ignore
-    logger.warning("MySQL client not available - position tracking to MySQL disabled")
 
 
 class PositionManager:
@@ -67,16 +63,15 @@ class PositionManager:
             # Initialize MongoDB connection
             await self._initialize_mongodb()
 
-            # Initialize MySQL connection if available
-            if mysql_client:
-                try:
-                    await mysql_client.connect()
-                    logger.info("MySQL client connected for position tracking")
-                except Exception as mysql_error:
-                    logger.warning(
-                        f"MySQL connection failed: {mysql_error}. "
-                        "Position tracking to MySQL disabled."
-                    )
+            # Initialize Data Manager connection
+            try:
+                await position_client.connect()
+                logger.info("Data Manager client connected for position tracking")
+            except Exception as data_manager_error:
+                logger.warning(
+                    f"Data Manager connection failed: {data_manager_error}. "
+                    "Position tracking disabled."
+                )
 
             # Load positions from MongoDB
             await self._load_positions_from_mongodb()
@@ -560,22 +555,23 @@ class PositionManager:
                 except Exception as mongo_error:
                     logger.error(f"Failed to create position in MongoDB: {mongo_error}")
 
-            # Persist to MySQL (with timeout to prevent blocking risk management)
-            if mysql_client:
-                try:
-                    await asyncio.wait_for(
-                        mysql_client.create_position(position_data), timeout=2.0
-                    )
-                    logger.info(
-                        f"Position {order.position_id} created in MySQL for "
-                        f"{order.symbol} {order.position_side}"
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"⚠️  MySQL position insert timed out for {order.position_id} (non-critical, continuing)"
-                    )
-                except Exception as mysql_error:
-                    logger.error(f"Failed to create position in MySQL: {mysql_error}")
+            # Persist to Data Manager (with timeout to prevent blocking risk management)
+            try:
+                await asyncio.wait_for(
+                    position_client.create_position(position_data), timeout=2.0
+                )
+                logger.info(
+                    f"Position {order.position_id} created via Data Manager for "
+                    f"{order.symbol} {order.position_side}"
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"⚠️  Data Manager position insert timed out for {order.position_id} (non-critical, continuing)"
+                )
+            except Exception as data_manager_error:
+                logger.error(
+                    f"Failed to create position via Data Manager: {data_manager_error}"
+                )
 
             # Export metrics (with timeout to prevent blocking)
             try:
@@ -622,21 +618,18 @@ class PositionManager:
                         f"Failed to update position risk orders in MongoDB: {mongo_error}"
                     )
 
-            # Update MySQL
-            from shared.mysql_client import mysql_client
-
-            if mysql_client:
-                try:
-                    await mysql_client.update_position_risk_orders(
-                        position_id, update_data
-                    )
-                    logger.info(
-                        f"Updated position {position_id} risk orders in MySQL: {update_data}"
-                    )
-                except Exception as mysql_error:
-                    logger.error(
-                        f"Failed to update position risk orders in MySQL: {mysql_error}"
-                    )
+            # Update Data Manager
+            try:
+                await position_client.update_position_risk_orders(
+                    position_id, update_data
+                )
+                logger.info(
+                    f"Updated position {position_id} risk orders via Data Manager: {update_data}"
+                )
+            except Exception as data_manager_error:
+                logger.error(
+                    f"Failed to update position risk orders via Data Manager: {data_manager_error}"
+                )
 
         except Exception as e:
             logger.error(f"Error updating position risk orders: {e}")
@@ -753,13 +746,14 @@ class PositionManager:
                 except Exception as mongo_error:
                     logger.error(f"Failed to close position in MongoDB: {mongo_error}")
 
-            # Update MySQL
-            if mysql_client:
-                try:
-                    await mysql_client.update_position(position_id, update_data)
-                    logger.info(f"Position {position_id} closed in MySQL")
-                except Exception as mysql_error:
-                    logger.error(f"Failed to close position in MySQL: {mysql_error}")
+            # Update Data Manager
+            try:
+                await position_client.update_position(position_id, update_data)
+                logger.info(f"Position {position_id} closed via Data Manager")
+            except Exception as data_manager_error:
+                logger.error(
+                    f"Failed to close position via Data Manager: {data_manager_error}"
+                )
 
             # Export metrics
             position_data = {**exit_result, **update_data}

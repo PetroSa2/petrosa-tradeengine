@@ -16,7 +16,7 @@ A modular, event-driven trading execution system focused on crypto trading. Cons
 |---------|---------|-------|--------|--------|
 | **petrosa-socket-client** | Real-time WebSocket data ingestion | Binance WebSocket API | NATS: `binance.websocket.data` | Real-time Processing |
 | **petrosa-binance-data-extractor** | Historical data extraction & gap filling | Binance REST API | MySQL (klines, funding rates, trades) | Batch Processing |
-| **petrosa-bot-ta-analysis** | Technical analysis (28 strategies) | MySQL klines data | NATS: `signals.trading` | Signal Generation |
+| **petrosa-bot-ta-analysis** | Technical analysis (28 strategies) | Data Manager API | NATS: `signals.trading` | Signal Generation |
 | **petrosa-realtime-strategies** | Real-time signal generation | NATS: `binance.websocket.data` | NATS: `signals.trading` | Live Processing |
 | **petrosa-tradeengine** | Order execution & trade management | NATS: `signals.trading` | Binance Orders API, MongoDB audit | **YOU ARE HERE** |
 | **petrosa_k8s** | Centralized infrastructure | Kubernetes manifests | Cluster resources | Infrastructure |
@@ -706,6 +706,32 @@ spec:
    - Review error logs
 
 ---
+
+## 🔗 Data Manager Integration
+
+The Trading Engine now integrates with `petrosa-data-manager` for centralized data access and persistence. This provides:
+
+- **Centralized Data Access**: All market data and configuration through a single API
+- **Consistent Data Models**: Standardized data structures across all services
+- **Improved Reliability**: Built-in retry logic and circuit breakers
+- **Better Monitoring**: Centralized logging and metrics for data operations
+
+### Required Environment Variables
+
+```bash
+# Data Manager configuration
+DATA_MANAGER_URL=http://petrosa-data-manager:8000
+DATA_MANAGER_TIMEOUT=30
+DATA_MANAGER_MAX_RETRIES=3
+DATA_MANAGER_DATABASE=mongodb
+```
+
+### Data Manager Features
+
+- **Generic CRUD API**: `/api/v1/{database}/{collection}` for flexible data operations
+- **Domain-Specific API**: `/data/candles`, `/data/trades`, etc. for typed responses
+- **Schema Registry**: Centralized schema management and validation
+- **Audit Logging**: Comprehensive audit trails for all data operations
 
 ## 🚀 Quick Start
 

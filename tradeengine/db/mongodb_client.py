@@ -1,6 +1,9 @@
 """
 MongoDB Client for Trading Configuration Management.
 
+This client now supports both direct MongoDB connections and Data Manager API
+for configuration management. Data Manager is the recommended approach for new deployments.
+
 Provides async operations for storing and retrieving trading configurations
 from MongoDB with proper error handling and connection management.
 """
@@ -13,17 +16,32 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 
+# Import Data Manager client
+try:
+    from ..services.data_manager_client import DataManagerClient
+
+    DATA_MANAGER_AVAILABLE = True
+except ImportError:
+    DATA_MANAGER_AVAILABLE = False
+    DataManagerClient = None
+
 logger = logging.getLogger(__name__)
 
 
 class MongoDBClient:
-    """MongoDB client for trading configuration persistence."""
+    """
+    MongoDB client for trading configuration persistence.
+
+    Supports both direct MongoDB connections and Data Manager API.
+    Data Manager is the recommended approach for new deployments.
+    """
 
     def __init__(
         self,
         connection_string: str,
         database_name: str,
         timeout_ms: int = 5000,
+        use_data_manager: bool = True,
     ):
         """
         Initialize MongoDB client.
@@ -32,7 +50,21 @@ class MongoDBClient:
             connection_string: MongoDB connection URI
             database_name: Database name
             timeout_ms: Connection timeout in milliseconds
+            use_data_manager: If True, use Data Manager API instead of direct MongoDB
         """
+        self.use_data_manager = use_data_manager and DATA_MANAGER_AVAILABLE
+
+        if self.use_data_manager:
+            # Initialize Data Manager client
+            self.data_manager_client = DataManagerClient()
+            self.client = None  # No direct MongoDB connection needed
+            self.db = None
+            self.connected = False
+            logger.info("Using Data Manager for configuration management")
+            return
+
+        # Fallback to direct MongoDB connection
+        logger.info("Using direct MongoDB connection")
         self.connection_string = connection_string
         self.database_name = database_name
         self.timeout_ms = timeout_ms
@@ -41,7 +73,12 @@ class MongoDBClient:
         self.connected = False
 
     async def connect(self) -> None:
-        """Establish MongoDB connection."""
+        """Establish MongoDB or Data Manager connection."""
+        if self.use_data_manager:
+            await self.data_manager_client.connect()
+            self.connected = True
+            return
+
         try:
             self.client = AsyncIOMotorClient(
                 self.connection_string,
@@ -59,11 +96,15 @@ class MongoDBClient:
             raise
 
     async def disconnect(self) -> None:
-        """Close MongoDB connection."""
-        if self.client:
-            self.client.close()
+        """Close MongoDB or Data Manager connection."""
+        if self.use_data_manager:
+            await self.data_manager_client.disconnect()
             self.connected = False
-            logger.info("MongoDB connection closed")
+        else:
+            if self.client:
+                self.client.close()
+                self.connected = False
+                logger.info("MongoDB connection closed")
 
     # =========================================================================
     # Global Configuration Operations
@@ -71,6 +112,9 @@ class MongoDBClient:
 
     async def get_global_config(self) -> Optional[TradingConfig]:
         """Get global trading configuration."""
+        if self.use_data_manager:
+            return await self.data_manager_client.get_global_config()
+
         try:
             if self.db is None:
                 return None

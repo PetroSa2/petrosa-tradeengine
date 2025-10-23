@@ -74,6 +74,7 @@ DATA_MANAGER_URL = os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:80
 DATA_MANAGER_TIMEOUT = int(os.getenv("DATA_MANAGER_TIMEOUT", "30"))
 DATA_MANAGER_MAX_RETRIES = int(os.getenv("DATA_MANAGER_MAX_RETRIES", "3"))
 DATA_MANAGER_DATABASE = os.getenv("DATA_MANAGER_DATABASE", "mongodb")
+USE_DATA_MANAGER = os.getenv("USE_DATA_MANAGER", "true").lower() == "true"
 
 # MySQL
 MYSQL_URI = os.getenv("MYSQL_URI", "mysql+pymysql://localhost:3306/petrosa")

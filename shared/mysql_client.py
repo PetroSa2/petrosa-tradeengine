@@ -19,7 +19,7 @@ from pymysql.cursors import DictCursor
 
 # Import Data Manager client
 try:
-    from ..tradeengine.services.data_manager_client import DataManagerClient
+    from tradeengine.services.data_manager_client import DataManagerClient
 
     DATA_MANAGER_AVAILABLE = True
 except ImportError:

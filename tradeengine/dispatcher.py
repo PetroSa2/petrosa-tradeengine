@@ -1000,11 +1000,29 @@ class Dispatcher:
                 )
                 # Execute order with distributed lock to ensure consensus
                 # Lock key includes signal fingerprint to prevent duplicate processing
-                execution_result = await distributed_lock_manager.execute_with_lock(
-                    f"signal_{signal_fingerprint}",
-                    self._execute_order_with_consensus,
-                    order,
-                )
+                try:
+                    execution_result = await distributed_lock_manager.execute_with_lock(
+                        f"signal_{signal_fingerprint}",
+                        self._execute_order_with_consensus,
+                        order,
+                    )
+                except Exception as lock_error:
+                    if "Failed to acquire lock" in str(lock_error):
+                        self.logger.info(
+                            f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
+                            f"Signal already being processed by another pod - SKIPPING"
+                        )
+                        signals_processed.labels(
+                            status="skipped_duplicate", action=signal.action
+                        ).inc()
+                        return {
+                            "status": "skipped_duplicate",
+                            "reason": "Signal already being processed by another pod",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
+                    else:
+                        # Re-raise other lock-related errors
+                        raise
 
                 result["execution_result"] = execution_result
                 result["status"] = (

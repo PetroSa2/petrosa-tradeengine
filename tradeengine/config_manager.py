@@ -16,7 +16,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
-from tradeengine.db.mongodb_client import MongoDBClient
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 from tradeengine.defaults import (
     get_default_parameters,
@@ -44,7 +43,7 @@ class TradingConfigManager:
 
     def __init__(
         self,
-        mongodb_client: Optional[MongoDBClient] = None,
+        mongodb_client: Optional[Any] = None,
         mysql_repository: Optional[MySQLConfigRepository] = None,
         cache_ttl_seconds: int = 60,
     ):

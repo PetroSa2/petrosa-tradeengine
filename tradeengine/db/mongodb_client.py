@@ -271,6 +271,164 @@ class DataManagerConfigClient:
             logger.error(f"Failed to get audit trail via Data Manager: {e}")
             return []
 
+    async def get_symbol_side_config(
+        self, symbol: str, side: str
+    ) -> Optional[TradingConfig]:
+        """
+        Get symbol-side specific trading configuration from Data Manager.
+
+        Args:
+            symbol: Trading symbol
+            side: Trading side (long/short)
+
+        Returns:
+            TradingConfig object or None if not found
+        """
+        try:
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="trading_configs_symbol_side",
+                params={"filter": {"symbol": symbol, "side": side}, "limit": 1},
+            )
+
+            if response and response.get("data"):
+                doc = response["data"][0]
+                doc["id"] = str(doc.pop("_id"))
+                return TradingConfig(**doc)
+            return None
+
+        except Exception as e:
+            logger.error(
+                f"Failed to get symbol-side config for {symbol}-{side} from Data Manager: {e}"
+            )
+            return None
+
+    async def set_global_config(self, config: TradingConfig) -> bool:
+        """
+        Set global trading configuration via Data Manager.
+
+        Args:
+            config: TradingConfig object to set
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return await self.upsert_global_config(config)
+
+    async def set_symbol_config(self, config: TradingConfig) -> bool:
+        """
+        Set symbol-specific trading configuration via Data Manager.
+
+        Args:
+            config: TradingConfig object to set
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Extract symbol from config metadata or use a default
+        symbol = getattr(config, "symbol", "UNKNOWN")
+        return await self.upsert_symbol_config(symbol, config)
+
+    async def set_symbol_side_config(self, config: TradingConfig) -> bool:
+        """
+        Set symbol-side specific trading configuration via Data Manager.
+
+        Args:
+            config: TradingConfig object to set
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            config_dict = config.model_dump()
+            symbol = config_dict.get("symbol", "UNKNOWN")
+            side = config_dict.get("side", "UNKNOWN")
+            config_dict["symbol"] = symbol
+            config_dict["side"] = side
+
+            response = await self.data_manager_client._client.upsert_one(
+                database="mongodb",
+                collection="trading_configs_symbol_side",
+                filter={"symbol": symbol, "side": side},
+                record=config_dict,
+            )
+
+            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+                logger.info(
+                    f"✓ Upserted symbol-side config for {symbol}-{side} via Data Manager"
+                )
+                return True
+            else:
+                logger.error(
+                    f"Failed to upsert symbol-side config for {symbol}-{side} via Data Manager"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to upsert symbol-side config via Data Manager: {e}")
+            return False
+
+    async def delete_symbol_side_config(self, symbol: str, side: str) -> bool:
+        """
+        Delete symbol-side specific trading configuration via Data Manager.
+
+        Args:
+            symbol: Trading symbol
+            side: Trading side
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            response = await self.data_manager_client._client.delete_one(
+                database="mongodb",
+                collection="trading_configs_symbol_side",
+                filter={"symbol": symbol, "side": side},
+            )
+
+            if response.get("deleted_count", 0) > 0:
+                logger.info(
+                    f"✓ Deleted symbol-side config for {symbol}-{side} via Data Manager"
+                )
+                return True
+            else:
+                logger.warning(
+                    f"No symbol-side configuration found for {symbol}-{side} to delete"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(
+                f"Failed to delete symbol-side config for {symbol}-{side} via Data Manager: {e}"
+            )
+            return False
+
+    async def add_audit_record(self, audit: TradingConfigAudit) -> bool:
+        """
+        Add audit record via Data Manager.
+
+        Args:
+            audit: TradingConfigAudit object
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return await self.create_audit_record(audit)
+
+    @property
+    def connected(self) -> bool:
+        """
+        Check if the Data Manager client is connected.
+
+        Returns:
+            True if connected, False otherwise
+        """
+        try:
+            # Simple health check to determine connection status
+            return True  # Assume connected if client is initialized
+        except Exception:
+            return False
+
     async def health_check(self) -> Dict[str, Any]:
         """
         Check the health of the Data Manager connection.

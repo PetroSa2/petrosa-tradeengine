@@ -541,31 +541,51 @@ class PositionManager:
                 "commission_total": commission,
             }
 
-            # Persist to MongoDB
+            # Persist to MongoDB (with timeout to prevent blocking)
             if self.mongodb_db is not None:
                 try:
                     positions_collection = self.mongodb_db.positions
-                    await positions_collection.insert_one(position_data.copy())
+                    await asyncio.wait_for(
+                        positions_collection.insert_one(position_data.copy()),
+                        timeout=2.0,
+                    )
                     logger.info(
                         f"Position {order.position_id} created in MongoDB for "
                         f"{order.symbol} {order.position_side}"
                     )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"⚠️  MongoDB position insert timed out for {order.position_id} (non-critical)"
+                    )
                 except Exception as mongo_error:
                     logger.error(f"Failed to create position in MongoDB: {mongo_error}")
 
-            # Persist to MySQL
+            # Persist to MySQL (with timeout to prevent blocking risk management)
             if mysql_client:
                 try:
-                    await mysql_client.create_position(position_data)
+                    await asyncio.wait_for(
+                        mysql_client.create_position(position_data), timeout=2.0
+                    )
                     logger.info(
                         f"Position {order.position_id} created in MySQL for "
                         f"{order.symbol} {order.position_side}"
                     )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"⚠️  MySQL position insert timed out for {order.position_id} (non-critical, continuing)"
+                    )
                 except Exception as mysql_error:
                     logger.error(f"Failed to create position in MySQL: {mysql_error}")
 
-            # Export metrics
-            await self._export_position_opened_metrics(position_data)
+            # Export metrics (with timeout to prevent blocking)
+            try:
+                await asyncio.wait_for(
+                    self._export_position_opened_metrics(position_data), timeout=1.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"⚠️  Metrics export timed out for {order.position_id} (non-critical)"
+                )
 
         except Exception as e:
             logger.error(f"Error creating position record: {e}")

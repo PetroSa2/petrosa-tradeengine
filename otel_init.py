@@ -284,10 +284,9 @@ def attach_logging_handler():
         print("✅ Stdout logging handler added for kubectl visibility")
 
         # 2. Add OTLP handler for Grafana/Loki
-        # CRITICAL FIX: Disable OTLP handler due to shutdown crash bug
-        # KeyError: 'warnings' in emit() causes pod restart loops
-        # Logs still visible via stdout for kubectl
-        if False and _global_logger_provider is not None:
+        # Re-enabled OTLP logging handler for Grafana integration
+        # Logs will be sent to both stdout (kubectl) and OTLP (Grafana/Loki)
+        if _global_logger_provider is not None:
             otlp_handler = LoggingHandler(
                 level=logging.NOTSET,
                 logger_provider=_global_logger_provider,

@@ -24,14 +24,10 @@ from typing import Any
 from contracts.order import TradeOrder
 from contracts.signal import Signal
 
-logger = logging.getLogger(__name__)
+# Import Data Manager position client
+from shared.mysql_client import position_client
 
-# Import MySQL client
-try:
-    from shared.mysql_client import mysql_client
-except ImportError:
-    mysql_client = None  # type: ignore
-    logger.warning("MySQL client not available - strategy position tracking disabled")
+logger = logging.getLogger(__name__)
 
 
 class StrategyPositionManager:
@@ -51,12 +47,14 @@ class StrategyPositionManager:
     async def initialize(self) -> None:
         """Initialize strategy position manager"""
         try:
-            # Connect MySQL if available
-            if mysql_client:
-                await mysql_client.connect()
-                logger.info("Strategy position manager initialized with MySQL")
-            else:
-                logger.warning("Strategy position manager running without MySQL")
+            # Connect to Data Manager
+            try:
+                await position_client.connect()
+                logger.info("Strategy position manager initialized with Data Manager")
+            except Exception as data_manager_error:
+                logger.warning(
+                    f"Data Manager not available - strategy position tracking disabled: {data_manager_error}"
+                )
         except Exception as e:
             logger.error(f"Failed to initialize strategy position manager: {e}")
 
@@ -146,9 +144,8 @@ class StrategyPositionManager:
             # Store in memory
             self.strategy_positions[strategy_position_id] = strategy_position
 
-            # Persist to MySQL
-            if mysql_client:
-                await self._persist_strategy_position(strategy_position)
+            # Persist to Data Manager
+            await self._persist_strategy_position(strategy_position)
 
             # Update exchange position
             await self._update_exchange_position(
@@ -237,11 +234,8 @@ class StrategyPositionManager:
             position["realized_pnl"] = pnl
             position["realized_pnl_pct"] = pnl_pct
 
-            # Persist to MySQL
-            if mysql_client:
-                await self._update_strategy_position_closure(
-                    strategy_position_id, position
-                )
+            # Persist to Data Manager
+            await self._update_strategy_position_closure(strategy_position_id, position)
 
             # Update contribution
             await self._close_contribution(
@@ -297,56 +291,7 @@ class StrategyPositionManager:
                 ):
                     open_positions.append(position)
 
-            # If MySQL is available, query for any we might have missed
-            if mysql_client and len(open_positions) == 0:
-                try:
-                    results = await mysql_client.execute_query(
-                        """
-                        SELECT
-                            strategy_position_id, strategy_id, signal_id, symbol, side,
-                            entry_quantity, entry_price, entry_time, entry_order_id,
-                            take_profit_price, stop_loss_price, tp_order_id, sl_order_id,
-                            status, exchange_position_key, strategy_metadata
-                        FROM strategy_positions
-                        WHERE exchange_position_key = %s AND status = 'open'
-                        """,
-                        (exchange_position_key,),
-                        fetch=True,
-                    )
-
-                    for row in results:
-                        open_positions.append(
-                            {
-                                "strategy_position_id": row["strategy_position_id"],
-                                "strategy_id": row["strategy_id"],
-                                "signal_id": row.get("signal_id"),
-                                "symbol": row["symbol"],
-                                "side": row["side"],
-                                "entry_quantity": float(row["entry_quantity"]),
-                                "entry_price": float(row["entry_price"]),
-                                "entry_time": row["entry_time"],
-                                "entry_order_id": row.get("entry_order_id"),
-                                "take_profit_price": (
-                                    float(row["take_profit_price"])
-                                    if row.get("take_profit_price")
-                                    else None
-                                ),
-                                "stop_loss_price": (
-                                    float(row["stop_loss_price"])
-                                    if row.get("stop_loss_price")
-                                    else None
-                                ),
-                                "tp_order_id": row.get("tp_order_id"),
-                                "sl_order_id": row.get("sl_order_id"),
-                                "status": row["status"],
-                                "exchange_position_key": row["exchange_position_key"],
-                            }
-                        )
-
-                except Exception as mysql_error:
-                    logger.warning(
-                        f"Failed to query strategy positions from MySQL: {mysql_error}"
-                    )
+            # Note: Data Manager fallback query removed - positions are managed in memory
 
             logger.info(
                 f"Found {len(open_positions)} open strategy positions for {exchange_position_key}"
@@ -360,42 +305,11 @@ class StrategyPositionManager:
             return []
 
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
-        """Persist strategy position to MySQL"""
-        if not mysql_client:
-            return
-
+        """Persist strategy position to Data Manager"""
         try:
-            await mysql_client.execute_query(
-                """
-                INSERT INTO strategy_positions (
-                    strategy_position_id, strategy_id, signal_id, symbol, side,
-                    entry_quantity, entry_price, entry_time, entry_order_id,
-                    take_profit_price, stop_loss_price, tp_order_id, sl_order_id,
-                    status, exchange_position_key, strategy_metadata
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    position["strategy_position_id"],
-                    position["strategy_id"],
-                    position.get("signal_id"),
-                    position["symbol"],
-                    position["side"],
-                    position["entry_quantity"],
-                    position["entry_price"],
-                    position["entry_time"],
-                    position.get("entry_order_id"),
-                    position.get("take_profit_price"),
-                    position.get("stop_loss_price"),
-                    position.get("tp_order_id"),
-                    position.get("sl_order_id"),
-                    position["status"],
-                    position["exchange_position_key"],
-                    str(position.get("strategy_metadata", {})),
-                ),
-                fetch=False,
-            )
+            await position_client.create_position(position)
             logger.debug(
-                f"Persisted strategy position {position['strategy_position_id']} to MySQL"
+                f"Persisted strategy position {position['strategy_position_id']} to Data Manager"
             )
         except Exception as e:
             logger.error(f"Failed to persist strategy position: {e}")
@@ -403,39 +317,11 @@ class StrategyPositionManager:
     async def _update_strategy_position_closure(
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
-        """Update strategy position closure details in MySQL"""
-        if not mysql_client:
-            return
-
+        """Update strategy position closure details in Data Manager"""
         try:
-            await mysql_client.execute_query(
-                """
-                UPDATE strategy_positions SET
-                    status = %s,
-                    exit_quantity = %s,
-                    exit_price = %s,
-                    exit_time = %s,
-                    exit_order_id = %s,
-                    close_reason = %s,
-                    realized_pnl = %s,
-                    realized_pnl_pct = %s
-                WHERE strategy_position_id = %s
-                """,
-                (
-                    position["status"],
-                    position.get("exit_quantity"),
-                    position.get("exit_price"),
-                    position.get("exit_time"),
-                    position.get("exit_order_id"),
-                    position.get("close_reason"),
-                    position.get("realized_pnl"),
-                    position.get("realized_pnl_pct"),
-                    strategy_position_id,
-                ),
-                fetch=False,
-            )
+            await position_client.update_position(strategy_position_id, position)
             logger.debug(
-                f"Updated strategy position closure for {strategy_position_id}"
+                f"Updated strategy position closure for {strategy_position_id} via Data Manager"
             )
         except Exception as e:
             logger.error(f"Failed to update strategy position closure: {e}")
@@ -487,9 +373,8 @@ class StrategyPositionManager:
                 if strategy_id not in position["contributing_strategies"]:
                     position["contributing_strategies"].append(strategy_id)
 
-            # Persist to MySQL
-            if mysql_client:
-                await self._persist_exchange_position(exchange_position_key)
+            # Persist to Data Manager
+            await self._persist_exchange_position(exchange_position_key)
 
         except Exception as e:
             logger.error(f"Error updating exchange position: {e}")
@@ -511,50 +396,17 @@ class StrategyPositionManager:
                 position["status"] = "closed"
                 logger.info(f"Exchange position {exchange_position_key} fully closed")
 
-            # Persist to MySQL
-            if mysql_client:
-                await self._persist_exchange_position(exchange_position_key)
+            # Persist to Data Manager
+            await self._persist_exchange_position(exchange_position_key)
 
         except Exception as e:
             logger.error(f"Error reducing exchange position: {e}")
 
     async def _persist_exchange_position(self, exchange_position_key: str) -> None:
-        """Persist exchange position to MySQL"""
-        if not mysql_client:
-            return
-
+        """Persist exchange position to Data Manager"""
         try:
             position = self.exchange_positions[exchange_position_key]
-
-            await mysql_client.execute_query(
-                """
-                INSERT INTO exchange_positions (
-                    exchange_position_key, symbol, side, current_quantity,
-                    weighted_avg_price, first_entry_time, last_update_time,
-                    status, contributing_strategies, total_contributions
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                    current_quantity = VALUES(current_quantity),
-                    weighted_avg_price = VALUES(weighted_avg_price),
-                    last_update_time = VALUES(last_update_time),
-                    status = VALUES(status),
-                    contributing_strategies = VALUES(contributing_strategies),
-                    total_contributions = VALUES(total_contributions)
-                """,
-                (
-                    exchange_position_key,
-                    position["symbol"],
-                    position["side"],
-                    position["current_quantity"],
-                    position["weighted_avg_price"],
-                    position.get("first_entry_time"),
-                    position["last_update_time"],
-                    position["status"],
-                    str(position["contributing_strategies"]),
-                    position["total_contributions"],
-                ),
-                fetch=False,
-            )
+            await position_client.create_position(position)
         except Exception as e:
             logger.error(f"Failed to persist exchange position: {e}")
 
@@ -601,34 +453,23 @@ class StrategyPositionManager:
                 self.contributions[exchange_position_key] = []
             self.contributions[exchange_position_key].append(contribution)
 
-            # Persist to MySQL
-            if mysql_client:
-                await mysql_client.execute_query(
-                    """
-                    INSERT INTO position_contributions (
-                        contribution_id, strategy_position_id, exchange_position_key,
-                        strategy_id, symbol, position_side, contribution_quantity,
-                        contribution_entry_price, contribution_time, position_sequence,
-                        exchange_quantity_before, exchange_quantity_after, status
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        contribution_id,
-                        strategy_position_id,
-                        exchange_position_key,
-                        strategy_id,
-                        symbol,
-                        position_side,
-                        quantity,
-                        price,
-                        contribution["contribution_time"],
-                        sequence,
-                        qty_before,
-                        qty_after,
-                        "active",
-                    ),
-                    fetch=False,
-                )
+            # Persist to Data Manager
+            contribution_data = {
+                "contribution_id": contribution_id,
+                "strategy_position_id": strategy_position_id,
+                "exchange_position_key": exchange_position_key,
+                "strategy_id": strategy_id,
+                "symbol": symbol,
+                "position_side": position_side,
+                "contribution_quantity": quantity,
+                "contribution_entry_price": price,
+                "contribution_time": contribution["contribution_time"],
+                "position_sequence": sequence,
+                "exchange_quantity_before": qty_before,
+                "exchange_quantity_after": qty_after,
+                "status": "active",
+            }
+            await position_client.create_position(contribution_data)
 
         except Exception as e:
             logger.error(f"Error creating contribution: {e}")
@@ -642,31 +483,17 @@ class StrategyPositionManager:
         close_reason: str,
     ) -> None:
         """Close contribution record when strategy position closes"""
-        if not mysql_client:
-            return
-
         try:
-            await mysql_client.execute_query(
-                """
-                UPDATE position_contributions SET
-                    status = 'closed',
-                    exit_time = %s,
-                    exit_price = %s,
-                    contribution_pnl = %s,
-                    contribution_pnl_pct = %s,
-                    close_reason = %s
-                WHERE strategy_position_id = %s
-                """,
-                (
-                    datetime.utcnow(),
-                    exit_price,
-                    pnl,
-                    pnl_pct,
-                    close_reason,
-                    strategy_position_id,
-                ),
-                fetch=False,
-            )
+            # Update contribution status in Data Manager
+            update_data = {
+                "status": "closed",
+                "exit_time": datetime.utcnow(),
+                "exit_price": exit_price,
+                "contribution_pnl": pnl,
+                "contribution_pnl_pct": pnl_pct,
+                "close_reason": close_reason,
+            }
+            await position_client.update_position(strategy_position_id, update_data)
         except Exception as e:
             logger.error(f"Error closing contribution: {e}")
 

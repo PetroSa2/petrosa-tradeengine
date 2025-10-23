@@ -275,9 +275,13 @@ MAX_POSITION_SIZE_PCT = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.1"))  # 10%
 MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.05"))  # 5%
 
 # Position accumulation controls
-MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "100.0"))  # Max quantity per position (default)
+MAX_POSITION_SIZE = float(
+    os.getenv("MAX_POSITION_SIZE", "100.0")
+)  # Max quantity per position (default)
 MAX_ACCUMULATIONS_PER_POSITION = int(os.getenv("MAX_ACCUMULATIONS_PER_POSITION", "3"))
-ACCUMULATION_COOLDOWN_SECONDS = int(os.getenv("ACCUMULATION_COOLDOWN_SECONDS", "300"))  # 5 minutes
+ACCUMULATION_COOLDOWN_SECONDS = int(
+    os.getenv("ACCUMULATION_COOLDOWN_SECONDS", "300")
+)  # 5 minutes
 MAX_TOTAL_POSITIONS = int(os.getenv("MAX_TOTAL_POSITIONS", "10"))
 
 # Strategy Weights (for weighted average conflict resolution)

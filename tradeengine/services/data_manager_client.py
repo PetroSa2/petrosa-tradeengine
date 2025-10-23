@@ -46,12 +46,16 @@ class BaseDataManagerClient:
         # For now, return success to avoid errors
         return {"inserted_id": "placeholder"}
 
-    async def update_one(self, database: str, collection: str, filter: dict, update: dict):
+    async def update_one(
+        self, database: str, collection: str, filter: dict, update: dict
+    ):
         """Update one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"modified_count": 1}
 
-    async def upsert_one(self, database: str, collection: str, filter: dict, record: dict):
+    async def upsert_one(
+        self, database: str, collection: str, filter: dict, record: dict
+    ):
         """Upsert one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"upserted_id": "placeholder"}

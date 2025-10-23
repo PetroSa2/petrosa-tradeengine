@@ -553,9 +553,7 @@ class OCOManager:
                                     row.get("commission_total", 0)
                                 ),
                             }
-                            self.logger.info(
-                                f"✅ Found position {position_id} in MySQL"
-                            )
+                            self.logger.info(f"✅ Found position {position_id} in MySQL")
                     except Exception as mysql_error:
                         self.logger.error(f"❌ MySQL query failed: {mysql_error}")
 
@@ -702,7 +700,7 @@ class Dispatcher:
             60  # Cache TTL in seconds (signals older than this are considered unique)
         )
         self.signal_cache_cleanup_interval = 300  # Cleanup every 5 minutes
-        
+
         # NEW: Accumulation cooldown tracking
         # Format: {(symbol, side): timestamp} - tracks last accumulation time per position
         self.last_accumulation_time: dict[tuple[str, str], float] = {}
@@ -975,16 +973,21 @@ class Dispatcher:
             # NEW: Check accumulation cooldown
             position_side = "LONG" if signal.action == "buy" else "SHORT"
             position_key = (signal.symbol, position_side)
-            
+
             if position_key in self.position_manager.positions:
-                existing_quantity = self.position_manager.positions[position_key]["quantity"]
-                
+                existing_quantity = self.position_manager.positions[position_key][
+                    "quantity"
+                ]
+
                 if existing_quantity > 0:  # Position exists
                     # Check cooldown
                     if position_key in self.last_accumulation_time:
                         from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
-                        elapsed = time.time() - self.last_accumulation_time[position_key]
-                        
+
+                        elapsed = (
+                            time.time() - self.last_accumulation_time[position_key]
+                        )
+
                         if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
                             remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
                             self.logger.info(
@@ -993,7 +996,7 @@ class Dispatcher:
                             )
                             return {
                                 "status": "rejected",
-                                "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)"
+                                "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
                             }
 
             # Log signal processing
@@ -1053,14 +1056,21 @@ class Dispatcher:
                         raise
 
                 result["execution_result"] = execution_result
-                result["status"] = (
-                    "executed"  # Change status to executed for consistency
-                )
+                result[
+                    "status"
+                ] = "executed"  # Change status to executed for consistency
 
                 # NEW: Update last accumulation time if order was executed successfully
-                if execution_result.get("status") in ("filled", "partially_filled", "NEW"):
+                if execution_result.get("status") in (
+                    "filled",
+                    "partially_filled",
+                    "NEW",
+                ):
                     if position_key in self.position_manager.positions:
-                        if self.position_manager.positions[position_key]["quantity"] > 0:
+                        if (
+                            self.position_manager.positions[position_key]["quantity"]
+                            > 0
+                        ):
                             self.last_accumulation_time[position_key] = time.time()
 
                 self.logger.info(
@@ -1382,9 +1392,7 @@ class Dispatcher:
             # Execute order on Binance exchange
             if order.simulate:
                 # Simulated order - just track locally
-                self.logger.info(
-                    f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
-                )
+                self.logger.info(f"🎭 SIMULATION MODE: Order {order.order_id} simulated")
                 result = {"status": "pending", "simulated": True}
                 await self.order_manager.track_order(order, result)
             else:
@@ -1719,10 +1727,12 @@ class Dispatcher:
             adjusted_stop_loss = order.stop_loss
             if self.exchange and order.stop_loss:
                 try:
-                    is_adjusted, adjusted_price, adjustment_msg = (
-                        await self.exchange.validate_and_adjust_price_for_percent_filter(
-                            order.symbol, order.stop_loss, "STOP_LOSS"
-                        )
+                    (
+                        is_adjusted,
+                        adjusted_price,
+                        adjustment_msg,
+                    ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
+                        order.symbol, order.stop_loss, "STOP_LOSS"
                     )
                     if is_adjusted:
                         self.logger.warning(
@@ -1853,10 +1863,12 @@ class Dispatcher:
             adjusted_take_profit = order.take_profit
             if self.exchange and order.take_profit:
                 try:
-                    is_adjusted, adjusted_price, adjustment_msg = (
-                        await self.exchange.validate_and_adjust_price_for_percent_filter(
-                            order.symbol, order.take_profit, "TAKE_PROFIT"
-                        )
+                    (
+                        is_adjusted,
+                        adjusted_price,
+                        adjustment_msg,
+                    ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
+                        order.symbol, order.take_profit, "TAKE_PROFIT"
                     )
                     if is_adjusted:
                         self.logger.warning(

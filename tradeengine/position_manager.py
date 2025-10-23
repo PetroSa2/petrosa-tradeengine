@@ -67,13 +67,13 @@ class PositionManager:
             try:
                 await position_client.connect()
                 logger.info("Data Manager client connected for position tracking")
-                
+
                 # Load positions from Data Manager (primary source)
                 await self._load_positions_from_data_manager()
-                
+
                 # Load daily P&L from Data Manager
                 await self._load_daily_pnl_from_data_manager()
-                
+
             except Exception as data_manager_error:
                 logger.error(
                     f"Data Manager connection failed: {data_manager_error}. "
@@ -314,11 +314,13 @@ class PositionManager:
                 if new_quantity > 0:
                     # NEW: Increment accumulation count if adding to existing position
                     if position["quantity"] > 0:  # Was an existing position
-                        position["accumulation_count"] = position.get("accumulation_count", 0) + 1
+                        position["accumulation_count"] = (
+                            position.get("accumulation_count", 0) + 1
+                        )
                         logger.info(
                             f"Position accumulation #{position['accumulation_count']} for {symbol} {position_side}"
                         )
-                    
+
                     new_avg_price = (
                         position["quantity"] * position["avg_price"]
                         + fill_quantity * fill_price
@@ -357,7 +359,9 @@ class PositionManager:
                             f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
                         audit_logger.log_position(position, status="closed")
-                        await self._close_position_in_data_manager(position_key, position)
+                        await self._close_position_in_data_manager(
+                            position_key, position
+                        )
                         del self.positions[position_key]
                         return
 
@@ -385,7 +389,9 @@ class PositionManager:
             # CRITICAL FIX: Data Manager sync must NOT block risk management orders
             # Use short timeout to prevent hanging - position already updated in memory
             try:
-                await asyncio.wait_for(self._sync_positions_to_data_manager(), timeout=2.0)
+                await asyncio.wait_for(
+                    self._sync_positions_to_data_manager(), timeout=2.0
+                )
             except asyncio.TimeoutError:
                 logger.warning(
                     f"⚠️  Data Manager sync timed out for {symbol} {position_side} (non-critical, continuing)"
@@ -409,12 +415,14 @@ class PositionManager:
         symbol, position_side = position_key
         try:
             await position_client.close_position(
-                symbol, position_side, {
+                symbol,
+                position_side,
+                {
                     "status": "closed",
                     "last_update": datetime.utcnow(),
                     "closed_at": datetime.utcnow(),
                     "final_realized_pnl": position["realized_pnl"],
-                }
+                },
             )
             logger.info(
                 f"Position {symbol} {position_side} marked as closed in Data Manager"
@@ -818,21 +826,22 @@ class PositionManager:
         try:
             # Check if there's a symbol-specific config
             from tradeengine.config_manager import config_manager
-            
+
             symbol_config = await config_manager.get_config(symbol=symbol)
             if symbol_config and symbol_config.parameters.get("max_position_size"):
                 return float(symbol_config.parameters["max_position_size"])
-            
+
             # Check global config
             global_config = await config_manager.get_config()
             if global_config and global_config.parameters.get("max_position_size"):
                 return float(global_config.parameters["max_position_size"])
-        
+
         except Exception as e:
             logger.warning(f"Failed to get config limit for {symbol}: {e}")
-        
+
         # Fall back to environment variable default
         from shared.constants import MAX_POSITION_SIZE
+
         return MAX_POSITION_SIZE
 
     async def check_position_limits(self, order: TradeOrder) -> bool:
@@ -846,14 +855,14 @@ class PositionManager:
         # NEW: Check absolute position size limit (from config or default)
         position_side = "LONG" if order.side == "buy" else "SHORT"
         position_key = (order.symbol, position_side)
-        
+
         if position_key in self.positions:
             current_quantity = self.positions[position_key]["quantity"]
             new_quantity = current_quantity + order.amount
-            
+
             # Get limit from config (symbol-specific or global)
             max_position_size = await self.get_position_size_limit(order.symbol)
-            
+
             if new_quantity > max_position_size:
                 logger.warning(
                     f"Position size would exceed limit: {order.symbol} {position_side} "

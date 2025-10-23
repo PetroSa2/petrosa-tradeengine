@@ -239,12 +239,13 @@ class DeterministicProcessor:
         if self.same_direction_resolution == "accumulate":
             # NEW: Check accumulation count
             from shared.constants import MAX_ACCUMULATIONS_PER_POSITION
+
             if len(same_direction_signals) >= MAX_ACCUMULATIONS_PER_POSITION:
                 return {
                     "status": "rejected",
-                    "reason": f"Maximum accumulations reached ({MAX_ACCUMULATIONS_PER_POSITION}) for {signal.symbol} {signal.action}"
+                    "reason": f"Maximum accumulations reached ({MAX_ACCUMULATIONS_PER_POSITION}) for {signal.symbol} {signal.action}",
                 }
-            
+
             # Allow accumulation
             return {
                 "status": "ok",

@@ -65,7 +65,9 @@ class TestMongoDBValidation:
                 mock_logger = mock_get_logger.return_value
                 validate_mongodb_config()
                 mock_logger.warning.assert_called_once()
-                assert "MongoDB URI not configured" in str(mock_logger.warning.call_args)
+                assert "MongoDB URI not configured" in str(
+                    mock_logger.warning.call_args
+                )
 
     def test_validate_mongodb_config_missing_database(self):
         """Test MongoDB validation logs warning when database is missing (Data Manager mode)"""
@@ -75,7 +77,9 @@ class TestMongoDBValidation:
                     mock_logger = mock_get_logger.return_value
                     validate_mongodb_config()
                     mock_logger.warning.assert_called_once()
-                    assert "MongoDB database not configured" in str(mock_logger.warning.call_args)
+                    assert "MongoDB database not configured" in str(
+                        mock_logger.warning.call_args
+                    )
 
     def test_validate_mongodb_config_invalid_uri_format(self):
         """Test MongoDB validation fails with invalid URI format"""

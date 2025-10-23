@@ -16,7 +16,7 @@ from binance import Client
 from binance.exceptions import BinanceAPIException
 
 from contracts.trading_config import LeverageStatus
-from tradeengine.db.mongodb_client import MongoDBClient
+from tradeengine.db.mongodb_client import DataManagerConfigClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class LeverageManager:
     def __init__(
         self,
         binance_client: Optional[Client] = None,
-        mongodb_client: Optional[MongoDBClient] = None,
+        mongodb_client: Optional[DataManagerConfigClient] = None,
     ):
         """
         Initialize leverage manager.

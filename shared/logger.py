@@ -141,3 +141,8 @@ class AuditLogger:
 
 # Global audit logger instance
 audit_logger = AuditLogger()
+
+
+def get_logger(name: str = __name__):
+    """Get a logger instance."""
+    return logging.getLogger(name)

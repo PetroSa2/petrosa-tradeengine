@@ -143,6 +143,13 @@ class AuditLogger:
 audit_logger = AuditLogger()
 
 
-def get_logger(name: str = __name__):
-    """Get a logger instance."""
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger instance for the specified module.
+
+    Args:
+        name: The name of the logger, typically __name__ from the calling module.
+
+    Returns:
+        A logger instance for the specified module.
+    """
     return logging.getLogger(name)

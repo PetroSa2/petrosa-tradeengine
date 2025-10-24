@@ -1,8 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from prometheus_client import Counter, Histogram
 
@@ -11,6 +10,7 @@ from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
 from shared.config import Settings
 from shared.distributed_lock import distributed_lock_manager
+from shared.logger import get_logger
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import SignalAggregator
@@ -61,7 +61,10 @@ class OCOManager:
         self.exchange = exchange
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
-        self.active_oco_pairs: Dict[str, Dict[str, Any]] = {}  # position_id -> oco_info
+        # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
+        self.active_oco_pairs: Dict[str, List[Dict[str, Any]]] = (
+            {}
+        )  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -73,6 +76,8 @@ class OCOManager:
         quantity: float,
         stop_loss_price: float,
         take_profit_price: float,
+        strategy_position_id: str | None = None,  # NEW: Link to strategy position
+        entry_price: float | None = None,  # NEW: Strategy's entry price for P&L calc
     ) -> Dict[str, Any]:
         """
         Place SL/TP orders that will cancel each other (OCO behavior)
@@ -84,32 +89,30 @@ class OCOManager:
             quantity: Position size
             stop_loss_price: Stop loss trigger price
             take_profit_price: Take profit target price
+            strategy_position_id: Strategy position UUID (for tracking)
+            entry_price: Strategy's actual entry price (for P&L calculation)
 
         Returns:
             Dict with sl_order_id and tp_order_id
         """
 
-        # CRITICAL FIX: Check if there are already active OCO pairs for THIS SPECIFIC POSITION
-        # Note: Multiple positions can exist for the same symbol (especially in hedge mode)
-        # Each position needs its own SL/TP orders, so we check by position_id, not symbol
-        if position_id in self.active_oco_pairs:
-            existing_oco = self.active_oco_pairs[position_id]
-            if existing_oco["status"] == "active":
-                self.logger.warning(
-                    f"⚠️  DUPLICATE OCO PREVENTION: Active OCO pair already exists "
-                    f"for position {position_id} ({symbol}). Skipping new OCO placement."
-                )
-                return {
-                    "status": "skipped",
-                    "reason": f"Active OCO pair already exists for position {position_id}",
-                    "existing_pair": position_id,
-                }
+        # REMOVED: Duplicate OCO prevention - now allows multiple strategies per position
+        # This enables multiple strategies to have their own OCO orders on the same exchange position
 
-        self.logger.info(f"🔄 PLACING OCO ORDERS FOR {symbol} {position_side}")
-        self.logger.info(f"Position ID: {position_id}")
-        self.logger.info(f"Quantity: {quantity}")
-        self.logger.info(f"Stop Loss: {stop_loss_price}")
-        self.logger.info(f"Take Profit: {take_profit_price}")
+        exchange_position_key = f"{symbol}_{position_side}"
+
+        self.logger.info(
+            "Placing OCO orders",
+            event="oco_orders_placing",
+            symbol=symbol,
+            position_side=position_side,
+            position_id=position_id,
+            strategy_position_id=strategy_position_id,
+            quantity=quantity,
+            stop_loss_price=stop_loss_price,
+            take_profit_price=take_profit_price,
+            entry_price=entry_price,
+        )
 
         # Determine order sides based on position side
         if position_side == "LONG":
@@ -185,7 +188,13 @@ class OCOManager:
 
             if sl_order_id and tp_order_id:
                 # Store the OCO pair for monitoring
-                self.active_oco_pairs[position_id] = {
+                if exchange_position_key not in self.active_oco_pairs:
+                    self.active_oco_pairs[exchange_position_key] = []
+
+                oco_info = {
+                    "strategy_position_id": strategy_position_id,
+                    "entry_price": entry_price,
+                    "quantity": quantity,
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
                     "symbol": symbol,
@@ -194,9 +203,46 @@ class OCOManager:
                     "created_at": time.time(),
                 }
 
+                self.active_oco_pairs[exchange_position_key].append(oco_info)
+
                 self.logger.info("✅ OCO ORDERS PLACED SUCCESSFULLY")
-                self.logger.info(f"  Stop Loss Order ID: {sl_order_id}")
-                self.logger.info(f"  Take Profit Order ID: {tp_order_id}")
+                self.logger.info(
+                    f"OCO pair added for strategy {strategy_position_id}: "
+                    f"Total OCO pairs for {exchange_position_key}: "
+                    f"{len(self.active_oco_pairs[exchange_position_key])}"
+                )
+                self.logger.info(
+                    "OCO orders placed",
+                    event="oco_orders_placed",
+                    position_id=position_id,
+                    strategy_position_id=strategy_position_id,
+                    sl_order_id=sl_order_id,
+                    tp_order_id=tp_order_id,
+                )
+
+                # Export metrics
+                from tradeengine.metrics import (
+                    active_oco_pairs_per_position,
+                    strategy_oco_placed_total,
+                )
+                from tradeengine.strategy_position_manager import (
+                    strategy_position_manager,
+                )
+
+                # Get strategy_id from position manager
+                if strategy_position_id and strategy_position_manager:
+                    strategy_pos = strategy_position_manager.get_strategy_position(
+                        strategy_position_id
+                    )
+                    if strategy_pos:
+                        strat_id = strategy_pos.get("strategy_id", "unknown")
+                        strategy_oco_placed_total.labels(
+                            strategy_id=strat_id, symbol=symbol, exchange="binance"
+                        ).inc()
+
+                active_oco_pairs_per_position.labels(
+                    symbol=symbol, position_side=position_side, exchange="binance"
+                ).set(len(self.active_oco_pairs[exchange_position_key]))
 
                 # Start monitoring if not already active
                 if not self.monitoring_active:
@@ -217,48 +263,82 @@ class OCOManager:
             self.logger.error(f"❌ ERROR PLACING OCO ORDERS: {e}")
             return {"status": "error", "error": str(e)}
 
-    async def cancel_oco_pair(self, position_id: str) -> bool:
+    async def cancel_oco_pair(
+        self, position_id: str, symbol: str = None, position_side: str = None
+    ) -> bool:
         """
-        Cancel both SL and TP orders for a position
+        Cancel ALL OCO pairs for a position (used for manual position closure)
 
         Args:
-            position_id: Position identifier
+            position_id: Position identifier (legacy)
+            symbol: Trading symbol
+            position_side: Position side (LONG/SHORT)
 
         Returns:
-            True if both orders were cancelled successfully
+            True if all OCO pairs were cancelled successfully
         """
 
-        if position_id not in self.active_oco_pairs:
-            self.logger.warning(f"⚠️  No OCO pair found for position {position_id}")
-            return False
+        # Build exchange_position_key
+        exchange_position_key = None
+        if symbol and position_side:
+            exchange_position_key = f"{symbol}_{position_side}"
 
-        oco_info = self.active_oco_pairs[position_id]
-        sl_order_id = oco_info["sl_order_id"]
-        tp_order_id = oco_info["tp_order_id"]
-        symbol = oco_info["symbol"]
-
-        self.logger.info(f"🔄 CANCELLING OCO PAIR FOR {symbol}")
-        self.logger.info(f"Position ID: {position_id}")
-        self.logger.info(f"SL Order ID: {sl_order_id}")
-        self.logger.info(f"TP Order ID: {tp_order_id}")
-
-        try:
-            # Cancel both orders using batch cancellation
-            cancel_result = self.exchange.client.futures_cancel_batch_orders(
-                symbol=symbol, orderIdList=[sl_order_id, tp_order_id]
+        # Try to find OCO pairs
+        oco_list = None
+        if exchange_position_key and exchange_position_key in self.active_oco_pairs:
+            oco_list = self.active_oco_pairs[exchange_position_key]
+        elif position_id in self.active_oco_pairs:
+            # Backward compatibility - old key structure
+            oco_list = (
+                [self.active_oco_pairs[position_id]]
+                if isinstance(self.active_oco_pairs[position_id], dict)
+                else self.active_oco_pairs[position_id]
             )
 
-            if cancel_result and len(cancel_result) >= 2:
-                self.logger.info("✅ OCO PAIR CANCELLED SUCCESSFULLY")
-                self.active_oco_pairs[position_id]["status"] = "cancelled"
-                return True
-            else:
-                self.logger.error(f"❌ FAILED TO CANCEL OCO PAIR: {cancel_result}")
-                return False
-
-        except Exception as e:
-            self.logger.error(f"❌ ERROR CANCELLING OCO PAIR: {e}")
+        if not oco_list:
+            self.logger.warning(
+                f"⚠️  No OCO pairs found for position {position_id} / {exchange_position_key}"
+            )
             return False
+
+        all_cancelled = True
+        for oco_info in oco_list:
+            if oco_info["status"] != "active":
+                continue
+
+            sl_order_id = oco_info["sl_order_id"]
+            tp_order_id = oco_info["tp_order_id"]
+            oco_symbol = oco_info["symbol"]
+
+            self.logger.info(
+                "Cancelling OCO pair",
+                event="oco_pair_cancelling",
+                symbol=oco_symbol,
+                strategy_position_id=oco_info.get("strategy_position_id"),
+                sl_order_id=sl_order_id,
+                tp_order_id=tp_order_id,
+            )
+
+            try:
+                # Cancel both orders using batch cancellation
+                cancel_result = self.exchange.client.futures_cancel_batch_orders(
+                    symbol=oco_symbol, orderIdList=[sl_order_id, tp_order_id]
+                )
+
+                if cancel_result and len(cancel_result) >= 2:
+                    self.logger.info(
+                        f"✅ OCO PAIR CANCELLED for strategy {oco_info.get('strategy_position_id')}"
+                    )
+                    oco_info["status"] = "cancelled"
+                else:
+                    self.logger.error(f"❌ FAILED TO CANCEL OCO PAIR: {cancel_result}")
+                    all_cancelled = False
+
+            except Exception as e:
+                self.logger.error(f"❌ ERROR CANCELLING OCO PAIR: {e}")
+                all_cancelled = False
+
+        return all_cancelled
 
     async def cancel_other_order(
         self, position_id: str, filled_order_id: str
@@ -301,11 +381,16 @@ class OCOManager:
             )
             return False, "unknown"
 
-        self.logger.info(f"🔄 OCO TRIGGERED: {filled_type} FILLED")
-        self.logger.info(f"Position ID: {position_id}")
-        self.logger.info(f"Filled Order: {filled_order_id} ({filled_type})")
-        self.logger.info(f"Cancelling Order: {order_to_cancel} ({cancel_type})")
-        self.logger.info(f"Close Reason: {close_reason}")
+        self.logger.info(
+            "OCO triggered",
+            event="oco_triggered",
+            position_id=position_id,
+            filled_type=filled_type,
+            filled_order_id=filled_order_id,
+            order_to_cancel=order_to_cancel,
+            cancel_type=cancel_type,
+            close_reason=close_reason,
+        )
 
         try:
             # Cancel the other order
@@ -314,7 +399,12 @@ class OCOManager:
             )
 
             if cancel_result:
-                self.logger.info(f"✅ {cancel_type} ORDER CANCELLED SUCCESSFULLY")
+                self.logger.info(
+                    "Order cancelled successfully",
+                    event="order_cancelled",
+                    order_type=cancel_type,
+                    order_id=order_to_cancel,
+                )
                 self.active_oco_pairs[position_id]["status"] = "completed"
                 self.active_oco_pairs[position_id]["close_reason"] = close_reason
                 return True, close_reason
@@ -350,89 +440,103 @@ class OCOManager:
         """
         Monitor active orders for fills and trigger OCO logic
         This runs in a separate task
+        NEW: Works with multiple OCO pairs per exchange position
         """
 
-        self.logger.info("🔍 STARTING ORDER MONITORING")
-        self.logger.info(f"Active OCO pairs: {len(self.active_oco_pairs)}")
+        self.logger.info("🔍 STARTING ORDER MONITORING (MULTI-STRATEGY MODE)")
+
+        # Count total OCO pairs across all exchange positions
+        total_pairs = sum(len(pairs) for pairs in self.active_oco_pairs.values())
+        self.logger.info(
+            f"Active OCO pairs: {total_pairs} across {len(self.active_oco_pairs)} positions"
+        )
 
         while self.monitoring_active and self.active_oco_pairs:
             try:
-                # Check each active OCO pair
-                for position_id, oco_info in list(self.active_oco_pairs.items()):
-                    if oco_info["status"] != "active":
+                # Check each exchange position's OCO pairs
+                for exchange_position_key, oco_list in list(
+                    self.active_oco_pairs.items()
+                ):
+                    if not oco_list:
                         continue
 
-                    # Query order status
-                    orders = self.exchange.client.futures_get_open_orders(
-                        symbol=oco_info["symbol"]
-                    )
+                    # Get symbol for batch query
+                    symbol = oco_list[0]["symbol"] if oco_list else None
+                    if not symbol:
+                        continue
 
-                    sl_order_id = oco_info["sl_order_id"]
-                    tp_order_id = oco_info["tp_order_id"]
+                    # Query all open orders for this symbol once
+                    orders = self.exchange.client.futures_get_open_orders(symbol=symbol)
+                    open_order_ids = {order["orderId"] for order in orders}
 
-                    # Check if orders still exist
-                    sl_exists = any(order["orderId"] == sl_order_id for order in orders)
-                    tp_exists = any(order["orderId"] == tp_order_id for order in orders)
+                    # Check each OCO pair in this position
+                    for oco_info in oco_list:
+                        if oco_info["status"] != "active":
+                            continue
 
-                    # If one order is missing, it was likely filled
-                    filled_order_id = None
-                    close_reason = "unknown"
+                        sl_order_id = oco_info["sl_order_id"]
+                        tp_order_id = oco_info["tp_order_id"]
 
-                    if not sl_exists and tp_exists:
-                        # Stop loss filled
-                        filled_order_id = sl_order_id
-                        success, close_reason = await self.cancel_other_order(
-                            position_id, sl_order_id
-                        )
-                    elif sl_exists and not tp_exists:
-                        # Take profit filled
-                        filled_order_id = tp_order_id
-                        success, close_reason = await self.cancel_other_order(
-                            position_id, tp_order_id
-                        )
-                    elif not sl_exists and not tp_exists:
-                        # Both orders are gone - OCO completed
-                        self.logger.info(f"✅ OCO COMPLETED FOR POSITION {position_id}")
-                        self.active_oco_pairs[position_id]["status"] = "completed"
+                        # Check if orders still exist
+                        sl_exists = sl_order_id in open_order_ids
+                        tp_exists = tp_order_id in open_order_ids
 
-                        # Try to determine which filled first (check oco_info for close_reason)
-                        close_reason = oco_info.get("close_reason", "unknown")
-                        filled_order_id = oco_info.get("filled_order_id")
+                        # Determine which order filled
+                        filled_order_id = None
+                        close_reason = "unknown"
 
-                        # CRITICAL: Close the position with full PNL calculation
-                        try:
-                            if self.dispatcher and filled_order_id:
-                                await self._close_position_on_oco_completion(
-                                    position_id,
-                                    filled_order_id,
-                                    close_reason,
-                                    oco_info,
-                                    self.dispatcher,
-                                )
-                            else:
-                                self.logger.warning(
-                                    f"No dispatcher reference or filled_order_id for position {position_id}"
-                                )
-                        except Exception as e:
-                            self.logger.error(
-                                f"❌ Failed to close position {position_id}: {e}"
+                        if not sl_exists and tp_exists:
+                            # Stop loss filled
+                            filled_order_id = sl_order_id
+                            close_reason = "stop_loss"
+                            self.logger.info(
+                                f"🔴 SL TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
                             )
+                        elif sl_exists and not tp_exists:
+                            # Take profit filled
+                            filled_order_id = tp_order_id
+                            close_reason = "take_profit"
+                            self.logger.info(
+                                f"🟢 TP TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
+                            )
+                        elif not sl_exists and not tp_exists:
+                            # Both gone - OCO completed
+                            self.logger.info(
+                                f"✅ OCO completed for strategy {oco_info.get('strategy_position_id')}"
+                            )
+                            oco_info["status"] = "completed"
+                            continue
 
-                    # Store filled order info for later use
-                    if filled_order_id and close_reason != "unknown":
-                        self.active_oco_pairs[position_id][
-                            "filled_order_id"
-                        ] = filled_order_id
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        # If an order filled, close the strategy position
+                        if filled_order_id:
+                            try:
+                                # Close position with strategy attribution
+                                await self._close_position_on_oco_completion(
+                                    position_id="",  # Not used anymore
+                                    filled_order_id=filled_order_id,
+                                    close_reason=close_reason,
+                                    oco_info=oco_info,
+                                    dispatcher=self.dispatcher,
+                                )
+                            except Exception as e:
+                                self.logger.error(
+                                    f"❌ Failed to close strategy position: {e}"
+                                )
 
-                # Remove completed pairs
-                self.active_oco_pairs = {
-                    pid: info
-                    for pid, info in self.active_oco_pairs.items()
-                    if info["status"] == "active"
-                }
+                # Clean up completed OCO pairs
+                for exchange_position_key in list(self.active_oco_pairs.keys()):
+                    # Filter out completed pairs
+                    active_pairs = [
+                        oco
+                        for oco in self.active_oco_pairs[exchange_position_key]
+                        if oco["status"] == "active"
+                    ]
+
+                    if active_pairs:
+                        self.active_oco_pairs[exchange_position_key] = active_pairs
+                    else:
+                        # No active pairs left, remove the key
+                        del self.active_oco_pairs[exchange_position_key]
 
                 # Wait before next check
                 await asyncio.sleep(2)  # Check every 2 seconds
@@ -451,25 +555,41 @@ class OCOManager:
         oco_info: dict,
         dispatcher,
     ) -> None:
-        """Close position with full PNL calculation when OCO completes
+        """Close ONLY the owning strategy's position when its OCO completes
 
         Args:
-            position_id: Position identifier
+            position_id: Position identifier (legacy, not used with new structure)
             filled_order_id: The order ID that was filled (SL or TP)
             close_reason: 'take_profit' or 'stop_loss'
-            oco_info: OCO pair information
+            oco_info: OCO pair information with strategy context
             dispatcher: Dispatcher instance
         """
         try:
             symbol = oco_info["symbol"]
             position_side = oco_info["position_side"]
+            exchange_position_key = f"{symbol}_{position_side}"
 
-            self.logger.info("🔄 CLOSING POSITION WITH PNL CALCULATION")
-            self.logger.info(f"  Position ID: {position_id}")
+            self.logger.info("🎯 STRATEGY OCO TRIGGERED - CLOSING OWNING STRATEGY ONLY")
             self.logger.info(f"  Symbol: {symbol}")
             self.logger.info(f"  Position Side: {position_side}")
             self.logger.info(f"  Close Reason: {close_reason}")
             self.logger.info(f"  Filled Order ID: {filled_order_id}")
+
+            # NEW: Find which strategy's OCO filled
+            owning_oco = oco_info  # This is already the owning OCO from _monitor_orders
+            strategy_position_id = owning_oco.get("strategy_position_id")
+            entry_price = owning_oco.get("entry_price")
+            exit_quantity = owning_oco.get("quantity")
+
+            if not strategy_position_id:
+                self.logger.error(
+                    f"❌ No strategy_position_id in OCO info for {filled_order_id}"
+                )
+                return
+
+            self.logger.info(f"  🎯 Owning Strategy Position: {strategy_position_id}")
+            self.logger.info(f"  📍 Entry Price: ${entry_price:,.2f}")
+            self.logger.info(f"  📊 Quantity: {exit_quantity}")
 
             # Step 1: Fetch filled order details from Binance
             try:
@@ -479,198 +599,116 @@ class OCOManager:
 
                 # Extract exit data
                 exit_price = float(order_details.get("avgPrice", 0))
-                exit_quantity = float(order_details.get("executedQty", 0))
-                exit_time_ms = order_details.get("updateTime")
+                filled_quantity = float(order_details.get("executedQty", 0))
 
-                self.logger.info(f"  Exit Price: {exit_price}")
-                self.logger.info(f"  Exit Quantity: {exit_quantity}")
+                self.logger.info(f"  📤 Exit Price: ${exit_price:,.2f}")
+                self.logger.info(f"  📤 Filled Quantity: {filled_quantity}")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to fetch order details: {e}")
-                # Fallback to estimated values from oco_info
-                exit_price = (
-                    oco_info.get("stop_loss_price")
-                    if close_reason == "stop_loss"
-                    else oco_info.get("take_profit_price")
-                ) or 0
-                exit_quantity = 0
-                exit_time_ms = int(time.time() * 1000)
-                self.logger.warning(f"Using fallback exit_price: {exit_price}")
+                # Use strategy's quantity from OCO info
+                exit_price = entry_price  # Fallback
+                filled_quantity = exit_quantity
+                self.logger.warning("Using fallback values")
 
-            # Step 2: Get position data from DATABASE (not in-memory aggregated data)
-            # CRITICAL: We need ACTUAL entry price from the entry order, not weighted average
-            position_data = None
+            # Step 2: Calculate P&L using THIS strategy's entry price
+            if position_side == "LONG":
+                pnl = (exit_price - entry_price) * filled_quantity
+            else:  # SHORT
+                pnl = (entry_price - exit_price) * filled_quantity
 
-            # Try MongoDB first (primary)
-            if hasattr(dispatcher, "position_manager") and dispatcher.position_manager:
-                if dispatcher.position_manager.mongodb_db is not None:
-                    try:
-                        positions_collection = (
-                            dispatcher.position_manager.mongodb_db.positions
-                        )
-                        position_data = await positions_collection.find_one(
-                            {"position_id": position_id}
-                        )
-                        if position_data:
-                            self.logger.info(
-                                f"✅ Found position {position_id} in MongoDB"
-                            )
-                    except Exception as mongo_error:
-                        self.logger.warning(
-                            f"⚠️  MongoDB query failed, trying MySQL: {mongo_error}"
-                        )
+            pnl_pct = (
+                (pnl / (entry_price * filled_quantity) * 100)
+                if entry_price > 0 and filled_quantity > 0
+                else 0.0
+            )
 
-            # Fallback to MySQL if MongoDB failed
-            if not position_data:
-                from shared.mysql_client import mysql_client
+            self.logger.info("  💰 P&L Calculation:")
+            self.logger.info(f"     Entry: ${entry_price:,.2f}")
+            self.logger.info(f"     Exit: ${exit_price:,.2f}")
+            self.logger.info(f"     Quantity: {filled_quantity}")
+            self.logger.info(f"     Gross P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%)")
 
-                if mysql_client:
-                    try:
-                        results = await mysql_client.execute_query(
-                            """
-                            SELECT
-                                position_id, symbol, position_side, entry_price,
-                                quantity, entry_time, entry_order_id,
-                                commission_total, stop_loss, take_profit
-                            FROM positions
-                            WHERE position_id = %s
-                            """,
-                            (position_id,),
-                            fetch=True,
-                        )
+            # Step 3: Close ONLY this strategy's position
+            from tradeengine.strategy_position_manager import strategy_position_manager
 
-                        if results and len(results) > 0:
-                            row = results[0]
-                            position_data = {
-                                "position_id": row["position_id"],
-                                "symbol": row["symbol"],
-                                "position_side": row["position_side"],
-                                "entry_price": float(row["entry_price"]),
-                                "quantity": float(row["quantity"]),
-                                "entry_time": row["entry_time"],
-                                "entry_order_id": row["entry_order_id"],
-                                "commission_total": float(
-                                    row.get("commission_total", 0)
-                                ),
-                            }
-                            self.logger.info(f"✅ Found position {position_id} in MySQL")
-                    except Exception as mysql_error:
-                        self.logger.error(f"❌ MySQL query failed: {mysql_error}")
-
-            if position_data:
-                # Extract ACTUAL entry data from database record
-                entry_price = float(position_data.get("entry_price", 0))
-                entry_order_id = position_data.get("entry_order_id")
-                entry_time = position_data.get("entry_time", datetime.utcnow())
-                quantity = float(position_data.get("quantity", exit_quantity))
-                entry_commission = float(
-                    position_data.get("commission_total", 0)
-                    or position_data.get("commission", 0)
+            # Get strategy_id from position manager
+            strategy_id = "unknown"
+            if strategy_position_manager:
+                # Get the position to extract strategy_id
+                strategy_pos = strategy_position_manager.get_strategy_position(
+                    strategy_position_id
                 )
+                if strategy_pos:
+                    strategy_id = strategy_pos.get("strategy_id", "unknown")
 
-                self.logger.info("  📋 Entry Data (from database):")
-                self.logger.info(f"     Entry Price: ${entry_price:.2f}")
-                self.logger.info(f"     Entry Order ID: {entry_order_id}")
-                self.logger.info(f"     Quantity: {quantity}")
-                self.logger.info(f"     Entry Commission: ${entry_commission:.4f}")
-
-                # Step 3: Calculate PNL (hedge-mode aware)
-                if position_side == "LONG":
-                    pnl = (exit_price - entry_price) * exit_quantity
-                else:  # SHORT
-                    pnl = (entry_price - exit_price) * exit_quantity
-
-                # Calculate exit commission (assume 0.04% maker fee for limit orders)
-                exit_commission = exit_quantity * exit_price * 0.0004
-                total_commission = entry_commission + exit_commission
-                pnl_after_fees = pnl - total_commission
-
-                pnl_pct = (
-                    (pnl / (entry_price * exit_quantity) * 100)
-                    if entry_price > 0 and exit_quantity > 0
-                    else 0.0
+                await strategy_position_manager.close_strategy_position(
+                    strategy_position_id=strategy_position_id,
+                    exit_price=exit_price,
+                    exit_quantity=filled_quantity,
+                    close_reason=close_reason,
+                    exit_order_id=filled_order_id,
                 )
-
-                self.logger.info("  📊 PNL Calculation:")
-                self.logger.info(f"     Gross PNL: ${pnl:.2f}")
-                self.logger.info(f"     Commission: ${total_commission:.4f}")
-                self.logger.info(f"     Net PNL: ${pnl_after_fees:.2f}")
-                self.logger.info(f"     PNL %: {pnl_pct:.2f}%")
-
-                # Step 4: Close exchange-level position
-                exit_result = {
-                    "exit_price": exit_price,
-                    "exit_time": datetime.fromtimestamp(exit_time_ms / 1000),
-                    "entry_price": entry_price,
-                    "entry_time": entry_time,
-                    "quantity": exit_quantity,
-                    "pnl": pnl,
-                    "pnl_pct": pnl_pct,
-                    "pnl_after_fees": pnl_after_fees,
-                    "close_reason": close_reason,
-                    "order_id": filled_order_id,
-                    "entry_commission": entry_commission,
-                    "exit_commission": exit_commission,
-                    "position_side": position_side,
-                    "entry_order_id": entry_order_id,  # Track the entry order ID
-                }
-
-                await dispatcher.position_manager.close_position_record(
-                    position_id, exit_result
-                )
-
-                # Remove from active positions
-                position_key = (symbol, position_side)
-                if (
-                    hasattr(dispatcher, "position_manager")
-                    and dispatcher.position_manager
-                ):
-                    if position_key in dispatcher.position_manager.positions:
-                        del dispatcher.position_manager.positions[position_key]
-
-                self.logger.info(f"✅ Exchange position closed: {position_id}")
-
-                # Step 5: Close strategy-level positions
-                from tradeengine.strategy_position_manager import (
-                    strategy_position_manager,
-                )
-
-                if strategy_position_manager:
-                    exchange_position_key = f"{symbol}_{position_side}"
-
-                    # Get all open strategy positions for this exchange position
-                    if hasattr(
-                        strategy_position_manager,
-                        "get_open_strategy_positions_by_exchange_key",
-                    ):
-                        strategy_positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key(
-                            exchange_position_key
-                        )
-
-                        self.logger.info(
-                            f"  Closing {len(strategy_positions)} strategy positions"
-                        )
-
-                        for strat_pos in strategy_positions:
-                            strategy_position_id = strat_pos["strategy_position_id"]
-                            await strategy_position_manager.close_strategy_position(
-                                strategy_position_id=strategy_position_id,
-                                exit_price=exit_price,
-                                exit_quantity=strat_pos.get("entry_quantity"),
-                                close_reason=close_reason,
-                                exit_order_id=filled_order_id,
-                            )
-                            self.logger.info(
-                                f"  ✅ Strategy position closed: {strategy_position_id}"
-                            )
 
                 self.logger.info(
-                    f"✅ POSITION {position_id} FULLY CLOSED WITH PNL CALCULATED"
+                    f"✅ Strategy position {strategy_position_id} ({strategy_id}) closed: {close_reason}, P&L: ${pnl:,.2f}"
                 )
-            else:
+
+            # Step 4: Cancel the paired order (TP if SL filled, SL if TP filled)
+            other_order_id = (
+                owning_oco["sl_order_id"]
+                if filled_order_id == owning_oco["tp_order_id"]
+                else owning_oco["tp_order_id"]
+            )
+
+            try:
+                await self.exchange.cancel_order(other_order_id, symbol)
+                self.logger.info(f"✅ Cancelled paired order: {other_order_id}")
+            except Exception as e:
                 self.logger.warning(
-                    f"❌ Position {position_id} not found in database (MongoDB or MySQL)"
+                    f"⚠️ Failed to cancel paired order {other_order_id}: {e}"
                 )
+
+            # Step 5: Mark this OCO as completed
+            owning_oco["status"] = "completed"
+
+            # Step 6: Export Prometheus metrics
+            from tradeengine.metrics import (
+                active_oco_pairs_per_position,
+                strategy_pnl_realized,
+                strategy_sl_triggered_total,
+                strategy_tp_triggered_total,
+            )
+
+            if close_reason == "take_profit":
+                strategy_tp_triggered_total.labels(
+                    strategy_id=strategy_id, symbol=symbol, exchange="binance"
+                ).inc()
+            elif close_reason == "stop_loss":
+                strategy_sl_triggered_total.labels(
+                    strategy_id=strategy_id, symbol=symbol, exchange="binance"
+                ).inc()
+
+            strategy_pnl_realized.labels(
+                strategy_id=strategy_id, close_reason=close_reason, exchange="binance"
+            ).observe(pnl)
+
+            # Update active OCO pairs gauge
+            if exchange_position_key in self.active_oco_pairs:
+                active_count = len(
+                    [
+                        o
+                        for o in self.active_oco_pairs[exchange_position_key]
+                        if o["status"] == "active"
+                    ]
+                )
+                active_oco_pairs_per_position.labels(
+                    symbol=symbol, position_side=position_side, exchange="binance"
+                ).set(active_count)
+
+            self.logger.info(
+                f"✅ STRATEGY {strategy_position_id} CLOSED: {close_reason}, P&L: ${pnl:,.2f}"
+            )
 
         except Exception as e:
             self.logger.error(
@@ -688,7 +726,7 @@ class Dispatcher:
         self.position_manager = PositionManager()
         self.signal_aggregator = SignalAggregator()
         self.exchange = exchange
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
         # Initialize OCO Manager for SL/TP order management
         self.oco_manager = OCOManager(exchange, self.logger, self)
@@ -709,6 +747,10 @@ class Dispatcher:
         # Signal to order mapping for strategy position tracking
         # Format: {order_id: Signal} - stores signals for strategy position creation
         self.order_to_signal: dict[str, Signal] = {}
+
+        # NEW: Order to strategy position mapping for OCO attribution
+        # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
+        self.order_to_strategy_position: dict[str, str] = {}
 
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
@@ -1056,9 +1098,9 @@ class Dispatcher:
                         raise
 
                 result["execution_result"] = execution_result
-                result[
-                    "status"
-                ] = "executed"  # Change status to executed for consistency
+                result["status"] = (
+                    "executed"  # Change status to executed for consistency
+                )
 
                 # NEW: Update last accumulation time if order was executed successfully
                 if execution_result.get("status") in (
@@ -1137,7 +1179,13 @@ class Dispatcher:
                             self.position_manager.update_position(order, result),
                             timeout=10.0,  # Increased from 5s to 10s
                         )
-                        self.logger.info(f"✅ Position updated for {order.symbol}")
+                        self.logger.info(
+                            "Position updated",
+                            event="position_updated",
+                            symbol=order.symbol,
+                            order_id=order.order_id,
+                            position_id=getattr(result, "position_id", None),
+                        )
                         position_updated = True
                         self.logger.info(
                             f"🔍 DEBUG: position_updated={position_updated}, breaking from retry loop"
@@ -1211,7 +1259,16 @@ class Dispatcher:
                             self.logger.info(
                                 f"✅ Strategy position {strategy_position_id} created for {signal.strategy_id}"
                             )
-                            # Clean up mapping
+
+                            # NEW: Map order to strategy position for OCO attribution
+                            self.order_to_strategy_position[order.order_id] = (
+                                strategy_position_id
+                            )
+                            self.logger.info(
+                                f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
+                            )
+
+                            # Clean up signal mapping
                             del self.order_to_signal[order.order_id]
                         else:
                             self.logger.warning(
@@ -1357,9 +1414,13 @@ class Dispatcher:
                 amount = min_amount
 
             self.logger.info(
-                f"Calculated order amount for {signal.symbol}: {amount} "
-                f"(signal_qty: {signal.quantity}, min_required: {min_amount}, "
-                f"current_price: ${current_price:.2f})"
+                "Order amount calculated",
+                event="order_amount_calculated",
+                symbol=signal.symbol,
+                amount=amount,
+                signal_qty=signal.quantity,
+                min_required=min_amount,
+                current_price=current_price,
             )
 
             return amount
@@ -1392,7 +1453,9 @@ class Dispatcher:
             # Execute order on Binance exchange
             if order.simulate:
                 # Simulated order - just track locally
-                self.logger.info(f"🎭 SIMULATION MODE: Order {order.order_id} simulated")
+                self.logger.info(
+                    f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
+                )
                 result = {"status": "pending", "simulated": True}
                 await self.order_manager.track_order(order, result)
             else:
@@ -1632,6 +1695,17 @@ class Dispatcher:
                     )
                     return
 
+                # NEW: Get strategy context for OCO attribution
+                strategy_position_id = self.order_to_strategy_position.get(
+                    order.order_id
+                )
+                entry_price = result.get("fill_price", result.get("price", order.price))
+
+                self.logger.info(
+                    f"🎯 Placing OCO with strategy context: "
+                    f"strategy_position_id={strategy_position_id}, entry_price={entry_price}"
+                )
+
                 oco_result = await self.oco_manager.place_oco_orders(
                     position_id=order.position_id or "",
                     symbol=order.symbol,
@@ -1639,6 +1713,8 @@ class Dispatcher:
                     quantity=filled_quantity,
                     stop_loss_price=order.stop_loss or 0.0,
                     take_profit_price=order.take_profit or 0.0,
+                    strategy_position_id=strategy_position_id,  # NEW
+                    entry_price=entry_price,  # NEW
                 )
 
                 if oco_result["status"] == "success":

@@ -100,3 +100,38 @@ position_exit_price = Histogram(
     ["symbol", "position_side", "exchange"],
     buckets=[1, 10, 100, 1000, 10000, 50000, 100000],
 )
+
+# ========================================
+# Strategy OCO Attribution Metrics
+# ========================================
+
+strategy_oco_placed_total = Counter(
+    "tradeengine_strategy_oco_placed_total",
+    "Total OCO pairs placed per strategy",
+    ["strategy_id", "symbol", "exchange"],
+)
+
+strategy_tp_triggered_total = Counter(
+    "tradeengine_strategy_tp_triggered_total",
+    "Strategy's own TP order triggered",
+    ["strategy_id", "symbol", "exchange"],
+)
+
+strategy_sl_triggered_total = Counter(
+    "tradeengine_strategy_sl_triggered_total",
+    "Strategy's own SL order triggered",
+    ["strategy_id", "symbol", "exchange"],
+)
+
+strategy_pnl_realized = Histogram(
+    "tradeengine_strategy_pnl_realized",
+    "Realized P&L per strategy exit",
+    ["strategy_id", "close_reason", "exchange"],
+    buckets=[-100, -50, -10, -5, -1, 0, 1, 5, 10, 50, 100, 500],
+)
+
+active_oco_pairs_per_position = Gauge(
+    "tradeengine_active_oco_pairs_per_position",
+    "Number of active OCO pairs per exchange position",
+    ["symbol", "position_side", "exchange"],
+)

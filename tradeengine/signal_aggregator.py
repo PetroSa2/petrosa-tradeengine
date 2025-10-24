@@ -237,10 +237,19 @@ class DeterministicProcessor:
 
         # Handle based on configuration
         if self.same_direction_resolution == "accumulate":
-            # Allow multiple strategies to build positions
+            # NEW: Check accumulation count
+            from shared.constants import MAX_ACCUMULATIONS_PER_POSITION
+
+            if len(same_direction_signals) >= MAX_ACCUMULATIONS_PER_POSITION:
+                return {
+                    "status": "rejected",
+                    "reason": f"Maximum accumulations reached ({MAX_ACCUMULATIONS_PER_POSITION}) for {signal.symbol} {signal.action}",
+                }
+
+            # Allow accumulation
             return {
                 "status": "ok",
-                "reason": "Accumulating position from multiple strategies",
+                "reason": f"Accumulating position from multiple strategies ({len(same_direction_signals) + 1}/{MAX_ACCUMULATIONS_PER_POSITION})",
             }
 
         elif self.same_direction_resolution == "strongest_wins":

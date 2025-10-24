@@ -1,6 +1,6 @@
 """
 Position Manager - Tracks positions and enforces risk limits with distributed state
-management using MongoDB and MySQL, with metrics export to Grafana
+management using Data Manager API and MongoDB for coordination only.
 """
 
 import asyncio
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 class PositionManager:
     """Manages trading positions and risk limits with distributed state management
-    using MongoDB"""
+    using Data Manager API for persistence and MongoDB for coordination only."""
 
     def __init__(self) -> None:
         self.positions: dict[str, dict[str, Any]] = {}
@@ -58,32 +58,34 @@ class PositionManager:
         self.mongodb_db: Any = None
 
     async def initialize(self) -> None:
-        """Initialize position manager with MongoDB and MySQL persistence"""
+        """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
         try:
-            # Initialize MongoDB connection
+            # Initialize MongoDB connection for distributed coordination only
             await self._initialize_mongodb()
 
-            # Initialize Data Manager connection
+            # Initialize Data Manager connection for position persistence
             try:
                 await position_client.connect()
                 logger.info("Data Manager client connected for position tracking")
+
+                # Load positions from Data Manager (primary source)
+                await self._load_positions_from_data_manager()
+
+                # Load daily P&L from Data Manager
+                await self._load_daily_pnl_from_data_manager()
+
             except Exception as data_manager_error:
-                logger.warning(
+                logger.error(
                     f"Data Manager connection failed: {data_manager_error}. "
                     "Position tracking disabled."
                 )
+                raise
 
-            # Load positions from MongoDB
-            await self._load_positions_from_mongodb()
-
-            # Load daily P&L
-            await self._load_daily_pnl_from_mongodb()
-
-            # Start periodic sync
+            # Start periodic sync to Data Manager
             asyncio.create_task(self._periodic_sync())
 
             logger.info(
-                f"Position manager initialized with {len(self.positions)} positions"
+                f"Position manager initialized with {len(self.positions)} positions via Data Manager"
             )
         except Exception as e:
             logger.error(f"Failed to initialize position manager: {e}")
@@ -93,9 +95,10 @@ class PositionManager:
     async def close(self) -> None:
         """Close position manager and sync final state"""
         try:
-            await self._sync_positions_to_mongodb()
+            await self._sync_positions_to_data_manager()
             if self.mongodb_client:
                 self.mongodb_client.close()
+            await position_client.disconnect()
             logger.info("Position manager closed successfully")
         except Exception as e:
             logger.error(f"Error closing position manager: {e}")
@@ -128,20 +131,14 @@ class PositionManager:
             self.mongodb_db = None
             raise
 
-    async def _load_positions_from_mongodb(self) -> None:
-        """Load positions from MongoDB with hedge mode support"""
-        if self.mongodb_db is None:
-            logger.warning("MongoDB not available, skipping position load")
-            return
-
+    async def _load_positions_from_data_manager(self) -> None:
+        """Load positions from Data Manager with hedge mode support"""
         try:
-            positions_collection = self.mongodb_db.positions
-
-            # Find all open positions
-            cursor = positions_collection.find({"status": "open"})
+            # Query all open positions from Data Manager
+            positions_data = await position_client.get_open_positions()
             positions = {}
 
-            async for doc in cursor:
+            for doc in positions_data:
                 symbol = doc["symbol"]
                 # Get position_side, default to LONG for backward compatibility
                 position_side = doc.get("position_side", "LONG")
@@ -163,27 +160,22 @@ class PositionManager:
 
             self.positions = positions
             self.last_sync_time = datetime.utcnow()
-            logger.info(f"Loaded {len(positions)} positions from MongoDB")
+            logger.info(f"Loaded {len(positions)} positions from Data Manager")
 
         except Exception as e:
-            logger.error(f"Failed to load positions from MongoDB: {e}")
+            logger.error(f"Failed to load positions from Data Manager: {e}")
             raise
 
-    async def _load_daily_pnl_from_mongodb(self) -> None:
-        """Load daily P&L from MongoDB"""
-        if self.mongodb_db is None:
-            return
-
+    async def _load_daily_pnl_from_data_manager(self) -> None:
+        """Load daily P&L from Data Manager"""
         try:
-            daily_pnl_collection = self.mongodb_db.daily_pnl
             today = datetime.utcnow().date()
-
-            doc = await daily_pnl_collection.find_one({"date": today.isoformat()})
-            if doc:
-                self.daily_pnl = float(doc["daily_pnl"])
-                logger.info(f"Loaded daily P&L: {self.daily_pnl}")
+            daily_pnl = await position_client.get_daily_pnl(today.isoformat())
+            if daily_pnl is not None:
+                self.daily_pnl = float(daily_pnl)
+                logger.info(f"Loaded daily P&L from Data Manager: {self.daily_pnl}")
         except Exception as e:
-            logger.warning(f"Failed to load daily P&L: {e}")
+            logger.warning(f"Failed to load daily P&L from Data Manager: {e}")
 
     async def _load_positions_from_exchange(self) -> None:
         """Load positions from Binance API as fallback"""
@@ -198,65 +190,45 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to load positions from exchange: {e}")
 
-    async def _sync_positions_to_mongodb(self) -> None:
-        """Sync current positions to MongoDB with hedge mode support"""
-        if self.mongodb_db is None:
-            logger.warning("MongoDB not available, skipping position sync")
-            return
-
+    async def _sync_positions_to_data_manager(self) -> None:
+        """Sync current positions to Data Manager with hedge mode support"""
         async with self.sync_lock:
             try:
-                positions_collection = self.mongodb_db.positions
-                daily_pnl_collection = self.mongodb_db.daily_pnl
-
-                # Clear existing open positions
-                await positions_collection.delete_many({"status": "open"})
-
-                # Insert current positions
+                # Sync current positions to Data Manager
                 for position_key, position in self.positions.items():
                     symbol, position_side = position_key
-                    await positions_collection.insert_one(
-                        {
-                            "symbol": symbol,
-                            "position_side": position_side,
-                            "quantity": position["quantity"],
-                            "avg_price": position["avg_price"],
-                            "unrealized_pnl": position["unrealized_pnl"],
-                            "realized_pnl": position["realized_pnl"],
-                            "total_cost": position["total_cost"],
-                            "total_value": position["total_value"],
-                            "entry_time": position["entry_time"],
-                            "last_update": position["last_update"],
-                            "status": "open",
-                            "updated_at": datetime.utcnow(),
-                        }
-                    )
+                    position_data = {
+                        "symbol": symbol,
+                        "position_side": position_side,
+                        "quantity": position["quantity"],
+                        "avg_price": position["avg_price"],
+                        "unrealized_pnl": position["unrealized_pnl"],
+                        "realized_pnl": position["realized_pnl"],
+                        "total_cost": position["total_cost"],
+                        "total_value": position["total_value"],
+                        "entry_time": position["entry_time"],
+                        "last_update": position["last_update"],
+                        "status": "open",
+                        "updated_at": datetime.utcnow(),
+                    }
+                    await position_client.upsert_position(position_data)
 
-                # Update daily P&L
+                # Update daily P&L in Data Manager
                 today = datetime.utcnow().date().isoformat()
-                await daily_pnl_collection.update_one(
-                    {"date": today},
-                    {
-                        "$set": {
-                            "daily_pnl": self.daily_pnl,
-                            "updated_at": datetime.utcnow(),
-                        }
-                    },
-                    upsert=True,
-                )
+                await position_client.update_daily_pnl(today, self.daily_pnl)
 
                 self.last_sync_time = datetime.utcnow()
-                logger.debug("Positions synced to MongoDB")
+                logger.debug("Positions synced to Data Manager")
 
             except Exception as e:
-                logger.error(f"Failed to sync positions to MongoDB: {e}")
+                logger.error(f"Failed to sync positions to Data Manager: {e}")
 
     async def _periodic_sync(self) -> None:
-        """Periodically sync positions to MongoDB"""
+        """Periodically sync positions to Data Manager"""
         while True:
             try:
                 await asyncio.sleep(30)  # Sync every 30 seconds
-                await self._sync_positions_to_mongodb()
+                await self._sync_positions_to_data_manager()
             except Exception as e:
                 logger.error(f"Error in periodic sync: {e}")
 
@@ -290,6 +262,7 @@ class PositionManager:
                     "entry_time": datetime.utcnow(),
                     "total_cost": 0.0,
                     "total_value": 0.0,
+                    "accumulation_count": 0,  # NEW: Track accumulations
                 }
             position = self.positions[position_key]
 
@@ -339,6 +312,15 @@ class PositionManager:
                 # Add to position (opening or increasing)
                 new_quantity = position["quantity"] + fill_quantity
                 if new_quantity > 0:
+                    # NEW: Increment accumulation count if adding to existing position
+                    if position["quantity"] > 0:  # Was an existing position
+                        position["accumulation_count"] = (
+                            position.get("accumulation_count", 0) + 1
+                        )
+                        logger.info(
+                            f"Position accumulation #{position['accumulation_count']} for {symbol} {position_side}"
+                        )
+
                     new_avg_price = (
                         position["quantity"] * position["avg_price"]
                         + fill_quantity * fill_price
@@ -377,7 +359,9 @@ class PositionManager:
                             f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
                         audit_logger.log_position(position, status="closed")
-                        await self._close_position_in_mongodb(position_key, position)
+                        await self._close_position_in_data_manager(
+                            position_key, position
+                        )
                         del self.positions[position_key]
                         return
 
@@ -402,17 +386,19 @@ class PositionManager:
             )
             audit_logger.log_position(position, status="updated")
 
-            # CRITICAL FIX: MongoDB sync must NOT block risk management orders
+            # CRITICAL FIX: Data Manager sync must NOT block risk management orders
             # Use short timeout to prevent hanging - position already updated in memory
             try:
-                await asyncio.wait_for(self._sync_positions_to_mongodb(), timeout=2.0)
+                await asyncio.wait_for(
+                    self._sync_positions_to_data_manager(), timeout=2.0
+                )
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"⚠️  MongoDB sync timed out for {symbol} {position_side} (non-critical, continuing)"
+                    f"⚠️  Data Manager sync timed out for {symbol} {position_side} (non-critical, continuing)"
                 )
-            except Exception as mongo_error:
+            except Exception as data_manager_error:
                 logger.warning(
-                    f"⚠️  MongoDB sync failed for {symbol} {position_side} (non-critical): {mongo_error}"
+                    f"⚠️  Data Manager sync failed for {symbol} {position_side} (non-critical): {data_manager_error}"
                 )
 
         except Exception as e:
@@ -422,33 +408,28 @@ class PositionManager:
                 context={"order": order.model_dump(), "result": result},
             )
 
-    async def _close_position_in_mongodb(
+    async def _close_position_in_data_manager(
         self, position_key: tuple[str, str], position: dict[str, Any]
     ) -> None:
-        """Mark position as closed in MongoDB"""
-        if self.mongodb_db is None:
-            return
-
+        """Mark position as closed in Data Manager"""
         symbol, position_side = position_key
         try:
-            positions_collection = self.mongodb_db.positions
-            await positions_collection.update_one(
-                {"symbol": symbol, "position_side": position_side},
+            await position_client.close_position(
+                symbol,
+                position_side,
                 {
-                    "$set": {
-                        "status": "closed",
-                        "last_update": datetime.utcnow(),
-                        "closed_at": datetime.utcnow(),
-                        "final_realized_pnl": position["realized_pnl"],
-                    }
+                    "status": "closed",
+                    "last_update": datetime.utcnow(),
+                    "closed_at": datetime.utcnow(),
+                    "final_realized_pnl": position["realized_pnl"],
                 },
             )
             logger.info(
-                f"Position {symbol} {position_side} marked as closed in MongoDB"
+                f"Position {symbol} {position_side} marked as closed in Data Manager"
             )
         except Exception as e:
             logger.error(
-                f"Failed to close position {symbol} {position_side} in MongoDB: {e}"
+                f"Failed to close position {symbol} {position_side} in Data Manager: {e}"
             )
 
     async def create_position_record(
@@ -536,25 +517,6 @@ class PositionManager:
                 "commission_total": commission,
             }
 
-            # Persist to MongoDB (with timeout to prevent blocking)
-            if self.mongodb_db is not None:
-                try:
-                    positions_collection = self.mongodb_db.positions
-                    await asyncio.wait_for(
-                        positions_collection.insert_one(position_data.copy()),
-                        timeout=2.0,
-                    )
-                    logger.info(
-                        f"Position {order.position_id} created in MongoDB for "
-                        f"{order.symbol} {order.position_side}"
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"⚠️  MongoDB position insert timed out for {order.position_id} (non-critical)"
-                    )
-                except Exception as mongo_error:
-                    logger.error(f"Failed to create position in MongoDB: {mongo_error}")
-
             # Persist to Data Manager (with timeout to prevent blocking risk management)
             try:
                 await asyncio.wait_for(
@@ -603,21 +565,6 @@ class PositionManager:
             if not update_data:
                 return
 
-            # Update MongoDB
-            if self.mongodb_db is not None:
-                try:
-                    positions_collection = self.mongodb_db.positions
-                    await positions_collection.update_one(
-                        {"position_id": position_id}, {"$set": update_data}
-                    )
-                    logger.info(
-                        f"Updated position {position_id} risk orders in MongoDB: {update_data}"
-                    )
-                except Exception as mongo_error:
-                    logger.error(
-                        f"Failed to update position risk orders in MongoDB: {mongo_error}"
-                    )
-
             # Update Data Manager
             try:
                 await position_client.update_position_risk_orders(
@@ -644,20 +591,16 @@ class PositionManager:
             Position data dict or None if not found
         """
         try:
-            # First try MongoDB
-            if self.mongodb_db is not None:
-                try:
-                    positions_collection = self.mongodb_db.positions
-                    position = await positions_collection.find_one(
-                        {"position_id": position_id}
-                    )
-                    if position:
-                        logger.debug(f"Found position {position_id} in MongoDB")
-                        return position
-                except Exception as mongo_error:
-                    logger.warning(
-                        f"Failed to get position from MongoDB: {mongo_error}"
-                    )
+            # Try Data Manager first
+            try:
+                position = await position_client.get_position(position_id)
+                if position:
+                    logger.debug(f"Found position {position_id} in Data Manager")
+                    return position
+            except Exception as data_manager_error:
+                logger.warning(
+                    f"Failed to get position from Data Manager: {data_manager_error}"
+                )
 
             # Fallback to in-memory positions (search by position_id in metadata)
             for position_key, position in self.positions.items():
@@ -733,18 +676,6 @@ class PositionManager:
                 "close_reason": exit_result.get("close_reason", "manual"),
                 "final_commission": exit_commission,
             }
-
-            # Update MongoDB
-            if self.mongodb_db is not None:
-                try:
-                    positions_collection = self.mongodb_db.positions
-                    await positions_collection.update_one(
-                        {"position_id": position_id},
-                        {"$set": update_data},
-                    )
-                    logger.info(f"Position {position_id} closed in MongoDB")
-                except Exception as mongo_error:
-                    logger.error(f"Failed to close position in MongoDB: {mongo_error}")
 
             # Update Data Manager
             try:
@@ -890,13 +821,54 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error exporting position closed metrics: {e}")
 
+    async def get_position_size_limit(self, symbol: str) -> float:
+        """Get position size limit for symbol (checks config, then default)"""
+        try:
+            # Check if there's a symbol-specific config
+            from tradeengine.config_manager import config_manager
+
+            symbol_config = await config_manager.get_config(symbol=symbol)
+            if symbol_config and symbol_config.parameters.get("max_position_size"):
+                return float(symbol_config.parameters["max_position_size"])
+
+            # Check global config
+            global_config = await config_manager.get_config()
+            if global_config and global_config.parameters.get("max_position_size"):
+                return float(global_config.parameters["max_position_size"])
+
+        except Exception as e:
+            logger.warning(f"Failed to get config limit for {symbol}: {e}")
+
+        # Fall back to environment variable default
+        from shared.constants import MAX_POSITION_SIZE
+
+        return MAX_POSITION_SIZE
+
     async def check_position_limits(self, order: TradeOrder) -> bool:
         """Check if order meets position size limits with distributed state"""
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
-        # Refresh positions from MongoDB to ensure consistency
-        await self._refresh_positions_from_mongodb()
+        # Refresh positions from Data Manager to ensure consistency
+        await self._refresh_positions_from_data_manager()
+
+        # NEW: Check absolute position size limit (from config or default)
+        position_side = "LONG" if order.side == "buy" else "SHORT"
+        position_key = (order.symbol, position_side)
+
+        if position_key in self.positions:
+            current_quantity = self.positions[position_key]["quantity"]
+            new_quantity = current_quantity + order.amount
+
+            # Get limit from config (symbol-specific or global)
+            max_position_size = await self.get_position_size_limit(order.symbol)
+
+            if new_quantity > max_position_size:
+                logger.warning(
+                    f"Position size would exceed limit: {order.symbol} {position_side} "
+                    f"current={current_quantity}, new={new_quantity}, max={max_position_size}"
+                )
+                return False
 
         # Check individual position size limit
         if (
@@ -920,22 +892,17 @@ class PositionManager:
 
         return True
 
-    async def _refresh_positions_from_mongodb(self) -> None:
-        """Refresh positions from MongoDB to ensure consistency across pods"""
-        if self.mongodb_db is None:
-            return
-
+    async def _refresh_positions_from_data_manager(self) -> None:
+        """Refresh positions from Data Manager to ensure consistency across pods"""
         try:
-            positions_collection = self.mongodb_db.positions
-
-            # Find all open positions
-            cursor = positions_collection.find({"status": "open"})
+            # Get all open positions from Data Manager
+            positions_data = await position_client.get_open_positions()
             refreshed_positions = {}
 
-            async for doc in cursor:
+            for doc in positions_data:
                 symbol = doc.get("symbol")
                 if not symbol:
-                    logger.warning("Skipping MongoDB document without symbol")
+                    logger.warning("Skipping Data Manager document without symbol")
                     continue
 
                 # Get position_side, default to LONG for backward compatibility
@@ -958,19 +925,19 @@ class PositionManager:
 
             # Only update if positions have changed
             if refreshed_positions != self.positions:
-                logger.info("Refreshing positions from MongoDB for consistency")
+                logger.info("Refreshing positions from Data Manager for consistency")
                 self.positions = refreshed_positions
 
         except Exception as e:
-            logger.error(f"Failed to refresh positions from MongoDB: {e}")
+            logger.error(f"Failed to refresh positions from Data Manager: {e}")
 
     async def check_daily_loss_limits(self) -> bool:
         """Check daily loss limits with distributed state"""
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
-        # Refresh daily P&L from MongoDB
-        await self._refresh_daily_pnl_from_mongodb()
+        # Refresh daily P&L from Data Manager
+        await self._refresh_daily_pnl_from_data_manager()
 
         max_daily_loss = self.total_portfolio_value * self.max_daily_loss_pct
 
@@ -982,20 +949,15 @@ class PositionManager:
 
         return True
 
-    async def _refresh_daily_pnl_from_mongodb(self) -> None:
-        """Refresh daily P&L from MongoDB"""
-        if self.mongodb_db is None:
-            return
-
+    async def _refresh_daily_pnl_from_data_manager(self) -> None:
+        """Refresh daily P&L from Data Manager"""
         try:
-            daily_pnl_collection = self.mongodb_db.daily_pnl
             today = datetime.utcnow().date().isoformat()
-
-            doc = await daily_pnl_collection.find_one({"date": today})
-            if doc:
-                self.daily_pnl = float(doc["daily_pnl"])
+            daily_pnl = await position_client.get_daily_pnl(today)
+            if daily_pnl is not None:
+                self.daily_pnl = float(daily_pnl)
         except Exception as e:
-            logger.warning(f"Failed to refresh daily P&L: {e}")
+            logger.warning(f"Failed to refresh daily P&L from Data Manager: {e}")
 
     def _calculate_portfolio_exposure(self) -> float:
         """Calculate current portfolio exposure"""
@@ -1093,18 +1055,12 @@ class PositionManager:
         self.daily_pnl = 0.0
         logger.info("Daily P&L reset")
 
-        # Sync to MongoDB
-        if self.mongodb_db is not None:
-            try:
-                daily_pnl_collection = self.mongodb_db.daily_pnl
-                today = datetime.utcnow().date().isoformat()
-                await daily_pnl_collection.update_one(
-                    {"date": today},
-                    {"$set": {"daily_pnl": 0.0, "updated_at": datetime.utcnow()}},
-                    upsert=True,
-                )
-            except Exception as e:
-                logger.error(f"Failed to reset daily P&L in MongoDB: {e}")
+        # Sync to Data Manager
+        try:
+            today = datetime.utcnow().date().isoformat()
+            await position_client.update_daily_pnl(today, 0.0)
+        except Exception as e:
+            logger.error(f"Failed to reset daily P&L in Data Manager: {e}")
 
     def set_portfolio_value(self, value: float) -> None:
         """Set total portfolio value"""

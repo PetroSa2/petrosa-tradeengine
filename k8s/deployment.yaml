@@ -98,7 +98,7 @@ spec:
               name: petrosa-sensitive-credentials
               key: PYROSCOPE_AUTH_TOKEN
               optional: true
-        # MongoDB configuration from secret
+        # MongoDB configuration for distributed coordination only (locks, leader election)
         - name: MONGODB_URI
           valueFrom:
             secretKeyRef:
@@ -109,12 +109,18 @@ spec:
             secretKeyRef:
               name: petrosa-sensitive-credentials
               key: MONGODB_DATABASE
-        # MySQL configuration from secret (for position tracking)
+        # MySQL configuration from secret (for Data Manager position tracking)
         - name: MYSQL_URI
           valueFrom:
             secretKeyRef:
               name: petrosa-sensitive-credentials
               key: MYSQL_URI
+        # Data Manager API configuration
+        - name: DATA_MANAGER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: petrosa-common-config
+              key: DATA_MANAGER_URL
         # NATS configuration from configmap
         - name: NATS_ENABLED
           valueFrom:
@@ -212,6 +218,15 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.podIP
+        # Position accumulation controls
+        - name: MAX_POSITION_SIZE
+          value: "100.0"  # Maximum quantity per position
+        - name: MAX_ACCUMULATIONS_PER_POSITION
+          value: "3"  # Maximum number of accumulations
+        - name: ACCUMULATION_COOLDOWN_SECONDS
+          value: "300"  # 5 minutes between accumulations
+        - name: MAX_TOTAL_POSITIONS
+          value: "10"  # Maximum number of different positions
         resources:
           requests:
             memory: "512Mi"

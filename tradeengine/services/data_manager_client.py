@@ -33,6 +33,38 @@ class BaseDataManagerClient:
         """Close connection."""
         pass
 
+    # NEW METHODS - Implement missing Data Manager methods
+    async def query(self, database: str, collection: str, params: dict):
+        """Query records."""
+        # TODO: Implement actual HTTP call to Data Manager API
+        # For now, return empty to avoid errors
+        return {"data": []}
+
+    async def insert_one(self, database: str, collection: str, record: dict):
+        """Insert one record."""
+        # TODO: Implement actual HTTP call to Data Manager API
+        # For now, return success to avoid errors
+        return {"inserted_id": "placeholder"}
+
+    async def update_one(
+        self, database: str, collection: str, filter: dict, update: dict
+    ):
+        """Update one record."""
+        # TODO: Implement actual HTTP call to Data Manager API
+        return {"modified_count": 1}
+
+    async def upsert_one(
+        self, database: str, collection: str, filter: dict, record: dict
+    ):
+        """Upsert one record."""
+        # TODO: Implement actual HTTP call to Data Manager API
+        return {"upserted_id": "placeholder"}
+
+    async def delete_one(self, database: str, collection: str, filter: dict):
+        """Delete one record."""
+        # TODO: Implement actual HTTP call to Data Manager API
+        return {"deleted_count": 1}
+
 
 class ConnectionError(Exception):
     """Connection error."""

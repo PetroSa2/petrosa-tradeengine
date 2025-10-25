@@ -84,6 +84,9 @@ class TestOrderExecutionMetrics:
     @pytest.mark.asyncio
     async def test_orders_executed_by_type_metric(self, dispatcher, sample_order):
         """Test that orders_executed_by_type counter increments correctly"""
+        # Add signal_received_at to order meta for latency tracking
+        sample_order.meta = {"signal_received_at": 1234567890.0}
+
         # Get initial counter value
         initial_value = self._get_counter_value(
             "tradeengine_orders_executed_by_type_total",
@@ -136,6 +139,9 @@ class TestOrderExecutionMetrics:
     @pytest.mark.asyncio
     async def test_order_failures_metric(self, dispatcher, sample_order):
         """Test that order_failures_total counter increments on failures"""
+        # Add signal_received_at to trigger latency tracking
+        sample_order.meta = {"signal_received_at": 1234567890.0}
+
         # Mock exchange to return error
         dispatcher.exchange.execute = AsyncMock(
             return_value={
@@ -170,6 +176,117 @@ class TestOrderExecutionMetrics:
 
         assert final_value == initial_value + 1
         assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_order_latency_with_meta(self, dispatcher, sample_order):
+        """Test that order latency is tracked when signal_received_at is in meta"""
+        import time
+
+        # Add signal_received_at to order meta
+        sample_order.meta = {"signal_received_at": time.time() - 0.5}  # 500ms ago
+
+        # Execute order
+        result = await dispatcher.execute_order(sample_order)
+
+        # Verify latency histogram has data
+        histogram_count = self._get_histogram_count(
+            "tradeengine_order_execution_latency_seconds"
+        )
+
+        # Should have at least one observation
+        assert histogram_count > 0
+        assert result["status"] == "filled"
+
+    @pytest.mark.asyncio
+    async def test_rejected_order_metric(self, dispatcher, sample_order):
+        """Test that rejected orders are tracked as failures"""
+        # Add signal_received_at to order meta
+        sample_order.meta = {"signal_received_at": 1234567890.0}
+
+        # Mock exchange to return rejected status
+        dispatcher.exchange.execute = AsyncMock(
+            return_value={
+                "status": "rejected",
+                "error": "Order rejected by exchange",
+            }
+        )
+
+        initial_value = self._get_counter_value(
+            "tradeengine_order_failures_total",
+            {
+                "symbol": "BTCUSDT",
+                "order_type": "market",
+                "failure_reason": "Order rejected by exchange",
+                "exchange": "binance",
+            },
+        )
+
+        # Execute order (should be rejected)
+        result = await dispatcher.execute_order(sample_order)
+
+        # Verify failure counter incremented
+        final_value = self._get_counter_value(
+            "tradeengine_order_failures_total",
+            {
+                "symbol": "BTCUSDT",
+                "order_type": "market",
+                "failure_reason": "Order rejected by exchange",
+                "exchange": "binance",
+            },
+        )
+
+        assert final_value == initial_value + 1
+        assert result["status"] == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_order_metric(self, dispatcher, sample_order):
+        """Test that cancelled orders are tracked as failures"""
+        # Add signal_received_at to order meta
+        sample_order.meta = {"signal_received_at": 1234567890.0}
+
+        # Mock exchange to return cancelled status
+        dispatcher.exchange.execute = AsyncMock(
+            return_value={
+                "status": "cancelled",
+                "error": "Order cancelled by user",
+            }
+        )
+
+        initial_value = self._get_counter_value(
+            "tradeengine_order_failures_total",
+            {
+                "symbol": "BTCUSDT",
+                "order_type": "market",
+                "failure_reason": "Order cancelled by user",
+                "exchange": "binance",
+            },
+        )
+
+        # Execute order (should be cancelled)
+        result = await dispatcher.execute_order(sample_order)
+
+        # Verify failure counter incremented
+        final_value = self._get_counter_value(
+            "tradeengine_order_failures_total",
+            {
+                "symbol": "BTCUSDT",
+                "order_type": "market",
+                "failure_reason": "Order cancelled by user",
+                "exchange": "binance",
+            },
+        )
+
+        assert final_value == initial_value + 1
+        assert result["status"] == "cancelled"
+
+    def _get_histogram_count(self, metric_name):
+        """Helper to get histogram observation count"""
+        for metric in REGISTRY.collect():
+            if metric.name == metric_name:
+                for sample in metric.samples:
+                    if sample.name.endswith("_count"):
+                        return sample.value
+        return 0
 
     def _get_counter_value(self, metric_name, labels):
         """Helper to get counter value from Prometheus registry"""
@@ -289,6 +406,51 @@ class TestRiskManagementMetrics:
             assert checking_final == checking_initial + 1
             assert passed_final == passed_initial + 1
 
+    @pytest.mark.asyncio
+    async def test_daily_loss_limit_rejection(self, dispatcher, sample_order):
+        """Test that daily loss limit rejections emit correct metrics"""
+        # Mock position limits to pass but daily loss to fail
+        with (
+            patch.object(
+                dispatcher.position_manager,
+                "check_position_limits",
+                new_callable=AsyncMock,
+            ) as mock_position,
+            patch.object(
+                dispatcher.position_manager,
+                "check_daily_loss_limits",
+                new_callable=AsyncMock,
+            ) as mock_daily,
+        ):
+            mock_position.return_value = True
+            mock_daily.return_value = False
+
+            initial_value = self._get_counter_value(
+                "tradeengine_risk_rejections_total",
+                {
+                    "reason": "daily_loss_limits_exceeded",
+                    "symbol": "BTCUSDT",
+                    "exchange": "binance",
+                },
+            )
+
+            # Execute order (should be rejected)
+            result = await dispatcher._execute_order_with_consensus(sample_order)
+
+            # Verify rejection counter incremented
+            final_value = self._get_counter_value(
+                "tradeengine_risk_rejections_total",
+                {
+                    "reason": "daily_loss_limits_exceeded",
+                    "symbol": "BTCUSDT",
+                    "exchange": "binance",
+                },
+            )
+
+            assert final_value == initial_value + 1
+            assert result["status"] == "rejected"
+            assert "Daily loss limits exceeded" in result["reason"]
+
     def _get_counter_value(self, metric_name, labels):
         """Helper to get counter value from Prometheus registry"""
         for metric in REGISTRY.collect():
@@ -355,14 +517,77 @@ class TestPositionMetrics:
 
             # Verify gauges were updated
             unrealized_pnl = self._get_gauge_value(
-                "tradeengine_unrealized_pnl_usd", {"exchange": "binance"}
+                "tradeengine_total_unrealized_pnl_usd", {"exchange": "binance"}
             )
             daily_pnl = self._get_gauge_value(
-                "tradeengine_daily_pnl_usd", {"exchange": "binance"}
+                "tradeengine_total_daily_pnl_usd", {"exchange": "binance"}
             )
 
             assert unrealized_pnl is not None
             assert daily_pnl is not None
+
+    @pytest.mark.asyncio
+    async def test_position_close_metrics(self, dispatcher, sample_order):
+        """Test that closing a position emits correct metrics"""
+        # Create a closing order (selling a LONG position)
+        close_order = TradeOrder(
+            order_id="test_close_order",
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=0.01,
+            target_price=52000.0,
+            position_id="test_position_123",
+            position_side="LONG",
+            exchange="binance",
+            status=OrderStatus.PENDING,
+            simulate=False,
+            reduce_only=True,
+        )
+
+        # Mock the Data Manager sync calls
+        with (
+            patch.object(
+                dispatcher.position_manager,
+                "_close_position_in_data_manager",
+                new_callable=AsyncMock,
+            ) as mock_close_dm,
+            patch.object(
+                dispatcher.position_manager,
+                "_sync_positions_to_data_manager",
+                new_callable=AsyncMock,
+            ) as mock_sync,
+        ):
+            mock_close_dm.return_value = None
+            mock_sync.return_value = None
+
+            # Set up initial position
+            dispatcher.position_manager.positions[("BTCUSDT", "LONG")] = {
+                "symbol": "BTCUSDT",
+                "position_side": "LONG",
+                "quantity": 0.01,
+                "avg_price": 50000.0,
+                "unrealized_pnl": 20.0,
+                "realized_pnl": 100.0,
+                "total_value": 500.0,
+                "total_cost": 500.0,
+            }
+            dispatcher.position_manager.daily_pnl = 120.0
+
+            # Update position with closing order (should close position)
+            await dispatcher.position_manager.update_position(
+                close_order, {"status": "filled", "amount": 0.01, "fill_price": 52000.0}
+            )
+
+            # Verify position was closed and metrics updated
+            # Position should be removed from dict
+            assert ("BTCUSDT", "LONG") not in dispatcher.position_manager.positions
+
+            # Verify realized PnL gauge was set
+            realized_pnl = self._get_gauge_value(
+                "tradeengine_total_realized_pnl_usd", {"exchange": "binance"}
+            )
+            assert realized_pnl is not None
 
     def _get_gauge_value(self, metric_name, labels):
         """Helper to get gauge value from Prometheus registry"""

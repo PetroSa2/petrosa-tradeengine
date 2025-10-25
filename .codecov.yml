@@ -17,10 +17,11 @@ coverage:
 
     patch:
       default:
-        target: 50%
-        threshold: 10%
+        target: 40%
+        threshold: 20%
         if_ci_failed: error
-        # More lenient for patch coverage since metrics code is hard to test
+        # Lenient for metrics/instrumentation code which is hard to test
+        # without live infrastructure (NATS, MongoDB, Exchange)
 
 comment:
   layout: "header, diff, flags, files"

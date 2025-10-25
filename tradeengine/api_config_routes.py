@@ -566,9 +566,9 @@ async def set_global_limits(
         if max_accumulations is not None:
             config.parameters["max_accumulations"] = max_accumulations
         if accumulation_cooldown_seconds is not None:
-            config.parameters[
-                "accumulation_cooldown_seconds"
-            ] = accumulation_cooldown_seconds
+            config.parameters["accumulation_cooldown_seconds"] = (
+                accumulation_cooldown_seconds
+            )
 
         # Save config
         success = await manager.set_config(config)
@@ -628,9 +628,9 @@ async def set_symbol_limits(
         if max_accumulations is not None:
             config.parameters["max_accumulations"] = max_accumulations
         if accumulation_cooldown_seconds is not None:
-            config.parameters[
-                "accumulation_cooldown_seconds"
-            ] = accumulation_cooldown_seconds
+            config.parameters["accumulation_cooldown_seconds"] = (
+                accumulation_cooldown_seconds
+            )
 
         # Save config
         success = await manager.set_config(config, symbol=symbol)

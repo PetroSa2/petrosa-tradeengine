@@ -1,0 +1,48 @@
+codecov:
+  require_ci_to_pass: yes
+  notify:
+    wait_for_ci: yes
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+
+  status:
+    project:
+      default:
+        target: 40%
+        threshold: 5%
+        if_ci_failed: error
+
+    patch:
+      default:
+        target: 40%
+        threshold: 20%
+        if_ci_failed: error
+        # Lenient for metrics/instrumentation code which is hard to test
+        # without live infrastructure (NATS, MongoDB, Exchange)
+
+comment:
+  layout: "header, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests/"
+  - "scripts/"
+  - "docs/"
+  - "examples/"
+  - "htmlcov/"
+  - "**/test_*.py"
+  - "**/__pycache__"
+  - "*.egg-info"
+
+# File-specific overrides
+flag_management:
+  individual_flags:
+    - name: metrics
+      paths:
+        - tradeengine/metrics.py
+      # Metrics files are declarative and hard to test in isolation
+      carryforward: true

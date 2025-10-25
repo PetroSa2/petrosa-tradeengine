@@ -22,6 +22,7 @@ from shared.constants import (
 # Import Data Manager position client
 from shared.mysql_client import position_client
 from tradeengine.metrics import (
+    current_position_size,
     position_commission_usd,
     position_duration_seconds,
     position_entry_price,
@@ -33,6 +34,10 @@ from tradeengine.metrics import (
     positions_losing_total,
     positions_opened_total,
     positions_winning_total,
+    total_daily_pnl_usd,
+    total_position_value_usd,
+    total_realized_pnl_usd,
+    total_unrealized_pnl_usd,
 )
 
 logger = logging.getLogger(__name__)
@@ -359,6 +364,30 @@ class PositionManager:
                             f"total realized P&L: {position['realized_pnl']:.2f}"
                         )
                         audit_logger.log_position(position, status="closed")
+
+                        # Emit realized PnL metric
+                        total_realized_pnl_usd.labels(
+                            exchange=order.exchange,
+                        ).set(position["realized_pnl"])
+
+                        # Update daily PnL
+                        total_daily_pnl_usd.labels(
+                            exchange=order.exchange,
+                        ).set(self.daily_pnl)
+
+                        # Reset position size gauge
+                        current_position_size.labels(
+                            symbol=symbol,
+                            position_side=position_side,
+                            exchange=order.exchange,
+                        ).set(0)
+
+                        logger.info(
+                            f"📊 Position metrics updated on close: "
+                            f"realized_pnl=${position['realized_pnl']:.2f}, "
+                            f"daily_pnl=${self.daily_pnl:.2f}"
+                        )
+
                         await self._close_position_in_data_manager(
                             position_key, position
                         )
@@ -385,6 +414,39 @@ class PositionManager:
                 f"avg_price={position['avg_price']:.2f}"
             )
             audit_logger.log_position(position, status="updated")
+
+            # Emit business metrics for position size and PnL monitoring
+            current_position_size.labels(
+                symbol=symbol,
+                position_side=position_side,
+                exchange=order.exchange,
+            ).set(position["quantity"])
+
+            total_unrealized_pnl_usd.labels(
+                exchange=order.exchange,
+            ).set(position["unrealized_pnl"])
+
+            # Update total position value
+            total_value = sum(
+                pos["total_value"]
+                for pos in self.positions.values()
+                if pos.get("total_value", 0) > 0
+            )
+            total_position_value_usd.labels(
+                exchange=order.exchange,
+            ).set(total_value)
+
+            # Update daily PnL gauge
+            total_daily_pnl_usd.labels(
+                exchange=order.exchange,
+            ).set(self.daily_pnl)
+
+            logger.debug(
+                f"📊 Business metrics updated: "
+                f"position_size={position['quantity']:.6f}, "
+                f"unrealized_pnl=${position['unrealized_pnl']:.2f}, "
+                f"total_value=${total_value:.2f}"
+            )
 
             # CRITICAL FIX: Data Manager sync must NOT block risk management orders
             # Use short timeout to prevent hanging - position already updated in memory

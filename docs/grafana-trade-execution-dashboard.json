@@ -1,0 +1,451 @@
+{
+  "dashboard": {
+    "title": "Trade Execution Monitoring",
+    "description": "Business metrics for monitoring order execution, risk management, and trading performance",
+    "tags": ["tradeengine", "trading", "execution", "business-metrics"],
+    "timezone": "utc",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "10s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "title": "Order Execution Rate",
+        "type": "timeseries",
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "rate(tradeengine_orders_executed_by_type_total[5m])",
+            "legendFormat": "{{order_type}} {{side}} - {{symbol}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "green" },
+                { "value": 10, "color": "yellow" },
+                { "value": 50, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "legend": { "displayMode": "table", "placement": "bottom" },
+          "tooltip": { "mode": "multi" }
+        }
+      },
+      {
+        "title": "Order Execution Latency (p50, p95, p99)",
+        "type": "timeseries",
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(tradeengine_order_execution_latency_seconds_bucket[5m])) by (le, symbol))",
+            "legendFormat": "p50 - {{symbol}}",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(tradeengine_order_execution_latency_seconds_bucket[5m])) by (le, symbol))",
+            "legendFormat": "p95 - {{symbol}}",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(tradeengine_order_execution_latency_seconds_bucket[5m])) by (le, symbol))",
+            "legendFormat": "p99 - {{symbol}}",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "green" },
+                { "value": 5, "color": "yellow" },
+                { "value": 10, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "legend": { "displayMode": "table", "placement": "bottom" },
+          "tooltip": { "mode": "multi" }
+        }
+      },
+      {
+        "title": "Risk Rejections by Reason",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 8, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "sum by (reason) (increase(tradeengine_risk_rejections_total[1h]))",
+            "legendFormat": "{{reason}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "green" },
+                { "value": 5, "color": "yellow" },
+                { "value": 20, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "auto",
+          "colorMode": "background"
+        }
+      },
+      {
+        "title": "Risk Check Success Rate",
+        "type": "gauge",
+        "gridPos": { "x": 6, "y": 8, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "sum(rate(tradeengine_risk_checks_total{result=\"passed\"}[5m])) / sum(rate(tradeengine_risk_checks_total[5m])) * 100",
+            "legendFormat": "Success Rate",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 80, "color": "yellow" },
+                { "value": 95, "color": "green" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true
+        }
+      },
+      {
+        "title": "Current Position Sizes",
+        "type": "timeseries",
+        "gridPos": { "x": 12, "y": 8, "w": 12, "h": 6 },
+        "targets": [
+          {
+            "expr": "tradeengine_current_position_size",
+            "legendFormat": "{{symbol}} {{position_side}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "decimals": 6,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "legend": { "displayMode": "table", "placement": "bottom" },
+          "tooltip": { "mode": "multi" }
+        }
+      },
+      {
+        "title": "Unrealized PnL",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 14, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "tradeengine_total_unrealized_pnl_usd",
+            "legendFormat": "Unrealized PnL",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 0, "color": "green" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "title": "Realized PnL",
+        "type": "stat",
+        "gridPos": { "x": 6, "y": 14, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "tradeengine_total_realized_pnl_usd",
+            "legendFormat": "Realized PnL",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 0, "color": "green" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "title": "Daily PnL",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 14, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "tradeengine_total_daily_pnl_usd",
+            "legendFormat": "Daily PnL",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "red" },
+                { "value": 0, "color": "green" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "title": "Total Position Value",
+        "type": "stat",
+        "gridPos": { "x": 18, "y": 14, "w": 6, "h": 6 },
+        "targets": [
+          {
+            "expr": "tradeengine_total_position_value_usd",
+            "legendFormat": "Total Value",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "decimals": 2,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "blue" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "value"
+        }
+      },
+      {
+        "title": "Order Success vs Failures",
+        "type": "piechart",
+        "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum(increase(tradeengine_orders_executed_by_type_total[1h]))",
+            "legendFormat": "Successful",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(increase(tradeengine_order_failures_total[1h]))",
+            "legendFormat": "Failed",
+            "refId": "B"
+          }
+        ],
+        "options": {
+          "legend": { "displayMode": "table", "placement": "right" },
+          "pieType": "donut"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Order Failures by Reason",
+        "type": "table",
+        "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+        "targets": [
+          {
+            "expr": "sort_desc(sum by (failure_reason, symbol) (increase(tradeengine_order_failures_total[1h])))",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true
+              },
+              "renameByName": {
+                "failure_reason": "Failure Reason",
+                "symbol": "Symbol",
+                "Value": "Count"
+              }
+            }
+          }
+        ],
+        "options": {
+          "showHeader": true,
+          "sortBy": [
+            {
+              "displayName": "Count",
+              "desc": true
+            }
+          ]
+        }
+      },
+      {
+        "title": "Order Execution Heatmap (by hour)",
+        "type": "heatmap",
+        "gridPos": { "x": 0, "y": 28, "w": 24, "h": 8 },
+        "targets": [
+          {
+            "expr": "sum by (symbol) (increase(tradeengine_orders_executed_by_type_total[1h]))",
+            "legendFormat": "{{symbol}}",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "calculate": true,
+          "cellGap": 2,
+          "color": {
+            "mode": "spectrum",
+            "scheme": "Spectral",
+            "exponent": 0.5
+          },
+          "yAxis": {
+            "axisPlacement": "left",
+            "reverse": false
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "exchange",
+          "label": "Exchange",
+          "type": "query",
+          "query": "label_values(tradeengine_orders_executed_by_type_total, exchange)",
+          "current": {
+            "selected": false,
+            "text": "binance",
+            "value": "binance"
+          },
+          "multi": false,
+          "includeAll": false
+        },
+        {
+          "name": "symbol",
+          "label": "Symbol",
+          "type": "query",
+          "query": "label_values(tradeengine_orders_executed_by_type_total{exchange=\"$exchange\"}, symbol)",
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "multi": true,
+          "includeAll": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Risk Rejections",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "ALERTS{alertname=\"HighRiskRejections\"}",
+          "iconColor": "red",
+          "step": "60s",
+          "tagKeys": "reason",
+          "textFormat": "Risk rejection: {{reason}}",
+          "titleFormat": "Risk Alert"
+        }
+      ]
+    }
+  }
+}

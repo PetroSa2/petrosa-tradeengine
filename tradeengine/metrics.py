@@ -135,3 +135,79 @@ active_oco_pairs_per_position = Gauge(
     "Number of active OCO pairs per exchange position",
     ["symbol", "position_side", "exchange"],
 )
+
+# ========================================
+# Business Metrics for Trade Execution Monitoring
+# ========================================
+
+# Order Execution Metrics
+orders_executed_by_type = Counter(
+    "tradeengine_orders_executed_by_type_total",
+    "Total orders executed by type (market, limit, stop, etc.)",
+    ["order_type", "side", "symbol", "exchange"],
+)
+
+order_execution_latency_seconds = Histogram(
+    "tradeengine_order_execution_latency_seconds",
+    "Time from signal receipt to order execution completion",
+    ["symbol", "order_type", "exchange"],
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0],  # 100ms to 2min
+)
+
+# Risk Management Metrics
+risk_rejections_total = Counter(
+    "tradeengine_risk_rejections_total",
+    "Total orders rejected by risk management",
+    ["reason", "symbol", "exchange"],
+)
+
+risk_checks_total = Counter(
+    "tradeengine_risk_checks_total",
+    "Total risk checks performed",
+    ["check_type", "result", "exchange"],
+)
+
+# Position Size Monitoring
+current_position_size = Gauge(
+    "tradeengine_current_position_size",
+    "Current position size by symbol and side",
+    ["symbol", "position_side", "exchange"],
+)
+
+total_position_value_usd = Gauge(
+    "tradeengine_total_position_value_usd",
+    "Total value of all positions in USD",
+    ["exchange"],
+)
+
+# PnL Monitoring (Aggregate Metrics)
+total_realized_pnl_usd = Gauge(
+    "tradeengine_total_realized_pnl_usd",
+    "Cumulative realized PnL in USD (aggregate across all positions)",
+    ["exchange"],
+)
+
+total_unrealized_pnl_usd = Gauge(
+    "tradeengine_total_unrealized_pnl_usd",
+    "Total unrealized PnL in USD (aggregate across all open positions)",
+    ["exchange"],
+)
+
+total_daily_pnl_usd = Gauge(
+    "tradeengine_total_daily_pnl_usd",
+    "Total daily PnL in USD (resets at midnight UTC)",
+    ["exchange"],
+)
+
+# Order Success Metrics
+order_success_rate = Gauge(
+    "tradeengine_order_success_rate",
+    "Ratio of successful orders to total orders",
+    ["symbol", "order_type", "exchange"],
+)
+
+order_failures_total = Counter(
+    "tradeengine_order_failures_total",
+    "Total order execution failures",
+    ["symbol", "order_type", "failure_reason", "exchange"],
+)

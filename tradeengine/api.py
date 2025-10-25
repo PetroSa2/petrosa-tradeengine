@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 1. Setup OpenTelemetry FIRST (before any logging configuration)
     try:
-        from petrosa_otel import attach_logging_handler, initialize_telemetry_standard
+        from petrosa_otel import initialize_telemetry_standard
 
         initialize_telemetry_standard(
             service_name="tradeengine",

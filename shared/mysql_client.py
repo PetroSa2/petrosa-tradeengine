@@ -328,7 +328,7 @@ class DataManagerPositionClient:
             True if successful, False otherwise
         """
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             # Use upsert_one() instead of update_one(upsert=True)
             await self.data_manager_client._client.upsert_one(
@@ -338,7 +338,7 @@ class DataManagerPositionClient:
                 record={
                     "date": date,
                     "daily_pnl": daily_pnl,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(timezone.utc),
                 },
             )
 

@@ -223,7 +223,8 @@ class DataManagerPositionClient:
             symbol = position_data.get("symbol")
             position_side = position_data.get("position_side", "LONG")
 
-            await self.data_manager_client._client.update_one(
+            # Use upsert_one() instead of update_one(upsert=True)
+            await self.data_manager_client._client.upsert_one(
                 database="mysql",
                 collection="positions",
                 filter={
@@ -231,8 +232,7 @@ class DataManagerPositionClient:
                     "position_side": position_side,
                     "status": "open",
                 },
-                update={"$set": position_data},
-                upsert=True,
+                record=position_data,
             )
 
             logger.info(
@@ -330,14 +330,16 @@ class DataManagerPositionClient:
         try:
             from datetime import datetime
 
-            await self.data_manager_client._client.update_one(
+            # Use upsert_one() instead of update_one(upsert=True)
+            await self.data_manager_client._client.upsert_one(
                 database="mysql",
                 collection="daily_pnl",
                 filter={"date": date},
-                update={
-                    "$set": {"daily_pnl": daily_pnl, "updated_at": datetime.utcnow()}
+                record={
+                    "date": date,
+                    "daily_pnl": daily_pnl,
+                    "updated_at": datetime.utcnow(),
                 },
-                upsert=True,
             )
 
             logger.info(f"✓ Updated daily P&L for {date} via Data Manager: {daily_pnl}")

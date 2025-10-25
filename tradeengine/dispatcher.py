@@ -11,6 +11,13 @@ from shared.audit import audit_logger
 from shared.config import Settings
 from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
+from tradeengine.metrics import (
+    order_execution_latency_seconds,
+    order_failures_total,
+    orders_executed_by_type,
+    risk_checks_total,
+    risk_rejections_total,
+)
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import SignalAggregator
@@ -959,6 +966,9 @@ class Dispatcher:
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing with distributed state management"""
         try:
+            # Track signal reception time for latency measurement
+            signal_received_at = time.time()
+
             # Track signal reception in metrics
             signals_received.labels(
                 strategy=signal.strategy_id, symbol=signal.symbol, action=signal.action
@@ -1064,6 +1074,10 @@ class Dispatcher:
                 # Store signal for strategy position creation later
                 self.order_to_signal[order.order_id] = signal
 
+                # Store signal received time for latency tracking
+                order.meta = order.meta or {}
+                order.meta["signal_received_at"] = signal_received_at
+
                 # Generate unique signal fingerprint for deduplication across replicas
                 # This prevents multiple pods from processing the same signal
                 signal_fingerprint = self._generate_signal_fingerprint(signal)
@@ -1147,11 +1161,61 @@ class Dispatcher:
         """Execute order with distributed consensus"""
         try:
             # Check risk limits with distributed state
+            risk_checks_total.labels(
+                check_type="position_limits",
+                result="checking",
+                exchange=order.exchange,
+            ).inc()
+
             if not await self.position_manager.check_position_limits(order):
+                risk_rejections_total.labels(
+                    reason="position_limits_exceeded",
+                    symbol=order.symbol,
+                    exchange=order.exchange,
+                ).inc()
+                risk_checks_total.labels(
+                    check_type="position_limits",
+                    result="rejected",
+                    exchange=order.exchange,
+                ).inc()
+                self.logger.warning(
+                    f"⛔ RISK REJECTION: Position limits exceeded for {order.symbol}"
+                )
                 return {"status": "rejected", "reason": "Risk limits exceeded"}
 
+            risk_checks_total.labels(
+                check_type="position_limits",
+                result="passed",
+                exchange=order.exchange,
+            ).inc()
+
+            risk_checks_total.labels(
+                check_type="daily_loss_limits",
+                result="checking",
+                exchange=order.exchange,
+            ).inc()
+
             if not await self.position_manager.check_daily_loss_limits():
+                risk_rejections_total.labels(
+                    reason="daily_loss_limits_exceeded",
+                    symbol=order.symbol,
+                    exchange=order.exchange,
+                ).inc()
+                risk_checks_total.labels(
+                    check_type="daily_loss_limits",
+                    result="rejected",
+                    exchange=order.exchange,
+                ).inc()
+                self.logger.warning(
+                    f"⛔ RISK REJECTION: Daily loss limits exceeded for {order.symbol}"
+                )
                 return {"status": "rejected", "reason": "Daily loss limits exceeded"}
+
+            risk_checks_total.labels(
+                check_type="daily_loss_limits",
+                result="passed",
+                exchange=order.exchange,
+            ).inc()
 
             # Execute order
             result = await self.execute_order(order)
@@ -1516,6 +1580,42 @@ class Dispatcher:
                 side=order.side,
                 status=result.get("status", "unknown"),
             ).inc()
+
+            # Track business metrics
+            order_status = result.get("status", "unknown")
+
+            # Emit order execution by type metric
+            orders_executed_by_type.labels(
+                order_type=order.type,
+                side=order.side,
+                symbol=order.symbol,
+                exchange=order.exchange,
+            ).inc()
+
+            # Calculate and emit order latency (signal → execution)
+            if order.meta and "signal_received_at" in order.meta:
+                signal_latency = time.time() - order.meta["signal_received_at"]
+                order_execution_latency_seconds.labels(
+                    symbol=order.symbol,
+                    order_type=order.type,
+                    exchange=order.exchange,
+                ).observe(signal_latency)
+
+                self.logger.info(
+                    f"📊 ORDER LATENCY: {signal_latency:.3f}s from signal receipt to execution complete"
+                )
+
+            # Track order failures
+            if order_status in ["error", "rejected", "cancelled"]:
+                failure_reason = result.get("error", "unknown")
+                order_failures_total.labels(
+                    symbol=order.symbol,
+                    order_type=order.type,
+                    failure_reason=str(failure_reason)[
+                        :50
+                    ],  # Truncate long error messages
+                    exchange=order.exchange,
+                ).inc()
 
             return result
 

@@ -34,30 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
-    # 1. Setup OpenTelemetry FIRST (before any logging configuration)
-    try:
-        from petrosa_otel import initialize_telemetry_standard
-
-        initialize_telemetry_standard(
-            service_name="tradeengine",
-            service_type="fastapi",
-            enable_fastapi=True,
-            enable_mongodb=True,
-            enable_http=True,
-        )
-    except ImportError:
-        pass  # Continue without OpenTelemetry if not available
-
-    # 2. Setup logging (may call basicConfig)
-    # Note: logging is already configured at module level
-
-    # 3. Attach OTel logging handler LAST (after logging is configured)
-    try:
-        from petrosa_otel import attach_logging_handler
-
-        attach_logging_handler()
-    except ImportError:
-        pass  # Continue without OpenTelemetry if not available
+    # Attach OTLP logging handler after uvicorn configures logging
+    otel_init.attach_logging_handler()
 
     # Start watchdog FIRST to ensure handler stays attached even if other init fails
     async def logging_handler_watchdog() -> None:

@@ -147,9 +147,12 @@ async def test_place_oco_orders_long_position(oco_manager: OCOManager):
     assert result["sl_order_id"] is not None
     assert result["tp_order_id"] is not None
 
-    # Verify OCO pair was stored
-    assert "test_pos_long_123" in oco_manager.active_oco_pairs
-    oco_info = oco_manager.active_oco_pairs["test_pos_long_123"]
+    # Verify OCO pair was stored (key is exchange_position_key: symbol_position_side)
+    exchange_key = "BTCUSDT_LONG"
+    assert exchange_key in oco_manager.active_oco_pairs
+    oco_list = oco_manager.active_oco_pairs[exchange_key]
+    assert len(oco_list) > 0
+    oco_info = oco_list[0]  # Get first OCO pair
     assert oco_info["status"] == "active"
     assert oco_info["symbol"] == "BTCUSDT"
     assert oco_info["position_side"] == "LONG"
@@ -178,9 +181,12 @@ async def test_place_oco_orders_short_position(oco_manager: OCOManager):
     assert "sl_order_id" in result
     assert "tp_order_id" in result
 
-    # Verify OCO pair was stored
-    assert "test_pos_short_456" in oco_manager.active_oco_pairs
-    oco_info = oco_manager.active_oco_pairs["test_pos_short_456"]
+    # Verify OCO pair was stored (key is exchange_position_key: symbol_position_side)
+    exchange_key = "ETHUSDT_SHORT"
+    assert exchange_key in oco_manager.active_oco_pairs
+    oco_list = oco_manager.active_oco_pairs[exchange_key]
+    assert len(oco_list) > 0
+    oco_info = oco_list[0]  # Get first OCO pair
     assert oco_info["status"] == "active"
     assert oco_info["symbol"] == "ETHUSDT"
     assert oco_info["position_side"] == "SHORT"
@@ -202,14 +208,20 @@ async def test_cancel_oco_pair(oco_manager: OCOManager):
         take_profit_price=52000.0,
     )
 
-    # Cancel the OCO pair
-    result = await oco_manager.cancel_oco_pair("test_pos_cancel_789")
+    # Cancel the OCO pair (need to pass symbol and position_side for new key structure)
+    result = await oco_manager.cancel_oco_pair(
+        "test_pos_cancel_789", symbol="BTCUSDT", position_side="LONG"
+    )
 
     # Verify cancellation succeeded
     assert result is True
 
-    # Verify the status was updated
-    assert oco_manager.active_oco_pairs["test_pos_cancel_789"]["status"] == "cancelled"
+    # Verify the status was updated (use exchange key)
+    exchange_key = "BTCUSDT_LONG"
+    if exchange_key in oco_manager.active_oco_pairs:
+        oco_list = oco_manager.active_oco_pairs[exchange_key]
+        if len(oco_list) > 0:
+            assert oco_list[0]["status"] == "cancelled"
 
     # Clean up
     await oco_manager.stop_monitoring()

@@ -172,12 +172,11 @@ class DataManagerClient:
             config_dict = config.model_dump(exclude={"id"})
             config_dict["updated_at"] = datetime.utcnow()
 
-            result = await self._client.update(
+            result = await self._client.upsert_one(
                 database="mongodb",
                 collection="trading_configs_global",
                 filter={},  # Empty filter for global config
-                data=config_dict,
-                upsert=True,
+                record=config_dict,
             )
 
             if (
@@ -239,12 +238,11 @@ class DataManagerClient:
             config_dict = config.model_dump(exclude={"id"})
             config_dict["updated_at"] = datetime.utcnow()
 
-            result = await self._client.update(
+            result = await self._client.upsert_one(
                 database="mongodb",
                 collection="trading_configs_symbol",
                 filter={"symbol": config.symbol},
-                data=config_dict,
-                upsert=True,
+                record=config_dict,
             )
 
             if (
@@ -310,12 +308,11 @@ class DataManagerClient:
             config_dict = config.model_dump(exclude={"id"})
             config_dict["updated_at"] = datetime.utcnow()
 
-            result = await self._client.update(
+            result = await self._client.upsert_one(
                 database="mongodb",
                 collection="trading_configs_symbol_side",
                 filter={"symbol": config.symbol, "side": config.side},
-                data=config_dict,
-                upsert=True,
+                record=config_dict,
             )
 
             if (
@@ -433,12 +430,11 @@ class DataManagerClient:
             status_dict = status.model_dump(exclude={"id"})
             status_dict["updated_at"] = datetime.utcnow()
 
-            result = await self._client.update(
+            result = await self._client.upsert_one(
                 database="mongodb",
                 collection="leverage_status",
                 filter={"symbol": status.symbol},
-                data=status_dict,
-                upsert=True,
+                record=status_dict,
             )
 
             if (

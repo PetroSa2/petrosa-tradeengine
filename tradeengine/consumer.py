@@ -7,6 +7,8 @@ from typing import Any
 import nats
 import nats.aio.client
 import nats.aio.subscription
+from opentelemetry import trace
+from petrosa_otel import extract_trace_context
 from prometheus_client import Counter
 
 from contracts.signal import Signal
@@ -14,6 +16,9 @@ from shared.config import settings
 from tradeengine.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
+
+# OpenTelemetry tracer
+tracer = trace.get_tracer(__name__)
 
 # Prometheus metrics
 messages_processed = Counter(
@@ -166,7 +171,7 @@ class SignalConsumer:
             logger.info("NATS consumer cleanup completed")
 
     async def _message_handler(self, msg: Any) -> None:
-        """Handle incoming NATS messages with enhanced logging"""
+        """Handle incoming NATS messages with trace context extraction"""
         # CRITICAL: Log at the very start to see if handler is called at all
         print(
             f"🔥 HANDLER CALLED! Subject: {msg.subject if msg else 'None'}", flush=True
@@ -187,80 +192,135 @@ class SignalConsumer:
                 signal_data.get("action", "Unknown"),
             )
 
-            # Parse timestamp with better error handling and fallback
-            timestamp_raw = signal_data.get("timestamp")
-            if not timestamp_raw:
+            # Extract trace context from signal message (with error handling)
+            try:
+                ctx = extract_trace_context(signal_data)
+            except Exception as e:
                 logger.warning(
-                    "⚠️ MISSING TIMESTAMP | Subject: %s | Using current time as fallback",
-                    msg.subject,
+                    "Failed to extract trace context, using current context: %s", e
                 )
-                signal_data["timestamp"] = datetime.utcnow()
-            else:
+                ctx = None
+
+            # Create span with extracted context for distributed tracing
+            with tracer.start_as_current_span(
+                "process_trading_signal",
+                context=ctx,
+                kind=trace.SpanKind.CONSUMER,
+            ) as span:
                 try:
-                    signal_data["timestamp"] = datetime.fromisoformat(timestamp_raw)
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        "⚠️ INVALID TIMESTAMP FORMAT | Subject: %s | Timestamp: %s | Type: %s | Error: %s | Using current time as fallback",
-                        msg.subject,
-                        timestamp_raw,
-                        type(timestamp_raw).__name__,
-                        str(e),
+                    # Set messaging attributes for observability
+                    span.set_attribute("messaging.system", "nats")
+                    span.set_attribute("messaging.destination", "signals.trading")
+                    span.set_attribute("messaging.operation", "receive")
+                    span.set_attribute(
+                        "signal.strategy_id", signal_data.get("strategy_id", "unknown")
                     )
-                    # Use current time as fallback instead of raising error
-                    signal_data["timestamp"] = datetime.utcnow()
-
-            signal = Signal(**signal_data)
-
-            logger.info(
-                "✅ SIGNAL PARSED SUCCESSFULLY | %s | %s %s @ %s",
-                signal.strategy_id,
-                signal.symbol,
-                signal.action.upper(),
-                signal.current_price,
-            )
-
-            # Dispatch signal
-            logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
-            print(f"🔥 About to dispatch signal: {signal.strategy_id}", flush=True)
-            if not self.dispatcher:
-                raise RuntimeError("Dispatcher not initialized")
-            result = await self.dispatcher.dispatch(signal)
-            print(f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True)
-
-            messages_processed.labels(status="success").inc()
-            logger.info(
-                "✅ NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
-                signal.strategy_id,
-                result.get("status"),
-                result,
-            )
-            print(
-                f"🔥 Handler completing successfully for: {signal.strategy_id}",
-                flush=True,
-            )
-
-            # Send acknowledgment with timeout to prevent blocking handler
-            if msg.reply and self.nc:
-                try:
-                    response = {
-                        "status": "processed",
-                        "signal_id": signal.strategy_id,
-                        "result": result,
-                    }
-                    await asyncio.wait_for(
-                        self.nc.publish(msg.reply, json.dumps(response).encode()),
-                        timeout=0.5,  # 500ms timeout
+                    span.set_attribute(
+                        "signal.symbol", signal_data.get("symbol", "unknown")
                     )
-                    logger.info("📤 NATS ACK SENT to %s", msg.reply)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "⏱️ ACK publish timed out for %s - continuing anyway",
-                        msg.reply,
+                    span.set_attribute(
+                        "signal.action", signal_data.get("action", "unknown")
                     )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to send ACK to %s: %s - continuing anyway", msg.reply, e
+
+                    # Parse timestamp with better error handling and fallback
+                    timestamp_raw = signal_data.get("timestamp")
+                    if not timestamp_raw:
+                        logger.warning(
+                            "⚠️ MISSING TIMESTAMP | Subject: %s | Using current time as fallback",
+                            msg.subject,
+                        )
+                        signal_data["timestamp"] = datetime.utcnow()
+                    else:
+                        try:
+                            signal_data["timestamp"] = datetime.fromisoformat(
+                                timestamp_raw
+                            )
+                        except (ValueError, TypeError) as e:
+                            logger.warning(
+                                "⚠️ INVALID TIMESTAMP FORMAT | Subject: %s | Timestamp: %s | Type: %s | Error: %s | Using current time as fallback",
+                                msg.subject,
+                                timestamp_raw,
+                                type(timestamp_raw).__name__,
+                                str(e),
+                            )
+                            # Use current time as fallback instead of raising error
+                            signal_data["timestamp"] = datetime.utcnow()
+
+                    signal = Signal(**signal_data)
+
+                    logger.info(
+                        "✅ SIGNAL PARSED SUCCESSFULLY | %s | %s %s @ %s",
+                        signal.strategy_id,
+                        signal.symbol,
+                        signal.action.upper(),
+                        signal.current_price,
                     )
+
+                    # Dispatch signal within trace context
+                    logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
+                    print(
+                        f"🔥 About to dispatch signal: {signal.strategy_id}", flush=True
+                    )
+                    if not self.dispatcher:
+                        raise RuntimeError("Dispatcher not initialized")
+                    result = await self.dispatcher.dispatch(signal)
+                    print(
+                        f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True
+                    )
+
+                    messages_processed.labels(status="success").inc()
+                    logger.info(
+                        "✅ NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
+                        signal.strategy_id,
+                        result.get("status"),
+                        result,
+                    )
+                    print(
+                        f"🔥 Handler completing successfully for: {signal.strategy_id}",
+                        flush=True,
+                    )
+
+                    # Send acknowledgment with timeout to prevent blocking handler
+                    if msg.reply and self.nc:
+                        try:
+                            response = {
+                                "status": "processed",
+                                "signal_id": signal.strategy_id,
+                                "result": result,
+                            }
+                            await asyncio.wait_for(
+                                self.nc.publish(
+                                    msg.reply, json.dumps(response).encode()
+                                ),
+                                timeout=0.5,  # 500ms timeout
+                            )
+                            logger.info("📤 NATS ACK SENT to %s", msg.reply)
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "⏱️ ACK publish timed out for %s - continuing anyway",
+                                msg.reply,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to send ACK to %s: %s - continuing anyway",
+                                msg.reply,
+                                e,
+                            )
+
+                    # Mark span as successful
+                    span.set_status(trace.Status(trace.StatusCode.OK))
+
+                except Exception as processing_error:
+                    # Mark span as error
+                    span.set_status(
+                        trace.Status(
+                            trace.StatusCode.ERROR,
+                            description=f"Signal processing failed: {processing_error}",
+                        )
+                    )
+                    span.record_exception(processing_error)
+                    # Re-raise to be caught by outer handler
+                    raise
 
         except json.JSONDecodeError as e:
             logger.error(

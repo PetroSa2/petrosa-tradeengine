@@ -751,6 +751,12 @@ curl -X POST http://localhost:8000/trade \
 make deploy
 ```
 
+### Manual Deployment (No Code Changes)
+
+For operational deployments without code changes (ConfigMap updates, Docker base image updates, etc.):
+- **Guide**: See [docs/MANUAL_DEPLOYMENT_GUIDE.md](docs/MANUAL_DEPLOYMENT_GUIDE.md)
+- **Trigger**: Via GitHub Actions UI or `gh workflow run manual-deploy.yml`
+
 ---
 
 **Production Status:** ✅ **ACTIVE** - Processing 50-150 signals/day with comprehensive risk management

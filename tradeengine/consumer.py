@@ -8,7 +8,19 @@ import nats
 import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import trace
-from petrosa_otel import extract_trace_context
+
+# Try to import extract_trace_context, but handle if it's not available
+try:
+    from petrosa_otel import extract_trace_context
+except ImportError:
+    # Fallback: create a simple function that returns current context
+    from opentelemetry import context as otel_context
+
+    def extract_trace_context(message_dict: dict) -> Any:
+        """Fallback trace context extractor when petrosa_otel doesn't export it"""
+        return otel_context.get_current()
+
+
 from prometheus_client import Counter
 
 from contracts.signal import Signal
@@ -64,6 +76,15 @@ class SignalConsumer:
             if not settings.nats_servers:
                 logger.error("NATS is enabled but no servers configured")
                 return False
+
+            # Validate subscription topic
+            if settings.nats_signal_subject != "signals.trading":
+                logger.error(
+                    "CRITICAL: NATS consumer topic misconfigured!",
+                    configured_topic=settings.nats_signal_subject,
+                    expected_topic="signals.trading",
+                    message="Will not receive signals from publishers on correct topic",
+                )
 
             # Connect to NATS with proper reconnection and keep-alive settings
             from shared.constants import (
@@ -245,6 +266,13 @@ class SignalConsumer:
                             )
                             # Use current time as fallback instead of raising error
                             signal_data["timestamp"] = datetime.utcnow()
+
+                    # DEBUG: Log raw signal data to diagnose validation errors
+                    logger.info(
+                        "🔍 RAW SIGNAL DATA | Keys: %s | Sample: %s",
+                        list(signal_data.keys()),
+                        {k: v for k, v in list(signal_data.items())[:5]},
+                    )
 
                     signal = Signal(**signal_data)
 

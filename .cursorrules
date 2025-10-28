@@ -1,10 +1,21 @@
-# Cursor AI Rules for Petrosa Systems
+# Cursor AI Rules for Petrosa Trade Engine
+
+**IMPORTANT**: For ecosystem-wide rules, architecture, and shared resources, always refer to:
+- **Master Cursorrules**: `/Users/yurisa2/petrosa/petrosa_k8s/.cursorrules`
+- **NATS Topics Registry**: `/Users/yurisa2/petrosa/petrosa_k8s/docs/NATS_TOPICS.md`
 
 ## Repository Context
-This is a unified configuration for all Petrosa systems:
-- **petrosa-bot-ta-analysis**: Technical Analysis bot for crypto trading
-- **petrosa-tradeengine**: Cryptocurrency trading engine system
-- **petrosa-binance-data-extractor**: Cryptocurrency data extraction system
+This is the **Petrosa Trade Engine** - the order execution and trade management service.
+
+**NATS Configuration**:
+- This service MUST consume from `signals.trading` (configured via `NATS_SIGNAL_SUBJECT`)
+- Consult the NATS Topics Registry before any configuration changes
+- Startup validation will log CRITICAL warnings if topic is misconfigured
+
+Related systems:
+- **petrosa-bot-ta-analysis**: Technical Analysis bot (signal publisher)
+- **petrosa-realtime-strategies**: Real-time strategies (signal publisher)
+- **petrosa-binance-data-extractor**: Data extraction system
 
 All systems use the same remote MicroK8s cluster, CI/CD pipeline patterns, and development workflows.
 

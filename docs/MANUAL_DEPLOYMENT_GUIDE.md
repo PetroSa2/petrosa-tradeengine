@@ -5,7 +5,7 @@ This guide explains how to trigger manual deployments of the TradeEngine service
 ## Overview
 
 The manual deployment workflow allows you to:
-- Deploy tradeengine without code changes
+- Deploy TradeEngine without code changes
 - Automatically bump semantic versions (patch/minor/major)
 - Build and push Docker images with new version tags
 - Update Kubernetes deployment with new image

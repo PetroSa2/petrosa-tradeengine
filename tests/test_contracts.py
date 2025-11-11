@@ -48,7 +48,7 @@ def test_signal_creation(sample_signal: Signal) -> None:
 
 def test_signal_validation_invalid_confidence() -> None:
     """Test signal validation with invalid confidence"""
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc_info:
         Signal(
             strategy_id="test-strategy-1",
             symbol="BTCUSDT",
@@ -63,6 +63,10 @@ def test_signal_validation_invalid_confidence() -> None:
             source="test",
             strategy="test-strategy",
         )
+
+    # Verify the specific validation error
+    error_str = str(exc_info.value).lower()
+    assert "confidence" in error_str, "Error should mention 'confidence' field"
 
 
 def test_signal_validation_invalid_price() -> None:

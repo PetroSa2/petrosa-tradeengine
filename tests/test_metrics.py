@@ -96,122 +96,163 @@ class TestMetricLabels:
     def test_positions_opened_total_labels(self):
         """Test positions_opened_total has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        positions_opened_total.labels(
+        metric = positions_opened_total.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).inc()
+        )
+        initial_value = metric._value._value if hasattr(metric, "_value") else 0
+        metric.inc()
+        # Verify metric was incremented
+        assert metric._value._value == initial_value + 1
 
     def test_positions_closed_total_labels(self):
         """Test positions_closed_total has correct labels"""
         # Labels: strategy_id, symbol, position_side, close_reason, exchange
-        positions_closed_total.labels(
+        metric = positions_closed_total.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             close_reason="signal",
             exchange="binance",
-        ).inc()
+        )
+        initial_value = metric._value._value if hasattr(metric, "_value") else 0
+        metric.inc()
+        # Verify metric was incremented
+        assert metric._value._value == initial_value + 1
 
     def test_position_pnl_usd_labels(self):
         """Test position_pnl_usd has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        position_pnl_usd.labels(
+        metric = position_pnl_usd.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).observe(100.0)
+        )
+        metric.observe(100.0)
+        # Verify metric recorded the observation (sample count increased)
+        assert metric._sum._value > 0
 
     def test_position_pnl_percentage_labels(self):
         """Test position_pnl_percentage has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        position_pnl_percentage.labels(
+        metric = position_pnl_percentage.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).observe(5.0)
+        )
+        metric.observe(5.0)
+        # Verify metric recorded the observation
+        assert metric._sum._value > 0
 
     def test_position_duration_seconds_labels(self):
         """Test position_duration_seconds has correct labels"""
         # Labels: strategy_id, symbol, position_side, close_reason, exchange
-        position_duration_seconds.labels(
+        metric = position_duration_seconds.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             close_reason="signal",
             exchange="binance",
-        ).observe(300)
+        )
+        metric.observe(300)
+        # Verify metric recorded the observation
+        assert metric._sum._value == 300
 
     def test_position_roi_labels(self):
         """Test position_roi has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        position_roi.labels(
+        metric = position_roi.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).observe(0.05)
+        )
+        metric.observe(0.05)
+        # Verify metric recorded the observation
+        assert metric._sum._value == 0.05
 
     def test_open_positions_value_usd_labels(self):
         """Test open_positions_value_usd has correct labels"""
         # Labels: strategy_id, exchange
-        open_positions_value_usd.labels(strategy_id="test", exchange="binance").set(
-            5000.0
-        )
+        metric = open_positions_value_usd.labels(strategy_id="test", exchange="binance")
+        metric.set(5000.0)
+        # Verify metric value was set
+        assert metric._value._value == 5000.0
 
     def test_unrealized_pnl_usd_labels(self):
         """Test unrealized_pnl_usd has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        unrealized_pnl_usd.labels(
+        metric = unrealized_pnl_usd.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).set(100.0)
+        )
+        metric.set(100.0)
+        # Verify metric value was set
+        assert metric._value._value == 100.0
 
     def test_positions_winning_total_labels(self):
         """Test positions_winning_total has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        positions_winning_total.labels(
+        metric = positions_winning_total.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).inc()
+        )
+        initial_value = metric._value._value if hasattr(metric, "_value") else 0
+        metric.inc()
+        # Verify metric was incremented
+        assert metric._value._value == initial_value + 1
 
     def test_positions_losing_total_labels(self):
         """Test positions_losing_total has correct labels"""
         # Labels: strategy_id, symbol, position_side, exchange
-        positions_losing_total.labels(
+        metric = positions_losing_total.labels(
             strategy_id="test",
             symbol="BTCUSDT",
             position_side="LONG",
             exchange="binance",
-        ).inc()
+        )
+        initial_value = metric._value._value if hasattr(metric, "_value") else 0
+        metric.inc()
+        # Verify metric was incremented
+        assert metric._value._value == initial_value + 1
 
     def test_position_commission_usd_labels(self):
         """Test position_commission_usd has correct labels"""
         # Labels: strategy_id, symbol, exchange
-        position_commission_usd.labels(
+        metric = position_commission_usd.labels(
             strategy_id="test", symbol="BTCUSDT", exchange="binance"
-        ).observe(0.5)
+        )
+        metric.observe(0.5)
+        # Verify metric recorded the observation
+        assert metric._sum._value == 0.5
 
     def test_position_entry_price_labels(self):
         """Test position_entry_price has correct labels"""
         # Labels: symbol, position_side, exchange
-        position_entry_price.labels(
+        metric = position_entry_price.labels(
             symbol="BTCUSDT", position_side="LONG", exchange="binance"
-        ).observe(45000.0)
+        )
+        metric.observe(45000.0)
+        # Verify metric recorded the observation
+        assert metric._sum._value == 45000.0
 
     def test_position_exit_price_labels(self):
         """Test position_exit_price has correct labels"""
         # Labels: symbol, position_side, exchange
-        position_exit_price.labels(
+        metric = position_exit_price.labels(
             symbol="BTCUSDT", position_side="LONG", exchange="binance"
-        ).observe(46000.0)
+        )
+        metric.observe(46000.0)
+        # Verify metric recorded the observation
+        assert metric._sum._value == 46000.0
 
 
 class TestMetricBuckets:

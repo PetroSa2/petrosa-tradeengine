@@ -174,11 +174,19 @@ def test_signal_model_config_json_encoders() -> None:
         strategy="test",
         timestamp=datetime(2024, 1, 1, 12, 0, 0),
     )
-    # Verify model_config exists
+    # Verify model_config exists and explicitly access it to ensure coverage
     assert hasattr(signal, "model_config")
-    assert isinstance(signal.model_config, dict)
-    assert "json_encoders" in signal.model_config
-    assert "protected_namespaces" in signal.model_config
+    model_config = signal.model_config
+    assert isinstance(model_config, dict)
+    assert "json_encoders" in model_config
+    assert "protected_namespaces" in model_config
+
+    # Explicitly access json_encoders and protected_namespaces to ensure coverage
+    json_encoders = model_config["json_encoders"]
+    protected_namespaces = model_config["protected_namespaces"]
+    assert datetime in json_encoders
+    assert callable(json_encoders[datetime])
+    assert isinstance(protected_namespaces, tuple)
 
     # Test that datetime is serialized correctly via json_encoders
     signal_dict = signal.model_dump()
@@ -209,10 +217,16 @@ def test_order_model_config_json_encoders() -> None:
         status=OrderStatus.PENDING,
         created_at=datetime(2024, 1, 1, 12, 0, 0),
     )
-    # Verify model_config exists
+    # Verify model_config exists and explicitly access it to ensure coverage
     assert hasattr(order, "model_config")
-    assert isinstance(order.model_config, dict)
-    assert "json_encoders" in order.model_config
+    model_config = order.model_config
+    assert isinstance(model_config, dict)
+    assert "json_encoders" in model_config
+
+    # Explicitly access json_encoders to ensure the dictionary line is covered
+    json_encoders = model_config["json_encoders"]
+    assert datetime in json_encoders
+    assert callable(json_encoders[datetime])
 
     # Test that datetime is serialized correctly via json_encoders
     order_dict = order.model_dump()
@@ -430,6 +444,12 @@ def test_trading_config_model_config() -> None:
     assert hasattr(config, "model_config")
     assert "json_schema_extra" in config.model_config
 
+    # Explicitly access model_config to ensure coverage of the dictionary definition
+    model_config = config.model_config
+    json_schema_extra = model_config["json_schema_extra"]
+    assert isinstance(json_schema_extra, dict)
+    assert "example" in json_schema_extra
+
 
 def test_trading_config_audit_model_config() -> None:
     """Test TradingConfigAudit model_config (Pydantic v2)"""
@@ -443,6 +463,12 @@ def test_trading_config_audit_model_config() -> None:
     # Verify model_config is working
     assert hasattr(audit, "model_config")
     assert "json_schema_extra" in audit.model_config
+
+    # Explicitly access model_config to ensure coverage
+    model_config = audit.model_config
+    json_schema_extra = model_config["json_schema_extra"]
+    assert isinstance(json_schema_extra, dict)
+    assert "example" in json_schema_extra
 
 
 def test_leverage_status_model_config() -> None:

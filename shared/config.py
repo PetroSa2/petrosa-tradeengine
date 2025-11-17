@@ -69,10 +69,11 @@ class Settings(BaseSettings):
     # MySQL Configuration (legacy support)
     mysql_uri: str | None = None
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-        extra = "allow"
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": False,
+        "extra": "allow",
+    }
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

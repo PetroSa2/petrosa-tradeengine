@@ -227,3 +227,16 @@ class TestSettings:
         assert settings.jwt_secret_key == "my_secret"
         assert settings.jwt_algorithm == "HS512"
         assert settings.jwt_expiration_hours == 48
+
+    def test_model_config_pydantic_v2(self):
+        """Test model_config attribute (Pydantic v2 migration)"""
+        settings = Settings()
+        # Verify model_config is present and has correct structure
+        assert hasattr(settings, "model_config")
+        assert isinstance(settings.model_config, dict)
+        assert "env_file" in settings.model_config
+        assert "case_sensitive" in settings.model_config
+        assert "extra" in settings.model_config
+        assert settings.model_config["env_file"] == ".env"
+        assert settings.model_config["case_sensitive"] is False
+        assert settings.model_config["extra"] == "allow"

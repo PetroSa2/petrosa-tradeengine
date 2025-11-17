@@ -6,10 +6,10 @@ Test script to verify signal mapping functionality
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 from contracts.signal import Signal
 from tradeengine.consumer import SignalConsumer
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_signal_mapping():

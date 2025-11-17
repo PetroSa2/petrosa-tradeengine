@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
+from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 
 
 @pytest.fixture
@@ -206,3 +207,196 @@ def test_order_deserialization() -> None:
     assert order.symbol == "BTCUSDT"
     assert order.type == "market"
     assert order.side == "buy"
+
+
+def test_trading_config_side_validation() -> None:
+    """Test TradingConfig side field validator (Pydantic v2)"""
+    # Valid LONG side
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side == "LONG"
+
+    # Valid SHORT side
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="SHORT",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side == "SHORT"
+
+    # Invalid side should raise ValidationError
+    with pytest.raises(ValidationError):
+        TradingConfig(
+            symbol="BTCUSDT",
+            side="INVALID",
+            parameters={"leverage": 10},
+            created_by="test",
+        )
+
+    # None side is valid (for global/symbol configs)
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side is None
+
+
+def test_signal_field_validators() -> None:
+    """Test Signal field validators (Pydantic v2)"""
+    # Test confidence validator - valid range
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.5,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+    )
+    assert signal.confidence == 0.5
+
+    # Test confidence validator - invalid (too high)
+    with pytest.raises(ValidationError):
+        Signal(
+            strategy_id="test",
+            symbol="BTCUSDT",
+            action="buy",
+            confidence=1.5,  # Invalid: > 1
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="test",
+            strategy="test",
+        )
+
+    # Test percentage validators - valid
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        position_size_pct=0.1,
+        stop_loss_pct=0.02,
+        take_profit_pct=0.05,
+    )
+    assert signal.position_size_pct == 0.1
+    assert signal.stop_loss_pct == 0.02
+    assert signal.take_profit_pct == 0.05
+
+    # Test percentage validators - invalid (too high)
+    with pytest.raises(ValidationError):
+        Signal(
+            strategy_id="test",
+            symbol="BTCUSDT",
+            action="buy",
+            confidence=0.8,
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="test",
+            strategy="test",
+            position_size_pct=1.5,  # Invalid: > 1
+        )
+
+
+def test_signal_timestamp_validator() -> None:
+    """Test Signal timestamp field validator (Pydantic v2)"""
+    from datetime import datetime
+
+    # Test with ISO format string
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp="2024-01-01T12:00:00Z",
+    )
+    assert isinstance(signal.timestamp, datetime)
+
+    # Test with Unix timestamp (float)
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=1704110400.0,  # Valid Unix timestamp
+    )
+    assert isinstance(signal.timestamp, datetime)
+
+    # Test with datetime object
+    dt = datetime(2024, 1, 1, 12, 0, 0)
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=dt,
+    )
+    assert signal.timestamp == dt
+
+
+def test_trading_config_model_config() -> None:
+    """Test TradingConfig model_config (Pydantic v2)"""
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    # Verify model_config is working (json_schema_extra)
+    assert hasattr(config, "model_config")
+    assert "json_schema_extra" in config.model_config
+
+
+def test_trading_config_audit_model_config() -> None:
+    """Test TradingConfigAudit model_config (Pydantic v2)"""
+    audit = TradingConfigAudit(
+        config_type="symbol_side",
+        symbol="BTCUSDT",
+        side="LONG",
+        action="update",
+        changed_by="test",
+    )
+    # Verify model_config is working
+    assert hasattr(audit, "model_config")
+    assert "json_schema_extra" in audit.model_config
+
+
+def test_leverage_status_model_config() -> None:
+    """Test LeverageStatus model_config (Pydantic v2)"""
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+    )
+    # Verify model_config is working
+    assert hasattr(status, "model_config")
+    assert "json_schema_extra" in status.model_config

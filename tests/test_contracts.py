@@ -158,6 +158,35 @@ def test_signal_serialization(sample_signal: Signal) -> None:
     assert signal_dict["current_price"] == 45000.0
 
 
+def test_signal_model_config_json_encoders() -> None:
+    """Test Signal model_config json_encoders (Pydantic v2)"""
+    from datetime import datetime
+
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=datetime(2024, 1, 1, 12, 0, 0),
+    )
+    # Verify model_config exists
+    assert hasattr(signal, "model_config")
+    assert isinstance(signal.model_config, dict)
+    assert "json_encoders" in signal.model_config
+    assert "protected_namespaces" in signal.model_config
+
+    # Test that datetime is serialized correctly via json_encoders
+    signal_dict = signal.model_dump()
+    assert "timestamp" in signal_dict
+    # Verify timestamp is serialized (should be ISO format string or datetime)
+    assert isinstance(signal_dict["timestamp"], (str, datetime))
+
+
 def test_order_serialization(sample_order: TradeOrder) -> None:
     """Test order serialization"""
     order_dict = sample_order.model_dump()
@@ -165,6 +194,31 @@ def test_order_serialization(sample_order: TradeOrder) -> None:
     assert order_dict["type"] == "market"
     assert order_dict["side"] == "buy"
     assert order_dict["amount"] == 0.1
+
+
+def test_order_model_config_json_encoders() -> None:
+    """Test TradeOrder model_config json_encoders (Pydantic v2)"""
+    from datetime import datetime
+
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        order_id="test-order-1",
+        status=OrderStatus.PENDING,
+        created_at=datetime(2024, 1, 1, 12, 0, 0),
+    )
+    # Verify model_config exists
+    assert hasattr(order, "model_config")
+    assert isinstance(order.model_config, dict)
+    assert "json_encoders" in order.model_config
+
+    # Test that datetime is serialized correctly via json_encoders
+    order_dict = order.model_dump()
+    if "created_at" in order_dict:
+        # Verify datetime is serialized (should be ISO format string)
+        assert isinstance(order_dict["created_at"], (str, datetime))
 
 
 def test_signal_deserialization() -> None:
@@ -400,3 +454,115 @@ def test_leverage_status_model_config() -> None:
     # Verify model_config is working
     assert hasattr(status, "model_config")
     assert "json_schema_extra" in status.model_config
+
+    # Test that model_config structure is correct
+    assert isinstance(status.model_config, dict)
+    assert isinstance(status.model_config["json_schema_extra"], dict)
+    example = status.model_config["json_schema_extra"]["example"]
+    assert example["symbol"] == "BTCUSDT"
+    assert example["configured_leverage"] == 10
+
+
+def test_trading_config_get_scope_key() -> None:
+    """Test TradingConfig get_scope_key method"""
+    # Global config
+    config = TradingConfig(
+        symbol=None,
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "global"
+
+    # Symbol config
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "BTCUSDT"
+
+    # Symbol-side config
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "BTCUSDT:LONG"
+
+
+def test_trading_config_audit_get_change_summary() -> None:
+    """Test TradingConfigAudit get_change_summary method"""
+    audit = TradingConfigAudit(
+        config_type="symbol_side",
+        symbol="BTCUSDT",
+        side="LONG",
+        action="update",
+        changed_by="test_user",
+    )
+    summary = audit.get_change_summary()
+    assert "UPDATE" in summary
+    assert "BTCUSDT" in summary
+    assert "LONG" in summary
+    assert "test_user" in summary
+
+    # Global config
+    audit = TradingConfigAudit(
+        config_type="global",
+        symbol=None,
+        side=None,
+        action="create",
+        changed_by="admin",
+    )
+    summary = audit.get_change_summary()
+    assert "CREATE" in summary
+    assert "global" in summary
+    assert "admin" in summary
+
+
+def test_leverage_status_is_synced() -> None:
+    """Test LeverageStatus is_synced method"""
+    # Synced
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=10,
+    )
+    assert status.is_synced() is True
+
+    # Not synced
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=20,
+    )
+    assert status.is_synced() is False
+
+    # Unknown actual leverage
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=None,
+    )
+    assert status.is_synced() is False
+
+
+def test_leverage_status_needs_sync() -> None:
+    """Test LeverageStatus needs_sync method"""
+    # Needs sync
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=None,
+    )
+    assert status.needs_sync() is True
+
+    # Doesn't need sync
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=10,
+    )
+    assert status.needs_sync() is False

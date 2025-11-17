@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class SignalType(str, Enum):
@@ -183,7 +183,8 @@ class Signal(BaseModel):
         default_factory=datetime.utcnow, description="Signal timestamp"
     )
 
-    @validator("timestamp", pre=True)
+    @field_validator("timestamp", mode="before")
+    @classmethod
     def validate_timestamp(cls, v: Any) -> datetime:
         """Ensure timestamp is timezone-aware"""
         if isinstance(v, str):
@@ -239,20 +240,23 @@ class Signal(BaseModel):
             logger.warning(f"Invalid timestamp type {type(v)} - using current time")
             return datetime.utcnow()
 
-    @validator("confidence", "model_confidence")
+    @field_validator("confidence", "model_confidence")
+    @classmethod
     def validate_confidence(cls, v: Any) -> float | None:
         """Validate confidence values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Confidence must be between 0 and 1")
         return float(v) if v is not None else None
 
-    @validator("position_size_pct", "stop_loss_pct", "take_profit_pct")
+    @field_validator("position_size_pct", "stop_loss_pct", "take_profit_pct")
+    @classmethod
     def validate_percentages(cls, v: Any) -> float | None:
         """Validate percentage values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Percentage must be between 0 and 1")
         return float(v) if v is not None else None
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
-        protected_namespaces = ()
+    model_config = {
+        "json_encoders": {datetime: lambda v: v.isoformat()},
+        "protected_namespaces": (),
+    }

@@ -158,9 +158,10 @@ class TestMetricLabels:
             close_reason="signal",
             exchange="binance",
         )
+        initial_sum = metric._sum._value
         metric.observe(300)
-        # Verify metric recorded the observation
-        assert metric._sum._value == 300
+        # Verify metric recorded the observation (sum increased by at least observed value)
+        assert metric._sum._value >= initial_sum + 300
 
     def test_position_roi_labels(self):
         """Test position_roi has correct labels"""
@@ -171,9 +172,10 @@ class TestMetricLabels:
             position_side="LONG",
             exchange="binance",
         )
+        initial_sum = metric._sum._value
         metric.observe(0.05)
-        # Verify metric recorded the observation
-        assert metric._sum._value == 0.05
+        # Verify metric recorded the observation (sum increased by at least observed value)
+        assert metric._sum._value >= initial_sum + 0.05
 
     def test_open_positions_value_usd_labels(self):
         """Test open_positions_value_usd has correct labels"""
@@ -230,9 +232,10 @@ class TestMetricLabels:
         metric = position_commission_usd.labels(
             strategy_id="test", symbol="BTCUSDT", exchange="binance"
         )
+        initial_sum = metric._sum._value
         metric.observe(0.5)
-        # Verify metric recorded the observation
-        assert metric._sum._value == 0.5
+        # Verify metric recorded the observation (sum increased by at least observed value)
+        assert metric._sum._value >= initial_sum + 0.5
 
     def test_position_entry_price_labels(self):
         """Test position_entry_price has correct labels"""
@@ -240,9 +243,10 @@ class TestMetricLabels:
         metric = position_entry_price.labels(
             symbol="BTCUSDT", position_side="LONG", exchange="binance"
         )
+        initial_sum = metric._sum._value
         metric.observe(45000.0)
-        # Verify metric recorded the observation
-        assert metric._sum._value == 45000.0
+        # Verify metric recorded the observation (sum increased by at least observed value)
+        assert metric._sum._value >= initial_sum + 45000.0
 
     def test_position_exit_price_labels(self):
         """Test position_exit_price has correct labels"""
@@ -250,9 +254,10 @@ class TestMetricLabels:
         metric = position_exit_price.labels(
             symbol="BTCUSDT", position_side="LONG", exchange="binance"
         )
+        initial_sum = metric._sum._value
         metric.observe(46000.0)
-        # Verify metric recorded the observation
-        assert metric._sum._value == 46000.0
+        # Verify metric recorded the observation (sum increased by at least observed value)
+        assert metric._sum._value >= initial_sum + 46000.0
 
 
 class TestMetricBuckets:

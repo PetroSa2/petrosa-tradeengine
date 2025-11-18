@@ -638,7 +638,27 @@ async def validate_config(request: ConfigValidationRequest):
 
         for error_msg in errors:
             # Parse error message to extract field and details
-            if "must be" in error_msg or "must be one of" in error_msg:
+            if "Unknown parameter" in error_msg:
+                # Handle "Unknown parameter" errors separately (they don't contain "must be")
+                code = "UNKNOWN_PARAMETER"
+                # Extract parameter name from "Unknown parameter: param_name"
+                if "Unknown parameter:" in error_msg:
+                    param_name = error_msg.split("Unknown parameter:")[-1].strip()
+                    field = param_name
+                else:
+                    field = "unknown"
+                suggested_fixes.append(
+                    f"Remove {field} or check parameter name spelling"
+                )
+                validation_errors.append(
+                    ValidationError(
+                        field=field,
+                        message=error_msg,
+                        code=code,
+                        suggested_value=None,
+                    )
+                )
+            elif "must be" in error_msg or "must be one of" in error_msg:
                 # Extract field name (usually first word before "must")
                 parts = error_msg.split(" must be")
                 if parts:
@@ -646,6 +666,7 @@ async def validate_config(request: ConfigValidationRequest):
                     message = error_msg
 
                     # Determine error code
+                    suggested_value = None  # Initialize before conditionals
                     if "must be integer" in error_msg:
                         code = "INVALID_TYPE"
                         suggested_fixes.append(f"Change {field} to an integer value")
@@ -680,12 +701,6 @@ async def validate_config(request: ConfigValidationRequest):
                             suggested_value = None
                         else:
                             suggested_value = None
-                    elif "Unknown parameter" in error_msg:
-                        code = "UNKNOWN_PARAMETER"
-                        suggested_fixes.append(
-                            f"Remove {field} or check parameter name spelling"
-                        )
-                        suggested_value = None
                     else:
                         code = "VALIDATION_ERROR"
                         suggested_value = None
@@ -725,7 +740,8 @@ async def validate_config(request: ConfigValidationRequest):
 
         if "leverage" in request.parameters:
             leverage = request.parameters["leverage"]
-            if leverage > 50:
+            # Type check to avoid comparison errors with invalid types
+            if isinstance(leverage, (int, float)) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
                 estimated_impact["warning"] = (
                     "High leverage increases risk significantly"

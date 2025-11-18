@@ -6,7 +6,7 @@ at global, symbol, and symbol-side levels.
 """
 
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
@@ -77,6 +77,67 @@ class APIResponse(BaseModel):
     data: Optional[Any] = Field(None, description="Response data")
     error: Optional[Dict[str, Any]] = Field(None, description="Error details if failed")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+
+class ValidationError(BaseModel):
+    """Standardized validation error format."""
+
+    field: str = Field(..., description="Parameter name that failed validation")
+    message: str = Field(..., description="Human-readable error message")
+    code: str = Field(
+        ..., description="Error code (e.g., 'INVALID_TYPE', 'OUT_OF_RANGE')"
+    )
+    suggested_value: Optional[Any] = Field(
+        None, description="Suggested correct value if applicable"
+    )
+
+
+class CrossServiceConflict(BaseModel):
+    """Cross-service configuration conflict."""
+
+    service: str = Field(..., description="Service name with conflicting configuration")
+    conflict_type: str = Field(
+        ..., description="Type of conflict (e.g., 'PARAMETER_CONFLICT')"
+    )
+    description: str = Field(..., description="Description of the conflict")
+    resolution: str = Field(..., description="Suggested resolution")
+
+
+class ValidationResponse(BaseModel):
+    """Standardized validation response across all services."""
+
+    validation_passed: bool = Field(..., description="Whether validation passed")
+    errors: List[ValidationError] = Field(
+        default_factory=list, description="List of validation errors"
+    )
+    warnings: List[str] = Field(
+        default_factory=list, description="Non-blocking warnings"
+    )
+    suggested_fixes: List[str] = Field(
+        default_factory=list, description="Actionable suggestions to fix errors"
+    )
+    estimated_impact: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Estimated impact of configuration changes",
+    )
+    conflicts: List[CrossServiceConflict] = Field(
+        default_factory=list, description="Cross-service conflicts detected"
+    )
+
+
+class ConfigValidationRequest(BaseModel):
+    """Request model for configuration validation."""
+
+    parameters: Dict[str, Any] = Field(
+        ..., description="Configuration parameters to validate"
+    )
+    symbol: Optional[str] = Field(
+        None, description="Trading symbol (optional, for symbol-specific validation)"
+    )
+    side: Optional[Literal["LONG", "SHORT"]] = Field(
+        None,
+        description="Position side (optional, for symbol-side-specific validation)",
+    )
 
 
 # =============================================================================
@@ -508,6 +569,200 @@ async def update_symbol_side_config(
         logger.error(f"Error updating config for {symbol}-{side}: {e}")
         return APIResponse(
             success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.post(
+    "/validate",
+    response_model=APIResponse,
+    summary="Validate configuration without applying changes",
+    description="""
+    **For LLM Agents**: Validate configuration parameters without persisting changes.
+
+    This endpoint performs comprehensive validation including:
+    - Parameter type and constraint validation
+    - Dependency validation
+    - Cross-service conflict detection (future)
+    - Impact assessment
+
+    **Example Request**:
+    ```json
+    {
+      "parameters": {
+        "leverage": 15,
+        "stop_loss_pct": 2.5
+      },
+      "symbol": "BTCUSDT",
+      "side": "LONG"
+    }
+    ```
+
+    **Example Response**:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "validation_passed": true,
+        "errors": [],
+        "warnings": [],
+        "suggested_fixes": [],
+        "estimated_impact": {
+          "risk_level": "medium",
+          "affected_positions": "all_long_btcusdt"
+        },
+        "conflicts": []
+      }
+    }
+    ```
+    """,
+    tags=["trading-configuration"],
+)
+async def validate_config(request: ConfigValidationRequest):
+    """Validate configuration without applying changes."""
+    try:
+        manager = get_config_manager()
+
+        # Perform validation using existing logic
+        success, config, errors = await manager.set_config(
+            parameters=request.parameters,
+            changed_by="validation_api",
+            symbol=request.symbol.upper() if request.symbol else None,
+            side=request.side,
+            reason="Validation only - no changes applied",
+            validate_only=True,
+        )
+
+        # Convert errors to standardized format
+        validation_errors = []
+        suggested_fixes = []
+
+        for error_msg in errors:
+            # Parse error message to extract field and details
+            if "must be" in error_msg or "must be one of" in error_msg:
+                # Extract field name (usually first word before "must")
+                parts = error_msg.split(" must be")
+                if parts:
+                    field = parts[0].strip()
+                    message = error_msg
+
+                    # Determine error code
+                    if "must be integer" in error_msg:
+                        code = "INVALID_TYPE"
+                        suggested_fixes.append(f"Change {field} to an integer value")
+                    elif "must be float" in error_msg:
+                        code = "INVALID_TYPE"
+                        suggested_fixes.append(f"Change {field} to a numeric value")
+                    elif "must be >=" in error_msg or "must be <=" in error_msg:
+                        code = "OUT_OF_RANGE"
+                        # Extract suggested value from schema
+                        from tradeengine.defaults import PARAMETER_SCHEMA
+
+                        if field in PARAMETER_SCHEMA:
+                            schema = PARAMETER_SCHEMA[field]
+                            if "min" in schema and "max" in schema:
+                                suggested_value = (schema["min"] + schema["max"]) / 2
+                            elif "min" in schema:
+                                suggested_value = schema["min"]
+                            elif "max" in schema:
+                                suggested_value = schema["max"]
+                            else:
+                                suggested_value = schema.get("default")
+                        else:
+                            suggested_value = None
+                    elif "must be one of" in error_msg:
+                        code = "INVALID_VALUE"
+                        # Extract allowed values
+                        allowed_start = error_msg.find("[") + 1
+                        allowed_end = error_msg.find("]")
+                        if allowed_start > 0 and allowed_end > allowed_start:
+                            allowed_values = error_msg[allowed_start:allowed_end]
+                            suggested_fixes.append(f"Use one of: {allowed_values}")
+                            suggested_value = None
+                        else:
+                            suggested_value = None
+                    elif "Unknown parameter" in error_msg:
+                        code = "UNKNOWN_PARAMETER"
+                        suggested_fixes.append(
+                            f"Remove {field} or check parameter name spelling"
+                        )
+                        suggested_value = None
+                    else:
+                        code = "VALIDATION_ERROR"
+                        suggested_value = None
+
+                    validation_errors.append(
+                        ValidationError(
+                            field=field,
+                            message=message,
+                            code=code,
+                            suggested_value=suggested_value,
+                        )
+                    )
+            else:
+                # Generic error
+                validation_errors.append(
+                    ValidationError(
+                        field="unknown",
+                        message=error_msg,
+                        code="VALIDATION_ERROR",
+                        suggested_value=None,
+                    )
+                )
+
+        # Estimate impact (simplified for now)
+        estimated_impact = {
+            "risk_level": "low",
+            "affected_scope": (
+                "global" if not request.symbol else f"symbol:{request.symbol}"
+            ),
+            "parameter_count": len(request.parameters),
+        }
+
+        # Add risk assessment based on parameters
+        high_risk_params = ["leverage", "stop_loss_pct", "max_position_size"]
+        if any(param in request.parameters for param in high_risk_params):
+            estimated_impact["risk_level"] = "medium"
+
+        if "leverage" in request.parameters:
+            leverage = request.parameters["leverage"]
+            if leverage > 50:
+                estimated_impact["risk_level"] = "high"
+                estimated_impact["warning"] = (
+                    "High leverage increases risk significantly"
+                )
+
+        # Cross-service conflict detection (placeholder - to be implemented)
+        conflicts = []
+        # TODO: Implement cross-service conflict detection
+        # This would check against other services' configurations
+
+        validation_response = ValidationResponse(
+            validation_passed=success and len(validation_errors) == 0,
+            errors=validation_errors,
+            warnings=[],
+            suggested_fixes=suggested_fixes,
+            estimated_impact=estimated_impact,
+            conflicts=conflicts,
+        )
+
+        return APIResponse(
+            success=True,
+            data=validation_response,
+            metadata={
+                "validation_mode": "dry_run",
+                "scope": (
+                    "global"
+                    if not request.symbol
+                    else f"{request.symbol}:{request.side or 'all'}"
+                ),
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error validating config: {e}")
+        return APIResponse(
+            success=False,
+            error={"code": "INTERNAL_ERROR", "message": str(e)},
         )
 
 

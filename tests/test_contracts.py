@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
+from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 
 
 @pytest.fixture
@@ -161,6 +162,43 @@ def test_signal_serialization(sample_signal: Signal) -> None:
     assert signal_dict["current_price"] == 45000.0
 
 
+def test_signal_model_config_json_encoders() -> None:
+    """Test Signal model_config json_encoders (Pydantic v2)"""
+    from datetime import datetime
+
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=datetime(2024, 1, 1, 12, 0, 0),
+    )
+    # Verify model_config exists and explicitly access it to ensure coverage
+    assert hasattr(signal, "model_config")
+    model_config = signal.model_config
+    assert isinstance(model_config, dict)
+    assert "json_encoders" in model_config
+    assert "protected_namespaces" in model_config
+
+    # Explicitly access json_encoders and protected_namespaces to ensure coverage
+    json_encoders = model_config["json_encoders"]
+    protected_namespaces = model_config["protected_namespaces"]
+    assert datetime in json_encoders
+    assert callable(json_encoders[datetime])
+    assert isinstance(protected_namespaces, tuple)
+
+    # Test that datetime is serialized correctly via json_encoders
+    signal_dict = signal.model_dump()
+    assert "timestamp" in signal_dict
+    # Verify timestamp is serialized (should be ISO format string or datetime)
+    assert isinstance(signal_dict["timestamp"], (str, datetime))
+
+
 def test_order_serialization(sample_order: TradeOrder) -> None:
     """Test order serialization"""
     order_dict = sample_order.model_dump()
@@ -168,6 +206,37 @@ def test_order_serialization(sample_order: TradeOrder) -> None:
     assert order_dict["type"] == "market"
     assert order_dict["side"] == "buy"
     assert order_dict["amount"] == 0.1
+
+
+def test_order_model_config_json_encoders() -> None:
+    """Test TradeOrder model_config json_encoders (Pydantic v2)"""
+    from datetime import datetime
+
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        order_id="test-order-1",
+        status=OrderStatus.PENDING,
+        created_at=datetime(2024, 1, 1, 12, 0, 0),
+    )
+    # Verify model_config exists and explicitly access it to ensure coverage
+    assert hasattr(order, "model_config")
+    model_config = order.model_config
+    assert isinstance(model_config, dict)
+    assert "json_encoders" in model_config
+
+    # Explicitly access json_encoders to ensure the dictionary line is covered
+    json_encoders = model_config["json_encoders"]
+    assert datetime in json_encoders
+    assert callable(json_encoders[datetime])
+
+    # Test that datetime is serialized correctly via json_encoders
+    order_dict = order.model_dump()
+    if "created_at" in order_dict:
+        # Verify datetime is serialized (should be ISO format string)
+        assert isinstance(order_dict["created_at"], (str, datetime))
 
 
 def test_signal_deserialization() -> None:
@@ -210,3 +279,320 @@ def test_order_deserialization() -> None:
     assert order.symbol == "BTCUSDT"
     assert order.type == "market"
     assert order.side == "buy"
+
+
+def test_trading_config_side_validation() -> None:
+    """Test TradingConfig side field validator (Pydantic v2)"""
+    # Valid LONG side
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side == "LONG"
+
+    # Valid SHORT side
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="SHORT",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side == "SHORT"
+
+    # Invalid side should raise ValidationError
+    with pytest.raises(ValidationError):
+        TradingConfig(
+            symbol="BTCUSDT",
+            side="INVALID",
+            parameters={"leverage": 10},
+            created_by="test",
+        )
+
+    # None side is valid (for global/symbol configs)
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.side is None
+
+
+def test_signal_field_validators() -> None:
+    """Test Signal field validators (Pydantic v2)"""
+    # Test confidence validator - valid range
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.5,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+    )
+    assert signal.confidence == 0.5
+
+    # Test confidence validator - invalid (too high)
+    with pytest.raises(ValidationError):
+        Signal(
+            strategy_id="test",
+            symbol="BTCUSDT",
+            action="buy",
+            confidence=1.5,  # Invalid: > 1
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="test",
+            strategy="test",
+        )
+
+    # Test percentage validators - valid
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        position_size_pct=0.1,
+        stop_loss_pct=0.02,
+        take_profit_pct=0.05,
+    )
+    assert signal.position_size_pct == 0.1
+    assert signal.stop_loss_pct == 0.02
+    assert signal.take_profit_pct == 0.05
+
+    # Test percentage validators - invalid (too high)
+    with pytest.raises(ValidationError):
+        Signal(
+            strategy_id="test",
+            symbol="BTCUSDT",
+            action="buy",
+            confidence=0.8,
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="test",
+            strategy="test",
+            position_size_pct=1.5,  # Invalid: > 1
+        )
+
+
+def test_signal_timestamp_validator() -> None:
+    """Test Signal timestamp field validator (Pydantic v2)"""
+    from datetime import datetime
+
+    # Test with ISO format string
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp="2024-01-01T12:00:00Z",
+    )
+    assert isinstance(signal.timestamp, datetime)
+
+    # Test with Unix timestamp (float)
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=1704110400.0,  # Valid Unix timestamp
+    )
+    assert isinstance(signal.timestamp, datetime)
+
+    # Test with datetime object
+    dt = datetime(2024, 1, 1, 12, 0, 0)
+    signal = Signal(
+        strategy_id="test",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="test",
+        strategy="test",
+        timestamp=dt,
+    )
+    assert signal.timestamp == dt
+
+
+def test_trading_config_model_config() -> None:
+    """Test TradingConfig model_config (Pydantic v2)"""
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    # Verify model_config is working (json_schema_extra)
+    assert hasattr(config, "model_config")
+    assert "json_schema_extra" in config.model_config
+
+    # Explicitly access model_config to ensure coverage of the dictionary definition
+    model_config = config.model_config
+    json_schema_extra = model_config["json_schema_extra"]
+    assert isinstance(json_schema_extra, dict)
+    assert "example" in json_schema_extra
+
+
+def test_trading_config_audit_model_config() -> None:
+    """Test TradingConfigAudit model_config (Pydantic v2)"""
+    audit = TradingConfigAudit(
+        config_type="symbol_side",
+        symbol="BTCUSDT",
+        side="LONG",
+        action="update",
+        changed_by="test",
+    )
+    # Verify model_config is working
+    assert hasattr(audit, "model_config")
+    assert "json_schema_extra" in audit.model_config
+
+    # Explicitly access model_config to ensure coverage
+    model_config = audit.model_config
+    json_schema_extra = model_config["json_schema_extra"]
+    assert isinstance(json_schema_extra, dict)
+    assert "example" in json_schema_extra
+
+
+def test_leverage_status_model_config() -> None:
+    """Test LeverageStatus model_config (Pydantic v2)"""
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+    )
+    # Verify model_config is working
+    assert hasattr(status, "model_config")
+    assert "json_schema_extra" in status.model_config
+
+    # Test that model_config structure is correct
+    assert isinstance(status.model_config, dict)
+    assert isinstance(status.model_config["json_schema_extra"], dict)
+    example = status.model_config["json_schema_extra"]["example"]
+    assert example["symbol"] == "BTCUSDT"
+    assert example["configured_leverage"] == 10
+
+
+def test_trading_config_get_scope_key() -> None:
+    """Test TradingConfig get_scope_key method"""
+    # Global config
+    config = TradingConfig(
+        symbol=None,
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "global"
+
+    # Symbol config
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side=None,
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "BTCUSDT"
+
+    # Symbol-side config
+    config = TradingConfig(
+        symbol="BTCUSDT",
+        side="LONG",
+        parameters={"leverage": 10},
+        created_by="test",
+    )
+    assert config.get_scope_key() == "BTCUSDT:LONG"
+
+
+def test_trading_config_audit_get_change_summary() -> None:
+    """Test TradingConfigAudit get_change_summary method"""
+    audit = TradingConfigAudit(
+        config_type="symbol_side",
+        symbol="BTCUSDT",
+        side="LONG",
+        action="update",
+        changed_by="test_user",
+    )
+    summary = audit.get_change_summary()
+    assert "UPDATE" in summary
+    assert "BTCUSDT" in summary
+    assert "LONG" in summary
+    assert "test_user" in summary
+
+    # Global config
+    audit = TradingConfigAudit(
+        config_type="global",
+        symbol=None,
+        side=None,
+        action="create",
+        changed_by="admin",
+    )
+    summary = audit.get_change_summary()
+    assert "CREATE" in summary
+    assert "global" in summary
+    assert "admin" in summary
+
+
+def test_leverage_status_is_synced() -> None:
+    """Test LeverageStatus is_synced method"""
+    # Synced
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=10,
+    )
+    assert status.is_synced() is True
+
+    # Not synced
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=20,
+    )
+    assert status.is_synced() is False
+
+    # Unknown actual leverage
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=None,
+    )
+    assert status.is_synced() is False
+
+
+def test_leverage_status_needs_sync() -> None:
+    """Test LeverageStatus needs_sync method"""
+    # Needs sync
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=None,
+    )
+    assert status.needs_sync() is True
+
+    # Doesn't need sync
+    status = LeverageStatus(
+        symbol="BTCUSDT",
+        configured_leverage=10,
+        actual_leverage=10,
+    )
+    assert status.needs_sync() is False

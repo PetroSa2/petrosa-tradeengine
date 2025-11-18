@@ -132,6 +132,10 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      security-events: write  # Required for SARIF upload
+      actions: read
 
     steps:
     - name: Checkout code
@@ -145,9 +149,16 @@ jobs:
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: 'CRITICAL,HIGH'
-        exit-code: '0'
+        exit-code: '1'  # Fail if vulnerabilities found
         ignore-unfixed: true
         vuln-type: 'os,library'
+
+    - name: Upload Trivy results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && hashFiles('trivy-results.sarif') != ''
+      with:
+        sarif_file: 'trivy-results.sarif'
+      # Note: Upload step will fail if permissions not granted, which will block PR
 
 # =============================================================================
 # MAIN BRANCH DEPLOYMENT ONLY - No checks (they passed in PR)

@@ -1,27 +1,27 @@
 
 # Database and persistence
-aiomysql==0.2.0
+aiomysql==0.3.2
 
-asyncio-mqtt==0.16.1
+asyncio-mqtt==0.16.2
 
 # Development and linting
 black==24.3.0
 
 # Trading and exchange
-ccxt==4.1.77
+ccxt==4.5.19
 # Core dependencies
-fastapi==0.104.1
+fastapi==0.121.2
 flake8==7.0.0
-httpx==0.25.2
+httpx==0.28.1
 
 # Documentation
 mkdocs==1.5.3
 mkdocs-material==9.4.8
-motor==3.3.2
+motor==3.7.1
 mypy==1.8.0
 
 # Messaging and async
-nats-py==2.6.0
+nats-py==2.12.0
 
 # OpenTelemetry Core
 opentelemetry-api>=1.20.0
@@ -47,25 +47,25 @@ passlib[bcrypt]==1.7.4
 
 # Monitoring and observability
 petrosa-otel>=0.1.0
-prometheus-client==0.19.0
-pydantic==2.6.1
-pydantic-settings==2.2.0
-pymongo==4.6.3
-PyMySQL==1.1.1
+prometheus-client==0.23.1
+pydantic==2.12.4
+pydantic-settings==2.12.0
+pymongo==4.15.4
+PyMySQL==1.1.2
 
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.5
 pytest-cov==4.1.0
-python-binance==1.0.19
+python-binance==1.0.32
 
 # Utilities
-python-dotenv==1.0.0
+python-dotenv==1.2.1
 
 # Security and authentication
-python-jose[cryptography]==3.3.0
-python-multipart==0.0.18
+python-jose[cryptography]==3.5.0
+python-multipart==0.0.20
 ruff==0.1.15
-sqlalchemy[asyncio]==2.0.25
-structlog==23.2.0
-uvicorn[standard]==0.24.0
+sqlalchemy[asyncio]==2.0.36
+structlog==25.5.0
+uvicorn[standard]==0.38.0

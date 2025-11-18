@@ -9,7 +9,7 @@ and per-position-side basis.
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class TradingConfig(BaseModel):
@@ -65,7 +65,8 @@ class TradingConfig(BaseModel):
         description="Additional metadata (notes, performance metrics, etc.)",
     )
 
-    @validator("side")
+    @field_validator("side")
+    @classmethod
     def validate_side(cls, v: Optional[str]) -> Optional[str]:
         """Validate position side."""
         if v is not None and v not in ["LONG", "SHORT"]:
@@ -80,8 +81,8 @@ class TradingConfig(BaseModel):
             return self.symbol
         return "global"
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "id": "507f1f77bcf86cd799439011",
                 "symbol": "BTCUSDT",
@@ -102,6 +103,7 @@ class TradingConfig(BaseModel):
                 },
             }
         }
+    }
 
 
 class TradingConfigAudit(BaseModel):
@@ -161,8 +163,8 @@ class TradingConfigAudit(BaseModel):
             scope += f"-{self.side}"
         return f"{self.action.upper()} {scope} by {self.changed_by}"
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "id": "audit-123",
                 "config_type": "symbol_side",
@@ -179,6 +181,7 @@ class TradingConfigAudit(BaseModel):
                 "metadata": {"ip_address": "192.168.1.1"},
             }
         }
+    }
 
 
 class LeverageStatus(BaseModel):
@@ -227,8 +230,8 @@ class LeverageStatus(BaseModel):
         """Check if leverage needs to be synced."""
         return not self.is_synced()
 
-    class Config:
-        json_schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "id": "lev-status-btc",
                 "symbol": "BTCUSDT",
@@ -240,3 +243,4 @@ class LeverageStatus(BaseModel):
                 "updated_at": "2025-10-20T15:00:00Z",
             }
         }
+    }

@@ -112,5 +112,6 @@ class TradeOrder(BaseModel):
         default_factory=dict, description="Additional metadata"
     )
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = {
+        "json_encoders": {datetime: lambda v: v.isoformat()},
+    }

@@ -551,6 +551,28 @@ class TestSetGlobalLimitsEndpoint:
         data = response.json()
         assert data["success"] is True
 
+    def test_set_global_limits_failure(self, client, mock_config_manager):
+        """Test global limits update when set_config returns False."""
+        existing_config = TradingConfig(
+            id="global",
+            parameters={"leverage": 10},
+            created_by="test_user",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        mock_config_manager.get_config = AsyncMock(return_value=existing_config)
+        mock_config_manager.set_config = AsyncMock(return_value=False)
+
+        response = client.put(
+            "/api/v1/config/config/limits/global",
+            params={"max_position_size": 100.0},
+        )
+        # HTTPException is caught by exception handler and returns 200 with error
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"]["code"] == "INTERNAL_ERROR"
+
     def test_set_global_limits_error(self, client, mock_config_manager):
         """Test global limits update with error."""
         mock_config_manager.get_config = AsyncMock(side_effect=Exception("DB error"))
@@ -586,6 +608,7 @@ class TestSetSymbolLimitsEndpoint:
             params={
                 "max_position_size": 50.0,
                 "max_accumulations": 2,
+                "accumulation_cooldown_seconds": 300,
             },
         )
         assert response.status_code == 200
@@ -605,6 +628,29 @@ class TestSetSymbolLimitsEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
+
+    def test_set_symbol_limits_failure(self, client, mock_config_manager):
+        """Test symbol limits update when set_config returns False."""
+        existing_config = TradingConfig(
+            id="symbol_BTCUSDT",
+            symbol="BTCUSDT",
+            parameters={"leverage": 10},
+            created_by="test_user",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        mock_config_manager.get_config = AsyncMock(return_value=existing_config)
+        mock_config_manager.set_config = AsyncMock(return_value=False)
+
+        response = client.put(
+            "/api/v1/config/config/limits/symbol/BTCUSDT",
+            params={"max_position_size": 50.0},
+        )
+        # HTTPException is caught by exception handler and returns 200 with error
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"]["code"] == "INTERNAL_ERROR"
 
     def test_set_symbol_limits_error(self, client, mock_config_manager):
         """Test symbol limits update with error."""
@@ -858,3 +904,51 @@ class TestValidationEndpointEdgeCases:
         assert data["success"] is True
         assert data["data"]["errors"][0]["field"] == "unknown"
         assert data["data"]["errors"][0]["code"] == "UNKNOWN_PARAMETER"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    def test_validate_config_generic_validation_error(
+        self, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with generic error that doesn't match any pattern."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["Some completely unexpected error message"])
+        )
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["field"] == "unknown"
+        assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    def test_validate_config_must_be_else_clause(
+        self, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation error that matches 'must be' but doesn't match any specific pattern."""
+        mock_get_manager.return_value = mock_config_manager
+        # Error that contains "must be" but doesn't match integer/float/range/one_of patterns
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["field_name must be something else entirely"])
+        )
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"field_name": "invalid"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        # Should extract field name from "field_name must be"
+        assert data["data"]["errors"][0]["field"] == "field_name"
+        assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"

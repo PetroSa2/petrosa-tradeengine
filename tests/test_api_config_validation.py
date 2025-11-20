@@ -425,6 +425,197 @@ class TestConfigValidationEndpoint:
         assert error["suggested_value"] is not None
         assert isinstance(error["suggested_value"], (int, float))
 
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_unknown_parameter_without_colon(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with unknown parameter error without colon."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["Unknown parameter invalid_param"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"invalid_param": 123}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["field"] == "unknown"  # Line 651
+        assert data["data"]["errors"][0]["code"] == "UNKNOWN_PARAMETER"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_must_be_float_error(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with 'must be float' error."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["leverage must be float, got string"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": "invalid"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "INVALID_TYPE"
+        assert "Change leverage to a numeric value" in data["data"]["suggested_fixes"]
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    @patch("tradeengine.defaults.PARAMETER_SCHEMA", {"some_param": {"min": 5}})
+    def test_validate_config_schema_min_only(
+        self,
+        mock_detect_conflicts,
+        mock_get_manager,
+        client,
+        mock_config_manager,
+    ):
+        """Test validation with schema that has min only."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["some_param must be >= 5, got 0"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"some_param": 0}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["suggested_value"] == 5  # Line 688
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    @patch("tradeengine.defaults.PARAMETER_SCHEMA", {"some_param": {"max": 100}})
+    def test_validate_config_schema_max_only(
+        self,
+        mock_detect_conflicts,
+        mock_get_manager,
+        client,
+        mock_config_manager,
+    ):
+        """Test validation with schema that has max only."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["some_param must be <= 100, got 200"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"some_param": 200}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["suggested_value"] == 100  # Line 690
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    @patch("tradeengine.defaults.PARAMETER_SCHEMA", {"some_param": {"default": 10}})
+    def test_validate_config_schema_default_only(
+        self,
+        mock_detect_conflicts,
+        mock_get_manager,
+        client,
+        mock_config_manager,
+    ):
+        """Test validation with schema that has default only."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["some_param must be >= 1, got 0"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"some_param": 0}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["suggested_value"] == 10  # Line 692
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    @patch("tradeengine.defaults.PARAMETER_SCHEMA", {})
+    def test_validate_config_schema_no_field(
+        self,
+        mock_detect_conflicts,
+        mock_get_manager,
+        client,
+        mock_config_manager,
+    ):
+        """Test validation with field not in schema."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["unknown_field must be >= 1, got 0"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"unknown_field": 0}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["suggested_value"] is None  # Line 694
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_must_be_one_of_invalid_format(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with 'must be one of' error in invalid format (no brackets)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["side must be one of LONG SHORT, got INVALID"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"side": "INVALID"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "INVALID_VALUE"
+        assert data["data"]["errors"][0]["suggested_value"] is None  # Line 705
+
 
 class TestValidationModels:
     """Test validation model classes."""

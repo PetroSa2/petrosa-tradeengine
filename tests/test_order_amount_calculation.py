@@ -151,6 +151,7 @@ class TestFallbackAmountCalculation:
             strategy_id="test_strategy",
             symbol="BNBUSDT",
             action="buy",
+            price=1134.0,
             current_price=1134.0,  # From error logs
             quantity=0.001,
             confidence=0.8,
@@ -158,6 +159,8 @@ class TestFallbackAmountCalculation:
             timestamp=datetime.utcnow(),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
+            source="test",
+            strategy="test_strategy",
         )
 
     def test_fallback_btc_meets_minimum_notional(self, dispatcher, btc_signal):
@@ -278,6 +281,7 @@ class TestErrorLogging:
             strategy_id="test_strategy",
             symbol="BTCUSDT",
             action="buy",
+            price=50000.0,
             current_price=50000.0,
             quantity=0.001,
             confidence=0.8,
@@ -285,6 +289,8 @@ class TestErrorLogging:
             timestamp=datetime.utcnow(),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
+            source="test",
+            strategy="test_strategy",
         )
 
     def test_error_logged_with_exc_info(self, dispatcher, signal, caplog):

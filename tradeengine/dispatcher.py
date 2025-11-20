@@ -377,6 +377,7 @@ class OCOManager:
         # Try to find OCO pairs - first by exchange_position_key, then by position_id
         oco_list = None
         oco_info = None
+        found_key = None
 
         if exchange_position_key and exchange_position_key in self.active_oco_pairs:
             oco_list = self.active_oco_pairs[exchange_position_key]
@@ -387,6 +388,7 @@ class OCOManager:
                     or oco.get("tp_order_id") == filled_order_id
                 ):
                     oco_info = oco
+                    found_key = exchange_position_key
                     break
         elif position_id in self.active_oco_pairs:
             # Backward compatibility - old key structure
@@ -416,7 +418,7 @@ class OCOManager:
                                 or pair.get("tp_order_id") == filled_order_id
                             ):
                                 oco_info = pair
-                                exchange_position_key = key
+                                found_key = key
                                 break
                     if oco_info:
                         break
@@ -428,7 +430,7 @@ class OCOManager:
                         or pairs.get("tp_order_id") == filled_order_id
                     ):
                         oco_info = pairs
-                        exchange_position_key = key
+                        found_key = key
                         break
 
         if oco_info is None:
@@ -480,12 +482,9 @@ class OCOManager:
                     order_id=order_to_cancel,
                 )
                 # Update status in the correct location
-                if (
-                    exchange_position_key
-                    and exchange_position_key in self.active_oco_pairs
-                ):
+                if found_key and found_key in self.active_oco_pairs:
                     # Find and update the matching OCO pair in the list
-                    for oco in self.active_oco_pairs[exchange_position_key]:
+                    for oco in self.active_oco_pairs[found_key]:
                         if (
                             oco.get("sl_order_id") == sl_order_id
                             or oco.get("tp_order_id") == tp_order_id

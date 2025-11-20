@@ -109,16 +109,10 @@ class OCOManager:
         exchange_position_key = f"{symbol}_{position_side}"
 
         self.logger.info(
-            "Placing OCO orders",
-            event="oco_orders_placing",
-            symbol=symbol,
-            position_side=position_side,
-            position_id=position_id,
-            strategy_position_id=strategy_position_id,
-            quantity=quantity,
-            stop_loss_price=stop_loss_price,
-            take_profit_price=take_profit_price,
-            entry_price=entry_price,
+            f"Placing OCO orders: symbol={symbol}, position_side={position_side}, "
+            f"position_id={position_id}, strategy_position_id={strategy_position_id}, "
+            f"quantity={quantity}, stop_loss_price={stop_loss_price}, "
+            f"take_profit_price={take_profit_price}, entry_price={entry_price}"
         )
 
         # Determine order sides based on position side
@@ -220,12 +214,9 @@ class OCOManager:
                     f"{len(self.active_oco_pairs[exchange_position_key])}"
                 )
                 self.logger.info(
-                    "OCO orders placed",
-                    event="oco_orders_placed",
-                    position_id=position_id,
-                    strategy_position_id=strategy_position_id,
-                    sl_order_id=sl_order_id,
-                    tp_order_id=tp_order_id,
+                    f"OCO orders placed: position_id={position_id}, "
+                    f"strategy_position_id={strategy_position_id}, "
+                    f"sl_order_id={sl_order_id}, tp_order_id={tp_order_id}"
                 )
 
                 # Export metrics
@@ -476,10 +467,8 @@ class OCOManager:
 
             if cancel_result:
                 self.logger.info(
-                    "Order cancelled successfully",
-                    event="order_cancelled",
-                    order_type=cancel_type,
-                    order_id=order_to_cancel,
+                    f"Order cancelled successfully: order_type={cancel_type}, "
+                    f"order_id={order_to_cancel}"
                 )
                 # Update status in the correct location
                 if found_key and found_key in self.active_oco_pairs:

@@ -22,7 +22,7 @@ The PR adds 24 new lines to `api_config_routes.py`:
 ```bash
 # All new code paths are covered:
 ✅ Unknown parameter with colon: test_validate_config_unknown_parameter_error
-✅ Unknown parameter without colon: test_validate_config_unknown_parameter_no_colon  
+✅ Unknown parameter without colon: test_validate_config_unknown_parameter_no_colon
 ✅ suggested_value initialization: covered by all validation tests
 ✅ Leverage type check: test_validate_config_high_risk_leverage
 ```
@@ -113,4 +113,5 @@ patch:
 **Status**: ✅ **Code is fully tested and ready to merge**
 
 The codecov/patch failure is likely a false positive. All new code lines are covered by comprehensive tests, and the file has 100% coverage. The PR should proceed with merge.
+
 

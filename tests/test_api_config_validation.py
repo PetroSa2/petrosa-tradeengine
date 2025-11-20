@@ -42,14 +42,16 @@ class TestConfigValidationEndpoint:
     """Test /api/v1/config/validate endpoint."""
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_success_global(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test successful validation for global config."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
             return_value=(True, None, [])  # success, config, errors
         )
+        mock_detect_conflicts.return_value = []  # No conflicts
 
         response = client.post(
             "/api/v1/config/validate",
@@ -71,12 +73,14 @@ class TestConfigValidationEndpoint:
         assert data["metadata"]["validation_mode"] == "dry_run"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_success_symbol(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test successful validation for symbol-specific config."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -94,12 +98,14 @@ class TestConfigValidationEndpoint:
         assert data["metadata"]["scope"] == "BTCUSDT:all"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_success_symbol_side(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test successful validation for symbol-side-specific config."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -117,8 +123,9 @@ class TestConfigValidationEndpoint:
         assert data["metadata"]["scope"] == "BTCUSDT:LONG"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_invalid_type_error(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with invalid type error."""
         mock_get_manager.return_value = mock_config_manager
@@ -129,6 +136,7 @@ class TestConfigValidationEndpoint:
                 ["leverage must be integer, got <class 'str'>"],
             )
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -145,8 +153,9 @@ class TestConfigValidationEndpoint:
         assert "Change leverage to an integer value" in data["data"]["suggested_fixes"]
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_out_of_range_error(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with out of range error."""
         mock_get_manager.return_value = mock_config_manager
@@ -157,6 +166,7 @@ class TestConfigValidationEndpoint:
                 ["leverage must be >= 1, got 0"],
             )
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -173,8 +183,9 @@ class TestConfigValidationEndpoint:
         assert data["data"]["errors"][0]["suggested_value"] is not None
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_invalid_value_error(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with invalid value (not in allowed list)."""
         mock_get_manager.return_value = mock_config_manager
@@ -185,6 +196,7 @@ class TestConfigValidationEndpoint:
                 ["side must be one of ['LONG', 'SHORT'], got INVALID"],
             )
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -200,14 +212,16 @@ class TestConfigValidationEndpoint:
         assert any("Use one of:" in fix for fix in data["data"]["suggested_fixes"])
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_unknown_parameter_error(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with unknown parameter error."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
             return_value=(False, None, ["Unknown parameter: invalid_param"])
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -226,14 +240,16 @@ class TestConfigValidationEndpoint:
         )
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_generic_error(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with generic error message."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
             return_value=(False, None, ["Some generic error message"])
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -249,12 +265,14 @@ class TestConfigValidationEndpoint:
         assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_high_risk_leverage(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with high-risk leverage parameter."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -269,12 +287,14 @@ class TestConfigValidationEndpoint:
         assert "High leverage" in data["data"]["estimated_impact"]["warning"]
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_medium_risk_params(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with medium-risk parameters."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -291,12 +311,14 @@ class TestConfigValidationEndpoint:
         assert data["data"]["estimated_impact"]["risk_level"] == "medium"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_low_risk_params(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with low-risk parameters."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -313,8 +335,9 @@ class TestConfigValidationEndpoint:
         assert data["data"]["estimated_impact"]["risk_level"] == "low"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_multiple_errors(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test validation with multiple errors."""
         mock_get_manager.return_value = mock_config_manager
@@ -328,6 +351,7 @@ class TestConfigValidationEndpoint:
                 ],
             )
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -352,14 +376,16 @@ class TestConfigValidationEndpoint:
         assert "stop_loss_pct" in error_fields
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_exception_handling(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test exception handling in validation endpoint."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
             side_effect=Exception("Database error")
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",
@@ -372,14 +398,16 @@ class TestConfigValidationEndpoint:
         assert data["error"]["code"] == "INTERNAL_ERROR"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_suggested_value_from_schema(
-        self, mock_get_manager, client, mock_config_manager
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
         """Test that suggested values are extracted from parameter schema."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
             return_value=(False, None, ["leverage must be >= 1, got 0"])
         )
+        mock_detect_conflicts.return_value = []
 
         response = client.post(
             "/api/v1/config/validate",

@@ -751,6 +751,28 @@ class TestCrossServiceConflictDetection:
             assert len(conflicts) == 0
 
     @pytest.mark.asyncio
+    async def test_detect_conflicts_no_relevant_parameters(self):
+        """Test conflict detection when parameters don't match conflict check conditions (line 826-834)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Parameters that don't match the condition at line 826-834
+            conflicts = await detect_cross_service_conflicts(
+                {"some_other_param": "value"}
+            )
+
+            # Should return empty list without making any HTTP calls
+            assert len(conflicts) == 0
+            # Verify no HTTP calls were made
+            mock_client.get.assert_not_called()
+            mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_detect_conflicts_data_manager_position_mismatch(self):
         """Test conflict detection when data-manager has position limit mismatch."""
         from unittest.mock import AsyncMock, patch

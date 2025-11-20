@@ -6,8 +6,10 @@ at global, symbol, and symbol-side levels.
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Literal, Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
@@ -747,10 +749,10 @@ async def validate_config(request: ConfigValidationRequest):
                     "High leverage increases risk significantly"
                 )
 
-        # Cross-service conflict detection (placeholder - to be implemented)
-        conflicts = []
-        # TODO: Implement cross-service conflict detection
-        # This would check against other services' configurations
+        # Cross-service conflict detection
+        conflicts = await detect_cross_service_conflicts(
+            request.parameters, request.symbol, request.side
+        )
 
         validation_response = ValidationResponse(
             validation_passed=success and len(validation_errors) == 0,
@@ -780,6 +782,151 @@ async def validate_config(request: ConfigValidationRequest):
             success=False,
             error={"code": "INTERNAL_ERROR", "message": str(e)},
         )
+
+
+# Service URLs for cross-service conflict detection
+SERVICE_URLS = {
+    "data-manager": os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:8080"),
+    "ta-bot": os.getenv("TA_BOT_URL", "http://petrosa-ta-bot:8080"),
+    "realtime-strategies": os.getenv(
+        "REALTIME_STRATEGIES_URL", "http://petrosa-realtime-strategies:8080"
+    ),
+}
+
+
+async def detect_cross_service_conflicts(
+    parameters: Dict[str, Any],
+    symbol: Optional[str] = None,
+    side: Optional[Literal["LONG", "SHORT"]] = None,
+) -> List[CrossServiceConflict]:
+    """
+    Detect cross-service configuration conflicts.
+
+    Queries other services' /api/v1/config/validate endpoints to check for
+    conflicting configurations.
+
+    Args:
+        parameters: Configuration parameters to check
+        symbol: Trading symbol (optional)
+        side: Position side (optional)
+
+    Returns:
+        List of CrossServiceConflict objects
+    """
+    conflicts = []
+    timeout = httpx.Timeout(5.0)  # Short timeout for conflict checks
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        # Check data-manager for conflicts (if configuring confidence thresholds or position limits)
+        if any(
+            param in parameters
+            for param in [
+                "leverage",
+                "max_position_size",
+                "stop_loss_pct",
+                "take_profit_pct",
+            ]
+        ):
+            try:
+                # Check if data-manager has conflicting confidence or position settings
+                if "max_position_size" in parameters:
+                    try:
+                        # Query data-manager's current config to check for conflicts
+                        response = await client.get(
+                            f"{SERVICE_URLS['data-manager']}/api/v1/config/application",
+                            timeout=5.0,
+                        )
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data.get("success") and data.get("data"):
+                                current_max = data["data"].get("max_positions")
+                                proposed_max = parameters.get("max_position_size")
+                                if current_max and proposed_max:
+                                    # Check if there's a significant mismatch
+                                    if (
+                                        abs(current_max - proposed_max)
+                                        > current_max * 0.2
+                                    ):
+                                        conflicts.append(
+                                            CrossServiceConflict(
+                                                service="data-manager",
+                                                conflict_type="PARAMETER_CONFLICT",
+                                                description=(
+                                                    f"Position limit mismatch: tradeengine proposes "
+                                                    f"max_position_size={proposed_max}, but data-manager has "
+                                                    f"max_positions={current_max}"
+                                                ),
+                                                resolution=(
+                                                    "Align max_position_size in tradeengine with "
+                                                    "max_positions in data-manager"
+                                                ),
+                                            )
+                                        )
+                    except Exception as e:
+                        logger.debug(f"Could not check data-manager for conflicts: {e}")
+
+            except Exception as e:
+                logger.debug(f"Error checking data-manager conflicts: {e}")
+
+        # Check ta-bot and realtime-strategies for strategy config conflicts
+        # These services might have conflicting confidence thresholds or strategy parameters
+        if any(
+            param in parameters
+            for param in ["leverage", "stop_loss_pct", "take_profit_pct"]
+        ):
+            for service_name, service_url in [
+                ("ta-bot", SERVICE_URLS["ta-bot"]),
+                ("realtime-strategies", SERVICE_URLS["realtime-strategies"]),
+            ]:
+                try:
+                    # Query the service's validate endpoint with relevant parameters
+                    # Note: These services use strategy_id, so we'll check for general conflicts
+                    validation_request = {
+                        "parameters": {
+                            k: v
+                            for k, v in parameters.items()
+                            if k in ["leverage", "stop_loss_pct", "take_profit_pct"]
+                        },
+                    }
+                    if symbol:
+                        validation_request["symbol"] = symbol
+
+                    response = await client.post(
+                        f"{service_url}/api/v1/config/validate",
+                        json=validation_request,
+                        timeout=5.0,
+                    )
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("success") and data.get("data"):
+                            validation_data = data["data"]
+                            # Check if the service reports conflicts or validation issues
+                            if not validation_data.get("validation_passed", True):
+                                errors = validation_data.get("errors", [])
+                                if errors:
+                                    conflicts.append(
+                                        CrossServiceConflict(
+                                            service=service_name,
+                                            conflict_type="VALIDATION_CONFLICT",
+                                            description=(
+                                                f"{service_name} reports validation errors for "
+                                                f"trading parameters: "
+                                                f"{', '.join([e.get('message', '') for e in errors[:2]])}"
+                                            ),
+                                            resolution=(
+                                                f"Review {service_name} validation errors and "
+                                                "ensure parameter compatibility"
+                                            ),
+                                        )
+                                    )
+
+                except httpx.TimeoutException:
+                    logger.debug(f"Timeout checking {service_name} for conflicts")
+                except Exception as e:
+                    logger.debug(f"Error checking {service_name} conflicts: {e}")
+
+    return conflicts
 
 
 @router.get(

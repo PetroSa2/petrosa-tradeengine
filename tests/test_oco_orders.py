@@ -9,7 +9,6 @@ This test suite verifies:
 """
 
 import asyncio
-import time
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
@@ -27,10 +26,14 @@ def mock_exchange():
     exchange.client = Mock()
 
     # Mock order execution - return successful results
+    _order_counter = 0  # Use counter to ensure unique order IDs
+
     async def mock_execute(order: TradeOrder) -> Dict[str, Any]:
+        nonlocal _order_counter
+        _order_counter += 1
         return {
             "status": "filled",
-            "order_id": f"test_order_{int(time.time())}_{order.type}",
+            "order_id": f"test_order_{_order_counter}_{order.type}",
             "fill_price": order.target_price or 50000.0,
             "amount": order.amount,
             "symbol": order.symbol,

@@ -199,6 +199,7 @@ class OCOManager:
                     self.active_oco_pairs[exchange_position_key] = []
 
                 oco_info = {
+                    "position_id": position_id,  # Store position_id for backward compatibility
                     "strategy_position_id": strategy_position_id,
                     "entry_price": entry_price,
                     "quantity": quantity,
@@ -348,7 +349,11 @@ class OCOManager:
         return all_cancelled
 
     async def cancel_other_order(
-        self, position_id: str, filled_order_id: str
+        self,
+        position_id: str,
+        filled_order_id: str,
+        symbol: str | None = None,
+        position_side: str | None = None,
     ) -> tuple[bool, str]:
         """
         Cancel the other order when one SL/TP order is filled (OCO behavior)
@@ -356,17 +361,79 @@ class OCOManager:
         Args:
             position_id: Position identifier
             filled_order_id: ID of the order that was filled
+            symbol: Trading symbol (optional, used to build exchange_position_key)
+            position_side: Position side LONG/SHORT (optional, used to build exchange_position_key)
 
         Returns:
             Tuple of (success: bool, close_reason: str)
             close_reason will be 'take_profit', 'stop_loss', or 'unknown'
         """
 
-        if position_id not in self.active_oco_pairs:
+        # Build exchange_position_key if symbol and position_side provided
+        exchange_position_key = None
+        if symbol and position_side:
+            exchange_position_key = f"{symbol}_{position_side}"
+
+        # Try to find OCO pairs - first by exchange_position_key, then by position_id
+        oco_list = None
+        oco_info = None
+
+        if exchange_position_key and exchange_position_key in self.active_oco_pairs:
+            oco_list = self.active_oco_pairs[exchange_position_key]
+            # Find the OCO pair that matches the filled_order_id
+            for oco in oco_list:
+                if (
+                    oco.get("sl_order_id") == filled_order_id
+                    or oco.get("tp_order_id") == filled_order_id
+                ):
+                    oco_info = oco
+                    break
+        elif position_id in self.active_oco_pairs:
+            # Backward compatibility - old key structure
+            oco_data = self.active_oco_pairs[position_id]
+            if isinstance(oco_data, dict):
+                oco_info = oco_data
+            elif isinstance(oco_data, list) and len(oco_data) > 0:
+                # Find matching OCO pair
+                for oco in oco_data:
+                    if (
+                        oco.get("sl_order_id") == filled_order_id
+                        or oco.get("tp_order_id") == filled_order_id
+                    ):
+                        oco_info = oco
+                        break
+            else:
+                oco_info = oco_data[0] if oco_data else None
+
+        # If still not found, search all OCO pairs for matching position_id
+        if oco_info is None:
+            for key, pairs in self.active_oco_pairs.items():
+                if isinstance(pairs, list):
+                    for pair in pairs:
+                        if pair.get("position_id") == position_id:
+                            if (
+                                pair.get("sl_order_id") == filled_order_id
+                                or pair.get("tp_order_id") == filled_order_id
+                            ):
+                                oco_info = pair
+                                exchange_position_key = key
+                                break
+                    if oco_info:
+                        break
+                elif (
+                    isinstance(pairs, dict) and pairs.get("position_id") == position_id
+                ):
+                    if (
+                        pairs.get("sl_order_id") == filled_order_id
+                        or pairs.get("tp_order_id") == filled_order_id
+                    ):
+                        oco_info = pairs
+                        exchange_position_key = key
+                        break
+
+        if oco_info is None:
             self.logger.warning(f"⚠️  No OCO pair found for position {position_id}")
             return False, "unknown"
-
-        oco_info = self.active_oco_pairs[position_id]
         sl_order_id = oco_info["sl_order_id"]
         tp_order_id = oco_info["tp_order_id"]
 
@@ -412,8 +479,36 @@ class OCOManager:
                     order_type=cancel_type,
                     order_id=order_to_cancel,
                 )
-                self.active_oco_pairs[position_id]["status"] = "completed"
-                self.active_oco_pairs[position_id]["close_reason"] = close_reason
+                # Update status in the correct location
+                if (
+                    exchange_position_key
+                    and exchange_position_key in self.active_oco_pairs
+                ):
+                    # Find and update the matching OCO pair in the list
+                    for oco in self.active_oco_pairs[exchange_position_key]:
+                        if (
+                            oco.get("sl_order_id") == sl_order_id
+                            or oco.get("tp_order_id") == tp_order_id
+                        ):
+                            oco["status"] = "completed"
+                            oco["close_reason"] = close_reason
+                            break
+                elif position_id in self.active_oco_pairs:
+                    # Backward compatibility
+                    if isinstance(self.active_oco_pairs[position_id], dict):
+                        self.active_oco_pairs[position_id]["status"] = "completed"
+                        self.active_oco_pairs[position_id][
+                            "close_reason"
+                        ] = close_reason
+                    elif isinstance(self.active_oco_pairs[position_id], list):
+                        for oco in self.active_oco_pairs[position_id]:
+                            if (
+                                oco.get("sl_order_id") == sl_order_id
+                                or oco.get("tp_order_id") == tp_order_id
+                            ):
+                                oco["status"] = "completed"
+                                oco["close_reason"] = close_reason
+                                break
                 return True, close_reason
             else:
                 self.logger.error(f"❌ FAILED TO CANCEL {cancel_type} ORDER")

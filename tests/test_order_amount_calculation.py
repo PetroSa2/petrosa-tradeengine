@@ -34,6 +34,7 @@ class TestOrderAmountCalculation:
             strategy_id="test_strategy",
             symbol="BTCUSDT",
             action="buy",
+            price=50000.0,
             current_price=50000.0,
             quantity=0.001,
             confidence=0.8,
@@ -41,6 +42,8 @@ class TestOrderAmountCalculation:
             timestamp=datetime.utcnow(),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
+            source="test",
+            strategy="test_strategy",
         )
 
     def test_successful_amount_calculation(self, dispatcher, base_signal):
@@ -110,6 +113,7 @@ class TestFallbackAmountCalculation:
             strategy_id="test_strategy",
             symbol="BTCUSDT",
             action="buy",
+            price=50000.0,
             current_price=50000.0,
             quantity=0.001,
             confidence=0.8,
@@ -117,6 +121,8 @@ class TestFallbackAmountCalculation:
             timestamp=datetime.utcnow(),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
+            source="test",
+            strategy="test_strategy",
         )
 
     @pytest.fixture
@@ -124,6 +130,9 @@ class TestFallbackAmountCalculation:
         """Create an ETH signal for testing"""
         return Signal(
             strategy_id="test_strategy",
+            price=3000.0,
+            source="test",
+            strategy="test_strategy",
             symbol="ETHUSDT",
             action="buy",
             current_price=3000.0,

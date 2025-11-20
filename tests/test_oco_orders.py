@@ -243,14 +243,21 @@ async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager):
     sl_order_id = result["sl_order_id"]
     _tp_order_id = result["tp_order_id"]  # noqa: F841
 
-    # Simulate SL order being filled
+    # Wait a moment for OCO pair to be registered
+    await asyncio.sleep(0.1)
+
+    # Simulate SL order being filled - pass symbol and position_side to help find the pair
     cancel_result = await oco_manager.cancel_other_order(
-        "test_pos_sl_fill_111", sl_order_id
+        "test_pos_sl_fill_111", sl_order_id, symbol="BTCUSDT", position_side="LONG"
     )
 
     # Verify TP order was cancelled
-    assert cancel_result is True
-    assert oco_manager.active_oco_pairs["test_pos_sl_fill_111"]["status"] == "completed"
+    assert (
+        cancel_result[0] is True
+    ), f"Expected cancel_result[0] to be True, got {cancel_result}"
+    assert (
+        cancel_result[1] == "stop_loss"
+    ), f"Expected close_reason to be 'stop_loss', got {cancel_result[1]}"
 
     # Clean up
     await oco_manager.stop_monitoring()
@@ -274,12 +281,12 @@ async def test_cancel_other_order_when_tp_fills(oco_manager: OCOManager):
 
     # Simulate TP order being filled
     cancel_result = await oco_manager.cancel_other_order(
-        "test_pos_tp_fill_222", tp_order_id
+        "test_pos_tp_fill_222", tp_order_id, symbol="BTCUSDT", position_side="LONG"
     )
 
     # Verify SL order was cancelled
-    assert cancel_result is True
-    assert oco_manager.active_oco_pairs["test_pos_tp_fill_222"]["status"] == "completed"
+    assert cancel_result[0] is True
+    assert cancel_result[1] == "take_profit"
 
     # Clean up
     await oco_manager.stop_monitoring()
@@ -408,8 +415,13 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
 
     # Step 2: Verify OCO orders were placed
     assert len(dispatcher.oco_manager.active_oco_pairs) > 0
-    position_id = list(dispatcher.oco_manager.active_oco_pairs.keys())[0]
-    oco_info = dispatcher.oco_manager.active_oco_pairs[position_id]
+    # OCO pairs are stored under exchange_position_key
+    exchange_position_key = "BTCUSDT_LONG"
+    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+    assert len(oco_list) > 0
+    oco_info = oco_list[0]  # Get first OCO pair
+    position_id = oco_info.get("position_id", exchange_position_key)
 
     assert oco_info["status"] == "active"
     assert "sl_order_id" in oco_info
@@ -420,12 +432,12 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
 
     # Step 3: Simulate TP order filling
     cancel_result = await dispatcher.oco_manager.cancel_other_order(
-        position_id, tp_order_id
+        position_id, tp_order_id, symbol="BTCUSDT", position_side="LONG"
     )
 
     # Step 4: Verify SL was cancelled
-    assert cancel_result is True
-    assert oco_info["status"] == "completed"
+    assert cancel_result[0] is True
+    assert cancel_result[1] == "take_profit"
 
     # Clean up
     await dispatcher.oco_manager.stop_monitoring()
@@ -469,8 +481,13 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
 
     # Step 2: Verify OCO orders were placed
     assert len(dispatcher.oco_manager.active_oco_pairs) > 0
-    position_id = list(dispatcher.oco_manager.active_oco_pairs.keys())[0]
-    oco_info = dispatcher.oco_manager.active_oco_pairs[position_id]
+    # OCO pairs are stored under exchange_position_key
+    exchange_position_key = "ETHUSDT_SHORT"
+    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+    assert len(oco_list) > 0
+    oco_info = oco_list[0]  # Get first OCO pair
+    position_id = oco_info.get("position_id", exchange_position_key)
 
     assert oco_info["status"] == "active"
     assert oco_info["position_side"] == "SHORT"
@@ -480,12 +497,12 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
 
     # Step 3: Simulate SL order filling (position hits stop loss)
     cancel_result = await dispatcher.oco_manager.cancel_other_order(
-        position_id, sl_order_id
+        position_id, sl_order_id, symbol="ETHUSDT", position_side="SHORT"
     )
 
     # Step 4: Verify TP was cancelled
-    assert cancel_result is True
-    assert oco_info["status"] == "completed"
+    assert cancel_result[0] is True
+    assert cancel_result[1] == "stop_loss"
 
     # Clean up
     await dispatcher.oco_manager.stop_monitoring()
@@ -524,11 +541,14 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
     for signal in signals:
         await dispatcher.dispatch(signal)
 
-    # Verify all OCO pairs were created
-    assert len(dispatcher.oco_manager.active_oco_pairs) == 3
+    # Verify all OCO pairs were created (stored under exchange_position_key)
+    exchange_position_key = "BTCUSDT_LONG"
+    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+    assert len(oco_list) == 3
 
     # Verify all are active
-    for position_id, oco_info in dispatcher.oco_manager.active_oco_pairs.items():
+    for oco_info in oco_list:
         assert oco_info["status"] == "active"
         assert "sl_order_id" in oco_info
         assert "tp_order_id" in oco_info

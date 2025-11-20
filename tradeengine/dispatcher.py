@@ -310,12 +310,9 @@ class OCOManager:
             oco_symbol = oco_info["symbol"]
 
             self.logger.info(
-                "Cancelling OCO pair",
-                event="oco_pair_cancelling",
-                symbol=oco_symbol,
-                strategy_position_id=oco_info.get("strategy_position_id"),
-                sl_order_id=sl_order_id,
-                tp_order_id=tp_order_id,
+                f"Cancelling OCO pair: symbol={oco_symbol}, "
+                f"strategy_position_id={oco_info.get('strategy_position_id')}, "
+                f"sl_order_id={sl_order_id}, tp_order_id={tp_order_id}"
             )
 
             try:
@@ -370,8 +367,18 @@ class OCOManager:
         oco_info = None
         found_key = None
 
+        # Debug logging
+        self.logger.debug(
+            f"Looking for OCO pair: position_id={position_id}, filled_order_id={filled_order_id}, "
+            f"exchange_position_key={exchange_position_key}, "
+            f"active_keys={list(self.active_oco_pairs.keys())}"
+        )
+
         if exchange_position_key and exchange_position_key in self.active_oco_pairs:
             oco_list = self.active_oco_pairs[exchange_position_key]
+            self.logger.debug(
+                f"Found {len(oco_list)} OCO pair(s) under {exchange_position_key}"
+            )
             # Find the OCO pair that matches the filled_order_id
             for oco in oco_list:
                 if (
@@ -380,6 +387,7 @@ class OCOManager:
                 ):
                     oco_info = oco
                     found_key = exchange_position_key
+                    self.logger.debug(f"Matched OCO pair: {oco_info}")
                     break
         elif position_id in self.active_oco_pairs:
             # Backward compatibility - old key structure

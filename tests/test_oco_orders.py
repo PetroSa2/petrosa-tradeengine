@@ -231,7 +231,7 @@ async def test_cancel_oco_pair(oco_manager: OCOManager):
 
 
 @pytest.mark.asyncio
-async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager):
+async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager, mock_exchange):
     """Test that TP order is cancelled when SL fills"""
     # Place OCO orders
     result = await oco_manager.place_oco_orders(
@@ -244,7 +244,13 @@ async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager):
     )
 
     sl_order_id = result["sl_order_id"]
-    _tp_order_id = result["tp_order_id"]  # noqa: F841
+    tp_order_id = result["tp_order_id"]
+
+    # Mock futures_get_open_orders to return both orders so monitoring doesn't remove them
+    mock_exchange.client.futures_get_open_orders.return_value = [
+        {"orderId": sl_order_id, "status": "NEW"},
+        {"orderId": tp_order_id, "status": "NEW"},
+    ]
 
     # Wait a moment for OCO pair to be registered
     await asyncio.sleep(0.1)
@@ -267,7 +273,7 @@ async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager):
 
 
 @pytest.mark.asyncio
-async def test_cancel_other_order_when_tp_fills(oco_manager: OCOManager):
+async def test_cancel_other_order_when_tp_fills(oco_manager: OCOManager, mock_exchange):
     """Test that SL order is cancelled when TP fills"""
     # Place OCO orders
     result = await oco_manager.place_oco_orders(
@@ -279,8 +285,17 @@ async def test_cancel_other_order_when_tp_fills(oco_manager: OCOManager):
         take_profit_price=52000.0,
     )
 
-    _sl_order_id = result["sl_order_id"]  # noqa: F841
+    sl_order_id = result["sl_order_id"]
     tp_order_id = result["tp_order_id"]
+
+    # Mock futures_get_open_orders to return both orders so monitoring doesn't remove them
+    mock_exchange.client.futures_get_open_orders.return_value = [
+        {"orderId": sl_order_id, "status": "NEW"},
+        {"orderId": tp_order_id, "status": "NEW"},
+    ]
+
+    # Wait a moment for OCO pair to be registered
+    await asyncio.sleep(0.1)
 
     # Simulate TP order being filled
     cancel_result = await oco_manager.cancel_other_order(

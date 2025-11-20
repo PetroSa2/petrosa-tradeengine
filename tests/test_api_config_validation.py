@@ -616,6 +616,35 @@ class TestConfigValidationEndpoint:
         assert data["data"]["errors"][0]["code"] == "INVALID_VALUE"
         assert data["data"]["errors"][0]["suggested_value"] is None  # Line 705
 
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_must_be_generic_pattern(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with 'must be' error that doesn't match any specific pattern (lines 706-708)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(
+                False,
+                None,
+                ["some_field must be something else, got invalid_value"],
+            )
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"some_field": "invalid_value"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"  # Line 707
+        assert data["data"]["errors"][0]["suggested_value"] is None  # Line 708
+
 
 class TestValidationModels:
     """Test validation model classes."""

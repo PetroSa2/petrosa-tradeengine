@@ -449,14 +449,9 @@ class OCOManager:
             return False, "unknown"
 
         self.logger.info(
-            "OCO triggered",
-            event="oco_triggered",
-            position_id=position_id,
-            filled_type=filled_type,
-            filled_order_id=filled_order_id,
-            order_to_cancel=order_to_cancel,
-            cancel_type=cancel_type,
-            close_reason=close_reason,
+            f"OCO triggered: position_id={position_id}, filled_type={filled_type}, "
+            f"filled_order_id={filled_order_id}, order_to_cancel={order_to_cancel}, "
+            f"cancel_type={cancel_type}, close_reason={close_reason}"
         )
 
         try:

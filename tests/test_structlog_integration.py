@@ -138,9 +138,14 @@ class TestContextBinding:
         """Test that context can be bound to logger"""
         logger = get_logger("test_context")
 
-        # Standard logging doesn't support bind() method
-        # Just verify logger works without crashing
-        logger.info("request_complete: Request processed")
+        # Check if logger supports bind() method (structlog) or not (standard logging)
+        if hasattr(logger, "bind"):
+            # Structlog logger - use bind method
+            bound_logger = logger.bind(request_id="12345", user_id="user_001")
+            bound_logger.info("request_complete: Request processed")
+        else:
+            # Standard logging - just verify logger works
+            logger.info("request_complete: Request processed")
 
         # Should not raise errors
         assert True

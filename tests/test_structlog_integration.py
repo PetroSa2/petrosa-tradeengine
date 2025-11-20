@@ -72,11 +72,9 @@ class TestStructlogConfiguration:
         try:
             raise ValueError("Test exception for logging")
         except ValueError as e:
-            logger.error(
-                "exception_caught",
-                error_type=type(e).__name__,
-                exc_info=True,
-            )
+            # Standard logging supports exc_info, but not as keyword with other kwargs
+            # Use just the message with exc_info
+            logger.error(f"exception_caught: {type(e).__name__}", exc_info=True)
 
         # Verify no TypeError was raised
         assert True

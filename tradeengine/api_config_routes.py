@@ -793,6 +793,11 @@ SERVICE_URLS = {
     ),
 }
 
+# Constants for conflict detection
+CONFLICT_TIMEOUT_SECONDS = 5.0  # Timeout for cross-service conflict checks
+POSITION_MISMATCH_THRESHOLD = 0.2  # 20% threshold for position limit mismatches
+MAX_ERROR_MESSAGES_TO_SHOW = 2  # Limit error messages shown in conflicts
+
 
 async def detect_cross_service_conflicts(
     parameters: Dict[str, Any],
@@ -814,7 +819,7 @@ async def detect_cross_service_conflicts(
         List of CrossServiceConflict objects
     """
     conflicts = []
-    timeout = httpx.Timeout(5.0)  # Short timeout for conflict checks
+    timeout = httpx.Timeout(CONFLICT_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         # Check data-manager for conflicts (if configuring confidence thresholds or position limits)
@@ -827,25 +832,33 @@ async def detect_cross_service_conflicts(
                 "take_profit_pct",
             ]
         ):
-            try:
-                # Check if data-manager has conflicting confidence or position settings
-                if "max_position_size" in parameters:
-                    try:
-                        # Query data-manager's current config to check for conflicts
-                        response = await client.get(
-                            f"{SERVICE_URLS['data-manager']}/api/v1/config/application",
-                            timeout=5.0,
-                        )
-                        if response.status_code == 200:
-                            data = response.json()
-                            if data.get("success") and data.get("data"):
-                                current_max = data["data"].get("max_positions")
-                                proposed_max = parameters.get("max_position_size")
-                                if current_max and proposed_max:
+            # Check if data-manager has conflicting confidence or position settings
+            if "max_position_size" in parameters:
+                # Query data-manager's current config to check for conflicts
+                try:
+                    response = await client.get(
+                        f"{SERVICE_URLS['data-manager']}/api/v1/config/application",
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("success") and data.get("data"):
+                            current_max = data["data"].get("max_positions")
+                            proposed_max = parameters.get("max_position_size")
+                            if current_max and proposed_max:
+                                # Type check and convert to float for comparison
+                                try:
+                                    current_max_float = float(current_max)
+                                    proposed_max_float = float(proposed_max)
+                                except (ValueError, TypeError):
+                                    logger.debug(
+                                        "Invalid type for position limit comparison"
+                                    )
+                                else:
                                     # Check if there's a significant mismatch
                                     if (
-                                        abs(current_max - proposed_max)
-                                        > current_max * 0.2
+                                        abs(current_max_float - proposed_max_float)
+                                        > current_max_float
+                                        * POSITION_MISMATCH_THRESHOLD
                                     ):
                                         conflicts.append(
                                             CrossServiceConflict(
@@ -862,11 +875,8 @@ async def detect_cross_service_conflicts(
                                                 ),
                                             )
                                         )
-                    except Exception as e:
-                        logger.debug(f"Could not check data-manager for conflicts: {e}")
-
-            except Exception as e:
-                logger.debug(f"Error checking data-manager conflicts: {e}")
+                except Exception as e:
+                    logger.debug(f"Could not check data-manager for conflicts: {e}")
 
         # Check ta-bot and realtime-strategies for strategy config conflicts
         # These services might have conflicting confidence thresholds or strategy parameters
@@ -894,7 +904,6 @@ async def detect_cross_service_conflicts(
                     response = await client.post(
                         f"{service_url}/api/v1/config/validate",
                         json=validation_request,
-                        timeout=5.0,
                     )
 
                     if response.status_code == 200:
@@ -912,7 +921,7 @@ async def detect_cross_service_conflicts(
                                             description=(
                                                 f"{service_name} reports validation errors for "
                                                 f"trading parameters: "
-                                                f"{', '.join([e.get('message', '') for e in errors[:2]])}"
+                                                f"{', '.join([e.get('message', '') for e in errors[:MAX_ERROR_MESSAGES_TO_SHOW]])}"
                                             ),
                                             resolution=(
                                                 f"Review {service_name} validation errors and "

@@ -10,12 +10,12 @@ This test suite verifies:
 
 import asyncio
 from typing import Any, Dict
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from contracts.order import TradeOrder
-from contracts.signal import Signal
+from contracts.signal import Signal, StrategyMode
 from tradeengine.dispatcher import Dispatcher, OCOManager
 
 
@@ -68,6 +68,8 @@ def mock_position_manager():
     manager.update_position = AsyncMock(return_value=None)
     manager.create_position_record = AsyncMock(return_value=None)
     manager.update_position_risk_orders = AsyncMock(return_value=None)
+    # Make positions a dict so "in" checks work
+    manager.positions = {}
     return manager
 
 
@@ -98,6 +100,7 @@ def sample_long_signal() -> Signal:
         take_profit=52000.0,  # 4% above entry
         source="test",
         strategy="test-oco-strategy",
+        strategy_mode=StrategyMode.DETERMINISTIC,  # Add strategy_mode
     )
 
 
@@ -315,7 +318,7 @@ async def test_oco_monitoring_detects_filled_order(
     oco_manager: OCOManager, mock_exchange
 ):
     """Test that monitoring system detects filled orders and cancels the other"""
-    # Place OCO orders
+    # Place OCO orders with a strategy_position_id to avoid errors in monitoring
     result = await oco_manager.place_oco_orders(
         position_id="test_pos_monitor_333",
         symbol="BTCUSDT",
@@ -323,10 +326,23 @@ async def test_oco_monitoring_detects_filled_order(
         quantity=0.001,
         stop_loss_price=48000.0,
         take_profit_price=52000.0,
+        strategy_position_id="test_strategy_pos_333",  # Add strategy_position_id
+        entry_price=50000.0,  # Add entry_price
     )
 
     sl_order_id = result["sl_order_id"]
     tp_order_id = result["tp_order_id"]
+
+    # Mock futures_get_order to return order details (needed for _close_position_on_oco_completion)
+    def mock_get_order(symbol: str, orderId: str) -> dict:
+        return {
+            "orderId": orderId,
+            "avgPrice": "52000.0",
+            "executedQty": "0.001",
+            "status": "FILLED",
+        }
+
+    mock_exchange.client.futures_get_order = mock_get_order
 
     # Initially both orders are "open"
     mock_exchange.client.futures_get_open_orders.return_value = [
@@ -335,8 +351,12 @@ async def test_oco_monitoring_detects_filled_order(
     ]
 
     # Verify OCO pair is active before simulation
-    assert "test_pos_monitor_333" in oco_manager.active_oco_pairs
-    initial_status = oco_manager.active_oco_pairs["test_pos_monitor_333"]["status"]
+    # OCO pairs are stored under exchange_position_key
+    exchange_position_key = "BTCUSDT_LONG"
+    assert exchange_position_key in oco_manager.active_oco_pairs
+    oco_list = oco_manager.active_oco_pairs[exchange_position_key]
+    assert len(oco_list) > 0
+    initial_status = oco_list[0]["status"]
     assert initial_status == "active"
 
     # After 0.5 seconds, simulate TP order being filled (removed from open orders)
@@ -355,11 +375,12 @@ async def test_oco_monitoring_detects_filled_order(
     # Verify the OCO pair was completed or removed
     # Note: The monitoring loop removes completed pairs from active_oco_pairs
     # So we check if it's either completed or removed
-    if "test_pos_monitor_333" in oco_manager.active_oco_pairs:
-        assert (
-            oco_manager.active_oco_pairs["test_pos_monitor_333"]["status"]
-            == "completed"
-        )
+    exchange_position_key = "BTCUSDT_LONG"
+    if exchange_position_key in oco_manager.active_oco_pairs:
+        oco_list = oco_manager.active_oco_pairs[exchange_position_key]
+        if len(oco_list) > 0:
+            # Status should be completed after monitoring detects the fill
+            assert oco_list[0]["status"] == "completed"
     # If removed, that's also correct behavior (completed and cleaned up)
 
     # Clean up
@@ -371,28 +392,39 @@ async def test_dispatcher_places_oco_orders_on_position_open(
     mock_exchange, mock_position_manager, sample_long_signal: Signal
 ):
     """Test that dispatcher places OCO orders when opening a position with SL/TP"""
+    from shared.distributed_lock import distributed_lock_manager
 
-    # Create dispatcher with mocked exchange
-    dispatcher = Dispatcher(exchange=mock_exchange)
+    # Mock distributed lock manager to avoid MongoDB dependency
+    with patch.object(
+        distributed_lock_manager, "execute_with_lock", new_callable=AsyncMock
+    ) as mock_lock:
+        # Make the lock execute the function directly (no actual locking)
+        async def execute_directly(lock_key, func, *args, **kwargs):
+            return await func(*args, **kwargs)
 
-    # Override the position manager
-    dispatcher.position_manager = mock_position_manager
+        mock_lock.side_effect = execute_directly
 
-    # Process the signal
-    result = await dispatcher.dispatch(sample_long_signal)
+        # Create dispatcher with mocked exchange
+        dispatcher = Dispatcher(exchange=mock_exchange)
 
-    # Verify the position was created
-    assert result is not None
+        # Override the position manager
+        dispatcher.position_manager = mock_position_manager
 
-    # Verify position manager methods were called
-    mock_position_manager.update_position.assert_called()
-    mock_position_manager.create_position_record.assert_called()
+        # Process the signal
+        result = await dispatcher.dispatch(sample_long_signal)
 
-    # Verify OCO manager has active pairs
-    assert len(dispatcher.oco_manager.active_oco_pairs) > 0
+        # Verify the position was created
+        assert result is not None
 
-    # Clean up
-    await dispatcher.oco_manager.stop_monitoring()
+        # Verify position manager methods were called
+        mock_position_manager.update_position.assert_called()
+        mock_position_manager.create_position_record.assert_called()
+
+        # Verify OCO manager has active pairs
+        assert len(dispatcher.oco_manager.active_oco_pairs) > 0
+
+        # Clean up
+        await dispatcher.oco_manager.stop_monitoring()
 
 
 @pytest.mark.asyncio
@@ -404,61 +436,73 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
     3. Simulate one order filling
     4. Verify the other is cancelled
     """
+    from shared.distributed_lock import distributed_lock_manager
 
-    # Create dispatcher with mocked exchange
-    dispatcher = Dispatcher(exchange=mock_exchange)
-    dispatcher.position_manager = mock_position_manager
+    # Mock distributed lock manager to avoid MongoDB dependency
+    with patch.object(
+        distributed_lock_manager, "execute_with_lock", new_callable=AsyncMock
+    ) as mock_lock:
+        # Make the lock execute the function directly (no actual locking)
+        async def execute_directly(lock_key, func, *args, **kwargs):
+            return await func(*args, **kwargs)
 
-    # Create signal with SL/TP
-    signal = Signal(
-        strategy_id="test-full-lifecycle",
-        symbol="BTCUSDT",
-        signal_type="buy",
-        action="buy",
-        confidence=0.85,
-        strength="strong",
-        timeframe="1h",
-        price=50000.0,
-        quantity=0.001,
-        current_price=50000.0,
-        stop_loss=48000.0,
-        take_profit=52000.0,
-        source="test",
-        strategy="test-lifecycle",
-    )
+        mock_lock.side_effect = execute_directly
 
-    # Step 1: Open position
-    result = await dispatcher.dispatch(signal)
-    assert result is not None
+        # Create dispatcher with mocked exchange
+        dispatcher = Dispatcher(exchange=mock_exchange)
+        dispatcher.position_manager = mock_position_manager
 
-    # Step 2: Verify OCO orders were placed
-    assert len(dispatcher.oco_manager.active_oco_pairs) > 0
-    # OCO pairs are stored under exchange_position_key
-    exchange_position_key = "BTCUSDT_LONG"
-    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
-    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
-    assert len(oco_list) > 0
-    oco_info = oco_list[0]  # Get first OCO pair
-    position_id = oco_info.get("position_id", exchange_position_key)
+        # Create signal with SL/TP
+        signal = Signal(
+            strategy_id="test-full-lifecycle",
+            symbol="BTCUSDT",
+            signal_type="buy",
+            action="buy",
+            confidence=0.85,
+            strength="strong",
+            timeframe="1h",
+            price=50000.0,
+            quantity=0.001,
+            current_price=50000.0,
+            stop_loss=48000.0,
+            take_profit=52000.0,
+            source="test",
+            strategy="test-lifecycle",
+            strategy_mode=StrategyMode.DETERMINISTIC,
+        )
 
-    assert oco_info["status"] == "active"
-    assert "sl_order_id" in oco_info
-    assert "tp_order_id" in oco_info
+        # Step 1: Open position
+        result = await dispatcher.dispatch(signal)
+        assert result is not None
 
-    _sl_order_id = oco_info["sl_order_id"]  # noqa: F841
-    tp_order_id = oco_info["tp_order_id"]
+        # Step 2: Verify OCO orders were placed
+        assert len(dispatcher.oco_manager.active_oco_pairs) > 0
+        # OCO pairs are stored under exchange_position_key
+        exchange_position_key = "BTCUSDT_LONG"
+        assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+        oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+        assert len(oco_list) > 0
+        oco_info = oco_list[0]  # Get first OCO pair
+        position_id = oco_info.get("position_id", exchange_position_key)
 
-    # Step 3: Simulate TP order filling
-    cancel_result = await dispatcher.oco_manager.cancel_other_order(
-        position_id, tp_order_id, symbol="BTCUSDT", position_side="LONG"
-    )
+        assert oco_info["status"] == "active"
+        assert "sl_order_id" in oco_info
+        assert "tp_order_id" in oco_info
 
-    # Step 4: Verify SL was cancelled
-    assert cancel_result[0] is True
-    assert cancel_result[1] == "take_profit"
+        _sl_order_id = oco_info["sl_order_id"]  # noqa: F841
+        tp_order_id = oco_info["tp_order_id"]
 
-    # Clean up
-    await dispatcher.oco_manager.stop_monitoring()
+        # Step 3: Simulate TP order filling
+        cancel_result = await dispatcher.oco_manager.cancel_other_order(
+            position_id, tp_order_id, symbol="BTCUSDT", position_side="LONG"
+        )
+
+        # Step 4: Verify SL was cancelled
+        assert cancel_result[0] is True
+        assert cancel_result[1] == "take_profit"
+
+        # Clean up
+        await dispatcher.oco_manager.stop_monitoring()
 
 
 @pytest.mark.asyncio
@@ -470,114 +514,139 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
     3. Simulate SL filling
     4. Verify TP is cancelled
     """
+    from shared.distributed_lock import distributed_lock_manager
 
-    # Create dispatcher with mocked exchange
-    dispatcher = Dispatcher(exchange=mock_exchange)
-    dispatcher.position_manager = mock_position_manager
+    # Mock distributed lock manager to avoid MongoDB dependency
+    with patch.object(
+        distributed_lock_manager, "execute_with_lock", new_callable=AsyncMock
+    ) as mock_lock:
+        # Make the lock execute the function directly (no actual locking)
+        async def execute_directly(lock_key, func, *args, **kwargs):
+            return await func(*args, **kwargs)
 
-    # Create SHORT signal with SL/TP
-    signal = Signal(
-        strategy_id="test-full-lifecycle-short",
-        symbol="ETHUSDT",
-        signal_type="sell",
-        action="sell",
-        confidence=0.85,
-        strength="strong",
-        timeframe="1h",
-        price=3000.0,
-        quantity=0.01,
-        current_price=3000.0,
-        stop_loss=3060.0,  # 2% above for SHORT
-        take_profit=2940.0,  # 2% below for SHORT
-        source="test",
-        strategy="test-lifecycle-short",
-    )
+        mock_lock.side_effect = execute_directly
 
-    # Step 1: Open position
-    result = await dispatcher.dispatch(signal)
-    assert result is not None
+        # Create dispatcher with mocked exchange
+        dispatcher = Dispatcher(exchange=mock_exchange)
+        dispatcher.position_manager = mock_position_manager
 
-    # Step 2: Verify OCO orders were placed
-    assert len(dispatcher.oco_manager.active_oco_pairs) > 0
-    # OCO pairs are stored under exchange_position_key
-    exchange_position_key = "ETHUSDT_SHORT"
-    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
-    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
-    assert len(oco_list) > 0
-    oco_info = oco_list[0]  # Get first OCO pair
-    position_id = oco_info.get("position_id", exchange_position_key)
+        # Create SHORT signal with SL/TP
+        signal = Signal(
+            strategy_id="test-full-lifecycle-short",
+            symbol="ETHUSDT",
+            signal_type="sell",
+            action="sell",
+            confidence=0.85,
+            strength="strong",
+            timeframe="1h",
+            price=3000.0,
+            quantity=0.01,
+            current_price=3000.0,
+            stop_loss=3060.0,  # 2% above for SHORT
+            take_profit=2940.0,  # 2% below for SHORT
+            source="test",
+            strategy="test-lifecycle-short",
+            strategy_mode=StrategyMode.DETERMINISTIC,
+        )
 
-    assert oco_info["status"] == "active"
-    assert oco_info["position_side"] == "SHORT"
+        # Step 1: Open position
+        result = await dispatcher.dispatch(signal)
+        assert result is not None
 
-    sl_order_id = oco_info["sl_order_id"]
-    _tp_order_id = oco_info["tp_order_id"]  # noqa: F841
+        # Step 2: Verify OCO orders were placed
+        assert len(dispatcher.oco_manager.active_oco_pairs) > 0
+        # OCO pairs are stored under exchange_position_key
+        exchange_position_key = "ETHUSDT_SHORT"
+        assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+        oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+        assert len(oco_list) > 0
+        oco_info = oco_list[0]  # Get first OCO pair
+        position_id = oco_info.get("position_id", exchange_position_key)
 
-    # Step 3: Simulate SL order filling (position hits stop loss)
-    cancel_result = await dispatcher.oco_manager.cancel_other_order(
-        position_id, sl_order_id, symbol="ETHUSDT", position_side="SHORT"
-    )
+        assert oco_info["status"] == "active"
+        assert oco_info["position_side"] == "SHORT"
 
-    # Step 4: Verify TP was cancelled
-    assert cancel_result[0] is True
-    assert cancel_result[1] == "stop_loss"
+        sl_order_id = oco_info["sl_order_id"]
+        _tp_order_id = oco_info["tp_order_id"]  # noqa: F841
 
-    # Clean up
-    await dispatcher.oco_manager.stop_monitoring()
+        # Step 3: Simulate SL order filling (position hits stop loss)
+        cancel_result = await dispatcher.oco_manager.cancel_other_order(
+            position_id, sl_order_id, symbol="ETHUSDT", position_side="SHORT"
+        )
+
+        # Step 4: Verify TP was cancelled
+        assert cancel_result[0] is True
+        assert cancel_result[1] == "stop_loss"
+
+        # Clean up
+        await dispatcher.oco_manager.stop_monitoring()
 
 
 @pytest.mark.asyncio
 async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_manager):
     """Test handling multiple OCO positions simultaneously"""
+    from shared.distributed_lock import distributed_lock_manager
 
-    # Create dispatcher with mocked exchange
-    dispatcher = Dispatcher(exchange=mock_exchange)
-    dispatcher.position_manager = mock_position_manager
+    # Mock distributed lock manager to avoid MongoDB dependency
+    with patch.object(
+        distributed_lock_manager, "execute_with_lock", new_callable=AsyncMock
+    ) as mock_lock:
+        # Make the lock execute the function directly (no actual locking)
+        async def execute_directly(lock_key, func, *args, **kwargs):
+            return await func(*args, **kwargs)
 
-    # Create multiple signals
-    signals = [
-        Signal(
-            strategy_id=f"test-multi-{i}",
-            symbol="BTCUSDT",
-            signal_type="buy",
-            action="buy",
-            confidence=0.85,
-            strength="strong",
-            timeframe="1h",
-            price=50000.0 + (i * 100),
-            quantity=0.001,
-            current_price=50000.0 + (i * 100),
-            stop_loss=48000.0 + (i * 100),
-            take_profit=52000.0 + (i * 100),
-            source="test",
-            strategy=f"test-multi-strategy-{i}",
-        )
-        for i in range(3)
-    ]
+        mock_lock.side_effect = execute_directly
 
-    # Process all signals
-    for signal in signals:
-        await dispatcher.dispatch(signal)
+        # Create dispatcher with mocked exchange
+        dispatcher = Dispatcher(exchange=mock_exchange)
+        dispatcher.position_manager = mock_position_manager
 
-    # Verify all OCO pairs were created (stored under exchange_position_key)
-    exchange_position_key = "BTCUSDT_LONG"
-    assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
-    oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
-    assert len(oco_list) == 3
+        # Create multiple signals
+        signals = [
+            Signal(
+                strategy_id=f"test-multi-{i}",
+                symbol="BTCUSDT",
+                signal_type="buy",
+                action="buy",
+                confidence=0.85,
+                strength="strong",
+                timeframe="1h",
+                price=50000.0 + (i * 100),
+                quantity=0.001,
+                current_price=50000.0 + (i * 100),
+                stop_loss=48000.0 + (i * 100),
+                take_profit=52000.0 + (i * 100),
+                source="test",
+                strategy=f"test-multi-strategy-{i}",
+                strategy_mode=StrategyMode.DETERMINISTIC,
+            )
+            for i in range(3)
+        ]
 
-    # Verify all are active
-    for oco_info in oco_list:
-        assert oco_info["status"] == "active"
-        assert "sl_order_id" in oco_info
-        assert "tp_order_id" in oco_info
+        # Process all signals
+        for signal in signals:
+            await dispatcher.dispatch(signal)
 
-    # Clean up
-    await dispatcher.oco_manager.stop_monitoring()
+        # Verify all OCO pairs were created (stored under exchange_position_key)
+        exchange_position_key = "BTCUSDT_LONG"
+        assert exchange_position_key in dispatcher.oco_manager.active_oco_pairs
+        oco_list = dispatcher.oco_manager.active_oco_pairs[exchange_position_key]
+        assert len(oco_list) == 3
+
+        # Verify all are active
+        for oco_info in oco_list:
+            assert oco_info["status"] == "active"
+            assert "sl_order_id" in oco_info
+            assert "tp_order_id" in oco_info
+
+        # Clean up
+        await dispatcher.oco_manager.stop_monitoring()
 
 
 @pytest.mark.asyncio
 async def test_oco_order_placement_without_sl_or_tp():
     """Test that OCO orders are NOT placed when SL or TP is missing"""
+    from shared.distributed_lock import distributed_lock_manager
 
     mock_exchange = Mock()
     mock_exchange.execute = AsyncMock(
@@ -594,34 +663,46 @@ async def test_oco_order_placement_without_sl_or_tp():
     mock_position_manager.check_daily_loss_limits = AsyncMock(return_value=True)
     mock_position_manager.update_position = AsyncMock(return_value=None)
     mock_position_manager.create_position_record = AsyncMock(return_value=None)
+    mock_position_manager.positions = {}  # Make positions a dict
 
-    # Create dispatcher with mocked exchange
-    dispatcher = Dispatcher(exchange=mock_exchange)
-    dispatcher.position_manager = mock_position_manager
+    # Mock distributed lock manager to avoid MongoDB dependency
+    with patch.object(
+        distributed_lock_manager, "execute_with_lock", new_callable=AsyncMock
+    ) as mock_lock:
+        # Make the lock execute the function directly (no actual locking)
+        async def execute_directly(lock_key, func, *args, **kwargs):
+            return await func(*args, **kwargs)
 
-    # Signal without SL/TP
-    signal = Signal(
-        strategy_id="test-no-sltp",
-        symbol="BTCUSDT",
-        signal_type="buy",
-        action="buy",
-        confidence=0.85,
-        strength="strong",
-        timeframe="1h",
-        price=50000.0,
-        quantity=0.001,
-        current_price=50000.0,
-        source="test",
-        strategy="test-no-sltp",
-    )
+        mock_lock.side_effect = execute_directly
 
-    await dispatcher.dispatch(signal)
+        # Create dispatcher with mocked exchange
+        dispatcher = Dispatcher(exchange=mock_exchange)
+        dispatcher.position_manager = mock_position_manager
 
-    # Verify NO OCO pairs were created
-    assert len(dispatcher.oco_manager.active_oco_pairs) == 0
+        # Signal without SL/TP
+        signal = Signal(
+            strategy_id="test-no-sltp",
+            symbol="BTCUSDT",
+            signal_type="buy",
+            action="buy",
+            confidence=0.85,
+            strength="strong",
+            timeframe="1h",
+            price=50000.0,
+            quantity=0.001,
+            current_price=50000.0,
+            source="test",
+            strategy="test-no-sltp",
+            strategy_mode=StrategyMode.DETERMINISTIC,
+        )
 
-    # Clean up
-    await dispatcher.oco_manager.stop_monitoring()
+        await dispatcher.dispatch(signal)
+
+        # Verify NO OCO pairs were created
+        assert len(dispatcher.oco_manager.active_oco_pairs) == 0
+
+        # Clean up
+        await dispatcher.oco_manager.stop_monitoring()
 
 
 if __name__ == "__main__":

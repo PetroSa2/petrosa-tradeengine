@@ -1885,7 +1885,9 @@ class Dispatcher:
                 strategy_position_id = self.order_to_strategy_position.get(
                     order.order_id
                 )
-                entry_price = result.get("fill_price", result.get("price", order.price))
+                entry_price = result.get(
+                    "fill_price", result.get("price", order.target_price)
+                )
 
                 self.logger.info(
                     f"🎯 Placing OCO with strategy context: "

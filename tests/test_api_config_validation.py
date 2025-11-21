@@ -1442,3 +1442,432 @@ class TestCrossServiceConflictDetection:
 
             # Should handle non-200 response gracefully (no conflict added)
             assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_invalid_type_conversion(self):
+        """Test conflict detection handles invalid type conversion for position limits."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with invalid type for max_positions
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {
+                            "max_positions": "invalid_string"
+                        },  # Can't convert to float
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle ValueError/TypeError gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_exception_during_request(self):
+        """Test conflict detection handles exceptions during data-manager request."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock exception during data-manager GET request
+            mock_client.get = AsyncMock(side_effect=Exception("Network error"))
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle exception gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_proposed_max_invalid_type(self):
+        """Test conflict detection when proposed_max can't be converted to float."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with valid max_positions
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            # Pass invalid type for max_position_size (can't convert to float)
+            conflicts = await detect_cross_service_conflicts(
+                {"max_position_size": "not_a_number"}
+            )
+
+            # Should handle ValueError/TypeError gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_success_false(self):
+        """Test conflict detection when data-manager returns success=False."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with success=False
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": False,  # Line 844: success is False
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle success=False gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_no_data_field(self):
+        """Test conflict detection when data-manager response has no 'data' field."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response without 'data' field
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        # No 'data' field - line 844: data.get("data") is None
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle missing data field gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_success_false(self):
+        """Test conflict detection when ta-bot returns success=False."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response with success=False
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": False,  # Line 911: success is False
+                        "data": {"validation_passed": True},
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 5})
+
+            # Should handle success=False gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_no_data_field(self):
+        """Test conflict detection when ta-bot response has no 'data' field."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response without 'data' field
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        # No 'data' field - line 911: data.get("data") is None
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 5})
+
+            # Should handle missing data field gracefully (no conflict added)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_validation_passed_true_with_errors(self):
+        """Test conflict detection when validation_passed=True but errors exist."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response with validation_passed=True but errors exist
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {
+                            "validation_passed": True,  # Line 914: True, so condition is False
+                            "errors": [{"message": "Some error"}],  # But errors exist
+                        },
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 5})
+
+            # Should not add conflict when validation_passed=True (line 914 condition is False)
+            assert len(conflicts) == 0
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_symbol_with_side_none(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with symbol but side=None (covers line 774)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, {}, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}, "symbol": "BTCUSDT", "side": None},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Check that metadata.scope uses "all" when side is None (line 774)
+        assert data["metadata"]["scope"] == "BTCUSDT:all"
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_position_mismatch_within_threshold(
+        self,
+    ):
+        """Test conflict detection when position mismatch is within threshold (no conflict)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with position limit that's close (within 20% threshold)
+            # 10 vs 9 = 10% difference < 20% threshold, so no conflict
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 9},  # 10% difference from proposed 10
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should not add conflict when mismatch is within threshold (line 858-861 condition is False)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_current_max_none(self):
+        """Test conflict detection when data-manager has no current_max (covers line 847)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response without max_positions
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {},  # No max_positions field
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle missing current_max gracefully (line 847: current_max is None)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_proposed_max_none(self):
+        """Test conflict detection when proposed_max is None (covers line 847)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with max_positions
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+            mock_client.post = AsyncMock()
+
+            # Pass parameters without max_position_size
+            conflicts = await detect_cross_service_conflicts(
+                {"leverage": 5}  # No max_position_size, so proposed_max is None
+            )
+
+            # Should handle missing proposed_max gracefully (line 847: proposed_max is None)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_multiple_errors_truncated(self):
+        """Test conflict detection when ta-bot reports more than MAX_ERROR_MESSAGES_TO_SHOW errors."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock responses: ta-bot returns errors, realtime-strategies returns success
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    # First call for ta-bot (has errors)
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {
+                                "validation_passed": False,
+                                "errors": [
+                                    {"message": "Error 1"},
+                                    {"message": "Error 2"},
+                                    {"message": "Error 3"},
+                                    {"message": "Error 4"},
+                                ],  # 4 errors, but MAX_ERROR_MESSAGES_TO_SHOW is 2
+                            },
+                        },
+                    ),
+                    # Second call for realtime-strategies (no errors)
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 5})
+
+            assert len(conflicts) == 1
+            assert conflicts[0].service == "ta-bot"
+            # Check that only MAX_ERROR_MESSAGES_TO_SHOW errors are included in description (line 924)
+            description = conflicts[0].description
+            assert "Error 1" in description
+            assert "Error 2" in description
+            # Error 3 and 4 should not be in description (truncated)
+            assert "Error 3" not in description
+            assert "Error 4" not in description

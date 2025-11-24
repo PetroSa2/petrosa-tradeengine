@@ -13,7 +13,6 @@ import httpx
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
-from contracts.trading_config import TradingConfig
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.defaults import get_default_parameters, get_parameter_schema
 
@@ -982,33 +981,46 @@ async def set_global_limits(
     try:
         manager = get_config_manager()
 
-        # Get existing global config or create new
-        config = await manager.get_config() or TradingConfig(
-            id="global", parameters={}, created_by="api"
-        )
+        # Get existing global config (returns dict)
+        existing_config = await manager.get_config()
+        if not existing_config:
+            existing_config = {}
 
-        # Update limits
+        # Update limits in the config dict
+        parameters = existing_config.copy()
         if max_position_size is not None:
-            config.parameters["max_position_size"] = max_position_size
+            parameters["max_position_size"] = max_position_size
         if max_accumulations is not None:
-            config.parameters["max_accumulations"] = max_accumulations
+            parameters["max_accumulations"] = max_accumulations
         if accumulation_cooldown_seconds is not None:
-            config.parameters["accumulation_cooldown_seconds"] = (
-                accumulation_cooldown_seconds
-            )
+            parameters["accumulation_cooldown_seconds"] = accumulation_cooldown_seconds
 
-        # Save config
-        success = await manager.set_config(config)
+        # Save config using set_config with parameters dict
+        success, config, errors = await manager.set_config(
+            parameters=parameters,
+            changed_by="api",
+            symbol=None,
+            side=None,
+            reason="Update global position limits",
+        )
 
         if success:
             return APIResponse(
                 success=True,
                 data={
                     "config": {
-                        "id": config.id,
-                        "parameters": config.parameters,
-                        "created_at": config.created_at.isoformat(),
-                        "updated_at": config.updated_at.isoformat(),
+                        "id": config.id if config else "global",
+                        "parameters": config.parameters if config else parameters,
+                        "created_at": (
+                            config.created_at.isoformat()
+                            if config and config.created_at
+                            else None
+                        ),
+                        "updated_at": (
+                            config.updated_at.isoformat()
+                            if config and config.updated_at
+                            else None
+                        ),
                     }
                 },
                 message="Global limits updated successfully",
@@ -1044,34 +1056,47 @@ async def set_symbol_limits(
     try:
         manager = get_config_manager()
 
-        # Get existing symbol config or create new
-        config = await manager.get_config(symbol=symbol) or TradingConfig(
-            id=f"symbol_{symbol}", symbol=symbol, parameters={}, created_by="api"
-        )
+        # Get existing symbol config (returns dict)
+        existing_config = await manager.get_config(symbol=symbol)
+        if not existing_config:
+            existing_config = {}
 
-        # Update limits
+        # Update limits in the config dict
+        parameters = existing_config.copy()
         if max_position_size is not None:
-            config.parameters["max_position_size"] = max_position_size
+            parameters["max_position_size"] = max_position_size
         if max_accumulations is not None:
-            config.parameters["max_accumulations"] = max_accumulations
+            parameters["max_accumulations"] = max_accumulations
         if accumulation_cooldown_seconds is not None:
-            config.parameters["accumulation_cooldown_seconds"] = (
-                accumulation_cooldown_seconds
-            )
+            parameters["accumulation_cooldown_seconds"] = accumulation_cooldown_seconds
 
-        # Save config
-        success = await manager.set_config(config, symbol=symbol)
+        # Save config using set_config with parameters dict
+        success, config, errors = await manager.set_config(
+            parameters=parameters,
+            changed_by="api",
+            symbol=symbol.upper(),
+            side=None,
+            reason=f"Update position limits for {symbol}",
+        )
 
         if success:
             return APIResponse(
                 success=True,
                 data={
                     "config": {
-                        "id": config.id,
-                        "symbol": config.symbol,
-                        "parameters": config.parameters,
-                        "created_at": config.created_at.isoformat(),
-                        "updated_at": config.updated_at.isoformat(),
+                        "id": config.id if config else f"symbol_{symbol.upper()}",
+                        "symbol": symbol.upper(),
+                        "parameters": config.parameters if config else parameters,
+                        "created_at": (
+                            config.created_at.isoformat()
+                            if config and config.created_at
+                            else None
+                        ),
+                        "updated_at": (
+                            config.updated_at.isoformat()
+                            if config and config.updated_at
+                            else None
+                        ),
                     }
                 },
                 message=f"Symbol limits updated for {symbol}",
@@ -1095,13 +1120,13 @@ async def get_all_limits() -> APIResponse:
         manager = get_config_manager()
         limits = {"global": None, "symbols": {}}
 
-        # Get global config
+        # Get global config (returns dict)
         global_config = await manager.get_config()
         if global_config:
             limits["global"] = {
-                "max_position_size": global_config.parameters.get("max_position_size"),
-                "max_accumulations": global_config.parameters.get("max_accumulations"),
-                "accumulation_cooldown_seconds": global_config.parameters.get(
+                "max_position_size": global_config.get("max_position_size"),
+                "max_accumulations": global_config.get("max_accumulations"),
+                "accumulation_cooldown_seconds": global_config.get(
                     "accumulation_cooldown_seconds"
                 ),
             }
@@ -1113,18 +1138,14 @@ async def get_all_limits() -> APIResponse:
         for symbol in SUPPORTED_SYMBOLS:
             symbol_config = await manager.get_config(symbol=symbol)
             if symbol_config and (
-                symbol_config.parameters.get("max_position_size")
-                or symbol_config.parameters.get("max_accumulations")
-                or symbol_config.parameters.get("accumulation_cooldown_seconds")
+                symbol_config.get("max_position_size")
+                or symbol_config.get("max_accumulations")
+                or symbol_config.get("accumulation_cooldown_seconds")
             ):
                 limits["symbols"][symbol] = {
-                    "max_position_size": symbol_config.parameters.get(
-                        "max_position_size"
-                    ),
-                    "max_accumulations": symbol_config.parameters.get(
-                        "max_accumulations"
-                    ),
-                    "accumulation_cooldown_seconds": symbol_config.parameters.get(
+                    "max_position_size": symbol_config.get("max_position_size"),
+                    "max_accumulations": symbol_config.get("max_accumulations"),
+                    "accumulation_cooldown_seconds": symbol_config.get(
                         "accumulation_cooldown_seconds"
                     ),
                 }

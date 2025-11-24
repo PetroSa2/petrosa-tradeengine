@@ -809,6 +809,61 @@ class TestConfigValidationEndpoint:
         assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_error_parsing_loop_comprehensive(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Comprehensive test to ensure error parsing loop (lines 638-678) is executed.
+
+        This test explicitly exercises all branches in the error parsing logic to ensure
+        codecov detects coverage for lines 638-678.
+        """
+        mock_get_manager.return_value = mock_config_manager
+        # Return multiple errors to exercise the loop
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(
+                False,
+                None,
+                [
+                    "Unknown parameter: test1",  # Covers lines 643-662
+                    "Unknown parameter test2",  # Covers line 651 (else branch)
+                    "leverage must be integer, got str",  # Covers lines 672-674
+                    "price must be float, got int",  # Covers lines 675-677
+                    "amount must be >= 0, got -1",  # Covers line 678+
+                ],
+            )
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={
+                "parameters": {
+                    "test1": 1,
+                    "test2": 2,
+                    "leverage": "bad",
+                    "price": 1,
+                    "amount": -1,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 5  # All 5 errors should be parsed
+
+        # Verify all error types are present
+        error_codes = [e["code"] for e in data["data"]["errors"]]
+        assert "UNKNOWN_PARAMETER" in error_codes
+        assert "INVALID_TYPE" in error_codes
+        assert "OUT_OF_RANGE" in error_codes
+
+        # Verify suggested_fixes were populated (covers lines 652-653, 674, 677)
+        assert len(data["data"]["suggested_fixes"]) > 0
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
     def test_validate_config_exception_handler(self, mock_get_manager, client):
         """Test that validate_config exception handler is covered (lines 779-784)."""
         # Make get_config_manager raise an exception
@@ -2272,6 +2327,61 @@ class TestCrossServiceConflictDetection:
 
         # Access the function to ensure it's defined (covers line 802)
         assert callable(routes_module.detect_cross_service_conflicts)
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_error_parsing_loop_comprehensive(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Comprehensive test to ensure error parsing loop (lines 638-678) is executed.
+
+        This test explicitly exercises all branches in the error parsing logic to ensure
+        codecov detects coverage for lines 638-678.
+        """
+        mock_get_manager.return_value = mock_config_manager
+        # Return multiple errors to exercise the loop
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(
+                False,
+                None,
+                [
+                    "Unknown parameter: test1",  # Covers lines 643-662
+                    "Unknown parameter test2",  # Covers line 651 (else branch)
+                    "leverage must be integer, got str",  # Covers lines 672-674
+                    "price must be float, got int",  # Covers lines 675-677
+                    "amount must be >= 0, got -1",  # Covers line 678+
+                ],
+            )
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={
+                "parameters": {
+                    "test1": 1,
+                    "test2": 2,
+                    "leverage": "bad",
+                    "price": 1,
+                    "amount": -1,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 5  # All 5 errors should be parsed
+
+        # Verify all error types are present
+        error_codes = [e["code"] for e in data["data"]["errors"]]
+        assert "UNKNOWN_PARAMETER" in error_codes
+        assert "INVALID_TYPE" in error_codes
+        assert "OUT_OF_RANGE" in error_codes
+
+        # Verify suggested_fixes were populated (covers lines 652-653, 674, 677)
+        assert len(data["data"]["suggested_fixes"]) > 0
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     def test_validate_config_exception_handler(self, mock_get_manager, client):

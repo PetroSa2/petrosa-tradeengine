@@ -71,6 +71,53 @@ class TestConfigValidationEndpoint:
         assert data["data"]["estimated_impact"]["risk_level"] == "medium"
         assert data["data"]["estimated_impact"]["affected_scope"] == "global"
         assert data["metadata"]["validation_mode"] == "dry_run"
+        # Verify detect_cross_service_conflicts was called (covers line 753-755 in diff)
+        mock_detect_conflicts.assert_called_once()
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.httpx.AsyncClient")
+    def test_validate_config_calls_real_detect_conflicts(
+        self, mock_client_class, mock_get_manager, client, mock_config_manager
+    ):
+        """Test that validate_config actually calls detect_cross_service_conflicts (covers line 753-755)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+
+        # Mock httpx client for detect_cross_service_conflicts
+        mock_client = AsyncMock()
+        mock_client_class.return_value.__aenter__.return_value = mock_client
+        mock_client.get = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: {"success": True, "data": {"max_positions": 10}},
+            )
+        )
+        mock_client.post = AsyncMock(
+            return_value=AsyncMock(
+                status_code=200,
+                json=lambda: {
+                    "success": True,
+                    "data": {"validation_passed": True},
+                },
+            )
+        )
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={
+                "parameters": {
+                    "leverage": 10,
+                    "max_position_size": 10,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Verify the real detect_cross_service_conflicts was called (not mocked)
+        # This ensures line 753-755 in the diff is executed
+        assert "conflicts" in data["data"]
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")

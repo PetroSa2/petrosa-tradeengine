@@ -761,6 +761,37 @@ class TestConfigValidationEndpoint:
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_must_be_one_of_with_brackets(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with 'must be one of' error with valid brackets (covers lines 695-703)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(
+                False,
+                None,
+                ["side must be one of [LONG, SHORT], got INVALID"],
+            )
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"side": "INVALID"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "INVALID_VALUE"
+        assert data["data"]["errors"][0]["suggested_value"] is None
+        # Check that suggested_fixes includes the allowed values
+        assert any("LONG, SHORT" in fix for fix in data["data"]["suggested_fixes"])
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
     def test_validate_config_must_be_one_of_invalid_format(
         self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):

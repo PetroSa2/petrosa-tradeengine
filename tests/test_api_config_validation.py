@@ -720,6 +720,26 @@ class TestConfigValidationEndpoint:
         client,
         mock_config_manager,
     ):
+        """Test suggested_value when field is not in PARAMETER_SCHEMA (covers line 693-694)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["unknown_field must be >= 10"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"unknown_field": 5}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "OUT_OF_RANGE"
+        # When field not in schema, suggested_value should be None (line 694)
+        assert data["data"]["errors"][0]["suggested_value"] is None
         """Test validation with field not in schema."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(

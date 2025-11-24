@@ -769,6 +769,128 @@ class TestConfigValidationEndpoint:
     def test_validate_config_must_be_generic_pattern(
         self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
     ):
+        """Test generic must be pattern error handling."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["param must be something"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"param": "value"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) == 1
+        assert data["data"]["errors"][0]["code"] == "VALIDATION_ERROR"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    def test_validate_config_exception_handler(self, mock_get_manager, client):
+        """Test that validate_config exception handler is covered (lines 779-784)."""
+        # Make get_config_manager raise an exception
+        mock_get_manager.side_effect = Exception("Database connection failed")
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"]["code"] == "INTERNAL_ERROR"
+        assert "Database connection failed" in data["error"]["message"]
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_global(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when no symbol is provided (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "global"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_symbol_with_side(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when symbol and side are provided (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={
+                "parameters": {"leverage": 10},
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "BTCUSDT:LONG"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_symbol_no_side(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when symbol is provided but no side (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}, "symbol": "BTCUSDT"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "BTCUSDT:all"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_validation_passed_false_with_errors(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation_passed=False when there are errors (covers line 758)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["leverage must be >= 1"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 0}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) > 0
         """Test validation with 'must be' error that doesn't match any specific pattern (lines 706-708)."""
         mock_get_manager.return_value = mock_config_manager
         mock_config_manager.set_config = AsyncMock(
@@ -2130,6 +2252,110 @@ class TestCrossServiceConflictDetection:
 
         # Access the function to ensure it's defined (covers line 802)
         assert callable(routes_module.detect_cross_service_conflicts)
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    def test_validate_config_exception_handler(self, mock_get_manager, client):
+        """Test that validate_config exception handler is covered (lines 779-784)."""
+        # Make get_config_manager raise an exception
+        mock_get_manager.side_effect = Exception("Database connection failed")
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"]["code"] == "INTERNAL_ERROR"
+        assert "Database connection failed" in data["error"]["message"]
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_global(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when no symbol is provided (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "global"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_symbol_with_side(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when symbol and side are provided (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={
+                "parameters": {"leverage": 10},
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "BTCUSDT:LONG"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_metadata_scope_symbol_no_side(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope when symbol is provided but no side (covers lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}, "symbol": "BTCUSDT"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["metadata"]["scope"] == "BTCUSDT:all"
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_validation_passed_false_with_errors(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation_passed=False when there are errors (covers line 758)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["leverage must be >= 1"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 0}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["validation_passed"] is False
+        assert len(data["data"]["errors"]) > 0
 
     @pytest.mark.asyncio
     async def test_detect_conflicts_data_manager_position_mismatch_exact_coverage(self):

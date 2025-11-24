@@ -73,6 +73,11 @@ class TestConfigValidationEndpoint:
         assert data["metadata"]["validation_mode"] == "dry_run"
         # Verify detect_cross_service_conflicts was called (covers line 753-755 in diff)
         mock_detect_conflicts.assert_called_once()
+        # Verify it was called with correct arguments
+        call_args = mock_detect_conflicts.call_args
+        assert call_args[0][0] == {"leverage": 10, "stop_loss_pct": 2.0}
+        assert call_args[0][1] is None  # symbol
+        assert call_args[0][2] is None  # side
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     @patch("tradeengine.api_config_routes.httpx.AsyncClient")

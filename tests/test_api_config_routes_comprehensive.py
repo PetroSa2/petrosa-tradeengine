@@ -752,6 +752,88 @@ class TestDeleteSymbolLimitsEndpoint:
         assert data["error"]["code"] == "INTERNAL_ERROR"
 
 
+class TestPositionLimitsEdgeCases:
+    """Test edge cases in position limit endpoints to ensure full coverage."""
+
+    def test_set_global_limits_all_params_none(self, client, mock_config_manager):
+        """Test set_global_limits when all params are None (covers lines 991-998)."""
+        existing_config = TradingConfig(
+            id="global",
+            parameters={"leverage": 10},
+            created_by="test_user",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        mock_config_manager.get_config = AsyncMock(return_value=existing_config)
+        mock_config_manager.set_config = AsyncMock(return_value=True)
+
+        # Call with no params - should still work but not update anything
+        response = client.put("/api/v1/config/config/limits/global")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_set_symbol_limits_all_params_none(self, client, mock_config_manager):
+        """Test set_symbol_limits when all params are None (covers lines 1053-1060)."""
+        existing_config = TradingConfig(
+            id="symbol_BTCUSDT",
+            symbol="BTCUSDT",
+            parameters={"leverage": 10},
+            created_by="test_user",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        mock_config_manager.get_config = AsyncMock(return_value=existing_config)
+        mock_config_manager.set_config = AsyncMock(return_value=True)
+
+        # Call with no params - should still work but not update anything
+        response = client.put("/api/v1/config/config/limits/symbol/BTCUSDT")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_get_all_limits_no_global_config(self, client, mock_config_manager):
+        """Test get_all_limits when global config is None (covers line 1100)."""
+        from unittest.mock import patch
+
+        with patch("shared.constants.SUPPORTED_SYMBOLS", ["BTCUSDT"]):
+            mock_config_manager.get_config = AsyncMock(return_value=None)
+
+            response = client.get("/api/v1/config/config/limits")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["data"]["limits"]["global"] is None
+
+    def test_get_all_limits_symbol_config_no_limits(self, client, mock_config_manager):
+        """Test get_all_limits when symbol config exists but has no limit params (covers lines 1115-1119)."""
+        from unittest.mock import patch
+
+        with patch("shared.constants.SUPPORTED_SYMBOLS", ["BTCUSDT"]):
+            global_config = TradingConfig(
+                id="global",
+                parameters={"max_position_size": 100.0},
+                created_by="test_user",
+            )
+            # Symbol config exists but has no limit parameters
+            symbol_config = TradingConfig(
+                id="symbol_BTCUSDT",
+                symbol="BTCUSDT",
+                parameters={"leverage": 10},  # No limit params
+                created_by="test_user",
+            )
+            mock_config_manager.get_config = AsyncMock(
+                side_effect=[global_config, symbol_config]
+            )
+
+            response = client.get("/api/v1/config/config/limits")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            # BTCUSDT should not be in symbols dict since it has no limit params
+            assert "BTCUSDT" not in data["data"]["limits"]["symbols"]
+
+
 class TestValidationEndpointEdgeCases:
     """Test edge cases in /api/v1/config/validate endpoint."""
 

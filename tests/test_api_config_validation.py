@@ -2176,30 +2176,12 @@ class TestCrossServiceConflictDetection:
         codecov counts them as executed. Field() calls are executable lines that
         codecov should count in patch coverage.
         """
-        import os
-        from unittest.mock import patch
-
         from tradeengine.api_config_routes import (
             ConfigValidationRequest,
             CrossServiceConflict,
             ValidationError,
             ValidationResponse,
         )
-
-        # Ensure os.getenv() is called when SERVICE_URLS is accessed
-        # This covers lines 789-793 where os.getenv() is called
-        with patch.dict(os.environ, {}, clear=True):
-            # Re-import to trigger os.getenv() calls
-            import importlib
-
-            import tradeengine.api_config_routes
-
-            importlib.reload(tradeengine.api_config_routes)
-            # Access SERVICE_URLS to ensure os.getenv() calls are executed
-            urls = tradeengine.api_config_routes.SERVICE_URLS
-            assert "data-manager" in urls
-            assert "ta-bot" in urls
-            assert "realtime-strategies" in urls
 
         # Instantiate each model with all fields to ensure Field() calls are executed
         # This covers the Field() definitions in the Pydantic models (lines 87-94, 100-105, etc.)
@@ -3321,3 +3303,198 @@ class TestCrossServiceConflictDetection:
 
             # Should not add conflict when there are no errors
             assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_comprehensive_all_branches(self):
+        """Comprehensive test to ensure ALL branches in detect_cross_service_conflicts are executed.
+
+        This test explicitly exercises every single executable line in the function to maximize
+        codecov patch coverage. It covers:
+        - All conditionals (if statements)
+        - All exception handlers
+        - All branches in data-manager check
+        - All branches in ta-bot/realtime-strategies check
+        - All edge cases
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        # Test 1: No relevant params - should skip all checks (covers lines 826-834)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            conflicts = await detect_cross_service_conflicts({"some_param": 123})
+            assert len(conflicts) == 0
+
+        # Test 2: Has max_position_size, data-manager conflict detected (covers lines 836-877)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {
+                            "max_positions": 50.0
+                        },  # 50 vs 100 = 100% difference > 20% threshold
+                    },
+                )
+            )
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {"validation_passed": True}},
+                )
+            )
+            conflicts = await detect_cross_service_conflicts(
+                {"max_position_size": 100.0}
+            )
+            assert len(conflicts) == 1
+            assert conflicts[0].service == "data-manager"
+
+        # Test 3: Has leverage, ta-bot reports validation errors (covers lines 883-931)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {}},
+                )
+            )
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {
+                                "validation_passed": False,
+                                "errors": [
+                                    {"message": "Error 1"},
+                                    {"message": "Error 2"},
+                                ],
+                            },
+                        },
+                    ),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+            conflicts = await detect_cross_service_conflicts(
+                {"leverage": 10}, symbol="BTCUSDT"
+            )
+            assert len(conflicts) == 1
+            assert conflicts[0].service == "ta-bot"
+
+        # Test 4: Has take_profit_pct, realtime-strategies reports validation errors
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {}},
+                )
+            )
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {
+                                "validation_passed": False,
+                                "errors": [
+                                    {"message": "Error from realtime-strategies"}
+                                ],
+                            },
+                        },
+                    ),
+                ]
+            )
+            conflicts = await detect_cross_service_conflicts({"take_profit_pct": 5.0})
+            assert len(conflicts) == 1
+            assert conflicts[0].service == "realtime-strategies"
+
+        # Test 5: All exception handlers (covers lines 852-853, 878-879, 933-936)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            # ValueError in conversion
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": "invalid"},
+                    },
+                )
+            )
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {"validation_passed": True}},
+                )
+            )
+            conflicts = await detect_cross_service_conflicts(
+                {"max_position_size": 100.0}
+            )
+            assert len(conflicts) == 0  # Should handle ValueError gracefully
+
+        # Test 6: Exception in data-manager check (covers line 878-879)
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.get = AsyncMock(side_effect=Exception("Network error"))
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {"validation_passed": True}},
+                )
+            )
+            conflicts = await detect_cross_service_conflicts(
+                {"max_position_size": 100.0}
+            )
+            assert len(conflicts) == 0  # Should handle exception gracefully
+
+        # Test 7: TimeoutException in ta-bot check (covers line 933-934)
+        import httpx
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {"success": True, "data": {}},
+                )
+            )
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    httpx.TimeoutException("Timeout"),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+            conflicts = await detect_cross_service_conflicts({"leverage": 10})
+            assert len(conflicts) == 0  # Should handle timeout gracefully

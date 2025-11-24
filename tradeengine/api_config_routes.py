@@ -850,7 +850,7 @@ async def detect_cross_service_conflicts(
                                     proposed_max_float = float(proposed_max)
                                 except (ValueError, TypeError):
                                     logger.debug(
-                                        "Invalid type for position limit comparison"
+                                        f"Invalid type for position limit comparison: current_max={current_max}, proposed_max={proposed_max}"
                                     )
                                 else:
                                     # Check if there's a significant mismatch
@@ -920,7 +920,7 @@ async def detect_cross_service_conflicts(
                                             description=(
                                                 f"{service_name} reports validation errors for "
                                                 f"trading parameters: "
-                                                f"{', '.join([e.get('message', '') for e in errors[:MAX_ERROR_MESSAGES_TO_SHOW]])}"
+                                                f"{', '.join([msg for e in errors[:MAX_ERROR_MESSAGES_TO_SHOW] if (msg := e.get('message'))])}"
                                             ),
                                             resolution=(
                                                 f"Review {service_name} validation errors and "

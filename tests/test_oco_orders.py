@@ -489,7 +489,6 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
         assert "sl_order_id" in oco_info
         assert "tp_order_id" in oco_info
 
-        _sl_order_id = oco_info["sl_order_id"]  # noqa: F841
         tp_order_id = oco_info["tp_order_id"]
 
         # Step 3: Simulate TP order filling
@@ -567,7 +566,6 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
         assert oco_info["position_side"] == "SHORT"
 
         sl_order_id = oco_info["sl_order_id"]
-        _tp_order_id = oco_info["tp_order_id"]  # noqa: F841
 
         # Step 3: Simulate SL order filling (position hits stop loss)
         cancel_result = await dispatcher.oco_manager.cancel_other_order(

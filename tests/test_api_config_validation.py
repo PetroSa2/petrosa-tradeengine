@@ -2332,8 +2332,8 @@ class TestCrossServiceConflictDetection:
 
         These are module-level executable statements that codecov should count.
         """
-        # Import the module to execute all module-level code
-        import tradeengine.api_config_routes as routes_module
+        # Access module-level code through existing import
+        from tradeengine import api_config_routes as routes_module
 
         # Explicitly access imports to ensure they're executed
         # Verify imports are available
@@ -3041,6 +3041,7 @@ class TestCrossServiceConflictDetection:
         assert response.status_code == 200
         data = response.json()
         # Should not crash, risk_level should be medium (from high_risk_params check)
+        assert data["data"]["estimated_impact"]["risk_level"] == "medium"
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")

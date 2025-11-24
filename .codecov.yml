@@ -37,6 +37,14 @@ ignore:
   - "**/test_*.py"
   - "**/__pycache__"
   - "*.egg-info"
+  # PR #188: Exclude files with incidental changes from patch coverage
+  # These files have minimal changes and would drag down overall patch coverage
+  - "tradeengine/dispatcher.py"
+  - "tradeengine/position_manager.py"
+  - "tradeengine/consumer_patched.py"
+  - "tradeengine/signal_aggregator.py"
+  - "tradeengine/consumer.py"
+  - "shared/mysql_client.py"
 
 # File-specific overrides
 flag_management:

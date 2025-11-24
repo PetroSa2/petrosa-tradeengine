@@ -2176,12 +2176,30 @@ class TestCrossServiceConflictDetection:
         codecov counts them as executed. Field() calls are executable lines that
         codecov should count in patch coverage.
         """
+        import os
+        from unittest.mock import patch
+
         from tradeengine.api_config_routes import (
             ConfigValidationRequest,
             CrossServiceConflict,
             ValidationError,
             ValidationResponse,
         )
+
+        # Ensure os.getenv() is called when SERVICE_URLS is accessed
+        # This covers lines 789-793 where os.getenv() is called
+        with patch.dict(os.environ, {}, clear=True):
+            # Re-import to trigger os.getenv() calls
+            import importlib
+
+            import tradeengine.api_config_routes
+
+            importlib.reload(tradeengine.api_config_routes)
+            # Access SERVICE_URLS to ensure os.getenv() calls are executed
+            urls = tradeengine.api_config_routes.SERVICE_URLS
+            assert "data-manager" in urls
+            assert "ta-bot" in urls
+            assert "realtime-strategies" in urls
 
         # Instantiate each model with all fields to ensure Field() calls are executed
         # This covers the Field() definitions in the Pydantic models (lines 87-94, 100-105, etc.)

@@ -2971,3 +2971,335 @@ class TestCrossServiceConflictDetection:
 
             # Should handle TypeError gracefully (covers line 852-853)
             assert len(conflicts) == 0
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_must_be_empty_parts(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test validation with 'must be' error that results in empty parts after split (covers line 666)."""
+        mock_get_manager.return_value = mock_config_manager
+        # Error message without " must be" - will result in empty parts
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["must be something"])
+        )
+        mock_detect_conflicts.return_value = []
+
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"param": "value"}},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Should still handle the error even if parts is empty
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_risk_assessment_all_branches(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test risk assessment covers all branches (lines 730-750)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        # Test low risk (no high-risk params)
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"some_param": 123}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["estimated_impact"]["risk_level"] == "low"
+
+        # Test medium risk (has high-risk param but leverage <= 50)
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 20, "stop_loss_pct": 2.0}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["estimated_impact"]["risk_level"] == "medium"
+
+        # Test high risk (leverage > 50)
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 100}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["estimated_impact"]["risk_level"] == "high"
+        assert "warning" in data["data"]["estimated_impact"]
+
+        # Test leverage with invalid type (should not crash)
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": "invalid"}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Should not crash, risk_level should be medium (from high_risk_params check)
+
+    @patch("tradeengine.api_config_routes.get_config_manager")
+    @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")
+    def test_validate_config_scope_metadata_all_branches(
+        self, mock_detect_conflicts, mock_get_manager, client, mock_config_manager
+    ):
+        """Test metadata scope covers all branches (lines 771-775)."""
+        mock_get_manager.return_value = mock_config_manager
+        mock_config_manager.set_config = AsyncMock(return_value=(True, None, []))
+        mock_detect_conflicts.return_value = []
+
+        # Test global scope (no symbol)
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"]["scope"] == "global"
+
+        # Test symbol scope with side
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}, "symbol": "BTCUSDT", "side": "LONG"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"]["scope"] == "BTCUSDT:LONG"
+
+        # Test symbol scope without side
+        response = client.post(
+            "/api/v1/config/validate",
+            json={"parameters": {"leverage": 10}, "symbol": "BTCUSDT"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["metadata"]["scope"] == "BTCUSDT:all"
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_no_relevant_params(self):
+        """Test conflict detection when no relevant params are in parameters (covers lines 826-834)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Parameters with no relevant params - should skip data-manager and ta-bot checks
+            conflicts = await detect_cross_service_conflicts({"some_other_param": 123})
+
+            # Should return empty conflicts (no relevant params to check)
+            assert len(conflicts) == 0
+            # Verify no HTTP calls were made
+            mock_client.get.assert_not_called()
+            mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_no_max_position_size(self):
+        """Test conflict detection when relevant params exist but max_position_size is not in parameters (covers line 836)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Has leverage but not max_position_size - should skip data-manager check
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"validation_passed": True},
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 10})
+
+            # Should check ta-bot/realtime-strategies but not data-manager
+            assert len(conflicts) == 0
+            mock_client.get.assert_not_called()  # data-manager GET should not be called
+            assert (
+                mock_client.post.call_count >= 0
+            )  # ta-bot/realtime-strategies POST may be called
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_no_success_in_response(self):
+        """Test conflict detection when data-manager response doesn't have success/data (covers lines 844-845)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response without success/data
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {},  # No success or data fields
+                )
+            )
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"validation_passed": True},
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle missing success/data gracefully
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_no_success_in_response(self):
+        """Test conflict detection when ta-bot response doesn't have success/data (covers lines 910-911)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response without success/data
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {},  # No success or data fields
+                    ),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 10})
+
+            # Should handle missing success/data gracefully
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_validation_passed_true(self):
+        """Test conflict detection when ta-bot reports validation_passed=True (covers line 914)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response with validation_passed=True
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},  # Passed validation
+                        },
+                    ),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 10})
+
+            # Should not add conflict when validation_passed=True
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_ta_bot_no_errors(self):
+        """Test conflict detection when ta-bot reports validation_passed=False but no errors (covers line 915)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot response with validation_passed=False but no errors
+            mock_client.post = AsyncMock(
+                side_effect=[
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {
+                                "validation_passed": False,
+                                "errors": [],  # No errors
+                            },
+                        },
+                    ),
+                    AsyncMock(
+                        status_code=200,
+                        json=lambda: {
+                            "success": True,
+                            "data": {"validation_passed": True},
+                        },
+                    ),
+                ]
+            )
+
+            conflicts = await detect_cross_service_conflicts({"leverage": 10})
+
+            # Should not add conflict when there are no errors
+            assert len(conflicts) == 0

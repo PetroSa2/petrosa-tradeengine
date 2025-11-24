@@ -2099,3 +2099,123 @@ class TestCrossServiceConflictDetection:
             assert len(conflicts) == 1
             assert conflicts[0].service == "ta-bot"
             assert conflicts[0].conflict_type == "VALIDATION_CONFLICT"
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_with_symbol_parameter(self):
+        """Test conflict detection includes symbol in validation request (covers line 901-902)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response (no conflict)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": 10},
+                    },
+                )
+            )
+
+            # Mock ta-bot and realtime-strategies responses
+            mock_response = AsyncMock(
+                status_code=200,
+                json=lambda: {
+                    "success": True,
+                    "data": {"validation_passed": True},
+                },
+            )
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            # Call with symbol parameter (covers line 901-902)
+            conflicts = await detect_cross_service_conflicts(
+                {"leverage": 5}, symbol="BTCUSDT"
+            )
+
+            # Verify symbol was included in the POST request
+            assert mock_client.post.call_count == 2  # ta-bot and realtime-strategies
+            # Check that symbol was included in at least one request
+            call_args = mock_client.post.call_args_list[0]
+            assert "json" in call_args.kwargs
+            assert call_args.kwargs["json"].get("symbol") == "BTCUSDT"
+
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_value_error_in_conversion(self):
+        """Test conflict detection handles ValueError during position limit conversion (covers line 852-853)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with value that causes ValueError when converting to float
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {
+                            "max_positions": "not-a-number"
+                        },  # Will cause ValueError
+                    },
+                )
+            )
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"validation_passed": True},
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle ValueError gracefully (covers line 852-853)
+            assert len(conflicts) == 0
+
+    @pytest.mark.asyncio
+    async def test_detect_conflicts_data_manager_type_error_in_conversion(self):
+        """Test conflict detection handles TypeError during position limit conversion (covers line 852-853)."""
+        from unittest.mock import AsyncMock, patch
+
+        from tradeengine.api_config_routes import detect_cross_service_conflicts
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+
+            # Mock data-manager response with None (will cause TypeError when converting to float)
+            mock_client.get = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"max_positions": None},  # Will cause TypeError
+                    },
+                )
+            )
+            mock_client.post = AsyncMock(
+                return_value=AsyncMock(
+                    status_code=200,
+                    json=lambda: {
+                        "success": True,
+                        "data": {"validation_passed": True},
+                    },
+                )
+            )
+
+            conflicts = await detect_cross_service_conflicts({"max_position_size": 10})
+
+            # Should handle TypeError gracefully (covers line 852-853)
+            assert len(conflicts) == 0

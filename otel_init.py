@@ -275,11 +275,10 @@ def configure_logging() -> bool:
 
         handler_names = ["stdout"]
 
-        # Add OTLP handler if logger provider is configured
+        # Add OTLP to handler names if logger provider is configured
+        # (Handler instance will be created and attached after dictConfig)
         if _global_logger_provider is not None:
-            # Create OTLP handler instance and add directly (bypassing dictConfig for this handler)
-            # We'll add it after dictConfig applies the base configuration
-            pass  # Will be added manually after dictConfig
+            handler_names.append("otlp")
 
         # Build complete logging configuration
         logging_config = {
@@ -335,8 +334,6 @@ def configure_logging() -> bool:
             logging.getLogger("uvicorn.access").addHandler(otlp_handler)
             logging.getLogger("uvicorn.error").addHandler(otlp_handler)
 
-            handler_names.append("otlp")
-
         print("📊 Logging configuration complete (using dictConfig):")
         print("   Root logger level: INFO")
         print(f"   Handlers configured: {', '.join(handler_names)}")
@@ -368,7 +365,13 @@ def attach_logging_handler() -> bool:
     Returns:
         bool: True if configuration successful, False otherwise
     """
-    print("ℹ️  attach_logging_handler() is deprecated, use configure_logging()")
+    import warnings
+
+    warnings.warn(
+        "attach_logging_handler() is deprecated, use configure_logging() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return configure_logging()
 
 

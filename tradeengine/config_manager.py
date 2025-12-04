@@ -439,3 +439,139 @@ class TradingConfigManager:
         if cache_key in self._cache:
             del self._cache[cache_key]
             logger.debug(f"Cache invalidated: {cache_key}")
+
+    async def get_config_history(
+        self, strategy_id: str, symbol: Optional[str] = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        Get configuration version history from audit trail.
+
+        Args:
+            strategy_id: Strategy identifier
+            symbol: Optional symbol filter
+            limit: Maximum number of versions
+
+        Returns:
+            List of audit records (most recent first)
+        """
+        if not self.mongodb_client or not self.mongodb_client.is_connected:
+            return []
+
+        try:
+            query = {"strategy_id": strategy_id}
+            if symbol:
+                query["symbol"] = symbol
+
+            cursor = (
+                self.mongodb_client.database.strategy_config_audit.find(query)
+                .sort("changed_at", -1)
+                .limit(limit)
+            )
+
+            records = await cursor.to_list(length=limit)
+            return records
+
+        except Exception as e:
+            logger.error(f"Failed to get config history for {strategy_id}: {e}")
+            return []
+
+    async def get_previous_config(
+        self, strategy_id: str, symbol: Optional[str] = None
+    ) -> dict[str, Any] | None:
+        """Get immediately previous configuration."""
+        history = await self.get_config_history(strategy_id, symbol, limit=2)
+        return history[1] if len(history) >= 2 else None
+
+    async def get_config_by_version(
+        self, strategy_id: str, version_number: int, symbol: Optional[str] = None
+    ) -> dict[str, Any] | None:
+        """Get configuration at specific version number."""
+        all_history = await self.get_config_history(strategy_id, symbol, limit=1000)
+        if not all_history:
+            return None
+
+        chronological = list(reversed(all_history))
+        if 1 <= version_number <= len(chronological):
+            return chronological[version_number - 1]
+        return None
+
+    async def get_config_by_id(self, config_id: str) -> dict[str, Any] | None:
+        """Get configuration by audit record ID."""
+        if not self.mongodb_client or not self.mongodb_client.is_connected:
+            return None
+
+        try:
+            from bson import ObjectId
+
+            record = await self.mongodb_client.database.strategy_config_audit.find_one(
+                {"_id": ObjectId(config_id)}
+            )
+            return record
+        except Exception as e:
+            logger.error(f"Failed to get config by ID {config_id}: {e}")
+            return None
+
+    async def rollback_config(
+        self,
+        strategy_id: str,
+        target_version: str,
+        reason: str,
+        symbol: Optional[str] = None,
+        changed_by: str = "system_rollback",
+    ) -> tuple[bool, dict[str, Any] | None, list[str]]:
+        """
+        Rollback configuration to previous version.
+
+        Args:
+            strategy_id: Strategy identifier
+            target_version: "previous", version number, or audit ID
+            reason: Reason for rollback
+            symbol: Optional symbol
+            changed_by: Who is performing rollback
+
+        Returns:
+            Tuple of (success, restored_config, errors)
+        """
+        # Resolve target version
+        target_audit = None
+
+        if target_version == "previous":
+            target_audit = await self.get_previous_config(strategy_id, symbol)
+            if not target_audit:
+                return False, None, ["No previous configuration found"]
+
+        elif target_version.isdigit():
+            target_audit = await self.get_config_by_version(
+                strategy_id, int(target_version), symbol
+            )
+            if not target_audit:
+                return False, None, [f"Version {target_version} not found"]
+
+        else:
+            target_audit = await self.get_config_by_id(target_version)
+            if not target_audit:
+                return False, None, [f"Configuration ID {target_version} not found"]
+
+        # Extract parameters
+        params_to_restore = target_audit.get("new_parameters")
+        if not params_to_restore:
+            return False, None, ["Target configuration has no parameters"]
+
+        # Perform rollback (set_config handles validation)
+        success = await self.set_config(
+            strategy_id=strategy_id,
+            parameters=params_to_restore,
+            changed_by=changed_by,
+            symbol=symbol,
+            reason=f"Rollback: {reason} (from audit {target_audit.get('_id')})",
+        )
+
+        if not success:
+            return False, None, ["Failed to apply rollback configuration"]
+
+        logger.info(
+            f"Configuration rolled back for {strategy_id}",
+            extra={"symbol": symbol, "reason": reason},
+        )
+
+        return True, params_to_restore, []

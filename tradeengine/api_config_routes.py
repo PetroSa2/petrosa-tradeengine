@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from tradeengine.config_manager import TradingConfigManager
@@ -777,6 +777,190 @@ async def validate_config(request: ConfigValidationRequest):
 
     except Exception as e:
         logger.error(f"Error validating config: {e}")
+        return APIResponse(
+            success=False,
+            error={"code": "INTERNAL_ERROR", "message": str(e)},
+        )
+
+
+# ============================================================================
+# Configuration Rollback Endpoints
+# ============================================================================
+
+
+@router.post(
+    "/strategies/{strategy_id}/config/rollback",
+    response_model=APIResponse[dict[str, Any]],
+    summary="Rollback strategy configuration to previous version",
+    description="""
+    **For LLM Agents**: Quickly revert configuration changes that caused trading issues.
+
+    Supports three rollback modes:
+    - `version=previous` - Rollback to immediately previous configuration
+    - `version=5` - Rollback to specific version number
+    - `version=507f...` - Rollback to specific audit record ID
+
+    **Safety**: Configuration is validated before rollback to prevent breaking changes.
+
+    **Example**: `POST /api/v1/strategies/momentum_pulse/config/rollback?version=previous&reason=High+reject+rate`
+    """,
+)
+async def rollback_strategy_config(
+    strategy_id: str,
+    version: str = Query(
+        ..., description="Target version: 'previous', version number, or audit ID"
+    ),
+    reason: str = Query(..., description="Reason for rollback"),
+    symbol: Optional[str] = Query(
+        None, description="Symbol for symbol-specific rollback"
+    ),
+    side: Optional[str] = Query(
+        None, description="Side (buy/sell) for side-specific rollback"
+    ),
+    changed_by: str = Query(
+        default="llm_agent", description="Who is performing rollback"
+    ),
+):
+    """Rollback strategy configuration to a previous version."""
+    try:
+        config_manager = get_config_manager()
+
+        success, restored_params, errors = await config_manager.rollback_config(
+            strategy_id=strategy_id,
+            target_version=version,
+            reason=reason,
+            symbol=symbol,
+            changed_by=changed_by,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "ROLLBACK_FAILED",
+                    "message": f"Failed to rollback: {', '.join(errors)}",
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data={"parameters": restored_params},
+            metadata={
+                "strategy_id": strategy_id,
+                "symbol": symbol,
+                "side": side,
+                "rolled_back_to": version,
+                "reason": reason,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error during rollback for {strategy_id}: {e}")
+        return APIResponse(
+            success=False,
+            error={"code": "INTERNAL_ERROR", "message": str(e)},
+        )
+
+
+@router.post(
+    "/strategies/{strategy_id}/config/restore",
+    response_model=APIResponse[dict[str, Any]],
+    summary="Restore strategy configuration from audit ID",
+    description="""
+    **For LLM Agents**: Restore a specific configuration by audit record ID.
+
+    **Safety**: Configuration is validated before restore.
+
+    **Example**: `POST /api/v1/strategies/momentum_pulse/config/restore?audit_id=507f...&reason=Restore+stable+config`
+    """,
+)
+async def restore_strategy_config(
+    strategy_id: str,
+    audit_id: str = Query(..., description="Audit record ID to restore from"),
+    reason: str = Query(..., description="Reason for restore"),
+    symbol: Optional[str] = Query(
+        None, description="Symbol for symbol-specific restore"
+    ),
+    side: Optional[str] = Query(
+        None, description="Side (buy/sell) for side-specific restore"
+    ),
+    changed_by: str = Query(
+        default="llm_agent", description="Who is performing restore"
+    ),
+):
+    """Restore strategy configuration from a specific audit record."""
+    try:
+        config_manager = get_config_manager()
+
+        success, restored_params, errors = await config_manager.rollback_config(
+            strategy_id=strategy_id,
+            target_version=audit_id,
+            reason=reason,
+            symbol=symbol,
+            changed_by=changed_by,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "RESTORE_FAILED",
+                    "message": f"Failed to restore: {', '.join(errors)}",
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data={"parameters": restored_params},
+            metadata={
+                "strategy_id": strategy_id,
+                "symbol": symbol,
+                "side": side,
+                "restored_from_audit_id": audit_id,
+                "reason": reason,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error during restore for {strategy_id}: {e}")
+        return APIResponse(
+            success=False,
+            error={"code": "INTERNAL_ERROR", "message": str(e)},
+        )
+
+
+@router.get(
+    "/strategies/{strategy_id}/config/history",
+    response_model=APIResponse[list[dict[str, Any]]],
+    summary="Get strategy configuration version history",
+    description="""
+    **For LLM Agents**: View configuration change history for analysis.
+
+    **Example**: `GET /api/v1/strategies/momentum_pulse/config/history?limit=20`
+    """,
+)
+async def get_strategy_config_history(
+    strategy_id: str,
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    limit: int = Query(20, description="Maximum number of versions", ge=1, le=100),
+):
+    """Get strategy configuration change history."""
+    try:
+        config_manager = get_config_manager()
+        history = await config_manager.get_config_history(strategy_id, symbol, limit)
+
+        return APIResponse(
+            success=True,
+            data=history,
+            metadata={
+                "count": len(history),
+                "strategy_id": strategy_id,
+                "symbol": symbol,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting config history for {strategy_id}: {e}")
         return APIResponse(
             success=False,
             error={"code": "INTERNAL_ERROR", "message": str(e)},

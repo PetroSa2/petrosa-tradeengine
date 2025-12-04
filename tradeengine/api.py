@@ -34,36 +34,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
-    # Attach OTLP logging handler after uvicorn configures logging
-    otel_init.attach_logging_handler()
+    # Configure logging using simplified dictConfig approach
+    # This replaces the old attach_logging_handler() + watchdog pattern
+    # Handlers will survive logging.basicConfig() calls automatically
+    otel_init.configure_logging()
+    logger.info("✅ Logging configured (no monitoring needed)")
 
-    # Start watchdog FIRST to ensure handler stays attached even if other init fails
-    async def logging_handler_watchdog() -> None:
-        """Aggressively monitor and re-attach OTLP logging handler"""
-        import asyncio
-
-        while True:
-            await asyncio.sleep(10)  # Check every 10 seconds (more aggressive)
-            try:
-                was_attached = otel_init.monitor_logging_handlers()
-                if not was_attached:
-                    logger.warning("⚠️  OTLP logging handler monitoring failed")
-            except Exception as e:
-                logger.error(f"⚠️  Watchdog error: {e}")
-                # Try to re-attach handler even if monitoring fails
-                try:
-                    otel_init.attach_logging_handler()
-                except Exception as reattach_error:
-                    logger.error(f"⚠️  Re-attach failed: {reattach_error}")
+    # Initialize components
+    startup_success = True
+    consumer_task = None  # Keep reference to prevent garbage collection
 
     import asyncio
 
-    asyncio.create_task(logging_handler_watchdog())
-    logger.info("✅ OTLP logging handler watchdog started")
-
-    # Now try to initialize other components (non-critical for logs)
-    startup_success = True
-    consumer_task = None  # Keep reference to prevent garbage collection
     try:
         # Validate MongoDB configuration first - fail catastrophically if not configured
         logger.info("Validating MongoDB configuration...")
@@ -152,13 +134,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error("Service will continue with limited functionality")
         startup_success = False
 
-    # Ensure OTLP logging handler is still attached after all initialization
-    # Some imports might have called logging.basicConfig() which clears handlers
-    otel_init.ensure_logging_handler()
-
-    # Don't raise exception - let service continue with watchdog running
+    # No need to ensure handler attachment - dictConfig handles it automatically
     if not startup_success:
-        logger.error("Service started with errors but watchdog is active")
+        logger.error("Service started with errors")
 
     yield
 
@@ -1022,7 +1000,7 @@ async def get_orders(
         # 4. Apply pagination (offset and limit)
 
         # Placeholder: Return empty list until order history is implemented
-        all_orders_list = []
+        all_orders_list: list[dict[str, Any]] = []
 
         # Apply filters here (when order history is implemented)
         filtered_orders = all_orders_list

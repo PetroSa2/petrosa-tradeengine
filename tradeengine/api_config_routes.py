@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from tradeengine.config_manager import TradingConfigManager
@@ -780,6 +780,97 @@ async def validate_config(request: ConfigValidationRequest):
         return APIResponse(
             success=False,
             error={"code": "INTERNAL_ERROR", "message": str(e)},
+        )
+
+
+# Configuration Rollback Endpoints
+
+
+@router.post(
+    "/strategies/{strategy_id}/config/rollback",
+    response_model=APIResponse[dict[str, Any]],
+    summary="Rollback strategy configuration",
+)
+async def rollback_strategy_config(
+    strategy_id: str,
+    version: str = Query(...),
+    reason: str = Query(...),
+    symbol: Optional[str] = Query(None),
+    changed_by: str = Query(default="llm_agent"),
+):
+    """Rollback strategy configuration."""
+    try:
+        config_manager = get_config_manager()
+        success, restored_params, errors = await config_manager.rollback_config(
+            strategy_id=strategy_id,
+            target_version=version,
+            reason=reason,
+            symbol=symbol,
+            changed_by=changed_by,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "ROLLBACK_FAILED",
+                    "message": f"Failed: {', '.join(errors)}",
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data={"parameters": restored_params},
+            metadata={"strategy_id": strategy_id, "rolled_back_to": version},
+        )
+    except Exception as e:
+        logger.error(f"Error during rollback: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.post(
+    "/strategies/{strategy_id}/config/restore",
+    response_model=APIResponse[dict[str, Any]],
+    summary="Restore configuration from audit ID",
+)
+async def restore_strategy_config(
+    strategy_id: str,
+    audit_id: str = Query(...),
+    reason: str = Query(...),
+    symbol: Optional[str] = Query(None),
+    changed_by: str = Query(default="llm_agent"),
+):
+    """Restore configuration from audit record."""
+    try:
+        config_manager = get_config_manager()
+        success, restored_params, errors = await config_manager.rollback_config(
+            strategy_id=strategy_id,
+            target_version=audit_id,
+            reason=reason,
+            symbol=symbol,
+            changed_by=changed_by,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "RESTORE_FAILED",
+                    "message": f"Failed: {', '.join(errors)}",
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data={"parameters": restored_params},
+            metadata={"strategy_id": strategy_id, "restored_from": audit_id},
+        )
+    except Exception as e:
+        logger.error(f"Error during restore: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
         )
 
 

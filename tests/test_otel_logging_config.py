@@ -212,3 +212,26 @@ class TestCornerCases:
         # (disable_existing_loggers=False means loggers stay enabled, not handlers preserved)
         # New handlers are added per configuration
         assert len(root_logger.handlers) >= 1
+
+    def test_configure_logging_exception_in_dictconfig(self):
+        """Test exception handling during dictConfig call."""
+        with patch(
+            "logging.config.dictConfig", side_effect=ValueError("Invalid config")
+        ):
+            result = otel_init.configure_logging()
+
+            assert result is False
+
+    def test_configure_logging_exception_in_otlp_handler(self):
+        """Test exception handling during OTLP handler creation."""
+        mock_provider = MagicMock()
+        otel_init._global_logger_provider = mock_provider
+
+        with patch(
+            "otel_init.LoggingHandler",
+            side_effect=RuntimeError("Handler creation failed"),
+        ):
+            result = otel_init.configure_logging()
+
+            # Should return False on exception
+            assert result is False

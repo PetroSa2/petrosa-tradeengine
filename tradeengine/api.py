@@ -214,6 +214,15 @@ otel_init.instrument_fastapi_app(app)
 # Include configuration API routes
 app.include_router(config_router)
 
+# Include performance metrics API routes
+try:
+    from tradeengine.api_metrics_routes import router as metrics_router
+
+    app.include_router(metrics_router)
+    logger.info("Performance metrics API routes registered at /api/v1/metrics")
+except Exception as e:
+    logger.warning(f"Could not register metrics API routes: {e}")
+
 # Initialize components
 settings = Settings()
 binance_exchange = BinanceFuturesExchange()

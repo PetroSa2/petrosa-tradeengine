@@ -45,9 +45,6 @@ ignore:
   - "tradeengine/signal_aggregator.py"
   - "tradeengine/consumer.py"
   - "shared/mysql_client.py"
-  # PR #191: OpenTelemetry initialization is instrumentation code (like metrics.py)
-  # Difficult to test without live telemetry infrastructure
-  - "otel_init.py"
 
 # File-specific overrides
 flag_management:

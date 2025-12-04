@@ -179,15 +179,15 @@ security:
 # Docker
 build:
 	@echo "🐳 Building Docker image..."
-	docker build -t petrosa-tradeengine:latest .
+	docker build -t petrosa-tradeengine:dev .
 
 container:
 	@echo "📦 Testing Docker container..."
-	docker run --rm --name test-container petrosa-tradeengine:latest python -c "import tradeengine; print('✅ Container test passed')" || (docker logs test-container 2>/dev/null || true; exit 1)
+	docker run --rm --name test-container petrosa-tradeengine:dev python -c "import tradeengine; print('✅ Container test passed')" || (docker logs test-container 2>/dev/null || true; exit 1)
 
 docker-clean:
 	@echo "🧹 Cleaning up Docker images..."
-	docker rmi petrosa-tradeengine:latest 2>/dev/null || true
+	docker rmi petrosa-tradeengine:dev 2>/dev/null || true
 	docker system prune -f
 
 # Deployment

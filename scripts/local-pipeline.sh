@@ -232,7 +232,7 @@ build_docker_image() {
     fi
 
     # Build image
-    if docker build -t "$DOCKER_IMAGE:$DOCKER_TAG" -t "$DOCKER_IMAGE:latest" .; then
+    if docker build -t "$DOCKER_IMAGE:$DOCKER_TAG" .; then
         print_success "Docker image built successfully"
         print_status "Image: $DOCKER_IMAGE:$DOCKER_TAG"
     else
@@ -364,7 +364,6 @@ cleanup() {
     if [ "${CLEANUP_DOCKER:-false}" = "true" ]; then
         print_status "Removing Docker images..."
         docker rmi "$DOCKER_IMAGE:$DOCKER_TAG" >/dev/null 2>&1 || true
-        docker rmi "$DOCKER_IMAGE:latest" >/dev/null 2>&1 || true
     fi
 }
 

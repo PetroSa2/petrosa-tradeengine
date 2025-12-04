@@ -275,10 +275,8 @@ def configure_logging() -> bool:
 
         handler_names = ["stdout"]
 
-        # Add OTLP to handler names if logger provider is configured
-        # (Handler instance will be created and attached after dictConfig)
-        if _global_logger_provider is not None:
-            handler_names.append("otlp")
+        # Note: OTLP handler will be added manually after dictConfig
+        # (Cannot be in dictConfig because it requires provider instance)
 
         # Build complete logging configuration
         logging_config = {

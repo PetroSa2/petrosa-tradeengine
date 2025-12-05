@@ -332,9 +332,6 @@ async def test_oco_placement_verifies_order_execution_flow(
     stop_loss_price = 48000.0
     take_profit_price = 52000.0
 
-    # Clear spy before test
-    exchange_spy.clear()
-
     # Place OCO orders
     result = await oco_manager.place_oco_orders(
         position_id=position_id,

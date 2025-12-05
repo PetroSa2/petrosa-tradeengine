@@ -38,7 +38,11 @@ def dispatcher_with_risk_limits():
 
 @pytest.fixture(autouse=True)
 def mock_distributed_lock():
-    """Mock distributed lock manager to always succeed (no MongoDB needed)."""
+    """Mock distributed lock manager to always succeed (no MongoDB needed).
+
+    According to trade engine integration test guidelines, distributed locks
+    should be mocked to avoid requiring MongoDB connections in tests.
+    """
 
     async def mock_execute_with_lock(lock_key, func, *args, **kwargs):
         """Mock lock execution - just call the function directly."""
@@ -85,9 +89,10 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
     execution_result = result.get("execution_result", {})
     assert (
         execution_result.get("status") == "rejected"
-        or "risk" in execution_result.get("reason", "").lower()
-        or result.get("status") == "rejected"
-        or "risk" in result.get("reason", "").lower()
+    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert (
+        "risk" in execution_result.get("reason", "").lower()
+        or "limit" in execution_result.get("reason", "").lower()
     )
 
     # Verify no order was executed
@@ -127,11 +132,10 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
     execution_result = result.get("execution_result", {})
     assert (
         execution_result.get("status") == "rejected"
-        or "risk" in execution_result.get("reason", "").lower()
-        or "daily loss" in execution_result.get("reason", "").lower()
+    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert (
+        "daily loss" in execution_result.get("reason", "").lower()
         or "loss limit" in execution_result.get("reason", "").lower()
-        or result.get("status") == "rejected"
-        or "risk" in result.get("reason", "").lower()
     )
 
     # Verify no order was executed
@@ -191,9 +195,10 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
     execution_result = result.get("execution_result", {})
     assert (
         execution_result.get("status") == "rejected"
-        or "risk" in execution_result.get("reason", "").lower()
-        or result.get("status") == "rejected"
-        or "risk" in result.get("reason", "").lower()
+    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert (
+        "risk" in execution_result.get("reason", "").lower()
+        or "exposure" in execution_result.get("reason", "").lower()
     )
 
     # Verify no order was executed
@@ -243,17 +248,22 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
     """Test that risk_rejections_total metric increments correctly."""
     dispatcher, fake_exchange, fake_position_mgr = dispatcher_with_risk_limits
 
-    from tradeengine.metrics import risk_rejections_total
+    from prometheus_client import REGISTRY
 
     # Set up scenario that will violate risk limit
     fake_position_mgr.total_portfolio_value = 10000.0
     fake_position_mgr.daily_pnl = -600.0  # Exceeds daily loss limit
 
-    # Get initial metric value
+    # Get initial metric value using public API
     initial_count = (
-        risk_rejections_total.labels(
-            reason="daily_loss_limits_exceeded", symbol="BTCUSDT", exchange="binance"
-        )._value.get()
+        REGISTRY.get_sample_value(
+            "tradeengine_risk_rejections_total",
+            labels={
+                "reason": "daily_loss_limits_exceeded",
+                "symbol": "BTCUSDT",
+                "exchange": "binance",
+            },
+        )
         or 0
     )
 
@@ -276,15 +286,23 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
     # Process signal (should be rejected)
     await dispatcher.dispatch(signal)
 
-    # Check metric increased
-    final_count = risk_rejections_total.labels(
-        reason="daily_loss_limits_exceeded", symbol="BTCUSDT", exchange="binance"
-    )._value.get()
+    # Check metric increased using public API
+    final_count = (
+        REGISTRY.get_sample_value(
+            "tradeengine_risk_rejections_total",
+            labels={
+                "reason": "daily_loss_limits_exceeded",
+                "symbol": "BTCUSDT",
+                "exchange": "binance",
+            },
+        )
+        or 0
+    )
 
-    # Note: Metric might not increment if dispatcher doesn't emit it on rejection
-    # This test verifies the integration works
-    # If metric doesn't increment, this is a bug to fix
-    assert final_count >= initial_count
+    # Verify metric actually incremented (not just >= which allows no change)
+    assert (
+        final_count > initial_count
+    ), f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
 
 
 @pytest.mark.integration

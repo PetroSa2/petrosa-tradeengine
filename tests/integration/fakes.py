@@ -189,11 +189,6 @@ class FakePositionManager:
             except (ValueError, TypeError):
                 pass  # If position_size_pct is not a valid number, check by value instead
 
-        # Check portfolio exposure limit
-        current_exposure = self._calculate_portfolio_exposure()
-        if current_exposure > self.max_portfolio_exposure_pct:
-            return False
-
         # Check absolute position size (for both new and existing positions)
         position_side = "LONG" if order.side == "buy" else "SHORT"
         position_key = (order.symbol, position_side)
@@ -201,6 +196,17 @@ class FakePositionManager:
         # Calculate position value for this order
         order_price = order.target_price or 50000.0
         order_value = order.amount * order_price
+
+        # Check portfolio exposure limit (including the new order)
+        current_exposure = self._calculate_portfolio_exposure()
+        new_order_exposure_pct = (
+            order_value / self.total_portfolio_value
+            if self.total_portfolio_value > 0
+            else 0
+        )
+        total_exposure_after_order = current_exposure + new_order_exposure_pct
+        if total_exposure_after_order > self.max_portfolio_exposure_pct:
+            return False
 
         if position_key in self.positions:
             # Existing position - check total after adding this order

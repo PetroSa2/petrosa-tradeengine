@@ -194,6 +194,7 @@ def oco_manager(fake_exchange):
     # Cleanup will be handled in each test
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_monitoring_detects_sl_fill_and_cancels_tp(oco_manager, fake_exchange):
     """
@@ -267,6 +268,7 @@ async def test_monitoring_detects_sl_fill_and_cancels_tp(oco_manager, fake_excha
     await oco_manager.stop_monitoring()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_monitoring_detects_tp_fill_and_cancels_sl(oco_manager, fake_exchange):
     """
@@ -331,6 +333,7 @@ async def test_monitoring_detects_tp_fill_and_cancels_sl(oco_manager, fake_excha
     await oco_manager.stop_monitoring()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_multiple_concurrent_oco_pairs_independent(oco_manager, fake_exchange):
     """
@@ -415,6 +418,7 @@ async def test_multiple_concurrent_oco_pairs_independent(oco_manager, fake_excha
     await oco_manager.stop_monitoring()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_cancelled_orders_removed_from_active_pairs(oco_manager, fake_exchange):
     """
@@ -477,6 +481,7 @@ async def test_cancelled_orders_removed_from_active_pairs(oco_manager, fake_exch
     await oco_manager.stop_monitoring()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_monitoring_continues_after_pair_completes(oco_manager, fake_exchange):
     """
@@ -563,6 +568,7 @@ async def test_monitoring_continues_after_pair_completes(oco_manager, fake_excha
     await oco_manager.stop_monitoring()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_order_state_changes_trigger_cancellation(oco_manager, fake_exchange):
     """

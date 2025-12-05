@@ -245,12 +245,17 @@ def configure_logging() -> bool:
     Configure logging using dictConfig for deterministic handler setup.
 
     This simplified approach uses logging.config.dictConfig with
-    disable_existing_loggers=False to ensure handlers survive
-    logging reconfiguration (e.g., logging.basicConfig() calls).
+    disable_existing_loggers=False to prevent existing loggers from
+    being disabled during reconfiguration.
+
+    Note: disable_existing_loggers=False prevents loggers from being
+    disabled, but does NOT prevent handler removal. Handlers survive
+    because dictConfig is called after basicConfig, or because basicConfig
+    is not called with force=True.
 
     Benefits:
     - Deterministic configuration
-    - Handlers survive logging.basicConfig()
+    - Handlers survive logging.basicConfig() (when called before basicConfig or without force=True)
     - No defensive monitoring/re-attachment needed
     - Single point of configuration
 
@@ -281,7 +286,7 @@ def configure_logging() -> bool:
         # Build complete logging configuration
         logging_config = {
             "version": 1,
-            "disable_existing_loggers": False,  # ← KEY: Prevents handler removal
+            "disable_existing_loggers": False,  # Prevents existing loggers from being disabled (not handler removal)
             "formatters": {
                 "standard": {
                     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",

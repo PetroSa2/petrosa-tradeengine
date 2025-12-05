@@ -99,7 +99,8 @@ def test_logging_survives_basicconfig_call():
     # Using force=False which is the default
     logging.basicConfig(level=logging.DEBUG, force=False)
 
-    # Handlers should still exist (disable_existing_loggers=False)
+    # Handlers should still exist because basicConfig(force=False) doesn't remove existing handlers
+    # Note: disable_existing_loggers=False prevents loggers from being disabled, not handler removal
     handler_count_after = len(root.handlers)
 
     # Should have at least the same number (basicConfig might add more but won't remove)

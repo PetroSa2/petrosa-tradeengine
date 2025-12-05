@@ -53,20 +53,59 @@ def sample_signal():
     )
 
 
+@pytest.fixture
+def mock_lock_manager_init():
+    """Fixture to mock distributed_lock_manager.initialize across all tests."""
+    from shared.distributed_lock import distributed_lock_manager
+
+    with patch.object(distributed_lock_manager, "initialize", new_callable=AsyncMock):
+        yield
+
+
+def create_signal_with_fingerprint(
+    sample_signal: Signal, signal_id: str, timestamp: datetime
+) -> Signal:
+    """Helper function to create a signal with a specific fingerprint.
+
+    Args:
+        sample_signal: Base signal to copy fields from
+        signal_id: Signal ID to use (determines fingerprint for lock key)
+        timestamp: Timestamp for the signal (affects duplicate cache)
+
+    Returns:
+        Signal with specified signal_id and timestamp
+    """
+    return Signal(
+        strategy_id=sample_signal.strategy_id,
+        symbol=sample_signal.symbol,
+        signal_type=sample_signal.signal_type,
+        action=sample_signal.action,
+        confidence=sample_signal.confidence,
+        strength=sample_signal.strength,
+        timeframe=sample_signal.timeframe,
+        price=sample_signal.price,
+        quantity=sample_signal.quantity,
+        current_price=sample_signal.current_price,
+        timestamp=timestamp,
+        source=sample_signal.source,
+        strategy=sample_signal.strategy,
+        strategy_mode=sample_signal.strategy_mode,
+        signal_id=signal_id,  # Same signal_id = same fingerprint = same lock key
+    )
+
+
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lock_prevents_concurrent_processing(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that lock prevents same signal from being processed concurrently.
 
     When the same signal is dispatched twice concurrently, only one order
     should be executed because the lock prevents the second pod from processing.
-
-    Note: We need to use slightly different signals to bypass the duplicate
-    signal cache, which would reject the second signal before it reaches
-    the lock mechanism.
     """
     from shared.distributed_lock import distributed_lock_manager
     from tradeengine.dispatcher import Dispatcher
@@ -97,64 +136,38 @@ async def test_lock_prevents_concurrent_processing(
         "execute_with_lock",
         side_effect=mock_execute_with_lock,
     ):
-        # Initialize lock manager (no-op for mocked version)
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
+
+        # Mock _generate_signal_id to return different IDs for duplicate cache bypass
+        # This allows both signals to pass duplicate check while using same fingerprint for lock
+        signal_id_counter = 0
+
+        def mock_generate_signal_id(signal):
+            """Mock to generate unique signal IDs to bypass duplicate cache."""
+            nonlocal signal_id_counter
+            signal_id_counter += 1
+            # Return different IDs so duplicate cache doesn't catch them
+            return f"test-signal-id-{signal_id_counter}"
+
+        # Create two signals with same fingerprint (same signal_id) but will have different
+        # duplicate cache IDs due to mocking
+        import time
+
+        base_timestamp = datetime.utcnow()
+        shared_signal_id = f"test-lock-signal-{int(time.time())}"
+
+        signal1 = create_signal_with_fingerprint(
+            sample_signal, shared_signal_id, base_timestamp
+        )
+        signal2 = create_signal_with_fingerprint(
+            sample_signal, shared_signal_id, base_timestamp
+        )
+
+        # Patch _generate_signal_id to bypass duplicate cache
         with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
+            dispatcher, "_generate_signal_id", side_effect=mock_generate_signal_id
         ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
-
-            # Create two signals with timestamps 2+ seconds apart to bypass duplicate cache.
-            # Set same signal_id so they have the same fingerprint (lock key).
-            # The duplicate cache uses _generate_signal_id (strategy_id, symbol, action, timestamp_second).
-            # The lock uses _generate_signal_fingerprint, which uses signal_id if available.
-            # By setting the same signal_id, both signals will use the same lock key.
-            import time
-
-            base_timestamp = datetime.utcnow()
-            shared_signal_id = f"test-lock-signal-{int(time.time())}"
-
-            # Create signal1
-            signal1 = Signal(
-                strategy_id=sample_signal.strategy_id,
-                symbol=sample_signal.symbol,
-                signal_type=sample_signal.signal_type,
-                action=sample_signal.action,
-                confidence=sample_signal.confidence,
-                strength=sample_signal.strength,
-                timeframe=sample_signal.timeframe,
-                price=sample_signal.price,
-                quantity=sample_signal.quantity,
-                current_price=sample_signal.current_price,
-                timestamp=base_timestamp,
-                source=sample_signal.source,
-                strategy=sample_signal.strategy,
-                strategy_mode=sample_signal.strategy_mode,
-                signal_id=shared_signal_id,  # Same signal_id = same fingerprint = same lock key
-            )
-
-            # Wait 2+ seconds to ensure different timestamp_second for duplicate cache
-            await asyncio.sleep(2.1)
-            signal2_timestamp = datetime.utcnow()
-
-            # Create signal2 with different timestamp (different second) but same signal_id
-            signal2 = Signal(
-                strategy_id=sample_signal.strategy_id,
-                symbol=sample_signal.symbol,
-                signal_type=sample_signal.signal_type,
-                action=sample_signal.action,
-                confidence=sample_signal.confidence,
-                strength=sample_signal.strength,
-                timeframe=sample_signal.timeframe,
-                price=sample_signal.price,
-                quantity=sample_signal.quantity,
-                current_price=sample_signal.current_price,
-                timestamp=signal2_timestamp,
-                source=sample_signal.source,
-                strategy=sample_signal.strategy,
-                strategy_mode=sample_signal.strategy_mode,
-                signal_id=shared_signal_id,  # Same signal_id = same fingerprint = same lock key
-            )
 
             # Process signals concurrently (simulating two pods)
             # Both signals will have the same fingerprint, so they'll use the same lock key
@@ -200,11 +213,13 @@ async def test_lock_prevents_concurrent_processing(
             ), f"Expected 1 lock release, got {len(lock_releases)}"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lock_acquisition_failure_skips_gracefully(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that failed lock acquisition skips processing without error.
 
@@ -224,36 +239,35 @@ async def test_lock_acquisition_failure_skips_gracefully(
         "execute_with_lock",
         side_effect=mock_execute_with_lock_fail,
     ):
-        with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
-        ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
 
-            # Process signal (should skip gracefully)
-            result = await dispatcher.dispatch(sample_signal)
+        # Process signal (should skip gracefully)
+        result = await dispatcher.dispatch(sample_signal)
 
-            # Verify: Processing was skipped
-            assert (
-                result["status"] == "skipped_duplicate"
-            ), f"Expected 'skipped_duplicate' status, got '{result.get('status')}'"
-            assert (
-                "lock" in result.get("reason", "").lower()
-                or "pod" in result.get("reason", "").lower()
-            ), f"Reason should mention lock or pod: {result.get('reason')}"
+        # Verify: Processing was skipped
+        assert (
+            result["status"] == "skipped_duplicate"
+        ), f"Expected 'skipped_duplicate' status, got '{result.get('status')}'"
+        assert (
+            "lock" in result.get("reason", "").lower()
+            or "pod" in result.get("reason", "").lower()
+        ), f"Reason should mention lock or pod: {result.get('reason')}"
 
-            # Verify: No order was executed
-            assert len(fake_exchange.executed_orders) == 0, (
-                f"Expected 0 orders, but got {len(fake_exchange.executed_orders)}. "
-                f"Lock failure should prevent order execution."
-            )
+        # Verify: No order was executed
+        assert len(fake_exchange.executed_orders) == 0, (
+            f"Expected 0 orders, but got {len(fake_exchange.executed_orders)}. "
+            f"Lock failure should prevent order execution."
+        )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lock_released_after_success(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that lock is released after successful processing.
 
@@ -278,29 +292,28 @@ async def test_lock_released_after_success(
         "execute_with_lock",
         side_effect=mock_execute_with_lock_success,
     ):
-        with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
-        ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
 
-            # Process signal
-            await dispatcher.dispatch(sample_signal)
+        # Process signal
+        await dispatcher.dispatch(sample_signal)
 
-            # Verify: Function was executed (order was placed)
-            assert (
-                len(fake_exchange.executed_orders) == 1
-            ), f"Expected 1 order, got {len(fake_exchange.executed_orders)}"
+        # Verify: Function was executed (order was placed)
+        assert (
+            len(fake_exchange.executed_orders) == 1
+        ), f"Expected 1 order, got {len(fake_exchange.executed_orders)}"
 
-            # Verify: Lock was released
-            assert lock_released, "Lock should be released after successful processing"
+        # Verify: Lock was released
+        assert lock_released, "Lock should be released after successful processing"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lock_released_after_failure(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that lock is released even if processing fails.
 
@@ -316,12 +329,14 @@ async def test_lock_released_after_failure(
         """Mock execute_with_lock to fail during execution but still release lock."""
         nonlocal lock_released
         try:
-            # Simulate error during order execution
-            raise Exception("Simulated exchange error during order execution")
+            # Actually call the function first, then simulate error
+            await func(*args, **kwargs)
+            # Simulate error after execution (e.g., during result processing)
+            raise Exception("Simulated error after order execution")
         finally:
             lock_released = True  # Lock should still be released
 
-    # Make exchange throw error
+    # Make exchange throw error during execution
     async def failing_execute(order):
         raise Exception("Simulated exchange error")
 
@@ -332,33 +347,30 @@ async def test_lock_released_after_failure(
         "execute_with_lock",
         side_effect=mock_execute_with_lock_error,
     ):
-        with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
-        ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
 
-            # Process signal (should handle error gracefully)
-            result = await dispatcher.dispatch(sample_signal)
+        # Process signal (should handle error gracefully)
+        result = await dispatcher.dispatch(sample_signal)
 
-            # Verify: Error was caught (status should be error or similar)
-            # The dispatcher may return error status or re-raise, but lock should be released
-            assert (
-                result.get("status") in ["error", "failed"]
-                or "error" in str(result).lower()
-            ), f"Expected error status, got: {result}"
+        # Verify: Error was caught (status should be error or similar)
+        # The dispatcher may return error status or re-raise, but lock should be released
+        assert (
+            result.get("status") in ["error", "failed"]
+            or "error" in str(result).lower()
+        ), f"Expected error status, got: {result}"
 
-            # Verify: Lock was released even after error
-            assert (
-                lock_released
-            ), "Lock should be released even after processing failure"
+        # Verify: Lock was released even after error
+        assert lock_released, "Lock should be released even after processing failure"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lock_key_includes_signal_fingerprint(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that lock key includes signal fingerprint to prevent collision.
 
@@ -381,39 +393,38 @@ async def test_lock_key_includes_signal_fingerprint(
         "execute_with_lock",
         side_effect=mock_execute_with_lock_capture,
     ):
-        with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
-        ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
 
-            # Process signal
-            await dispatcher.dispatch(sample_signal)
+        # Process signal
+        await dispatcher.dispatch(sample_signal)
 
-            # Verify: lock_key includes signal components
-            assert captured_lock_key is not None, "Lock key should be captured"
-            assert (
-                "signal_" in captured_lock_key
-            ), f"Lock key should start with 'signal_', got: {captured_lock_key}"
+        # Verify: lock_key includes signal components
+        assert captured_lock_key is not None, "Lock key should be captured"
+        assert (
+            "signal_" in captured_lock_key
+        ), f"Lock key should start with 'signal_', got: {captured_lock_key}"
 
-            # Verify: Lock key includes signal identifier (strategy_id or symbol)
-            # The fingerprint is generated from signal fields, so it should include
-            # strategy_id, symbol, or other identifying fields
-            assert (
-                sample_signal.strategy_id in captured_lock_key
-                or sample_signal.symbol in captured_lock_key
-            ), (
-                f"Lock key should include signal identifier. "
-                f"Key: {captured_lock_key}, Strategy: {sample_signal.strategy_id}, "
-                f"Symbol: {sample_signal.symbol}"
-            )
+        # Verify: Lock key includes signal identifier (strategy_id or symbol)
+        # The fingerprint is generated from signal fields, so it should include
+        # strategy_id, symbol, or other identifying fields
+        assert (
+            sample_signal.strategy_id in captured_lock_key
+            or sample_signal.symbol in captured_lock_key
+        ), (
+            f"Lock key should include signal identifier. "
+            f"Key: {captured_lock_key}, Strategy: {sample_signal.strategy_id}, "
+            f"Symbol: {sample_signal.symbol}"
+        )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_second_pod_waits_for_first_pod_lock_release(
     fake_exchange: FakeExchange,
     fake_position_manager: FakePositionManager,
     sample_signal: Signal,
+    mock_lock_manager_init,
 ):
     """Test that second pod waits for first pod's lock to release.
 
@@ -457,59 +468,36 @@ async def test_second_pod_waits_for_first_pod_lock_release(
         "execute_with_lock",
         side_effect=mock_execute_with_lock_sequential,
     ):
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
+
+        # Mock _generate_signal_id to return different IDs for duplicate cache bypass
+        signal_id_counter = 0
+
+        def mock_generate_signal_id(signal):
+            """Mock to generate unique signal IDs to bypass duplicate cache."""
+            nonlocal signal_id_counter
+            signal_id_counter += 1
+            return f"test-signal-id-{signal_id_counter}"
+
+        # Create two signals with same fingerprint (same signal_id) but will have different
+        # duplicate cache IDs due to mocking
+        import time
+
+        base_timestamp = datetime.utcnow()
+        shared_signal_id = f"test-sequential-lock-signal-{int(time.time())}"
+
+        signal1 = create_signal_with_fingerprint(
+            sample_signal, shared_signal_id, base_timestamp
+        )
+        signal2 = create_signal_with_fingerprint(
+            sample_signal, shared_signal_id, base_timestamp
+        )
+
+        # Patch _generate_signal_id to bypass duplicate cache
         with patch.object(
-            distributed_lock_manager, "initialize", new_callable=AsyncMock
+            dispatcher, "_generate_signal_id", side_effect=mock_generate_signal_id
         ):
-            dispatcher = Dispatcher(exchange=fake_exchange)
-            dispatcher.position_manager = fake_position_manager
-
-            # Create two signals with timestamps 2+ seconds apart to bypass duplicate cache.
-            # Set same signal_id so they have the same fingerprint (lock key).
-            import time
-
-            base_timestamp = datetime.utcnow()
-            shared_signal_id = f"test-sequential-lock-signal-{int(time.time())}"
-
-            signal1 = Signal(
-                strategy_id=sample_signal.strategy_id,
-                symbol=sample_signal.symbol,
-                signal_type=sample_signal.signal_type,
-                action=sample_signal.action,
-                confidence=sample_signal.confidence,
-                strength=sample_signal.strength,
-                timeframe=sample_signal.timeframe,
-                price=sample_signal.price,
-                quantity=sample_signal.quantity,
-                current_price=sample_signal.current_price,
-                timestamp=base_timestamp,
-                source=sample_signal.source,
-                strategy=sample_signal.strategy,
-                strategy_mode=sample_signal.strategy_mode,
-                signal_id=shared_signal_id,  # Same signal_id = same fingerprint = same lock key
-            )
-
-            # Wait 2+ seconds to ensure different timestamp_second for duplicate cache
-            await asyncio.sleep(2.1)
-            signal2_timestamp = datetime.utcnow()
-
-            signal2 = Signal(
-                strategy_id=sample_signal.strategy_id,
-                symbol=sample_signal.symbol,
-                signal_type=sample_signal.signal_type,
-                action=sample_signal.action,
-                confidence=sample_signal.confidence,
-                strength=sample_signal.strength,
-                timeframe=sample_signal.timeframe,
-                price=sample_signal.price,
-                quantity=sample_signal.quantity,
-                current_price=sample_signal.current_price,
-                timestamp=signal2_timestamp,
-                source=sample_signal.source,
-                strategy=sample_signal.strategy,
-                strategy_mode=sample_signal.strategy_mode,
-                signal_id=shared_signal_id,  # Same signal_id = same fingerprint = same lock key
-            )
-
             # Process signals (simulating two pods)
             # First call should succeed, second should skip due to lock
             results = await asyncio.gather(

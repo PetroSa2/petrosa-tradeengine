@@ -335,3 +335,4 @@ When fixing the pipeline, go until it is fully green and stop only when CI/CD on
 - **NumPy compatibility**: Use `numpy<2.0.0` for pandas-ta compatibility
 - **GitHub CLI**: Always dump output to `/tmp` files and read from them
 - **VERSION_PLACEHOLDER**: Never replace in Kubernetes manifests - it's part of the deployment system
+- **Pre-Merge Cleanup**: See master § Pre-Merge Intelligent Cleanup Workflow - Cursor AI automatically reorganizes files, removes outdated content, and consolidates documentation before merges using semantic understanding

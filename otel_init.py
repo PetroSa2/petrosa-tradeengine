@@ -3,9 +3,15 @@ OpenTelemetry initialization for the Trade Engine service.
 
 This module sets up OpenTelemetry instrumentation for observability
 and monitoring of the trading engine service.
+
+SIMPLIFIED LOGGING ARCHITECTURE:
+- Uses logging.config.dictConfig for deterministic configuration
+- Sets disable_existing_loggers=False to prevent handler removal
+- No defensive monitoring/re-attachment needed
 """
 
 import logging
+import logging.config
 import os
 from typing import Optional
 
@@ -25,9 +31,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-# Global logger provider for attaching handlers
+# Global logger provider reference
 _global_logger_provider = None
-_otlp_logging_handler = None  # Store reference to check if it's still attached
 
 
 def setup_telemetry(
@@ -197,7 +202,7 @@ def setup_telemetry(
             _global_logger_provider = logger_provider
 
             print(f"✅ OpenTelemetry logging export configured for {service_name}")
-            print("   Note: Call attach_logging_handler() after app starts to activate")
+            print("   Note: Call configure_logging() after app starts to activate")
 
         except Exception as e:
             print(f"⚠️  Failed to set up OpenTelemetry logging export: {e}")
@@ -221,7 +226,7 @@ def setup_telemetry(
     print(f"🚀 OpenTelemetry setup completed for {service_name} v{service_version}")
 
 
-def instrument_fastapi_app(app):
+def instrument_fastapi_app(app) -> None:  # type: ignore[no-untyped-def]
     """
     Instrument a FastAPI application.
 
@@ -235,163 +240,137 @@ def instrument_fastapi_app(app):
         print(f"⚠️  Failed to instrument FastAPI application: {e}")
 
 
-def attach_logging_handler():
+def configure_logging() -> bool:
     """
-    Attach BOTH OTLP and stdout logging handlers to root logger and uvicorn loggers.
+    Configure logging using dictConfig for deterministic handler setup.
 
-    This should be called AFTER uvicorn/FastAPI configures logging,
+    This simplified approach uses logging.config.dictConfig with
+    disable_existing_loggers=False to ensure handlers survive
+    logging reconfiguration (e.g., logging.basicConfig() calls).
+
+    Benefits:
+    - Deterministic configuration
+    - Handlers survive logging.basicConfig()
+    - No defensive monitoring/re-attachment needed
+    - Single point of configuration
+
+    Should be called AFTER uvicorn/FastAPI configures logging,
     typically in the lifespan startup function.
 
-    We attach to both root logger AND uvicorn-specific loggers because:
-    1. Root logger captures application logs
-    2. Uvicorn loggers (uvicorn, uvicorn.access, uvicorn.error) bypass root logger
-       and need explicit handler attachment to capture server/access logs
-
-    We add BOTH OTLP and stdout handlers so logs are visible in:
-    - Grafana/Loki (via OTLP) for centralized observability
-    - kubectl logs (via stdout) for quick debugging
+    Returns:
+        bool: True if configuration successful, False otherwise
     """
-    global _global_logger_provider, _otlp_logging_handler
-    import sys
+    global _global_logger_provider
 
     try:
-        # Get loggers
-        root_logger = logging.getLogger()
-        uvicorn_logger = logging.getLogger("uvicorn")
-        uvicorn_access_logger = logging.getLogger("uvicorn.access")
-        uvicorn_error_logger = logging.getLogger("uvicorn.error")
+        # Build handlers configuration
+        handlers_config = {
+            "stdout": {
+                "class": "logging.StreamHandler",
+                "level": "INFO",
+                "formatter": "standard",
+                "stream": "ext://sys.stdout",
+            }
+        }
 
-        # Set log level to INFO for root logger
-        root_logger.setLevel(logging.INFO)
+        handler_names = ["stdout"]
 
-        # Check if our handler is still attached to root logger
-        if _otlp_logging_handler is not None:
-            if _otlp_logging_handler in root_logger.handlers:
-                print("✅ OTLP logging handler already attached")
-                return True
-            else:
-                print("⚠️  OTLP handler was removed, re-attaching...")
+        # Note: OTLP handler will be added manually after dictConfig
+        # (Cannot be in dictConfig because it requires provider instance)
 
-        # 1. Add STDOUT handler for kubectl logs visibility
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setLevel(logging.INFO)
-        stdout_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
-        stdout_handler.setFormatter(stdout_formatter)
-        root_logger.addHandler(stdout_handler)
-        print("✅ Stdout logging handler added for kubectl visibility")
+        # Build complete logging configuration
+        logging_config = {
+            "version": 1,
+            "disable_existing_loggers": False,  # ← KEY: Prevents handler removal
+            "formatters": {
+                "standard": {
+                    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                }
+            },
+            "handlers": handlers_config,
+            "loggers": {
+                # Root logger
+                "": {
+                    "handlers": handler_names,
+                    "level": "INFO",
+                },
+                # Uvicorn loggers (don't propagate to root by default)
+                "uvicorn": {
+                    "handlers": handler_names,
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": handler_names,
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "handlers": handler_names,
+                    "level": "INFO",
+                    "propagate": False,
+                },
+            },
+        }
 
-        # 2. Add OTLP handler for Grafana/Loki
-        # Re-enabled OTLP logging handler for Grafana integration
-        # Logs will be sent to both stdout (kubectl) and OTLP (Grafana/Loki)
+        # Apply configuration
+        logging.config.dictConfig(logging_config)
+
+        # Add OTLP handler manually after dictConfig (if provider configured)
+        # This is done after dictConfig because LoggingHandler needs the provider instance
         if _global_logger_provider is not None:
             otlp_handler = LoggingHandler(
                 level=logging.NOTSET,
                 logger_provider=_global_logger_provider,
             )
 
-            # Attach OTLP handler to root logger
+            # Add to all loggers
+            root_logger = logging.getLogger()
             root_logger.addHandler(otlp_handler)
+            logging.getLogger("uvicorn").addHandler(otlp_handler)
+            logging.getLogger("uvicorn.access").addHandler(otlp_handler)
+            logging.getLogger("uvicorn.error").addHandler(otlp_handler)
 
-            # Also attach to uvicorn loggers to capture server/access logs
-            # These loggers don't propagate to root logger by default
-            uvicorn_logger.addHandler(otlp_handler)
-            uvicorn_access_logger.addHandler(otlp_handler)
-            uvicorn_error_logger.addHandler(otlp_handler)
-
-            _otlp_logging_handler = otlp_handler
-            print("✅ OTLP logging handler attached for Grafana export")
-        else:
-            print("⚠️  OTLP logging handler disabled (prevents shutdown crashes)")
-            print("   Logs still visible in stdout for kubectl")
-
-        print("📊 Logging configuration complete:")
-        print(f"   Root logger level: {logging.getLevelName(root_logger.level)}")
-        print(f"   Root logger handlers: {len(root_logger.handlers)}")
+        print("📊 Logging configuration complete (using dictConfig):")
+        print("   Root logger level: INFO")
+        print(f"   Handlers configured: {', '.join(handler_names)}")
         print("   - Stdout: ✅ (kubectl logs)")
         if _global_logger_provider is not None:
             print("   - OTLP: ✅ (Grafana/Loki)")
         else:
-            print("   - OTLP: ❌ (disabled)")
+            print("   - OTLP: ❌ (logger provider not configured)")
+        print("   ℹ️  Handlers will survive logging.basicConfig() calls")
 
         return True
 
     except Exception as e:
-        print(f"⚠️  Failed to attach logging handler: {e}")
+        print(f"⚠️  Failed to configure logging: {e}")
         import traceback
 
         traceback.print_exc()
         return False
 
 
-def ensure_logging_handler():
+# Backward compatibility aliases
+def attach_logging_handler() -> bool:
     """
-    Ensure OTLP logging handler is attached. Re-attach if it was removed.
+    Backward compatibility wrapper for configure_logging().
 
-    This is a safety mechanism to handle cases where logging configuration
-    is reset after initial setup (e.g., by logging.basicConfig()).
+    DEPRECATED: Use configure_logging() instead.
+    This function is maintained for backward compatibility only.
 
     Returns:
-        bool: True if handler is attached, False otherwise
+        bool: True if configuration successful, False otherwise
     """
-    global _otlp_logging_handler
+    import warnings
 
-    if _global_logger_provider is None:
-        return False
-
-    root_logger = logging.getLogger()
-
-    # Check if handler is still attached
-    if (
-        _otlp_logging_handler is not None
-        and _otlp_logging_handler in root_logger.handlers
-    ):
-        return True
-
-    # Handler was removed or never attached, attach it now
-    return attach_logging_handler()
-
-
-def monitor_logging_handlers():
-    """
-    Monitor and aggressively re-attach OTLP logging handler.
-
-    This function should be called periodically to ensure the handler
-    stays attached even if other components clear logging configuration.
-
-    Checks both root logger and uvicorn loggers.
-    """
-    global _otlp_logging_handler
-
-    if _global_logger_provider is None:
-        return False
-
-    root_logger = logging.getLogger()
-    uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_access_logger = logging.getLogger("uvicorn.access")
-
-    # Check if handler is missing from any logger
-    root_missing = _otlp_logging_handler not in root_logger.handlers
-    uvicorn_missing = _otlp_logging_handler not in uvicorn_logger.handlers
-    access_missing = _otlp_logging_handler not in uvicorn_access_logger.handlers
-
-    if root_missing or uvicorn_missing or access_missing:
-        missing_loggers = []
-        if root_missing:
-            missing_loggers.append("root")
-        if uvicorn_missing:
-            missing_loggers.append("uvicorn")
-        if access_missing:
-            missing_loggers.append("uvicorn.access")
-
-        print(
-            f"⚠️  OTLP handler missing from loggers: {', '.join(missing_loggers)} - re-attaching"
-        )
-        return attach_logging_handler()
-
-    return True
+    warnings.warn(
+        "attach_logging_handler() is deprecated, use configure_logging() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return configure_logging()
 
 
 def get_tracer(name: str = None) -> trace.Tracer:

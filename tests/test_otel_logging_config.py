@@ -3,6 +3,17 @@ Tests for simplified logging configuration in otel_init.py.
 
 Validates the new dictConfig-based approach that replaced
 defensive monitoring functions.
+
+Note: Multiple test files exist for logging configuration testing
+(test_otel_logging_config.py, test_otel_init_coverage.py, etc.).
+This is intentional to test different aspects:
+- Unit tests for specific functions
+- Integration tests for complete flows
+- Coverage tests for edge cases
+- API integration tests for lifespan events
+
+Each file serves a specific purpose and minimal overlap is acceptable
+for comprehensive testing of critical logging infrastructure.
 """
 
 import logging
@@ -72,8 +83,9 @@ class TestConfigureLogging:
         # Call logging.basicConfig (this would remove handlers in old approach)
         logging.basicConfig(level=logging.DEBUG)
 
-        # Handlers should still be present due to disable_existing_loggers=False
-        # Note: basicConfig may add handlers, but won't remove ours
+        # Handlers should still be present because basicConfig(force=False) doesn't remove existing handlers
+        # Note: disable_existing_loggers=False prevents loggers from being disabled, not handler removal
+        # What prevents handler removal is calling basicConfig without force=True
         assert len(root_logger.handlers) >= initial_handler_count
 
     def test_configure_logging_error_handling(self):

@@ -228,9 +228,8 @@ async def test_monitoring_detects_sl_fill_and_cancels_tp(oco_manager, fake_excha
     sl_order_id = result["sl_order_id"]
     tp_order_id = result["tp_order_id"]
 
-    # Add both orders to fake exchange as "open"
-    fake_exchange.add_open_order("BTCUSDT", sl_order_id, {"status": "NEW"})
-    fake_exchange.add_open_order("BTCUSDT", tp_order_id, {"status": "NEW"})
+    # Orders are already added to open_orders by execute() in place_oco_orders()
+    # No need to add them again
 
     # Start monitoring
     await oco_manager.start_monitoring()

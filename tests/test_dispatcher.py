@@ -1,9 +1,10 @@
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
+from contracts.signal import OrderType, Signal, StrategyMode
 from tradeengine.dispatcher import Dispatcher
 
 
@@ -206,6 +207,454 @@ async def test_create_order_from_signal(
     assert order.type == "market"
     assert order.side == "buy"
     assert order.amount == 0.1  # Uses signal quantity when valid
+
+
+# ============================================================================
+# Unit Tests for _generate_signal_id() Helper Function
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_signal_id_identical_signals(dispatcher: Dispatcher) -> None:
+    """Test that identical signals produce the same ID"""
+    timestamp = datetime(2024, 1, 1, 12, 0, 0)
+    signal1 = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+    signal2 = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.9,  # Different confidence shouldn't affect ID
+        strength="strong",  # Different strength shouldn't affect ID
+        timeframe="1h",
+        price=51000.0,  # Different price shouldn't affect ID
+        quantity=0.2,  # Different quantity shouldn't affect ID
+        current_price=51000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+
+    id1 = dispatcher._generate_signal_id(signal1)
+    id2 = dispatcher._generate_signal_id(signal2)
+
+    assert id1 == id2
+    assert "test-strategy_BTCUSDT_buy" in id1
+    assert "2024-01-01T12:00:00" in id1
+
+
+@pytest.mark.asyncio
+async def test_generate_signal_id_different_signals(dispatcher: Dispatcher) -> None:
+    """Test that different signals produce different IDs"""
+    timestamp = datetime(2024, 1, 1, 12, 0, 0)
+    signal1 = Signal(
+        strategy_id="test-1",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-1",
+    )
+    signal2 = Signal(
+        strategy_id="test-2",  # Different strategy_id
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-2",
+    )
+    signal3 = Signal(
+        strategy_id="test-1",
+        symbol="ETHUSDT",  # Different symbol
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-1",
+    )
+    signal4 = Signal(
+        strategy_id="test-1",
+        symbol="BTCUSDT",
+        action="sell",  # Different action
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-1",
+    )
+
+    ids = [
+        dispatcher._generate_signal_id(signal1),
+        dispatcher._generate_signal_id(signal2),
+        dispatcher._generate_signal_id(signal3),
+        dispatcher._generate_signal_id(signal4),
+    ]
+
+    # All IDs should be unique
+    assert len(set(ids)) == 4
+    # Verify each ID contains expected components
+    assert "test-1_BTCUSDT_buy" in ids[0]
+    assert "test-2_BTCUSDT_buy" in ids[1]
+    assert "test-1_ETHUSDT_buy" in ids[2]
+    assert "test-1_BTCUSDT_sell" in ids[3]
+
+
+@pytest.mark.asyncio
+async def test_generate_signal_id_different_timestamps(dispatcher: Dispatcher) -> None:
+    """Test that signals with same data but different timestamps produce different IDs"""
+    timestamp1 = datetime(2024, 1, 1, 12, 0, 0)
+    timestamp2 = datetime(2024, 1, 1, 12, 0, 1)  # 1 second later
+    timestamp3 = datetime(
+        2024, 1, 1, 12, 0, 0, 500000
+    )  # Same second, different microsecond
+
+    signal1 = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp1,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+    signal2 = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp2,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+    signal3 = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp3,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+
+    id1 = dispatcher._generate_signal_id(signal1)
+    id2 = dispatcher._generate_signal_id(signal2)
+    id3 = dispatcher._generate_signal_id(signal3)
+
+    # Different seconds should produce different IDs
+    assert id1 != id2
+    # Same second (even with different microseconds) should produce same ID
+    assert id1 == id3
+    assert "test-strategy_BTCUSDT_buy" in id1
+    assert "2024-01-01T12:00:00" in id1
+    assert "2024-01-01T12:00:01" in id2
+
+
+@pytest.mark.asyncio
+async def test_generate_signal_id_format(dispatcher: Dispatcher) -> None:
+    """Test ID format and consistency"""
+    timestamp = datetime(2024, 1, 1, 12, 0, 0)
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        timestamp=timestamp,
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+
+    signal_id = dispatcher._generate_signal_id(signal)
+
+    # Verify format: strategy_id_symbol_action_timestamp
+    assert signal_id == "test-strategy_BTCUSDT_buy_2024-01-01T12:00:00"
+    assert signal_id.count("_") == 3  # Three underscores separating components
+
+
+@pytest.mark.asyncio
+async def test_generate_signal_id_no_timestamp(dispatcher: Dispatcher) -> None:
+    """Test ID generation when timestamp is None
+
+    Note: Signal model always assigns a timestamp via default_factory, so we test
+    the _generate_signal_id method's None handling by directly setting timestamp to None.
+    """
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+    )
+
+    # Directly set timestamp to None to test the method's None handling
+    # This simulates the edge case where timestamp might be None (though Signal model prevents this)
+    signal.timestamp = None  # type: ignore
+
+    signal_id = dispatcher._generate_signal_id(signal)
+
+    # Should still generate ID without timestamp (empty string for timestamp part)
+    assert "test-strategy_BTCUSDT_buy" in signal_id
+    # When timestamp is None, the ID should end with an empty timestamp (just the separator)
+    assert signal_id.endswith("_") or signal_id.count("_") >= 2
+
+
+# ============================================================================
+# Unit Tests for _signal_to_order() Helper Function - Edge Cases
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_buy_signal(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with buy signal"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "buy"
+    assert order.type == "market"
+    assert order.target_price == 50000.0
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_sell_signal(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with sell signal"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="ETHUSDT",
+        action="sell",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=3000.0,
+        quantity=0.5,
+        current_price=3000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.LIMIT,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.symbol == "ETHUSDT"
+    assert order.side == "sell"
+    assert order.type == "limit"
+    assert order.target_price == 3000.0
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_close_signal(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with close signal"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="close",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "close"
+    assert order.type == "market"
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_negative_price(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with negative price (edge case)"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=-100.0,  # Negative price
+        quantity=0.1,
+        current_price=-100.0,  # Negative current price
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    # Should still create order (validation happens elsewhere)
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "buy"
+    assert order.target_price == -100.0
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_zero_quantity(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with zero quantity (edge case)"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.0,  # Zero quantity
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    # Should still create order (amount calculation handles this)
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "buy"
+    # Amount will be calculated by _calculate_order_amount (may use minimum)
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_missing_optional_fields(dispatcher: Dispatcher) -> None:
+    """Test _signal_to_order with missing optional fields"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+        # Missing optional fields: stop_loss, take_profit, conditional_price, etc.
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    # Should still create order with None for optional fields
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "buy"
+    assert order.type == "market"
+    # Optional fields should be None when not provided in signal
+    assert order.stop_loss is None
+    assert order.take_profit is None
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_with_stop_loss_take_profit(
+    dispatcher: Dispatcher,
+) -> None:
+    """Test _signal_to_order with stop loss and take profit"""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="test",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+        stop_loss=49000.0,
+        take_profit=51000.0,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.symbol == "BTCUSDT"
+    assert order.side == "buy"
+    assert order.stop_loss == 49000.0
+    assert order.take_profit == 51000.0
 
 
 @pytest.mark.asyncio

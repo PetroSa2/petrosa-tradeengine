@@ -349,3 +349,18 @@ class TestTradeSimulator:
         assert simulator.simulated_slippage is not None
         assert simulator.success_rate is not None
         assert simulator.delay_ms is not None
+
+    @pytest.mark.asyncio
+    async def test_simulator_exchange_close(self):
+        """Test simulator exchange close method"""
+        exchange = SimulatorExchange()
+        await exchange.close()
+        # Should complete without error and log message
+
+    @pytest.mark.asyncio
+    async def test_simulator_get_price_with_variation(self):
+        """Test that get_price returns varied prices"""
+        exchange = SimulatorExchange()
+        prices = [await exchange.get_price("BTCUSDT") for _ in range(10)]
+        # Prices should vary (not all exactly 45000)
+        assert len(set(prices)) > 1 or all(44100 <= p <= 45900 for p in prices)

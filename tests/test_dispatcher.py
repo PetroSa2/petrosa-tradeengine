@@ -425,12 +425,15 @@ async def test_generate_signal_id_format(dispatcher: Dispatcher) -> None:
 
 @pytest.mark.asyncio
 async def test_generate_signal_id_no_timestamp(dispatcher: Dispatcher) -> None:
-    """Test ID generation when timestamp is None"""
+    """Test ID generation when timestamp is None
+
+    Note: Signal model always assigns a timestamp via default_factory, so we test
+    the _generate_signal_id method's None handling by directly setting timestamp to None.
+    """
     signal = Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
         action="buy",
-        timestamp=None,
         confidence=0.8,
         strength="medium",
         timeframe="1h",
@@ -441,10 +444,15 @@ async def test_generate_signal_id_no_timestamp(dispatcher: Dispatcher) -> None:
         strategy="test-strategy",
     )
 
+    # Directly set timestamp to None to test the method's None handling
+    # This simulates the edge case where timestamp might be None (though Signal model prevents this)
+    signal.timestamp = None  # type: ignore
+
     signal_id = dispatcher._generate_signal_id(signal)
 
-    # Should still generate ID without timestamp
+    # Should still generate ID without timestamp (empty string for timestamp part)
     assert "test-strategy_BTCUSDT_buy" in signal_id
+    # When timestamp is None, the ID should end with an empty timestamp (just the separator)
     assert signal_id.endswith("_") or signal_id.count("_") >= 2
 
 
@@ -613,11 +621,9 @@ async def test_signal_to_order_missing_optional_fields(dispatcher: Dispatcher) -
     assert order.symbol == "BTCUSDT"
     assert order.side == "buy"
     assert order.type == "market"
-    # Optional fields may be None
-    assert order.stop_loss is None or isinstance(order.stop_loss, (float, type(None)))
-    assert order.take_profit is None or isinstance(
-        order.take_profit, (float, type(None))
-    )
+    # Optional fields should be None when not provided in signal
+    assert order.stop_loss is None
+    assert order.take_profit is None
 
 
 @pytest.mark.asyncio

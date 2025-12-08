@@ -351,3 +351,178 @@ class FakePositionManager:
         self.max_position_size_pct = max_position_size_pct
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_portfolio_exposure_pct = max_portfolio_exposure_pct
+
+
+class FakeOrderManager:
+    """Fake order manager for integration testing.
+
+    Tracks active and historical orders in memory without requiring
+    external dependencies or complex async monitoring.
+    """
+
+    def __init__(self) -> None:
+        """Initialize fake order manager."""
+        self.active_orders: dict[str, dict[str, Any]] = {}
+        self.conditional_orders: dict[str, dict[str, Any]] = {}
+        self.order_history: list[dict[str, Any]] = []
+
+    async def initialize(self) -> None:
+        """Initialize fake order manager (no-op)."""
+        pass
+
+    async def close(self) -> None:
+        """Close fake order manager (no-op)."""
+        pass
+
+    def log_event(self, event_type: str, event_data: dict[str, Any]) -> None:
+        """Log event (no-op for fake)."""
+        pass
+
+    async def get_account_info(self) -> dict[str, Any]:
+        """Get account info (returns empty dict for fake)."""
+        return {}
+
+    async def get_price(self, symbol: str) -> float:
+        """Get price for symbol (returns default price for fake)."""
+        # Default prices for common symbols
+        default_prices = {
+            "BTCUSDT": 50000.0,
+            "ETHUSDT": 3000.0,
+            "ADAUSDT": 0.5,
+            "DOTUSDT": 7.0,
+        }
+        return default_prices.get(symbol, 100.0)
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Get order metrics."""
+        return {
+            "active_orders": len(self.active_orders),
+            "conditional_orders": len(self.conditional_orders),
+            "total_orders": len(self.order_history),
+        }
+
+    async def track_order(self, order: TradeOrder, result: dict[str, Any]) -> None:
+        """Track an executed order.
+
+        Args:
+            order: Trade order
+            result: Order execution result
+        """
+        order_id = result.get("order_id", f"order_{len(self.order_history)}")
+
+        order_info = {
+            "order_id": order_id,
+            "symbol": order.symbol,
+            "side": order.side,
+            "type": order.type,
+            "quantity": order.amount,
+            "price": order.target_price,
+            "status": result.get("status", "unknown"),
+            "timestamp": result.get("timestamp"),
+            "result": result,
+            "original_order": order.model_dump(),
+        }
+
+        # Track as active if pending/partial, otherwise add to history
+        if result.get("status") in ["pending", "partial"]:
+            self.active_orders[order_id] = order_info
+        else:
+            self.order_history.append(order_info)
+
+    def get_active_orders(self) -> list[dict[str, Any]]:
+        """Get all active orders.
+
+        Returns:
+            List of active order dicts
+        """
+        return list(self.active_orders.values())
+
+    def get_conditional_orders(self) -> list[dict[str, Any]]:
+        """Get all conditional orders.
+
+        Returns:
+            List of conditional order dicts
+        """
+        return list(self.conditional_orders.values())
+
+    def get_order_history(self) -> list[dict[str, Any]]:
+        """Get order history.
+
+        Returns:
+            List of historical order dicts
+        """
+        return self.order_history.copy()
+
+    def get_order(self, order_id: str) -> dict[str, Any] | None:
+        """Get specific order by ID.
+
+        Args:
+            order_id: Order ID to retrieve
+
+        Returns:
+            Order dict if found, None otherwise
+        """
+        # Check active orders
+        if order_id in self.active_orders:
+            return self.active_orders[order_id]
+
+        # Check conditional orders
+        if order_id in self.conditional_orders:
+            return self.conditional_orders[order_id]
+
+        # Check history
+        for order in self.order_history:
+            if order.get("order_id") == order_id:
+                return order
+
+        return None
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel an order.
+
+        Args:
+            order_id: Order ID to cancel
+
+        Returns:
+            True if order was cancelled, False if not found
+        """
+        # Check active orders
+        if order_id in self.active_orders:
+            order_info = self.active_orders[order_id]
+            order_info["status"] = "cancelled"
+            self.order_history.append(order_info)
+            del self.active_orders[order_id]
+            return True
+
+        # Check conditional orders
+        if order_id in self.conditional_orders:
+            order_info = self.conditional_orders[order_id]
+            order_info["status"] = "cancelled"
+            self.order_history.append(order_info)
+            del self.conditional_orders[order_id]
+            return True
+
+        return False
+
+    def get_order_summary(self) -> dict[str, Any]:
+        """Get order summary statistics.
+
+        Returns:
+            Dict with order counts and status distribution
+        """
+        active_count = len(self.active_orders)
+        conditional_count = len(self.conditional_orders)
+        history_count = len(self.order_history)
+
+        # Count by status
+        status_counts: dict[str, int] = {}
+        for order in self.order_history:
+            status = order.get("status", "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        return {
+            "active_orders": active_count,
+            "conditional_orders": conditional_count,
+            "total_orders": history_count,
+            "status_distribution": status_counts,
+        }

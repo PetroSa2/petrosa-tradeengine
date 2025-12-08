@@ -85,7 +85,7 @@ class TestSignalValidation:
 
     def test_confidence_validation_above_one(self):
         """Test confidence validation fails for values > 1"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -97,10 +97,11 @@ class TestSignalValidation:
                 source="test",
                 strategy="momentum",
             )
+        assert exc_info.value is not None
 
     def test_confidence_validation_below_zero(self):
         """Test confidence validation fails for values < 0"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -112,6 +113,7 @@ class TestSignalValidation:
                 source="test",
                 strategy="momentum",
             )
+        assert exc_info.value is not None
 
     def test_timestamp_validation_string_iso(self):
         """Test timestamp validation with ISO format string"""
@@ -214,7 +216,7 @@ class TestSignalValidation:
 
     def test_model_confidence_validation_invalid(self):
         """Test model confidence validation fails for invalid values"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -227,6 +229,7 @@ class TestSignalValidation:
                 strategy="momentum",
                 model_confidence=1.5,  # Invalid
             )
+        assert exc_info.value is not None
 
     def test_position_size_pct_validation(self):
         """Test position_size_pct validation"""
@@ -246,7 +249,7 @@ class TestSignalValidation:
 
     def test_position_size_pct_validation_invalid(self):
         """Test position_size_pct validation fails for invalid values"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -259,6 +262,7 @@ class TestSignalValidation:
                 strategy="momentum",
                 position_size_pct=1.5,  # Invalid
             )
+        assert exc_info.value is not None
 
     def test_stop_loss_pct_validation(self):
         """Test stop_loss_pct validation"""
@@ -278,7 +282,7 @@ class TestSignalValidation:
 
     def test_stop_loss_pct_validation_invalid(self):
         """Test stop_loss_pct validation fails for invalid values"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -291,6 +295,7 @@ class TestSignalValidation:
                 strategy="momentum",
                 stop_loss_pct=1.5,  # Invalid
             )
+        assert exc_info.value is not None
 
     def test_take_profit_pct_validation(self):
         """Test take_profit_pct validation"""

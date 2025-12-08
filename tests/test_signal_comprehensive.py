@@ -315,7 +315,7 @@ class TestSignalValidation:
 
     def test_take_profit_pct_validation_invalid(self):
         """Test take_profit_pct validation fails for invalid values"""
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as exc_info:
             Signal(
                 strategy_id="test_strategy",
                 symbol="BTCUSDT",
@@ -328,6 +328,7 @@ class TestSignalValidation:
                 strategy="momentum",
                 take_profit_pct=-0.1,  # Invalid
             )
+        assert exc_info.value is not None
 
     def test_signal_with_all_fields(self):
         """Test signal with all optional fields populated"""

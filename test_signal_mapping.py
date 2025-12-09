@@ -41,7 +41,10 @@ def test_signal_mapping():
 
     # Test the mapping function
     try:
+        assert consumer is not None  # Consumer should be created
+        assert incoming_signal is not None  # Signal data should be provided
         mapped_data = consumer._map_signal_fields(incoming_signal)
+        assert mapped_data is not None  # Mapping should return data
         print("✅ Mapping successful!")
         print("📤 Mapped signal data:")
         for key, value in mapped_data.items():
@@ -51,6 +54,7 @@ def test_signal_mapping():
 
         # Test creating a Signal object with the mapped data
         signal = Signal(**mapped_data)
+        assert signal is not None  # Signal should be created
         print("✅ Signal model creation successful!")
         print("📊 Created Signal object:")
         print(f"   strategy_id: {signal.strategy_id}")

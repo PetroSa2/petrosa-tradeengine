@@ -85,8 +85,11 @@ class TestMongoDBValidation:
         """Test MongoDB validation fails with invalid URI format"""
         with patch("shared.constants.MONGODB_URI", "invalid://localhost"):
             with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
-                with pytest.raises(ValueError, match="Invalid MongoDB URI format"):
+                with pytest.raises(
+                    ValueError, match="Invalid MongoDB URI format"
+                ) as exc_info:
                     validate_mongodb_config()
+                assert exc_info.value is not None
 
     def test_validate_mongodb_config_valid(self):
         """Test MongoDB validation succeeds with valid config"""
@@ -94,6 +97,7 @@ class TestMongoDBValidation:
             with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
                 # Should not raise
                 validate_mongodb_config()
+                assert True  # Test passes if no exception was raised
 
     def test_validate_mongodb_config_valid_srv(self):
         """Test MongoDB validation succeeds with valid mongodb+srv URI"""
@@ -101,6 +105,7 @@ class TestMongoDBValidation:
             with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
                 # Should not raise
                 validate_mongodb_config()
+                assert True  # Test passes if no exception was raised
 
     def test_get_mongodb_connection_string(self):
         """Test MongoDB connection string generation"""
@@ -119,14 +124,16 @@ class TestNATSValidation:
             with patch("shared.constants.NATS_URL", None):
                 with pytest.raises(
                     ValueError, match="NATS is enabled but NATS_URL is not configured"
-                ):
+                ) as exc_info:
                     validate_nats_config()
+                assert exc_info.value is not None
 
     def test_validate_nats_config_disabled(self):
         """Test NATS validation succeeds when disabled"""
         with patch("shared.constants.NATS_ENABLED", False):
             # Should not raise
             validate_nats_config()
+            assert True  # Test passes if no exception was raised
 
     def test_validate_nats_config_enabled_with_url(self):
         """Test NATS validation succeeds when enabled with URL"""
@@ -134,6 +141,7 @@ class TestNATSValidation:
             with patch("shared.constants.NATS_URL", "nats://localhost:4222"):
                 # Should not raise
                 validate_nats_config()
+                assert True  # Test passes if no exception was raised
 
     def test_get_nats_connection_string_disabled(self):
         """Test NATS connection string returns None when disabled"""
@@ -289,10 +297,14 @@ class TestDeprecationWarning:
 
     def test_deprecation_warning(self):
         """Test deprecation warning is issued"""
-        with pytest.warns(DeprecationWarning, match="old_function is deprecated"):
+        with pytest.warns(
+            DeprecationWarning, match="old_function is deprecated"
+        ) as record:
             deprecation_warning("old_function", "new_function")
+        assert len(record) > 0  # Warning should be issued
 
     def test_deprecation_warning_custom_version(self):
         """Test deprecation warning with custom version"""
-        with pytest.warns(DeprecationWarning, match="version 1.0.0"):
+        with pytest.warns(DeprecationWarning, match="version 1.0.0") as record:
             deprecation_warning("old_function", "new_function", version="1.0.0")
+        assert len(record) > 0  # Warning should be issued

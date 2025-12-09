@@ -136,16 +136,15 @@ jobs:
       - name: Checkout service code
         uses: actions/checkout@v4
 
-      - name: Checkout petrosa_k8s
-        uses: actions/checkout@v4
-        with:
-          repository: PetroSa2/petrosa_k8s
-          path: petrosa_k8s
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Use check-test-assertions script
+        run: |
+          # Script is already in the repository at scripts/check-test-assertions.py
+          chmod +x scripts/check-test-assertions.py
 
       - name: Check test assertions
         run: |
@@ -157,7 +156,7 @@ jobs:
           fi
           echo "Found test files:"
           echo "$TEST_FILES" | sed 's/^/  - /'
-          python petrosa_k8s/scripts/check-test-assertions.py $(echo "$TEST_FILES" | tr '\n' ' ')
+          python scripts/check-test-assertions.py $(echo "$TEST_FILES" | tr '\n' ' ')
           if [ $? -ne 0 ]; then
             echo "❌ Tests without assertions detected"
             exit 1

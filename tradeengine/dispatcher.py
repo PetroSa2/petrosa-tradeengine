@@ -604,6 +604,8 @@ class OCOManager:
                         if filled_order_id:
                             try:
                                 # Cancel the other order (OCO behavior)
+                                # Note: position_id is legacy parameter (not used by _close_position_on_oco_completion)
+                                # but kept for consistency with function signature
                                 position_id = oco_info.get("position_id", "")
                                 cancel_success, cancel_reason = (
                                     await self.cancel_other_order(
@@ -619,13 +621,28 @@ class OCOManager:
                                         f"✅ OCO cancellation successful: {cancel_reason}"
                                     )
                                 else:
-                                    self.logger.warning(
-                                        f"⚠️  OCO cancellation failed: {cancel_reason}"
-                                    )
+                                    # Handle cancellation failure cases
+                                    # If cancellation fails because order already filled, this indicates
+                                    # a race condition where both SL and TP triggered simultaneously
+                                    # If cancellation fails for other reasons, log warning but proceed
+                                    # with position close to avoid leaving orphaned positions
+                                    if (
+                                        "already filled" in cancel_reason.lower()
+                                        or "not found" in cancel_reason.lower()
+                                    ):
+                                        self.logger.warning(
+                                            f"⚠️  OCO cancellation failed (order may already be filled): {cancel_reason}"
+                                        )
+                                    else:
+                                        self.logger.warning(
+                                            f"⚠️  OCO cancellation failed: {cancel_reason}. Proceeding with position close."
+                                        )
 
                                 # Close position with strategy attribution
+                                # Note: We proceed with position close even if cancellation failed to avoid
+                                # leaving orphaned positions. The exchange will handle any remaining orders.
                                 await self._close_position_on_oco_completion(
-                                    position_id=position_id,
+                                    position_id=position_id,  # Legacy parameter, not used by function
                                     filled_order_id=filled_order_id,
                                     close_reason=close_reason,
                                     oco_info=oco_info,

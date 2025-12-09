@@ -127,6 +127,43 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
+  # PR Test Quality Check - Only run on pull requests
+  test-quality:
+    name: Test Quality Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout service code
+        uses: actions/checkout@v4
+
+      - name: Checkout petrosa_k8s
+        uses: actions/checkout@v4
+        with:
+          repository: PetroSa2/petrosa_k8s
+          path: petrosa_k8s
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check test assertions
+        run: |
+          # Find all test files and check them
+          TEST_FILES=$(find . -type f -name "test_*.py" -o -name "*_test.py" | grep -v petrosa_k8s | grep -v ".venv" | grep -v "__pycache__" || true)
+          if [ -z "$TEST_FILES" ]; then
+            echo "⚠️  No test files found - skipping test quality check"
+            exit 0
+          fi
+          echo "Found test files:"
+          echo "$TEST_FILES" | sed 's/^/  - /'
+          python petrosa_k8s/scripts/check-test-assertions.py $(echo "$TEST_FILES" | tr '\n' ' ')
+          if [ $? -ne 0 ]; then
+            echo "❌ Tests without assertions detected"
+            exit 1
+          fi
+          echo "✅ All tests have assertions"
+
   # PR Security Scan - Only run on pull requests
   security-scan:
     name: Security Scan
@@ -166,7 +203,7 @@ jobs:
   pipeline:
     name: pipeline
     runs-on: ubuntu-latest
-    needs: [lint-and-test, security-scan]
+    needs: [lint-and-test, test-quality, security-scan]
     if: always() && github.event_name == 'pull_request'
     permissions:
       checks: write
@@ -177,6 +214,7 @@ jobs:
         with:
           script: |
             const conclusion = '${{ needs.lint-and-test.result }}' === 'success' &&
+                              '${{ needs.test-quality.result }}' === 'success' &&
                               '${{ needs.security-scan.result }}' === 'success'
                               ? 'success' : 'failure';
 

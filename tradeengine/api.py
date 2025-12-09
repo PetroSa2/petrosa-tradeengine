@@ -17,10 +17,8 @@ from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
-from tradeengine.api_config_routes import (
-    router as config_router,
-    set_config_manager,
-)
+from tradeengine.api_config_routes import router as config_router
+from tradeengine.api_config_routes import set_config_manager
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher

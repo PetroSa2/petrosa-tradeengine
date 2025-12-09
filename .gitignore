@@ -296,6 +296,7 @@ temp/
 # FastAPI specific
 .coverage
 htmlcov/
+coverage.json
 
 # Monitoring and metrics
 prometheus-data/

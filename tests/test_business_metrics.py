@@ -12,8 +12,12 @@ import pytest
 from prometheus_client import REGISTRY
 
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
-from contracts.signal import OrderType as SignalOrderType
-from contracts.signal import Signal, SignalStrength, StrategyMode
+from contracts.signal import (
+    OrderType as SignalOrderType,
+    Signal,
+    SignalStrength,
+    StrategyMode,
+)
 from tradeengine.dispatcher import Dispatcher
 
 

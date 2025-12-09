@@ -600,12 +600,32 @@ class OCOManager:
                             oco_info["status"] = "completed"
                             continue
 
-                        # If an order filled, close the strategy position
+                        # If an order filled, cancel the other order and close the strategy position
                         if filled_order_id:
                             try:
+                                # Cancel the other order (OCO behavior)
+                                position_id = oco_info.get("position_id", "")
+                                cancel_success, cancel_reason = (
+                                    await self.cancel_other_order(
+                                        position_id=position_id,
+                                        filled_order_id=filled_order_id,
+                                        symbol=oco_info["symbol"],
+                                        position_side=oco_info["position_side"],
+                                    )
+                                )
+
+                                if cancel_success:
+                                    self.logger.info(
+                                        f"✅ OCO cancellation successful: {cancel_reason}"
+                                    )
+                                else:
+                                    self.logger.warning(
+                                        f"⚠️  OCO cancellation failed: {cancel_reason}"
+                                    )
+
                                 # Close position with strategy attribution
                                 await self._close_position_on_oco_completion(
-                                    position_id="",  # Not used anymore
+                                    position_id=position_id,
                                     filled_order_id=filled_order_id,
                                     close_reason=close_reason,
                                     oco_info=oco_info,
@@ -613,7 +633,7 @@ class OCOManager:
                                 )
                             except Exception as e:
                                 self.logger.error(
-                                    f"❌ Failed to close strategy position: {e}"
+                                    f"❌ Failed to process OCO completion: {e}"
                                 )
 
                 # Clean up completed OCO pairs

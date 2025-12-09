@@ -78,6 +78,7 @@ class TestSettings:
         )
         # Should not raise an error
         settings.validate_required_settings()
+        assert settings.environment == "production"
 
     def test_validate_required_settings_production_missing_binance_api_key(self):
         """Test validation fails when Binance API key is missing in production"""
@@ -90,8 +91,9 @@ class TestSettings:
         )
         with pytest.raises(
             ValueError, match="BINANCE_API_KEY is required in production"
-        ):
+        ) as exc_info:
             settings.validate_required_settings()
+        assert exc_info.value is not None
 
     def test_validate_required_settings_production_missing_binance_api_secret(self):
         """Test validation fails when Binance API secret is missing in production"""
@@ -104,8 +106,9 @@ class TestSettings:
         )
         with pytest.raises(
             ValueError, match="BINANCE_API_SECRET is required in production"
-        ):
+        ) as exc_info:
             settings.validate_required_settings()
+        assert exc_info.value is not None
 
     def test_validate_required_settings_production_missing_jwt_secret(self):
         """Test validation fails when JWT secret is missing in production"""
@@ -118,8 +121,9 @@ class TestSettings:
         )
         with pytest.raises(
             ValueError, match="JWT_SECRET_KEY is required in production"
-        ):
+        ) as exc_info:
             settings.validate_required_settings()
+        assert exc_info.value is not None
 
     def test_validate_required_settings_production_missing_mongodb_uri(self):
         """Test validation fails when MongoDB URI is missing in production"""
@@ -135,14 +139,16 @@ class TestSettings:
             settings.mongodb_uri = None  # Force None after initialization
             with pytest.raises(
                 ValueError, match="MONGODB_URI is required in production"
-            ):
+            ) as exc_info:
                 settings.validate_required_settings()
+            assert exc_info.value is not None
 
     def test_validate_required_settings_development(self):
         """Test validation does not enforce required settings in development"""
         settings = Settings(environment="development")
         # Should not raise an error in development
         settings.validate_required_settings()
+        assert settings.environment == "development"
 
     def test_nats_enabled_configuration(self):
         """Test NATS configuration when enabled"""

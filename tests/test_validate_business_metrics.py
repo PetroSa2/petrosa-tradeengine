@@ -42,8 +42,9 @@ class TestValidateBusinessMetrics:
             "scripts.validate_business_metrics.requests.get",
             side_effect=Exception("Connection error"),
         ):
-            with pytest.raises(SystemExit):
+            with pytest.raises(SystemExit) as exc_info:
                 fetch_metrics("http://localhost:9090/metrics")
+            assert exc_info.value.code == 1
 
     def test_parse_metrics(self):
         """Test parsing Prometheus metrics text."""

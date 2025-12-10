@@ -40,6 +40,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     otel_init.configure_logging()
     logger.info("✅ Logging configured (no monitoring needed)")
 
+    # Set up signal handlers for graceful telemetry shutdown
+    otel_init.setup_signal_handlers()
+    logger.info("✅ Signal handlers registered for graceful telemetry shutdown")
+
     # Initialize components
     startup_success = True
     consumer_task = None  # Keep reference to prevent garbage collection
@@ -143,6 +147,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
     try:
+        # Flush telemetry first to prevent data loss
+        logger.info("Flushing telemetry data...")
+        otel_init.flush_telemetry()
+
         # Stop NATS consumer first
         from tradeengine.consumer import signal_consumer
 
@@ -171,6 +179,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("✅ Trading configuration manager stopped")
 
         logger.info("Trading engine shutdown completed")
+
+        # Shutdown telemetry providers after all other cleanup
+        logger.info("Shutting down telemetry providers...")
+        otel_init.shutdown_telemetry()
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
     logger.info("Petrosa Trading Engine shut down complete")

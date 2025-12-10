@@ -8,6 +8,7 @@ import nats
 import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import context, trace
+from opentelemetry.propagate import extract
 from petrosa_otel import extract_trace_context
 from prometheus_client import Counter
 
@@ -195,21 +196,23 @@ class SignalConsumer:
             # Extract trace context from signal message (with error handling)
             # Support both _otel_trace_context (petrosa_otel standard) and _otel_trace_headers (ta-bot legacy)
             try:
-                ctx = extract_trace_context(signal_data)
-
-                # Fallback: Check for legacy _otel_trace_headers field if _otel_trace_context not found
-                if (
-                    ctx == context.get_current()
-                    and "_otel_trace_headers" in signal_data
-                ):
-                    from opentelemetry.propagate import extract
-
-                    legacy_carrier = signal_data.get("_otel_trace_headers", {})
-                    if legacy_carrier:
-                        logger.debug(
-                            "Found legacy trace context field _otel_trace_headers, extracting..."
-                        )
-                        ctx = extract(legacy_carrier)
+                # Try standard field first (_otel_trace_context)
+                if "_otel_trace_context" in signal_data:
+                    ctx = extract_trace_context(signal_data)
+                else:
+                    # Fallback: Check for legacy _otel_trace_headers field (ta-bot format)
+                    if "_otel_trace_headers" in signal_data:
+                        legacy_carrier = signal_data.get("_otel_trace_headers", {})
+                        if legacy_carrier:
+                            logger.debug(
+                                "Found legacy trace context field _otel_trace_headers, extracting..."
+                            )
+                            ctx = extract(legacy_carrier)
+                        else:
+                            ctx = context.get_current()
+                    else:
+                        # No trace context found, use current context
+                        ctx = context.get_current()
             except Exception as e:
                 logger.warning(
                     "Failed to extract trace context, using current context: %s", e

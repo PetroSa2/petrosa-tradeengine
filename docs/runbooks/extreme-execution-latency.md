@@ -57,7 +57,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml logs -n petrosa-apps -l app=tradeengine
 
 ```bash
 # Check NATS message processing rate
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep -E "nats.*lag|nats.*messages"
 
 # Review NATS consumer metrics
@@ -157,6 +157,6 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml rollout history deployment/tradeengine 
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Latency Metrics**: Review p50, p95, p99 latency trends
 - **System Resources**: Monitor CPU/memory usage

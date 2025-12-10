@@ -24,7 +24,7 @@ Current position size for a symbol is approaching the configured position size l
 
 ```bash
 # Query current position sizes
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_current_position_size
 
 # Query Prometheus for specific symbol
@@ -35,7 +35,7 @@ tradeengine_current_position_size{symbol="BTCUSDT"}
 
 ```bash
 # Get position size configuration
-curl -X GET http://tradeengine:8080/api/v1/config/trading \
+curl -X GET http://petrosa-tradeengine-service:80/api/v1/config/trading \
   -H "Content-Type: application/json" | jq '.position_limits'
 
 # Check symbol-specific limits
@@ -141,6 +141,6 @@ curl -X GET http://tradeengine:8080/api/v1/config/trading/BTCUSDT \
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Position Size Panel**: Monitor position sizes vs limits
 - **Position Management**: Review position lifecycle

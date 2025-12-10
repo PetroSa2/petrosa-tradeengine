@@ -24,7 +24,7 @@ Daily PnL is approaching the configured daily loss limit (> 80% of limit), indic
 
 ```bash
 # Query current daily PnL
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_total_daily_pnl_usd
 
 # Query Prometheus
@@ -35,7 +35,7 @@ tradeengine_total_daily_pnl_usd
 
 ```bash
 # Get risk configuration
-curl -X GET http://tradeengine:8080/api/v1/config/trading \
+curl -X GET http://petrosa-tradeengine-service:80/api/v1/config/trading \
   -H "Content-Type: application/json" | jq '.risk_management.max_daily_loss_pct'
 
 # Calculate limit in USD (if needed)
@@ -46,7 +46,7 @@ curl -X GET http://tradeengine:8080/api/v1/config/trading \
 
 ```bash
 # Check unrealized PnL
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_total_unrealized_pnl_usd
 
 # Check position sizes
@@ -79,7 +79,9 @@ tradeengine_current_position_size
 1. **Monitor Closely**: Watch for continued losses approaching 100%
    ```bash
    # Set up continuous monitoring
-   watch -n 30 'curl -s http://tradeengine:9090/metrics | grep tradeengine_total_daily_pnl_usd'
+   # Monitor from within pod
+   kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
+     watch -n 30 'curl -s http://localhost:9090/metrics | grep tradeengine_total_daily_pnl_usd'
    ```
 
 2. **Review Active Positions**: Assess if positions should be closed
@@ -90,7 +92,7 @@ tradeengine_current_position_size
 3. **Reduce Exposure**: Consider reducing position sizes
    ```bash
    # Adjust position sizing (if appropriate)
-   curl -X PUT http://tradeengine:8080/api/v1/config/trading \
+   curl -X PUT http://petrosa-tradeengine-service:80/api/v1/config/trading \
      -H "Content-Type: application/json" \
      -d '{"position_size_pct": 0.05}'
    ```
@@ -159,6 +161,6 @@ When daily loss limit is reached:
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Daily PnL Panel**: Monitor daily PnL vs limit
 - **Position Monitoring**: Review active positions and unrealized PnL

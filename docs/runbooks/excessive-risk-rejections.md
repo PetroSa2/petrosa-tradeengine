@@ -25,7 +25,7 @@ Risk management system is rejecting orders at a high rate (> 5 rejections per mi
 
 ```bash
 # Check rejection reasons breakdown
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_risk_rejections_total
 
 # Query Prometheus for rejection reasons
@@ -36,11 +36,11 @@ sum by (reason) (rate(tradeengine_risk_rejections_total[5m]))
 
 ```bash
 # Check current risk configuration
-curl -X GET http://tradeengine:8080/api/v1/config/trading \
+curl -X GET http://petrosa-tradeengine-service:80/api/v1/config/trading \
   -H "Content-Type: application/json" | jq '.risk_management'
 
 # Check position limits
-curl -X GET http://tradeengine:8080/api/v1/config/trading \
+curl -X GET http://petrosa-tradeengine-service:80/api/v1/config/trading \
   -H "Content-Type: application/json" | jq '.position_limits'
 ```
 
@@ -48,7 +48,7 @@ curl -X GET http://tradeengine:8080/api/v1/config/trading \
 
 ```bash
 # Check current position sizes
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_current_position_size
 
 # Query Prometheus for position sizes
@@ -59,7 +59,7 @@ tradeengine_current_position_size
 
 ```bash
 # Check daily PnL
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_total_daily_pnl_usd
 
 # Query Prometheus
@@ -96,7 +96,7 @@ tradeengine_total_daily_pnl_usd
 
 ```bash
 # Adjust position size limits (if appropriate)
-curl -X PUT http://tradeengine:8080/api/v1/config/trading \
+curl -X PUT http://petrosa-tradeengine-service:80/api/v1/config/trading \
   -H "Content-Type: application/json" \
   -d '{
     "position_size_pct": 0.15,
@@ -155,6 +155,6 @@ curl -X PUT http://tradeengine:8080/api/v1/config/trading \
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Risk Rejections Panel**: Review rejection reasons breakdown
 - **Position Monitoring**: Track position sizes and limits

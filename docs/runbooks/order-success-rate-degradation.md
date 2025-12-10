@@ -25,7 +25,7 @@ Order success rate (filled orders / total orders) has dropped below 95% over a 1
 
 ```bash
 # Query failure reasons
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep tradeengine_order_failures_total
 
 # Query Prometheus for failure breakdown
@@ -159,6 +159,6 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml logs -n petrosa-apps -l app=tradeengine
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Order Success Rate Panel**: Monitor success rate trends
 - **Order Failures Panel**: Review failure reasons breakdown

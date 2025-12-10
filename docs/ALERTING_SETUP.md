@@ -165,7 +165,7 @@ After deployment, validate:
 
 ### Alerts Not Firing
 
-1. Check if metrics exist: `curl http://tradeengine:9090/metrics | grep tradeengine_`
+1. Check if metrics exist: `curl http://petrosa-tradeengine-service:9090/metrics | grep tradeengine_`
 2. Verify Prometheus is scraping: Check Prometheus targets
 3. Check alert rule syntax: `kubectl describe prometheusrule tradeengine-business-alerts`
 4. Review Prometheus logs for evaluation errors

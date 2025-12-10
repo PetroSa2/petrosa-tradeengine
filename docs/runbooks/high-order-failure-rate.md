@@ -25,7 +25,7 @@ Order failure rate exceeds 10% of total orders executed over a 5-minute window. 
 
 ```bash
 # Check current failure rate
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   curl -s http://localhost:9090/metrics | grep -E "tradeengine_order_failures_total|tradeengine_orders_executed_by_type_total"
 
 # Query Prometheus directly (if accessible)
@@ -55,7 +55,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml logs -n petrosa-apps -l app=tradeengine
   grep -iE "order.*fail|error.*order|rejected"
 
 # Check MongoDB for failed orders
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   python -c "
 from tradeengine.db.mongodb import get_mongodb_client
 client = get_mongodb_client()
@@ -70,7 +70,7 @@ for f in failures:
 
 ```bash
 # Verify NATS connectivity
-kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petrosa-apps -- \
+kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/petrosa-tradeengine -n petrosa-apps -- \
   nc -zv nats-server.nats 4222
 
 # Check for stuck messages (if NATS monitoring available)
@@ -92,7 +92,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petr
 1. **If failure rate > 20%**: Consider pausing trading temporarily
    ```bash
    # Disable trading via config API (if available)
-   curl -X PUT http://tradeengine:8080/api/v1/config/trading \
+   curl -X PUT http://petrosa-tradeengine-service:80/api/v1/config/trading \
      -H "Content-Type: application/json" \
      -d '{"enabled": false}'
    ```
@@ -104,7 +104,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petr
 3. **Review Recent Deployments**: Check if recent code changes introduced issues
    ```bash
    # Check recent deployments
-   kubectl --kubeconfig=k8s/kubeconfig.yaml rollout history deployment/tradeengine -n petrosa-apps
+   kubectl --kubeconfig=k8s/kubeconfig.yaml rollout history deployment/petrosa-tradeengine -n petrosa-apps
    ```
 
 ### Common Fixes
@@ -113,7 +113,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml exec -it deployment/tradeengine -n petr
 
 ```bash
 # Restart tradeengine pods to refresh connections
-kubectl --kubeconfig=k8s/kubeconfig.yaml rollout restart deployment/tradeengine -n petrosa-apps
+kubectl --kubeconfig=k8s/kubeconfig.yaml rollout restart deployment/petrosa-tradeengine -n petrosa-apps
 
 # Verify pods are healthy
 kubectl --kubeconfig=k8s/kubeconfig.yaml get pods -n petrosa-apps -l app=tradeengine
@@ -169,6 +169,6 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml get pods -n petrosa-apps -l app=tradeen
 
 ## Dashboard Links
 
-- **Grafana Dashboard**: https://grafana.company.com/d/trade-execution
+- **Grafana Dashboard**: Access via Grafana Cloud or local Grafana instance (configure actual URL in your environment)
 - **Prometheus Alerts**: Check Alertmanager UI
 - **Order Execution Metrics**: Review `tradeengine_order_failures_total` by reason

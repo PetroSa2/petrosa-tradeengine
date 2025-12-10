@@ -22,6 +22,9 @@
 
 set -euo pipefail
 
+# Constants
+readonly DEFAULT_GRAFANA_URL="https://yurisa2.grafana.net"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -92,15 +95,15 @@ if [ -z "${GRAFANA_URL:-}" ]; then
         success "Grafana URL from secret: $GRAFANA_URL"
       else
         # Try alternative: use yurisa2 as default
-        GRAFANA_URL="https://yurisa2.grafana.net"
+        GRAFANA_URL="$DEFAULT_GRAFANA_URL"
         warning "Could not get instance ID from secret, using default: $GRAFANA_URL"
       fi
     else
-      GRAFANA_URL="https://yurisa2.grafana.net"
+      GRAFANA_URL="$DEFAULT_GRAFANA_URL"
       warning "kubeconfig not found, using default: $GRAFANA_URL"
     fi
   else
-    GRAFANA_URL="https://yurisa2.grafana.net"
+    GRAFANA_URL="$DEFAULT_GRAFANA_URL"
     warning "kubectl not available, using default: $GRAFANA_URL"
   fi
 fi
@@ -110,7 +113,7 @@ if [ -z "${GRAFANA_API_TOKEN:-}" ]; then
 
   # Try to get from Kubernetes secret
   if command -v kubectl >/dev/null 2>&1; then
-    KUBECONFIG_PATH="$REPO_ROOT/../petrosa_k8s/k8s/kubeconfig.yaml"
+    KUBECONFIG_PATH="${KUBECONFIG_PATH:-$REPO_ROOT/../petrosa_k8s/k8s/kubeconfig.yaml}"
     if [ -f "$KUBECONFIG_PATH" ]; then
       GRAFANA_API_TOKEN=$(kubectl --kubeconfig="$KUBECONFIG_PATH" get secret petrosa-sensitive-credentials \
         -n petrosa-apps \
@@ -125,7 +128,7 @@ Please set:
   export GRAFANA_API_TOKEN='your-api-token'
 
 Or create API token in Grafana:
-  1. Go to https://yurisa2.grafana.net
+  1. Go to $DEFAULT_GRAFANA_URL
   2. Navigate to Configuration → API Keys
   3. Create new key with Editor role
   4. Copy token and export as env var"
@@ -182,10 +185,14 @@ HTTP_CODE=$(curl -s -w "%{http_code}" \
 if [ "$HTTP_CODE" = "200" ]; then
   success "Dashboard imported successfully!"
 
-  # Extract dashboard details
-  DASHBOARD_UID=$(jq -r '.uid' "$HTTP_RESPONSE")
-  DASHBOARD_URL=$(jq -r '.url' "$HTTP_RESPONSE")
-  DASHBOARD_SLUG=$(jq -r '.slug' "$HTTP_RESPONSE")
+  # Extract dashboard details with validation
+  DASHBOARD_UID=$(jq -r '.uid // empty' "$HTTP_RESPONSE")
+  DASHBOARD_URL=$(jq -r '.url // empty' "$HTTP_RESPONSE")
+  DASHBOARD_SLUG=$(jq -r '.slug // empty' "$HTTP_RESPONSE")
+
+  if [ -z "$DASHBOARD_UID" ] || [ -z "$DASHBOARD_URL" ]; then
+    error "Unexpected API response format. Response: $(cat "$HTTP_RESPONSE")"
+  fi
 
   echo ""
   echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -205,9 +212,10 @@ if [ "$HTTP_CODE" = "200" ]; then
   echo "6. Share URL in team documentation"
   echo ""
 
-  # Save URL for later use
-  echo "$GRAFANA_URL$DASHBOARD_URL" > /tmp/grafana-dashboard-url.txt
-  success "Dashboard URL saved to: /tmp/grafana-dashboard-url.txt"
+  # Save URL for later use (use unique temp file to avoid conflicts)
+  URL_FILE=$(mktemp /tmp/grafana-dashboard-url.XXXXXX.txt)
+  echo "$GRAFANA_URL$DASHBOARD_URL" > "$URL_FILE"
+  success "Dashboard URL saved to: $URL_FILE"
 
 elif [ "$HTTP_CODE" = "401" ]; then
   error "Authentication failed. Check GRAFANA_API_TOKEN is valid."

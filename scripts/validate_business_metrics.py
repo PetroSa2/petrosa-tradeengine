@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import math
 import sys
 import time
 from typing import Dict, List, Set
@@ -106,9 +107,9 @@ def validate_metric_values(metrics: Dict[str, List[Dict]]) -> tuple[bool, List[s
 
             # Check for NaN or Inf
             if isinstance(value, float):
-                if value != value:  # NaN check
+                if math.isnan(value):
                     issues.append(f"{sample['name']}: NaN value detected")
-                elif value == float("inf") or value == float("-inf"):
+                elif math.isinf(value):
                     issues.append(f"{sample['name']}: Inf value detected")
 
             # Counters should not be negative
@@ -142,11 +143,10 @@ def print_metrics_summary(metrics: Dict[str, List[Dict]]):
             print(f"\n✅ {metric_name} ({metric_type})")
             print(f"   Found {len(found_samples)} sample(s)")
             # Show first sample as example
-            if found_samples:
-                sample = found_samples[0]
-                print(f"   Example: {sample['name']} = {sample['value']}")
-                if sample["labels"]:
-                    print(f"   Labels: {sample['labels']}")
+            sample = found_samples[0]
+            print(f"   Example: {sample['name']} = {sample['value']}")
+            if sample["labels"]:
+                print(f"   Labels: {sample['labels']}")
         else:
             print(f"\n❌ {metric_name} ({metric_type}) - NOT FOUND")
 

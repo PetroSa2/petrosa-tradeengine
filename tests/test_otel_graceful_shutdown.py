@@ -261,3 +261,125 @@ class TestSetupSignalHandlers:
 
         # Verify sys.exit was NOT called (allows uvicorn to handle shutdown)
         mock_exit.assert_not_called()
+
+    def test_signal_handler_executes_complete_flow(self):
+        """Test that signal handler executes the complete flow including signal name resolution."""
+        with patch("signal.signal") as mock_signal:
+            otel_init.setup_signal_handlers()
+
+        # Get the registered handler
+        handler_call = mock_signal.call_args_list[0]
+        registered_handler = handler_call[0][1]
+
+        # Mock flush_telemetry to verify it's called
+        with patch("otel_init.flush_telemetry") as mock_flush:
+            # Test with SIGTERM (valid signal)
+            registered_handler(signal.SIGTERM, None)
+            mock_flush.assert_called_once_with(timeout_seconds=3.0)
+
+        # Test with SIGINT
+        with patch("otel_init.flush_telemetry") as mock_flush2:
+            registered_handler(signal.SIGINT, None)
+            mock_flush2.assert_called_once_with(timeout_seconds=3.0)
+
+        # Test with unknown signal number (edge case)
+        with patch("otel_init.flush_telemetry") as mock_flush3:
+            # Use a signal number that exists but is less common (SIGHUP = 1)
+            registered_handler(signal.SIGHUP, None)
+            mock_flush3.assert_called_once_with(timeout_seconds=3.0)
+
+    def test_flush_telemetry_elapsed_time_logic(self):
+        """Test flush_telemetry timeout elapsed logic."""
+
+        mock_tracer_provider = MagicMock()
+        mock_tracer_provider.force_flush = MagicMock()
+
+        with patch(
+            "otel_init.trace.get_tracer_provider", return_value=mock_tracer_provider
+        ):
+            with patch(
+                "otel_init.metrics.get_meter_provider", return_value=MagicMock()
+            ):
+                with patch("otel_init._global_logger_provider", None):
+                    # Test case: elapsed time < timeout (should sleep)
+                    with patch(
+                        "time.time", side_effect=[0.0, 0.1]
+                    ):  # 0.1 seconds elapsed
+                        with patch("time.sleep") as mock_sleep:
+                            otel_init.flush_telemetry(timeout_seconds=1.0)
+                            # Should sleep since elapsed (0.1) < timeout (1.0)
+                            mock_sleep.assert_called_once()
+                            # Verify sleep was called with remaining time (min 0.5)
+                            assert mock_sleep.call_args[0][0] <= 0.5
+
+    def test_flush_telemetry_typeerror_traces_only(self):
+        """Test TypeError fallback for trace provider only."""
+        mock_tracer_provider = MagicMock()
+        call_count = {"count": 0}
+
+        def force_flush_side_effect(*args, **kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1 and "timeout_millis" in kwargs:
+                raise TypeError("unexpected keyword argument")
+            return None
+
+        mock_tracer_provider.force_flush = MagicMock(
+            side_effect=force_flush_side_effect
+        )
+
+        with patch(
+            "otel_init.trace.get_tracer_provider", return_value=mock_tracer_provider
+        ):
+            with patch(
+                "otel_init.metrics.get_meter_provider", return_value=MagicMock()
+            ):
+                with patch("otel_init._global_logger_provider", None):
+                    otel_init.flush_telemetry(timeout_seconds=2.0)
+
+        assert mock_tracer_provider.force_flush.call_count == 2
+
+    def test_flush_telemetry_typeerror_metrics_only(self):
+        """Test TypeError fallback for metrics provider only."""
+        mock_meter_provider = MagicMock()
+        call_count = {"count": 0}
+
+        def force_flush_side_effect(*args, **kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1 and "timeout_millis" in kwargs:
+                raise TypeError("unexpected keyword argument")
+            return None
+
+        mock_meter_provider.force_flush = MagicMock(side_effect=force_flush_side_effect)
+
+        with patch("otel_init.trace.get_tracer_provider", return_value=MagicMock()):
+            with patch(
+                "otel_init.metrics.get_meter_provider", return_value=mock_meter_provider
+            ):
+                with patch("otel_init._global_logger_provider", None):
+                    otel_init.flush_telemetry(timeout_seconds=2.0)
+
+        assert mock_meter_provider.force_flush.call_count == 2
+
+    def test_flush_telemetry_typeerror_logs_only(self):
+        """Test TypeError fallback for log provider only."""
+        mock_logger_provider = MagicMock()
+        call_count = {"count": 0}
+
+        def force_flush_side_effect(*args, **kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1 and "timeout_millis" in kwargs:
+                raise TypeError("unexpected keyword argument")
+            return None
+
+        mock_logger_provider.force_flush = MagicMock(
+            side_effect=force_flush_side_effect
+        )
+
+        with patch("otel_init.trace.get_tracer_provider", return_value=MagicMock()):
+            with patch(
+                "otel_init.metrics.get_meter_provider", return_value=MagicMock()
+            ):
+                with patch("otel_init._global_logger_provider", mock_logger_provider):
+                    otel_init.flush_telemetry(timeout_seconds=2.0)
+
+        assert mock_logger_provider.force_flush.call_count == 2

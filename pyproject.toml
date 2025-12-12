@@ -149,6 +149,7 @@ addopts = [
     "--cov=tradeengine",
     "--cov=contracts",
     "--cov=shared",
+    "--cov=otel_init",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
@@ -182,7 +183,7 @@ norecursedirs = [
 
 
 [tool.coverage.run]
-source = ["tradeengine", "contracts", "shared"]
+source = ["tradeengine", "contracts", "shared", "otel_init"]
 omit = [
     "*/tests/*",
     "*/test_*",

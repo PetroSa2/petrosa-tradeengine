@@ -63,6 +63,107 @@ async def test_lifespan_startup_calls_configure_logging():
 
 
 @pytest.mark.asyncio
+async def test_lifespan_startup_calls_setup_signal_handlers():
+    """Test that lifespan startup calls setup_signal_handlers."""
+    import tradeengine.api as api_module
+
+    setup_was_called = []
+
+    def track_setup():
+        setup_was_called.append(True)
+
+    mock_app = MagicMock()
+    mock_app.state = MagicMock()
+
+    with (
+        patch("otel_init.configure_logging", return_value=True),
+        patch.object(
+            api_module.otel_init, "setup_signal_handlers", side_effect=track_setup
+        ),
+        patch("shared.constants.validate_mongodb_config"),
+        patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
+        patch.object(api_module, "binance_exchange") as mock_binance,
+        patch.object(api_module, "simulator_exchange") as mock_sim,
+        patch.object(api_module, "dispatcher") as mock_disp,
+        patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+    ):
+
+        mock_config = AsyncMock()
+        mock_config.start = AsyncMock()
+        mock_config.stop = AsyncMock()
+        MockConfig.return_value = mock_config
+
+        mock_binance.initialize = AsyncMock()
+        mock_binance.close = AsyncMock()
+        mock_sim.initialize = AsyncMock()
+        mock_sim.close = AsyncMock()
+        mock_disp.initialize = AsyncMock()
+        mock_disp.close = AsyncMock()
+        mock_consumer.initialize = AsyncMock(return_value=False)
+        mock_consumer.running = False
+
+        async with api_module.lifespan(mock_app):
+            pass
+
+        # Verify setup_signal_handlers was called
+        assert len(setup_was_called) > 0
+
+
+@pytest.mark.asyncio
+async def test_lifespan_shutdown_calls_flush_telemetry():
+    """Test that lifespan shutdown calls flush_telemetry and shutdown_telemetry."""
+    import tradeengine.api as api_module
+
+    flush_was_called = []
+    shutdown_was_called = []
+
+    def track_flush():
+        flush_was_called.append(True)
+
+    def track_shutdown():
+        shutdown_was_called.append(True)
+
+    mock_app = MagicMock()
+    mock_app.state = MagicMock()
+
+    with (
+        patch("otel_init.configure_logging", return_value=True),
+        patch.object(api_module.otel_init, "setup_signal_handlers"),
+        patch.object(api_module.otel_init, "flush_telemetry", side_effect=track_flush),
+        patch.object(
+            api_module.otel_init, "shutdown_telemetry", side_effect=track_shutdown
+        ),
+        patch("shared.constants.validate_mongodb_config"),
+        patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
+        patch.object(api_module, "binance_exchange") as mock_binance,
+        patch.object(api_module, "simulator_exchange") as mock_sim,
+        patch.object(api_module, "dispatcher") as mock_disp,
+        patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+    ):
+
+        mock_config = AsyncMock()
+        mock_config.start = AsyncMock()
+        mock_config.stop = AsyncMock()
+        MockConfig.return_value = mock_config
+
+        mock_binance.initialize = AsyncMock()
+        mock_binance.close = AsyncMock()
+        mock_sim.initialize = AsyncMock()
+        mock_sim.close = AsyncMock()
+        mock_disp.initialize = AsyncMock()
+        mock_disp.close = AsyncMock()
+        mock_consumer.initialize = AsyncMock(return_value=False)
+        mock_consumer.running = False
+
+        async with api_module.lifespan(mock_app):
+            pass
+
+        # Verify flush_telemetry and shutdown_telemetry were called during shutdown
+        assert len(flush_was_called) > 0
+        assert len(shutdown_was_called) > 0
+
+
+@pytest.mark.asyncio
 async def test_lifespan_logs_configured_message():
     """
     Test that lifespan logs the success message.

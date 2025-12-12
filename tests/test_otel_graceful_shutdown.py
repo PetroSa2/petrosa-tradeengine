@@ -71,7 +71,14 @@ class TestFlushTelemetry:
             ):
                 with patch("otel_init._global_logger_provider", None):
                     # Should not raise exception
-                    otel_init.flush_telemetry()
+                    try:
+                        otel_init.flush_telemetry()
+                        # Assert function completes without exception
+                        assert True
+                    except Exception:
+                        assert (
+                            False
+                        ), "flush_telemetry should handle missing providers gracefully"
 
     def test_flush_telemetry_handles_exceptions(self):
         """Test that flush_telemetry handles provider exceptions gracefully."""
@@ -88,7 +95,47 @@ class TestFlushTelemetry:
             ):
                 with patch("otel_init._global_logger_provider", None):
                     # Should not raise exception
-                    otel_init.flush_telemetry()
+                    try:
+                        otel_init.flush_telemetry()
+                        # Assert function completes without propagating exception
+                        assert True
+                    except Exception as e:
+                        assert (
+                            False
+                        ), f"flush_telemetry should catch exceptions, got: {e}"
+
+    def test_flush_telemetry_typeerror_fallback(self):
+        """Test that flush_telemetry falls back when providers don't accept timeout."""
+        # Mock provider that raises TypeError when timeout_millis is passed
+        mock_tracer_provider = MagicMock()
+        mock_tracer_provider.force_flush = MagicMock(
+            side_effect=[TypeError("unexpected keyword argument"), None]
+        )
+
+        mock_meter_provider = MagicMock()
+        mock_meter_provider.force_flush = MagicMock(
+            side_effect=[TypeError("unexpected keyword argument"), None]
+        )
+
+        mock_logger_provider = MagicMock()
+        mock_logger_provider.force_flush = MagicMock(
+            side_effect=[TypeError("unexpected keyword argument"), None]
+        )
+
+        with patch(
+            "otel_init.trace.get_tracer_provider", return_value=mock_tracer_provider
+        ):
+            with patch(
+                "otel_init.metrics.get_meter_provider", return_value=mock_meter_provider
+            ):
+                with patch("otel_init._global_logger_provider", mock_logger_provider):
+                    # Should fall back to calling without timeout
+                    otel_init.flush_telemetry(timeout_seconds=2.0)
+
+        # Verify fallback was called (two calls: with timeout, then without)
+        assert mock_tracer_provider.force_flush.call_count == 2
+        assert mock_meter_provider.force_flush.call_count == 2
+        assert mock_logger_provider.force_flush.call_count == 2
 
 
 class TestShutdownTelemetry:
@@ -133,7 +180,14 @@ class TestShutdownTelemetry:
             ):
                 with patch("otel_init._global_logger_provider", None):
                     # Should not raise exception
-                    otel_init.shutdown_telemetry()
+                    try:
+                        otel_init.shutdown_telemetry()
+                        # Assert function completes without exception
+                        assert True
+                    except Exception:
+                        assert (
+                            False
+                        ), "shutdown_telemetry should handle missing providers gracefully"
 
     def test_shutdown_telemetry_handles_exceptions(self):
         """Test that shutdown_telemetry handles provider exceptions gracefully."""
@@ -150,7 +204,14 @@ class TestShutdownTelemetry:
             ):
                 with patch("otel_init._global_logger_provider", None):
                     # Should not raise exception
-                    otel_init.shutdown_telemetry()
+                    try:
+                        otel_init.shutdown_telemetry()
+                        # Assert function completes without propagating exception
+                        assert True
+                    except Exception as e:
+                        assert (
+                            False
+                        ), f"shutdown_telemetry should catch exceptions, got: {e}"
 
 
 class TestSetupSignalHandlers:

@@ -1,6 +1,6 @@
 [run]
 # Standardized coverage configuration for Petrosa Systems
-source = tradeengine, contracts, shared
+source = tradeengine, contracts, shared, otel_init
 omit =
     */tests/*
     */test_*

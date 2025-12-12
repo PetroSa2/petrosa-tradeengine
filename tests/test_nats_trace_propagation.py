@@ -346,3 +346,50 @@ async def test_missing_timestamp_handled_within_span(
 
     # Verify span status is OK despite missing timestamp
     assert consumer_span.status.status_code == trace.StatusCode.OK
+
+
+@pytest.mark.asyncio
+async def test_extract_trace_context_with_legacy_headers_field(
+    consumer, span_exporter, tracer_provider
+):
+    """Test that trace context is extracted from legacy _otel_trace_headers field (ta-bot format)"""
+    signal_data = {
+        "strategy_id": "rsi_strategy",
+        "symbol": "BTCUSDT",
+        "action": "buy",
+        "price": 50000.0,
+        "quantity": 0.001,
+        "current_price": 50000.0,
+        "confidence": 0.85,
+        "source": "ta-bot",
+        "strategy": "rsi",
+        "timestamp": datetime.utcnow().isoformat(),
+        # Legacy trace context field used by ta-bot
+        "_otel_trace_headers": {
+            "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            "tracestate": "test=value",
+        },
+    }
+
+    msg = create_nats_message(signal_data)
+
+    # Process message
+    await consumer._message_handler(msg)
+
+    # Verify span was created
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) > 0
+
+    # Get the consumer span
+    consumer_span = next((s for s in spans if s.name == "process_trading_signal"), None)
+    assert consumer_span is not None
+
+    # Verify trace ID matches the one from traceparent (backward compatibility)
+    expected_trace_id = "0af7651916cd43dd8448eb211c80319c"
+    actual_trace_id = format(consumer_span.context.trace_id, "032x")
+    assert actual_trace_id == expected_trace_id
+
+    # Verify span attributes
+    attributes = dict(consumer_span.attributes)
+    assert attributes.get("signal.strategy_id") == "rsi_strategy"
+    assert attributes.get("signal.symbol") == "BTCUSDT"

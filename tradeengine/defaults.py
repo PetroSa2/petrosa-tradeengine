@@ -847,7 +847,7 @@ PARAMETER_SCHEMA = {
 # =============================================================================
 
 
-def validate_parameters(parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
+def validate_parameters(parameters: dict[str, Any]) -> tuple[bool, list[str]]:
     """
     Validate trading parameters against schema.
 
@@ -857,14 +857,14 @@ def validate_parameters(parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
     Returns:
         Tuple of (is_valid, list_of_errors)
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     for param_name, param_value in parameters.items():
         if param_name not in PARAMETER_SCHEMA:
             errors.append(f"Unknown parameter: {param_name}")
             continue
 
-        schema: Dict[str, Any] = PARAMETER_SCHEMA[param_name]
+        schema: dict[str, Any] = PARAMETER_SCHEMA[param_name]
         param_type: str = schema["type"]
 
         # Type validation
@@ -905,17 +905,17 @@ def validate_parameters(parameters: Dict[str, Any]) -> Tuple[bool, List[str]]:
     return len(errors) == 0, errors
 
 
-def get_parameter_schema() -> Dict[str, Any]:
+def get_parameter_schema() -> dict[str, Any]:
     """Get complete parameter schema for API documentation."""
     return PARAMETER_SCHEMA
 
 
-def get_default_parameters() -> Dict[str, Any]:
+def get_default_parameters() -> dict[str, Any]:
     """Get default trading parameters."""
     return DEFAULT_TRADING_PARAMETERS.copy()
 
 
-def merge_parameters(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def merge_parameters(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """
     Merge override parameters into base parameters.
 

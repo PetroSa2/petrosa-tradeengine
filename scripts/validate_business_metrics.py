@@ -23,7 +23,7 @@ import requests
 from prometheus_client.parser import text_string_to_metric_families
 
 # Expected business metrics (11 total)
-EXPECTED_METRICS: Dict[str, str] = {
+EXPECTED_METRICS: dict[str, str] = {
     # Order Execution (3 metrics)
     "tradeengine_orders_executed_by_type_total": "Counter",
     "tradeengine_order_execution_latency_seconds": "Histogram",
@@ -52,7 +52,7 @@ def fetch_metrics(endpoint: str, timeout: int = 10) -> str:
         sys.exit(1)
 
 
-def parse_metrics(metrics_text: str) -> Dict[str, List[Dict]]:
+def parse_metrics(metrics_text: str) -> dict[str, list[dict]]:
     """Parse Prometheus metrics text into structured format."""
     metrics = {}
     for family in text_string_to_metric_families(metrics_text):
@@ -70,10 +70,10 @@ def parse_metrics(metrics_text: str) -> Dict[str, List[Dict]]:
     return metrics
 
 
-def validate_metrics_present(metrics: Dict[str, List[Dict]]) -> tuple[bool, List[str]]:
+def validate_metrics_present(metrics: dict[str, list[dict]]) -> tuple[bool, list[str]]:
     """Validate all expected business metrics are present."""
-    found_metrics: Set[str] = set()
-    missing_metrics: List[str] = []
+    found_metrics: set[str] = set()
+    missing_metrics: list[str] = []
 
     # Check for each expected metric
     for metric_name in EXPECTED_METRICS.keys():
@@ -94,9 +94,9 @@ def validate_metrics_present(metrics: Dict[str, List[Dict]]) -> tuple[bool, List
     return all_present, missing_metrics
 
 
-def validate_metric_values(metrics: Dict[str, List[Dict]]) -> tuple[bool, List[str]]:
+def validate_metric_values(metrics: dict[str, list[dict]]) -> tuple[bool, list[str]]:
     """Validate metric values are reasonable (no NaN, Inf, negative counters)."""
-    issues: List[str] = []
+    issues: list[str] = []
 
     for metric_name, metric_type in EXPECTED_METRICS.items():
         if metric_name not in metrics:
@@ -126,7 +126,7 @@ def validate_metric_values(metrics: Dict[str, List[Dict]]) -> tuple[bool, List[s
     return len(issues) == 0, issues
 
 
-def print_metrics_summary(metrics: Dict[str, List[Dict]]):
+def print_metrics_summary(metrics: dict[str, list[dict]]):
     """Print summary of found business metrics."""
     print("\n📊 Business Metrics Summary:")
     print("=" * 80)

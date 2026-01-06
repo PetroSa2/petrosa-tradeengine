@@ -60,7 +60,7 @@ class TradingConfigManager:
         self.cache_ttl_seconds = cache_ttl_seconds
 
         # Cache: key = f"{symbol or 'global'}:{side or 'all'}", value = (config, timestamp)
-        self._cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+        self._cache: dict[str, tuple[dict[str, Any], float]] = {}
 
         # Background tasks
         self._cache_refresh_task: Optional[asyncio.Task[Any]] = None
@@ -129,7 +129,7 @@ class TradingConfigManager:
 
     async def get_config(
         self, symbol: Optional[str] = None, side: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get resolved trading configuration.
 
@@ -206,13 +206,13 @@ class TradingConfigManager:
 
     async def set_config(
         self,
-        parameters: Dict[str, Any],
+        parameters: dict[str, Any],
         changed_by: str,
         symbol: Optional[str] = None,
         side: Optional[str] = None,
         reason: Optional[str] = None,
         validate_only: bool = False,
-    ) -> Tuple[bool, Optional[TradingConfig], List[str]]:
+    ) -> tuple[bool, Optional[TradingConfig], list[str]]:
         """
         Set trading configuration.
 
@@ -336,7 +336,7 @@ class TradingConfigManager:
         symbol: Optional[str] = None,
         side: Optional[str] = None,
         reason: Optional[str] = None,
-    ) -> Tuple[bool, List[str]]:
+    ) -> tuple[bool, list[str]]:
         """
         Delete trading configuration.
 

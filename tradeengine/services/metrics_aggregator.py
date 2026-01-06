@@ -31,7 +31,7 @@ class MetricsAggregator:
 
     def __init__(self):
         """Initialize metrics aggregator"""
-        self.cache: Dict[str, Any] = {}
+        self.cache: dict[str, Any] = {}
         self.cache_ttl_seconds = 60  # Cache metrics for 1 minute
 
     def parse_timeframe(self, timeframe: str) -> int:
@@ -77,7 +77,7 @@ class MetricsAggregator:
         metric_filter: Optional[str] = None,
         strategy_id: Optional[str] = None,
         symbol: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get aggregated metrics for the specified time window.
 
@@ -243,7 +243,7 @@ class MetricsAggregator:
         strategy_id: Optional[str],
         window: str,
         symbol: Optional[str],
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get success rate metrics for strategies.
 
@@ -287,7 +287,7 @@ class MetricsAggregator:
         self,
         pod_id: Optional[str],
         timeframe: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get resource utilization for pods.
 
@@ -332,7 +332,7 @@ class MetricsAggregator:
         period: str,
         interval: str,
         strategy_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get metric evolution over time.
 
@@ -385,7 +385,7 @@ class MetricsAggregator:
         after: datetime,
         metric: Optional[str],
         window: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compare metrics before and after a timestamp.
 

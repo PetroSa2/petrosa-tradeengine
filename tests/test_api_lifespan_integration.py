@@ -38,7 +38,6 @@ async def test_lifespan_startup_calls_configure_logging():
         patch.object(api_module, "dispatcher") as mock_disp,
         patch("tradeengine.consumer.signal_consumer") as mock_consumer,
     ):
-
         # Setup async mocks
         mock_config = AsyncMock()
         mock_config.start = AsyncMock()
@@ -87,7 +86,6 @@ async def test_lifespan_startup_calls_setup_signal_handlers():
         patch.object(api_module, "dispatcher") as mock_disp,
         patch("tradeengine.consumer.signal_consumer") as mock_consumer,
     ):
-
         mock_config = AsyncMock()
         mock_config.start = AsyncMock()
         mock_config.stop = AsyncMock()
@@ -140,7 +138,6 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
         patch.object(api_module, "dispatcher") as mock_disp,
         patch("tradeengine.consumer.signal_consumer") as mock_consumer,
     ):
-
         mock_config = AsyncMock()
         mock_config.start = AsyncMock()
         mock_config.stop = AsyncMock()
@@ -198,7 +195,6 @@ async def test_lifespan_logs_configured_message():
             patch.object(api_module, "dispatcher") as mock_disp,
             patch("tradeengine.consumer.signal_consumer") as mock_consumer,
         ):
-
             mock_config = AsyncMock()
             mock_config.start = AsyncMock()
             mock_config.stop = AsyncMock()
@@ -263,7 +259,6 @@ async def test_lifespan_error_path_without_watchdog():
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
         ):
-
             mock_binance.close = AsyncMock()
             mock_sim.close = AsyncMock()
             mock_disp.close = AsyncMock()

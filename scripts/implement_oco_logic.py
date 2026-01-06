@@ -28,7 +28,7 @@ class OCOManager:
 
     def __init__(self, exchange: BinanceFuturesExchange):
         self.exchange = exchange
-        self.active_oco_pairs: Dict[str, Dict[str, str]] = (
+        self.active_oco_pairs: dict[str, dict[str, str]] = (
             {}
         )  # position_id -> {sl_order_id, tp_order_id}
 
@@ -40,7 +40,7 @@ class OCOManager:
         quantity: float,
         stop_loss_price: float,
         take_profit_price: float,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Place SL/TP orders that will cancel each other (OCO behavior)
 

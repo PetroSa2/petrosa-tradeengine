@@ -45,7 +45,7 @@ def get_config_manager() -> TradingConfigManager:
 class ConfigUpdateRequest(BaseModel):
     """Request model for updating configuration."""
 
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         ..., description="Configuration parameters to update"
     )
     changed_by: str = Field(
@@ -64,7 +64,7 @@ class ConfigResponse(BaseModel):
 
     symbol: Optional[str] = Field(None, description="Trading symbol")
     side: Optional[Literal["LONG", "SHORT"]] = Field(None, description="Position side")
-    parameters: Dict[str, Any] = Field(..., description="Configuration parameters")
+    parameters: dict[str, Any] = Field(..., description="Configuration parameters")
     version: int = Field(..., description="Configuration version")
     source: str = Field(..., description="Configuration source (mongodb/mysql/default)")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
@@ -76,8 +76,8 @@ class APIResponse(BaseModel):
 
     success: bool = Field(..., description="Whether operation succeeded")
     data: Optional[Any] = Field(None, description="Response data")
-    error: Optional[Dict[str, Any]] = Field(None, description="Error details if failed")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    error: Optional[dict[str, Any]] = Field(None, description="Error details if failed")
+    metadata: Optional[dict[str, Any]] = Field(None, description="Additional metadata")
 
 
 class ValidationError(BaseModel):
@@ -108,20 +108,20 @@ class ValidationResponse(BaseModel):
     """Standardized validation response across all services."""
 
     validation_passed: bool = Field(..., description="Whether validation passed")
-    errors: List[ValidationError] = Field(
+    errors: list[ValidationError] = Field(
         default_factory=list, description="List of validation errors"
     )
-    warnings: List[str] = Field(
+    warnings: list[str] = Field(
         default_factory=list, description="Non-blocking warnings"
     )
-    suggested_fixes: List[str] = Field(
+    suggested_fixes: list[str] = Field(
         default_factory=list, description="Actionable suggestions to fix errors"
     )
-    estimated_impact: Dict[str, Any] = Field(
+    estimated_impact: dict[str, Any] = Field(
         default_factory=dict,
         description="Estimated impact of configuration changes",
     )
-    conflicts: List[CrossServiceConflict] = Field(
+    conflicts: list[CrossServiceConflict] = Field(
         default_factory=list, description="Cross-service conflicts detected"
     )
 
@@ -129,7 +129,7 @@ class ValidationResponse(BaseModel):
 class ConfigValidationRequest(BaseModel):
     """Request model for configuration validation."""
 
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         ..., description="Configuration parameters to validate"
     )
     symbol: Optional[str] = Field(
@@ -362,7 +362,7 @@ async def update_global_config(request: ConfigUpdateRequest):
     """,
 )
 async def get_symbol_config(
-    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)")
+    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)"),
 ):
     """Get symbol configuration."""
     try:
@@ -799,10 +799,10 @@ MAX_ERROR_MESSAGES_TO_SHOW = 2  # Limit error messages shown in conflicts
 
 
 async def detect_cross_service_conflicts(
-    parameters: Dict[str, Any],
+    parameters: dict[str, Any],
     symbol: Optional[str] = None,
     side: Optional[Literal["LONG", "SHORT"]] = None,
-) -> List[CrossServiceConflict]:
+) -> list[CrossServiceConflict]:
     """
     Detect cross-service configuration conflicts.
 

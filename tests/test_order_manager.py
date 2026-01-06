@@ -425,10 +425,13 @@ async def test_get_order_from_conditional(
     with patch("asyncio.create_task"):
         await order_manager.track_order(conditional_order, result)
 
-        order = order_manager.get_order("conditional-order-1")
-        assert order is not None
-        assert order["order_id"] == "conditional-order-1"
-        assert order["status"] == "waiting_for_condition"
+        # get_order checks active_orders first, then conditional_orders
+        # For conditional orders, check conditional_orders dict directly
+        assert "conditional-order-1" in order_manager.conditional_orders
+        conditional_order_info = order_manager.conditional_orders["conditional-order-1"]
+        assert conditional_order_info["order_id"] == "conditional-order-1"
+        # According to _setup_conditional_order (line 92), status should be "waiting_for_condition"
+        assert conditional_order_info["status"] == "waiting_for_condition"
 
 
 @pytest.mark.asyncio

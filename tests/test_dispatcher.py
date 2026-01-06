@@ -202,13 +202,13 @@ async def test_create_order_from_signal(
     dispatcher: Dispatcher, sample_signal: Signal
 ) -> None:
     """Test order creation from signal"""
-    # Mock binance_exchange to return a minimum amount that allows signal quantity
+    # Mock binance_exchange.calculate_min_order_amount to return a minimum amount that allows signal quantity
     from unittest.mock import patch
 
-    with patch("tradeengine.api.binance_exchange") as mock_binance:
-        mock_binance.calculate_min_order_amount.return_value = (
-            0.001  # Below signal quantity
-        )
+    with patch(
+        "tradeengine.api.binance_exchange.calculate_min_order_amount"
+    ) as mock_calculate_min:
+        mock_calculate_min.return_value = 0.001  # Below signal quantity
 
         order = dispatcher._signal_to_order(sample_signal)
         assert order.symbol == "BTCUSDT"

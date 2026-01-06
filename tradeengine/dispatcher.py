@@ -1618,23 +1618,33 @@ class Dispatcher:
                 f"Error calculating order amount for {signal.symbol}: {e}",
                 exc_info=True,
             )
-            # Fallback: Calculate amount to meet $10 minimum notional
-            # This ensures orders meet Binance's minimum notional requirements
+            # Fallback: Calculate amount to meet minimum notional with safety margin
+            # Use a $25 target notional, which is above the system's $20 MIN_NOTIONAL default
+            # Note: We use signal.current_price here, but if it was invalid/caused the error,
+            # the fallback calculation may still fail. However, since this is a fallback path
+            # and we can't easily fetch price synchronously, we use what we have.
             current_price = signal.current_price or 0
+
             if current_price > 0:
-                # Target $10 notional value (above Binance's $5 minimum)
-                fallback_amount = 10.0 / current_price
+                # Target $25 notional value to avoid MIN_NOTIONAL rejections
+                # ($25 is above the $20 default MIN_NOTIONAL with safety margin)
+                fallback_amount = 25.0 / current_price
                 self.logger.warning(
                     f"Using fallback amount {fallback_amount} for {signal.symbol} "
-                    f"(target notional: $10.00 at ${current_price:.2f})"
+                    f"(target notional: $25.00 at ${current_price:.2f})"
                 )
                 return fallback_amount
             else:
-                # Fixed fallback when no price available
-                self.logger.warning(
-                    f"Using fixed fallback amount 0.01 for {signal.symbol} (no price available)"
+                # No reliable price available; cannot safely compute an amount
+                # that satisfies MIN_NOTIONAL. Abort rather than sending an
+                # almost certainly invalid order size.
+                self.logger.error(
+                    f"Cannot calculate valid order amount for {signal.symbol}: "
+                    f"no current price available in fallback path"
                 )
-                return 0.01
+                raise ValueError(
+                    f"Cannot calculate order amount for {signal.symbol} without a valid price"
+                )
 
     async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a trading order with detailed logging"""

@@ -246,7 +246,7 @@ class DataManagerConfigClient:
             logger.error(f"Failed to create audit record via Data Manager: {e}")
             return False
 
-    async def get_audit_trail(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_audit_trail(self, limit: int = 100) -> list[dict[str, Any]]:
         """
         Get audit trail from Data Manager.
 
@@ -429,7 +429,7 @@ class DataManagerConfigClient:
         except Exception:
             return False
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """
         Check the health of the Data Manager connection.
 

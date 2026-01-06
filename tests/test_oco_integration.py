@@ -26,11 +26,11 @@ class ExchangeSpy:
     """
 
     def __init__(self):
-        self.executed_orders: List[TradeOrder] = []
-        self.execute_results: Dict[str, Dict[str, Any]] = {}
+        self.executed_orders: list[TradeOrder] = []
+        self.execute_results: dict[str, dict[str, Any]] = {}
         self._order_counter = 0
 
-    async def execute(self, order: TradeOrder) -> Dict[str, Any]:
+    async def execute(self, order: TradeOrder) -> dict[str, Any]:
         """Capture the order and return a result"""
         self.executed_orders.append(order)
         self._order_counter += 1
@@ -48,13 +48,13 @@ class ExchangeSpy:
         self.execute_results[order_id] = result
         return result
 
-    def get_orders_by_type(self, order_type: OrderType) -> List[TradeOrder]:
+    def get_orders_by_type(self, order_type: OrderType) -> list[TradeOrder]:
         """Get all executed orders of a specific type"""
         # TradeOrder.type is stored as string, compare with enum value
         order_type_str = order_type.value
         return [o for o in self.executed_orders if o.type == order_type_str]
 
-    def get_orders_by_side(self, side: OrderSide) -> List[TradeOrder]:
+    def get_orders_by_side(self, side: OrderSide) -> list[TradeOrder]:
         """Get all executed orders with a specific side"""
         # TradeOrder.side is stored as string, compare with enum value
         side_str = side.value

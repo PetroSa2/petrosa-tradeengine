@@ -404,6 +404,182 @@ def get_meter(name: str = None) -> metrics.Meter:
     return metrics.get_meter(name or "tradeengine")
 
 
+def flush_telemetry(timeout_seconds: float = 5.0) -> None:
+    """
+    Force flush all telemetry data (traces, metrics, logs) to prevent data loss.
+
+    This function should be called on graceful shutdown (e.g., SIGTERM, SIGINT)
+    to ensure that the last batch of telemetry data is exported before the
+    process terminates.
+
+    **Important Notes:**
+    - This function is synchronous and may block for up to `timeout_seconds`
+    - The default timeout (5 seconds) is designed to allow batch processors
+      time to export pending data
+    - For asyncio applications, consider calling this from the shutdown handler
+      rather than signal handlers to avoid blocking the event loop
+    - OpenTelemetry's force_flush() has its own internal timeout, which this
+      function respects
+
+    Args:
+        timeout_seconds: Maximum time to wait for flush operations (default: 5.0)
+
+    Returns:
+        None
+    """
+    import time
+
+    start_time = time.time()
+    try:
+        # Flush traces (with timeout)
+        tracer_provider = trace.get_tracer_provider()
+        if hasattr(tracer_provider, "force_flush"):
+            try:
+                # force_flush() accepts a timeout parameter
+                tracer_provider.force_flush(timeout_millis=int(timeout_seconds * 1000))
+                print("✅ Traces flushed successfully")
+            except TypeError:
+                # Fallback for providers that don't accept timeout
+                tracer_provider.force_flush()
+                print("✅ Traces flushed successfully")
+
+        # Flush metrics (with timeout if supported)
+        meter_provider = metrics.get_meter_provider()
+        if hasattr(meter_provider, "force_flush"):
+            try:
+                meter_provider.force_flush(timeout_millis=int(timeout_seconds * 1000))
+                print("✅ Metrics flushed successfully")
+            except TypeError:
+                meter_provider.force_flush()
+                print("✅ Metrics flushed successfully")
+
+        # Flush logs (with timeout if supported)
+        global _global_logger_provider
+        if _global_logger_provider is not None and hasattr(
+            _global_logger_provider, "force_flush"
+        ):
+            try:
+                _global_logger_provider.force_flush(
+                    timeout_millis=int(timeout_seconds * 1000)
+                )
+                print("✅ Logs flushed successfully")
+            except TypeError:
+                _global_logger_provider.force_flush()
+                print("✅ Logs flushed successfully")
+
+        # Ensure we don't exceed total timeout
+        elapsed = time.time() - start_time
+        if elapsed < timeout_seconds:
+            # Brief wait to allow batch processors to finalize export
+            remaining_time = timeout_seconds - elapsed
+            time.sleep(min(0.5, remaining_time))
+
+    except Exception as e:
+        print(f"⚠️  Error flushing telemetry: {e}")
+
+
+def shutdown_telemetry() -> None:
+    """
+    Shutdown all telemetry providers to ensure clean termination.
+
+    This function should be called after flush_telemetry() to properly shut down
+    all OpenTelemetry providers and release resources.
+
+    Returns:
+        None
+    """
+    try:
+        # Shutdown traces
+        tracer_provider = trace.get_tracer_provider()
+        if hasattr(tracer_provider, "shutdown"):
+            tracer_provider.shutdown()
+            print("✅ Trace provider shut down successfully")
+
+        # Shutdown metrics
+        meter_provider = metrics.get_meter_provider()
+        if hasattr(meter_provider, "shutdown"):
+            meter_provider.shutdown()
+            print("✅ Metrics provider shut down successfully")
+
+        # Shutdown logs
+        global _global_logger_provider
+        if _global_logger_provider is not None and hasattr(
+            _global_logger_provider, "shutdown"
+        ):
+            _global_logger_provider.shutdown()
+            print("✅ Log provider shut down successfully")
+
+    except Exception as e:
+        print(f"⚠️  Error shutting down telemetry: {e}")
+
+
+def setup_signal_handlers() -> None:
+    """
+    Set up signal handlers for graceful shutdown with telemetry flushing.
+
+    **Important:** This function registers minimal signal handlers that trigger
+    telemetry flushing. The actual shutdown is handled by uvicorn/FastAPI's
+    lifespan shutdown handler to ensure proper async cleanup.
+
+    **Note for asyncio applications:** This implementation is designed to work
+    with FastAPI/uvicorn. The signal handler only flushes telemetry and sets
+    a flag. Uvicorn will handle the actual shutdown gracefully through its
+    lifespan context manager, which also calls flush_telemetry() and
+    shutdown_telemetry().
+
+    This ensures that telemetry data is not lost when pods are terminated
+    in Kubernetes (which sends SIGTERM) while still allowing FastAPI's
+    lifespan shutdown to complete properly.
+
+    Returns:
+        None
+    """
+    import signal
+
+    # Global flag to indicate shutdown was initiated by signal
+    # This allows the lifespan handler to know telemetry was already flushed
+    _signal_shutdown_initiated = {"flag": False}
+
+    def signal_handler(signum: int, frame) -> None:  # type: ignore[no-untyped-def]
+        """
+        Minimal signal handler that flushes telemetry immediately.
+
+        This handler only flushes telemetry and sets a flag. It does NOT call
+        sys.exit() to allow uvicorn/FastAPI to handle shutdown gracefully
+        through the lifespan context manager.
+
+        Args:
+            signum: Signal number
+            frame: Current stack frame
+        """
+        signal_name = (
+            signal.Signals(signum).name if signum in signal.Signals else str(signum)
+        )
+        print(
+            f"\n🛑 Received signal {signal_name} ({signum}), initiating graceful shutdown..."
+        )
+        print("📊 Flushing telemetry data immediately to prevent loss...")
+
+        # Mark that signal-initiated shutdown has started
+        _signal_shutdown_initiated["flag"] = True
+
+        # Flush telemetry immediately (with shorter timeout for signal handler)
+        # This ensures data is flushed even if FastAPI shutdown is interrupted
+        flush_telemetry(timeout_seconds=3.0)
+
+        print("✅ Telemetry flushed - FastAPI shutdown will continue gracefully")
+        # Note: We do NOT call sys.exit() here - let uvicorn handle shutdown
+        # The lifespan shutdown handler will also flush and shutdown telemetry
+
+    # Store flag in module for potential use by lifespan handler
+    setup_signal_handlers._shutdown_initiated = _signal_shutdown_initiated  # type: ignore[attr-defined]
+
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    print("✅ Signal handlers registered for graceful telemetry shutdown")
+
+
 # Auto-setup if environment variable is set and not disabled
 if os.getenv("ENABLE_OTEL", "true").lower() in ("true", "1", "yes"):
     if not os.getenv("OTEL_NO_AUTO_INIT"):

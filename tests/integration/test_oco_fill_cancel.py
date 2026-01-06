@@ -38,9 +38,9 @@ class FakeExchange:
 
     def __init__(self):
         self.client = Mock()
-        self._open_orders: Dict[str, List[Dict[str, Any]]] = {}
-        self._cancelled_orders: List[str] = []
-        self._order_details: Dict[str, Dict[str, Any]] = {}
+        self._open_orders: dict[str, list[dict[str, Any]]] = {}
+        self._cancelled_orders: list[str] = []
+        self._order_details: dict[str, dict[str, Any]] = {}
         self._order_counter = 0
 
     async def execute(self, order):
@@ -73,7 +73,7 @@ class FakeExchange:
             "symbol": symbol,
         }
 
-    def add_open_order(self, symbol: str, order_id: str, order_data: Dict[str, Any]):
+    def add_open_order(self, symbol: str, order_id: str, order_data: dict[str, Any]):
         """Add an order to the open orders list for a symbol."""
         if symbol not in self._open_orders:
             self._open_orders[symbol] = []
@@ -105,11 +105,11 @@ class FakeExchange:
                 self._order_details[order_id]["avgPrice"] = str(fill_price)
                 self._order_details[order_id]["executedQty"] = "0.001"
 
-    def get_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
+    def get_open_orders(self, symbol: str) -> list[dict[str, Any]]:
         """Get open orders for a symbol (used by monitoring loop)."""
         return self._open_orders.get(symbol, [])
 
-    async def cancel_order(self, order_id: str, symbol: str = None) -> Dict[str, Any]:
+    async def cancel_order(self, order_id: str, symbol: str = None) -> dict[str, Any]:
         """
         Cancel an order (used by OCO cancellation logic via exchange.cancel_order).
 
@@ -131,7 +131,7 @@ class FakeExchange:
             self._order_details[order_id]["status"] = "CANCELED"
         return {"orderId": order_id, "status": "CANCELED"}
 
-    def cancel_order_sync(self, symbol: str, orderId: str) -> Dict[str, Any]:
+    def cancel_order_sync(self, symbol: str, orderId: str) -> dict[str, Any]:
         """
         Synchronous cancel order (used by client.futures_cancel_order).
 
@@ -146,7 +146,7 @@ class FakeExchange:
             self._order_details[orderId]["status"] = "CANCELED"
         return {"orderId": orderId, "status": "CANCELED"}
 
-    def get_order(self, symbol: str, orderId: str) -> Dict[str, Any]:
+    def get_order(self, symbol: str, orderId: str) -> dict[str, Any]:
         """
         Get order details (used by position closing logic).
 

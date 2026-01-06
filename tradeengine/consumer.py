@@ -217,7 +217,7 @@ class SignalConsumer:
                 logger.warning(
                     "Failed to extract trace context, using current context: %s", e
                 )
-                ctx = None
+                ctx = context.get_current()
 
             # Create span with extracted context for distributed tracing
             with tracer.start_as_current_span(

@@ -36,7 +36,7 @@ class TradingConfig(BaseModel):
     )
 
     # Configuration data
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         ..., description="Trading parameters as key-value pairs"
     )
 
@@ -60,7 +60,7 @@ class TradingConfig(BaseModel):
     )
 
     # Additional metadata
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional metadata (notes, performance metrics, etc.)",
     )
@@ -131,10 +131,10 @@ class TradingConfigAudit(BaseModel):
     )
 
     # Before/after state
-    parameters_before: Optional[Dict[str, Any]] = Field(
+    parameters_before: Optional[dict[str, Any]] = Field(
         None, description="Parameters before the change"
     )
-    parameters_after: Optional[Dict[str, Any]] = Field(
+    parameters_after: Optional[dict[str, Any]] = Field(
         None, description="Parameters after the change"
     )
     version_before: Optional[int] = Field(
@@ -152,7 +152,7 @@ class TradingConfigAudit(BaseModel):
     )
 
     # Additional context
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional audit metadata"
     )
 

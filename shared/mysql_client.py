@@ -6,6 +6,7 @@ petrosa-data-manager service, replacing all direct database access.
 """
 
 import logging
+from datetime import UTC
 from typing import Any, Dict, List, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient
@@ -36,7 +37,7 @@ class DataManagerPositionClient:
         await self.data_manager_client.disconnect()
         logger.info("Disconnected from Data Manager service")
 
-    async def create_position(self, position_data: Dict[str, Any]) -> bool:
+    async def create_position(self, position_data: dict[str, Any]) -> bool:
         """
         Create a new position record via Data Manager.
 
@@ -68,7 +69,7 @@ class DataManagerPositionClient:
             return False
 
     async def update_position(
-        self, position_id: str, update_data: Dict[str, Any]
+        self, position_id: str, update_data: dict[str, Any]
     ) -> bool:
         """
         Update an existing position record via Data Manager.
@@ -103,7 +104,7 @@ class DataManagerPositionClient:
             return False
 
     async def update_position_risk_orders(
-        self, position_id: str, update_data: Dict[str, Any]
+        self, position_id: str, update_data: dict[str, Any]
     ) -> bool:
         """
         Update position risk orders via Data Manager.
@@ -141,7 +142,7 @@ class DataManagerPositionClient:
             )
             return False
 
-    async def get_position(self, position_id: str) -> Optional[Dict[str, Any]]:
+    async def get_position(self, position_id: str) -> Optional[dict[str, Any]]:
         """
         Get a specific position by ID via Data Manager.
 
@@ -173,7 +174,7 @@ class DataManagerPositionClient:
 
     async def get_open_positions(
         self, strategy_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get all open positions via Data Manager.
 
@@ -208,7 +209,7 @@ class DataManagerPositionClient:
             logger.error(f"Failed to get open positions via Data Manager: {e}")
             return []
 
-    async def upsert_position(self, position_data: Dict[str, Any]) -> bool:
+    async def upsert_position(self, position_data: dict[str, Any]) -> bool:
         """
         Upsert a position record via Data Manager.
 
@@ -245,7 +246,7 @@ class DataManagerPositionClient:
             return False
 
     async def close_position(
-        self, symbol: str, position_side: str, update_data: Dict[str, Any]
+        self, symbol: str, position_side: str, update_data: dict[str, Any]
     ) -> bool:
         """
         Close a position via Data Manager.
@@ -338,7 +339,7 @@ class DataManagerPositionClient:
                 record={
                     "date": date,
                     "daily_pnl": daily_pnl,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 },
             )
 
@@ -349,7 +350,7 @@ class DataManagerPositionClient:
             logger.error(f"Failed to update daily P&L for {date} via Data Manager: {e}")
             return False
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """
         Check the health of the Data Manager connection.
 

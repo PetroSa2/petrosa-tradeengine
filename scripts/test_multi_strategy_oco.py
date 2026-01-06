@@ -20,9 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from contracts.signal import Signal  # noqa: E402
 from tradeengine.dispatcher import Dispatcher  # noqa: E402
 from tradeengine.exchange import BinanceExchange  # noqa: E402
-from tradeengine.strategy_position_manager import (  # noqa: E402
-    strategy_position_manager,
-)
+from tradeengine.strategy_position_manager import strategy_position_manager
 
 
 async def test_multi_strategy_oco():

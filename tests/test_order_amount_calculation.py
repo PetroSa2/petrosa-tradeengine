@@ -164,7 +164,7 @@ class TestFallbackAmountCalculation:
         )
 
     def test_fallback_btc_meets_minimum_notional(self, dispatcher, btc_signal):
-        """Test that BTC fallback amount meets $10 target notional"""
+        """Test that BTC fallback amount meets $25 target notional"""
         # Force an error to trigger fallback
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
@@ -173,16 +173,16 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(btc_signal)
 
-            # Fallback should be $10 / $50000 = 0.0002
-            expected_fallback = 10.0 / 50000.0
+            # Fallback should be $25 / $50000 = 0.0005 (updated to $25 for MIN_NOTIONAL safety)
+            expected_fallback = 25.0 / 50000.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
             # Verify notional value
             notional = amount * btc_signal.current_price
-            assert notional == pytest.approx(10.0, rel=1e-2)
+            assert notional == pytest.approx(25.0, rel=1e-2)
 
     def test_fallback_eth_meets_minimum_notional(self, dispatcher, eth_signal):
-        """Test that ETH fallback amount meets $10 target notional"""
+        """Test that ETH fallback amount meets $25 target notional"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -190,16 +190,16 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(eth_signal)
 
-            # Fallback should be $10 / $3000 = 0.00333...
-            expected_fallback = 10.0 / 3000.0
+            # Fallback should be $25 / $3000 = 0.00833...
+            expected_fallback = 25.0 / 3000.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
             # Verify notional value
             notional = amount * eth_signal.current_price
-            assert notional == pytest.approx(10.0, rel=1e-2)
+            assert notional == pytest.approx(25.0, rel=1e-2)
 
     def test_fallback_bnb_meets_minimum_notional(self, dispatcher, bnb_signal):
-        """Test that BNB fallback amount meets $10 target notional (from actual error)"""
+        """Test that BNB fallback amount meets $25 target notional (from actual error)"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -207,17 +207,17 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(bnb_signal)
 
-            # Fallback should be $10 / $1134 = 0.008818...
-            expected_fallback = 10.0 / 1134.0
+            # Fallback should be $25 / $1134 = 0.02204...
+            expected_fallback = 25.0 / 1134.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
-            # Verify notional value is $10 (above $5 minimum)
+            # Verify notional value is $25 (above $20 MIN_NOTIONAL default)
             notional = amount * bnb_signal.current_price
-            assert notional == pytest.approx(10.0, rel=1e-2)
-            assert notional > 5.0  # Must be above Binance $5 minimum
+            assert notional == pytest.approx(25.0, rel=1e-2)
+            assert notional > 20.0  # Must be above $20 MIN_NOTIONAL default
 
     def test_fallback_better_than_old_default(self, dispatcher, bnb_signal):
-        """Test that new fallback ($10 worth) is better than old fallback (0.001)"""
+        """Test that new fallback ($25 worth) is better than old fallback (0.001)"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -225,18 +225,18 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(bnb_signal)
 
-            # Old fallback: 0.001 × $1134 = $1.13 (below $5 minimum) ❌
+            # Old fallback: 0.001 × $1134 = $1.13 (below $20 MIN_NOTIONAL) ❌
             old_notional = 0.001 * bnb_signal.current_price
 
-            # New fallback: amount × $1134 = ~$10 (above $5 minimum) ✅
+            # New fallback: amount × $1134 = ~$25 (above $20 MIN_NOTIONAL) ✅
             new_notional = amount * bnb_signal.current_price
 
             assert new_notional > old_notional
-            assert new_notional > 5.0  # Above minimum
-            assert old_notional < 5.0  # Old was below minimum
+            assert new_notional > 20.0  # Above $20 MIN_NOTIONAL default
+            assert old_notional < 20.0  # Old was below MIN_NOTIONAL
 
     def test_fallback_with_no_price(self, dispatcher, btc_signal):
-        """Test fallback when signal has no current_price"""
+        """Test fallback when signal has no current_price raises ValueError"""
         btc_signal.current_price = None
 
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
@@ -244,13 +244,12 @@ class TestFallbackAmountCalculation:
                 "Test error"
             )
 
-            amount = dispatcher._calculate_order_amount(btc_signal)
-
-            # Should use fixed fallback of 0.01 when no price available
-            assert amount == 0.01
+            # Should raise ValueError when no price is available
+            with pytest.raises(ValueError, match="Cannot calculate order amount"):
+                dispatcher._calculate_order_amount(btc_signal)
 
     def test_fallback_with_zero_price(self, dispatcher, btc_signal):
-        """Test fallback when signal has zero price"""
+        """Test fallback when signal has zero price raises ValueError"""
         btc_signal.current_price = 0
 
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
@@ -258,10 +257,9 @@ class TestFallbackAmountCalculation:
                 "Test error"
             )
 
-            amount = dispatcher._calculate_order_amount(btc_signal)
-
-            # Should use fixed fallback of 0.01 when price is zero
-            assert amount == 0.01
+            # Should raise ValueError when price is zero
+            with pytest.raises(ValueError, match="Cannot calculate order amount"):
+                dispatcher._calculate_order_amount(btc_signal)
 
 
 class TestErrorLogging:

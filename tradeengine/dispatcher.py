@@ -1615,10 +1615,26 @@ class Dispatcher:
 
         except Exception as e:
             self.logger.error(
-                f"Error calculating order amount for {signal.symbol}: {e}"
+                f"Error calculating order amount for {signal.symbol}: {e}",
+                exc_info=True,
             )
-            # Fallback to safe default
-            return 0.001
+            # Fallback: Calculate amount to meet $10 minimum notional
+            # This ensures orders meet Binance's minimum notional requirements
+            current_price = signal.current_price or 0
+            if current_price > 0:
+                # Target $10 notional value (above Binance's $5 minimum)
+                fallback_amount = 10.0 / current_price
+                self.logger.warning(
+                    f"Using fallback amount {fallback_amount} for {signal.symbol} "
+                    f"(target notional: $10.00 at ${current_price:.2f})"
+                )
+                return fallback_amount
+            else:
+                # Fixed fallback when no price available
+                self.logger.warning(
+                    f"Using fixed fallback amount 0.01 for {signal.symbol} (no price available)"
+                )
+                return 0.01
 
     async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute a trading order with detailed logging"""

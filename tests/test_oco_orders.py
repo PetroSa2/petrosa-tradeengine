@@ -28,7 +28,7 @@ def mock_exchange():
     # Mock order execution - return successful results
     _order_counter = 0  # Use counter to ensure unique order IDs
 
-    async def mock_execute(order: TradeOrder) -> Dict[str, Any]:
+    async def mock_execute(order: TradeOrder) -> dict[str, Any]:
         nonlocal _order_counter
         _order_counter += 1
         return {

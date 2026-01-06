@@ -17,8 +17,10 @@ from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
-from tradeengine.api_config_routes import router as config_router
-from tradeengine.api_config_routes import set_config_manager
+from tradeengine.api_config_routes import (
+    router as config_router,
+    set_config_manager,
+)
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
@@ -39,6 +41,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Handlers will survive logging.basicConfig() calls automatically
     otel_init.configure_logging()
     logger.info("✅ Logging configured (no monitoring needed)")
+
+    # Set up signal handlers for graceful telemetry shutdown
+    otel_init.setup_signal_handlers()
+    logger.info("✅ Signal handlers registered for graceful telemetry shutdown")
 
     # Initialize components
     startup_success = True
@@ -143,6 +149,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
     try:
+        # Flush telemetry first to prevent data loss
+        logger.info("Flushing telemetry data...")
+        otel_init.flush_telemetry()
+
         # Stop NATS consumer first
         from tradeengine.consumer import signal_consumer
 
@@ -171,6 +181,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("✅ Trading configuration manager stopped")
 
         logger.info("Trading engine shutdown completed")
+
+        # Shutdown telemetry providers after all other cleanup
+        logger.info("Shutting down telemetry providers...")
+        otel_init.shutdown_telemetry()
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
     logger.info("Petrosa Trading Engine shut down complete")

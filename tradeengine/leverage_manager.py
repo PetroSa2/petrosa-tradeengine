@@ -46,7 +46,7 @@ class LeverageManager:
         self.mongodb_client = mongodb_client
 
         # In-memory cache of leverage status
-        self._leverage_cache: Dict[str, LeverageStatus] = {}
+        self._leverage_cache: dict[str, LeverageStatus] = {}
 
     async def ensure_leverage(self, symbol: str, target_leverage: int) -> bool:
         """
@@ -150,7 +150,7 @@ class LeverageManager:
 
         return None
 
-    async def force_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
+    async def force_leverage(self, symbol: str, leverage: int) -> dict[str, Any]:
         """
         Manually force leverage change (admin operation).
 
@@ -192,7 +192,7 @@ class LeverageManager:
             logger.error(f"Failed to force leverage for {symbol}: {e.message}")
             return {"success": False, "error": f"{e.message} (code: {e.code})"}
 
-    async def sync_all_leverage(self) -> Dict[str, Any]:
+    async def sync_all_leverage(self) -> dict[str, Any]:
         """
         Sync leverage for all configured symbols at startup.
 
@@ -206,7 +206,7 @@ class LeverageManager:
             # Get all leverage status records
             all_status = await self.mongodb_client.get_all_leverage_status()
 
-            results: Dict[str, Any] = {
+            results: dict[str, Any] = {
                 "total": len(all_status),
                 "synced": 0,
                 "failed": 0,
@@ -223,7 +223,7 @@ class LeverageManager:
                 else:
                     results["failed"] = results["failed"] + 1  # type: ignore
 
-                symbol_list: List[Dict[str, Any]] = results["symbols"]  # type: ignore
+                symbol_list: list[dict[str, Any]] = results["symbols"]  # type: ignore
                 symbol_list.append(
                     {
                         "symbol": status.symbol,

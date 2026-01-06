@@ -29,7 +29,6 @@ async def test_lifespan_configure_logging_line_executes():
         patch.object(api_module, "simulator_exchange") as mock_sim,
         patch.object(api_module, "dispatcher") as mock_disp,
     ):
-
         mock_binance.close = AsyncMock()
         mock_sim.close = AsyncMock()
         mock_disp.close = AsyncMock()
@@ -76,7 +75,6 @@ async def test_lifespan_success_log_line_executes():
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
         ):
-
             mock_binance.close = AsyncMock()
             mock_sim.close = AsyncMock()
             mock_disp.close = AsyncMock()
@@ -126,7 +124,6 @@ async def test_lifespan_error_log_line_executes():
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
         ):
-
             mock_binance.close = AsyncMock()
             mock_sim.close = AsyncMock()
             mock_disp.close = AsyncMock()

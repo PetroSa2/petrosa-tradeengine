@@ -69,7 +69,7 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: Dict[str, List[Dict[str, Any]]] = (
+        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
             {}
         )  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
@@ -85,7 +85,7 @@ class OCOManager:
         take_profit_price: float,
         strategy_position_id: str | None = None,  # NEW: Link to strategy position
         entry_price: float | None = None,  # NEW: Strategy's entry price for P&L calc
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Place SL/TP orders that will cancel each other (OCO behavior)
 
@@ -607,13 +607,14 @@ class OCOManager:
                                 # Note: position_id is legacy parameter (not used by _close_position_on_oco_completion)
                                 # but kept for consistency with function signature
                                 position_id = oco_info.get("position_id", "")
-                                cancel_success, cancel_reason = (
-                                    await self.cancel_other_order(
-                                        position_id=position_id,
-                                        filled_order_id=filled_order_id,
-                                        symbol=oco_info["symbol"],
-                                        position_side=oco_info["position_side"],
-                                    )
+                                (
+                                    cancel_success,
+                                    cancel_reason,
+                                ) = await self.cancel_other_order(
+                                    position_id=position_id,
+                                    filled_order_id=filled_order_id,
+                                    symbol=oco_info["symbol"],
+                                    position_side=oco_info["position_side"],
                                 )
 
                                 if cancel_success:

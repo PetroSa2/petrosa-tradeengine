@@ -373,7 +373,7 @@ class DataManagerClient:
 
     async def get_audit_trail(
         self, symbol: Optional[str] = None, side: Optional[str] = None, limit: int = 100
-    ) -> List[TradingConfigAudit]:
+    ) -> list[TradingConfigAudit]:
         """Get audit trail records with optional filters."""
         try:
             filter_dict = {}
@@ -453,7 +453,7 @@ class DataManagerClient:
             self._logger.error(f"Error setting leverage status: {e}")
             return False
 
-    async def get_all_leverage_status(self) -> List[LeverageStatus]:
+    async def get_all_leverage_status(self) -> list[LeverageStatus]:
         """Get all leverage status records."""
         try:
             result = await self._client.query(
@@ -474,7 +474,7 @@ class DataManagerClient:
             self._logger.error(f"Error fetching all leverage status: {e}")
             return []
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """
         Check the health of the Data Manager service.
 

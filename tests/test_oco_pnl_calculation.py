@@ -157,7 +157,8 @@ class TestOCOPNLCalculation:
 
         # When - TP fills
         success, close_reason = await oco_manager.cancel_other_order(
-            position_id, 67890  # TP order filled
+            position_id,
+            67890,  # TP order filled
         )
 
         # Then
@@ -189,7 +190,8 @@ class TestOCOPNLCalculation:
 
         # When - SL fills
         success, close_reason = await oco_manager.cancel_other_order(
-            position_id, 12345  # SL order filled
+            position_id,
+            12345,  # SL order filled
         )
 
         # Then

@@ -4,7 +4,7 @@ Signal mapping patch to apply directly to running container
 """
 
 # Read the current consumer.py file
-with open("tradeengine/consumer.py", "r") as f:
+with open("tradeengine/consumer.py") as f:
     content = f.read()
 
 # Find the line with signal = Signal(**signal_data)

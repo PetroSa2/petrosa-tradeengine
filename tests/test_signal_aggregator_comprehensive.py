@@ -18,8 +18,6 @@ def sample_signal():
     """Create a sample signal for testing"""
     from datetime import datetime
     from contracts.signal import SignalStrength, StrategyMode
-    from contracts.order import OrderType
-from contracts.signal import TimeInForce
     return Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
@@ -71,8 +69,6 @@ class TestSignalAggregatorBasic:
         """Test _cleanup_old_signals removes expired signals"""
         from datetime import datetime, timedelta
         from contracts.signal import SignalStrength, StrategyMode
-        from contracts.order import OrderType
-from contracts.signal import TimeInForce
         
         # Create old signal (2 hours ago)
         old_signal = Signal(
@@ -129,8 +125,6 @@ from contracts.signal import TimeInForce
         """Test _cancel_opposing_signals removes signals for symbol"""
         from datetime import datetime
         from contracts.signal import SignalStrength, StrategyMode
-        from contracts.order import OrderType
-from contracts.signal import TimeInForce
         
         # Create signals for same symbol
         signal1 = Signal(
@@ -266,8 +260,6 @@ from contracts.signal import TimeInForce
         """Test get_signal_summary includes signal counts"""
         from datetime import datetime
         from contracts.signal import SignalStrength, StrategyMode
-        from contracts.order import OrderType
-from contracts.signal import TimeInForce
         
         # Add some signals
         for i in range(3):
@@ -305,8 +297,6 @@ from contracts.signal import TimeInForce
         with patch.object(signal_aggregator, 'add_signal', side_effect=Exception("Test error")):
             from datetime import datetime
             from contracts.signal import SignalStrength, StrategyMode
-            from contracts.order import OrderType
-from contracts.signal import TimeInForce
             
             signal = Signal(
                 strategy_id="test",

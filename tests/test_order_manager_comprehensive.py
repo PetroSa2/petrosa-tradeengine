@@ -554,6 +554,96 @@ class TestOrderQueriesAndCancellation:
         result = order_manager.cancel_order("nonexistent_order")
         assert result is False
 
+    def test_get_active_orders_returns_list(self, order_manager, sample_order):
+        """Test get_active_orders returns list of active orders"""
+        order_manager.active_orders["order1"] = {
+            "order_id": "order1",
+            "symbol": "BTCUSDT",
+            "status": "pending"
+        }
+        order_manager.active_orders["order2"] = {
+            "order_id": "order2",
+            "symbol": "ETHUSDT",
+            "status": "filled"
+        }
+        
+        active_orders = order_manager.get_active_orders()
+        assert isinstance(active_orders, list)
+        assert len(active_orders) == 2
+        assert any(o.get("order_id") == "order1" for o in active_orders)
+        assert any(o.get("order_id") == "order2" for o in active_orders)
+
+    def test_get_conditional_orders_returns_list(self, order_manager, sample_order):
+        """Test get_conditional_orders returns list of conditional orders"""
+        order_manager.conditional_orders["cond1"] = {
+            "order_id": "cond1",
+            "symbol": "BTCUSDT",
+            "status": "waiting_for_condition"
+        }
+        order_manager.conditional_orders["cond2"] = {
+            "order_id": "cond2",
+            "symbol": "ETHUSDT",
+            "status": "waiting_for_condition"
+        }
+        
+        conditional_orders = order_manager.get_conditional_orders()
+        assert isinstance(conditional_orders, list)
+        assert len(conditional_orders) == 2
+        assert any(o.get("order_id") == "cond1" for o in conditional_orders)
+        assert any(o.get("order_id") == "cond2" for o in conditional_orders)
+
+    def test_get_order_history_returns_list(self, order_manager):
+        """Test get_order_history returns list of historical orders"""
+        order_manager.order_history.append({
+            "order_id": "hist1",
+            "symbol": "BTCUSDT",
+            "status": "filled"
+        })
+        order_manager.order_history.append({
+            "order_id": "hist2",
+            "symbol": "ETHUSDT",
+            "status": "cancelled"
+        })
+        
+        history = order_manager.get_order_history()
+        assert isinstance(history, list)
+        assert len(history) == 2
+        assert any(o.get("order_id") == "hist1" for o in history)
+        assert any(o.get("order_id") == "hist2" for o in history)
+
+    def test_cancel_order_from_active_orders(self, order_manager):
+        """Test cancelling order from active orders"""
+        order_manager.active_orders["cancel_test"] = {
+            "order_id": "cancel_test",
+            "symbol": "BTCUSDT",
+            "status": "pending"
+        }
+        
+        result = order_manager.cancel_order("cancel_test")
+        assert result is True
+        assert "cancel_test" not in order_manager.active_orders
+        assert any(
+            o.get("order_id") == "cancel_test"
+            and o.get("status") == "cancelled"
+            for o in order_manager.order_history
+        )
+
+    def test_get_order_summary_counts(self, order_manager):
+        """Test get_order_summary returns correct counts"""
+        # Add some orders
+        order_manager.active_orders["active1"] = {"order_id": "active1", "status": "pending"}
+        order_manager.conditional_orders["cond1"] = {"order_id": "cond1", "status": "waiting"}
+        order_manager.order_history.append({"order_id": "hist1", "status": "filled"})
+        order_manager.order_history.append({"order_id": "hist2", "status": "cancelled"})
+        
+        summary = order_manager.get_order_summary()
+        assert summary["active_orders"] == 1
+        assert summary["conditional_orders"] == 1
+        assert summary["total_orders"] == 3  # 1 active + 1 conditional + 2 history
+        assert "status_distribution" in summary
+        assert summary["status_distribution"].get("filled", 0) == 1
+        assert summary["status_distribution"].get("cancelled", 0) == 1
+
 
 class TestConditionalOrderMonitoring:
     """Test conditional order monitoring logic"""

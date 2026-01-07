@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import uuid
 
 from tradeengine.strategy_position_manager import StrategyPositionManager
+from contracts.signal import Signal, SignalAction, StrategyMode, TimeInForce
+from contracts.order import TradeOrder, OrderSide, OrderType
 
 
 @pytest.fixture
@@ -15,21 +17,45 @@ def strategy_position_manager():
 
 
 @pytest.fixture
-def sample_strategy_position():
-    """Create a sample strategy position for testing"""
+def sample_signal():
+    """Create a sample signal for testing"""
+    return Signal(
+        signal_id="test_signal_123",
+        strategy_id="test-strategy-1",
+        symbol="BTCUSDT",
+        action=SignalAction.BUY,
+        current_price=50000.0,
+        quantity=0.001,
+        confidence=0.85,
+        timeframe="1h",
+        take_profit=52000.0,
+        stop_loss=48000.0,
+        source="test",
+        order_type="market",
+        time_in_force=TimeInForce.GTC,
+    )
+
+
+@pytest.fixture
+def sample_order():
+    """Create a sample order for testing"""
+    return TradeOrder(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        amount=0.001,
+        target_price=50000.0,
+    )
+
+
+@pytest.fixture
+def sample_execution_result():
+    """Create a sample execution result for testing"""
     return {
-        "strategy_position_id": str(uuid.uuid4()),
-        "strategy_id": "test-strategy-1",
-        "symbol": "BTCUSDT",
-        "side": "LONG",
-        "quantity": 0.001,
-        "entry_price": 50000.0,
-        "current_price": 51000.0,
-        "unrealized_pnl": 10.0,
-        "realized_pnl": 0.0,
-        "status": "open",
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "status": "filled",
+        "order_id": "test_order_123",
+        "fill_price": 50000.0,
+        "amount": 0.001,
     }
 
 
@@ -39,39 +65,44 @@ class TestStrategyPositionManagerBasic:
     def test_initialization(self, strategy_position_manager):
         """Test StrategyPositionManager initialization"""
         assert strategy_position_manager is not None
-        assert hasattr(strategy_position_manager, 'positions')
+        assert hasattr(strategy_position_manager, 'strategy_positions')
+        assert hasattr(strategy_position_manager, 'exchange_positions')
+        assert hasattr(strategy_position_manager, 'contributions')
 
-    def test_create_strategy_position(self, strategy_position_manager, sample_strategy_position):
+    @pytest.mark.asyncio
+    async def test_create_strategy_position(self, strategy_position_manager, sample_signal, sample_order, sample_execution_result):
         """Test creating a strategy position"""
-        position_id = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol=sample_strategy_position["symbol"],
-            side=sample_strategy_position["side"],
-            quantity=sample_strategy_position["quantity"],
-            entry_price=sample_strategy_position["entry_price"],
-        )
-        
-        assert position_id is not None
-        assert isinstance(position_id, str)
-        
-        # Verify position was created
-        position = strategy_position_manager.get_strategy_position(position_id)
-        assert position is not None
-        assert position["strategy_id"] == sample_strategy_position["strategy_id"]
-        assert position["symbol"] == sample_strategy_position["symbol"]
-        assert position["side"] == sample_strategy_position["side"]
-        assert position["quantity"] == sample_strategy_position["quantity"]
-        assert position["entry_price"] == sample_strategy_position["entry_price"]
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            position_id = await strategy_position_manager.create_strategy_position(
+                signal=sample_signal,
+                order=sample_order,
+                execution_result=sample_execution_result,
+            )
+            
+            assert position_id is not None
+            assert isinstance(position_id, str)
+            
+            # Verify position was created
+            position = strategy_position_manager.get_strategy_position(position_id)
+            assert position is not None
+            assert position["strategy_id"] == sample_signal.strategy_id
+            assert position["symbol"] == sample_signal.symbol
+            assert position["side"] == "LONG"
+            assert position["entry_quantity"] == sample_execution_result["amount"]
+            assert position["entry_price"] == sample_execution_result["fill_price"]
 
-    def test_get_strategy_position(self, strategy_position_manager, sample_strategy_position):
+    def test_get_strategy_position(self, strategy_position_manager):
         """Test getting a strategy position"""
-        position_id = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol=sample_strategy_position["symbol"],
-            side=sample_strategy_position["side"],
-            quantity=sample_strategy_position["quantity"],
-            entry_price=sample_strategy_position["entry_price"],
-        )
+        # Manually add a position to test getter
+        position_id = str(uuid.uuid4())
+        strategy_position_manager.strategy_positions[position_id] = {
+            "strategy_position_id": position_id,
+            "strategy_id": "test-strategy",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+        }
         
         position = strategy_position_manager.get_strategy_position(position_id)
         assert position is not None
@@ -82,37 +113,30 @@ class TestStrategyPositionManagerBasic:
         position = strategy_position_manager.get_strategy_position("nonexistent-id")
         assert position is None
 
-    def test_get_strategy_positions_by_strategy(self, strategy_position_manager, sample_strategy_position):
+    def test_get_strategy_positions_by_strategy(self, strategy_position_manager):
         """Test getting positions by strategy ID"""
-        # Create multiple positions for the same strategy
-        position_id_1 = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.001,
-            entry_price=50000.0,
-        )
+        # Manually add positions
+        position_id_1 = str(uuid.uuid4())
+        position_id_2 = str(uuid.uuid4())
+        position_id_3 = str(uuid.uuid4())
         
-        position_id_2 = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol="ETHUSDT",
-            side="LONG",
-            quantity=0.01,
-            entry_price=3000.0,
-        )
+        strategy_position_manager.strategy_positions[position_id_1] = {
+            "strategy_position_id": position_id_1,
+            "strategy_id": "test-strategy",
+            "symbol": "BTCUSDT",
+        }
+        strategy_position_manager.strategy_positions[position_id_2] = {
+            "strategy_position_id": position_id_2,
+            "strategy_id": "test-strategy",
+            "symbol": "ETHUSDT",
+        }
+        strategy_position_manager.strategy_positions[position_id_3] = {
+            "strategy_position_id": position_id_3,
+            "strategy_id": "other-strategy",
+            "symbol": "BTCUSDT",
+        }
         
-        # Create position for different strategy
-        position_id_3 = strategy_position_manager.create_strategy_position(
-            strategy_id="other-strategy",
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.002,
-            entry_price=51000.0,
-        )
-        
-        positions = strategy_position_manager.get_strategy_positions_by_strategy(
-            sample_strategy_position["strategy_id"]
-        )
+        positions = strategy_position_manager.get_strategy_positions_by_strategy("test-strategy")
         
         assert len(positions) == 2
         position_ids = [p["strategy_position_id"] for p in positions]
@@ -120,147 +144,61 @@ class TestStrategyPositionManagerBasic:
         assert position_id_2 in position_ids
         assert position_id_3 not in position_ids
 
-    def test_get_strategy_positions_by_exchange_position(self, strategy_position_manager):
-        """Test getting positions by exchange position"""
-        # Create positions for the same exchange position
-        position_id_1 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-1",
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.001,
-            entry_price=50000.0,
-        )
+    @pytest.mark.asyncio
+    async def test_get_open_strategy_positions_by_exchange_key(self, strategy_position_manager):
+        """Test getting open positions by exchange key"""
+        # Manually add positions
+        position_id_1 = str(uuid.uuid4())
+        position_id_2 = str(uuid.uuid4())
         
-        position_id_2 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-2",
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.002,
-            entry_price=51000.0,
-        )
+        strategy_position_manager.strategy_positions[position_id_1] = {
+            "strategy_position_id": position_id_1,
+            "strategy_id": "test-strategy",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "exchange_position_key": "BTCUSDT_LONG",
+            "status": "open",
+        }
+        strategy_position_manager.strategy_positions[position_id_2] = {
+            "strategy_position_id": position_id_2,
+            "strategy_id": "test-strategy",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "exchange_position_key": "BTCUSDT_LONG",
+            "status": "closed",
+        }
         
-        # Create position for different exchange position
-        position_id_3 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-1",
-            symbol="ETHUSDT",
-            side="LONG",
-            quantity=0.01,
-            entry_price=3000.0,
-        )
+        positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key("BTCUSDT_LONG")
         
-        positions = strategy_position_manager.get_strategy_positions_by_exchange_position(
-            symbol="BTCUSDT",
-            position_side="LONG"
-        )
-        
-        assert len(positions) == 2
-        position_ids = [p["strategy_position_id"] for p in positions]
-        assert position_id_1 in position_ids
-        assert position_id_2 in position_ids
-        assert position_id_3 not in position_ids
+        assert len(positions) == 1
+        assert positions[0]["strategy_position_id"] == position_id_1
 
-    def test_update_strategy_position(self, strategy_position_manager, sample_strategy_position):
-        """Test updating a strategy position"""
-        position_id = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol=sample_strategy_position["symbol"],
-            side=sample_strategy_position["side"],
-            quantity=sample_strategy_position["quantity"],
-            entry_price=sample_strategy_position["entry_price"],
-        )
+    def test_get_exchange_position(self, strategy_position_manager):
+        """Test getting exchange position"""
+        # Manually add exchange position
+        exchange_key = "BTCUSDT_LONG"
+        strategy_position_manager.exchange_positions[exchange_key] = {
+            "exchange_position_key": exchange_key,
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+        }
         
-        # Update position
-        strategy_position_manager.update_strategy_position(
-            position_id=position_id,
-            quantity=0.002,
-            current_price=52000.0,
-        )
-        
-        position = strategy_position_manager.get_strategy_position(position_id)
-        assert position["quantity"] == 0.002
-        assert position["current_price"] == 52000.0
+        position = strategy_position_manager.get_exchange_position(exchange_key)
+        assert position is not None
+        assert position["exchange_position_key"] == exchange_key
 
-    def test_close_strategy_position(self, strategy_position_manager, sample_strategy_position):
-        """Test closing a strategy position"""
-        position_id = strategy_position_manager.create_strategy_position(
-            strategy_id=sample_strategy_position["strategy_id"],
-            symbol=sample_strategy_position["symbol"],
-            side=sample_strategy_position["side"],
-            quantity=sample_strategy_position["quantity"],
-            entry_price=sample_strategy_position["entry_price"],
-        )
+    def test_get_contributions(self, strategy_position_manager):
+        """Test getting contributions"""
+        # Manually add contributions
+        exchange_key = "BTCUSDT_LONG"
+        contribution = {
+            "contribution_id": str(uuid.uuid4()),
+            "strategy_position_id": str(uuid.uuid4()),
+            "exchange_position_key": exchange_key,
+        }
+        strategy_position_manager.contributions[exchange_key] = [contribution]
         
-        # Close position
-        strategy_position_manager.close_strategy_position(
-            position_id=position_id,
-            exit_price=51000.0,
-            realized_pnl=10.0,
-        )
-        
-        position = strategy_position_manager.get_strategy_position(position_id)
-        assert position["status"] == "closed"
-        assert position["exit_price"] == 51000.0
-        assert position["realized_pnl"] == 10.0
-
-    def test_get_all_strategy_positions(self, strategy_position_manager):
-        """Test getting all strategy positions"""
-        # Create multiple positions
-        position_id_1 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-1",
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.001,
-            entry_price=50000.0,
-        )
-        
-        position_id_2 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-2",
-            symbol="ETHUSDT",
-            side="SHORT",
-            quantity=0.01,
-            entry_price=3000.0,
-        )
-        
-        all_positions = strategy_position_manager.get_all_strategy_positions()
-        
-        assert len(all_positions) >= 2
-        position_ids = [p["strategy_position_id"] for p in all_positions]
-        assert position_id_1 in position_ids
-        assert position_id_2 in position_ids
-
-    def test_get_strategy_positions_by_symbol(self, strategy_position_manager):
-        """Test getting positions by symbol"""
-        # Create positions for BTCUSDT
-        position_id_1 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-1",
-            symbol="BTCUSDT",
-            side="LONG",
-            quantity=0.001,
-            entry_price=50000.0,
-        )
-        
-        position_id_2 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-2",
-            symbol="BTCUSDT",
-            side="SHORT",
-            quantity=0.002,
-            entry_price=51000.0,
-        )
-        
-        # Create position for different symbol
-        position_id_3 = strategy_position_manager.create_strategy_position(
-            strategy_id="strategy-1",
-            symbol="ETHUSDT",
-            side="LONG",
-            quantity=0.01,
-            entry_price=3000.0,
-        )
-        
-        positions = strategy_position_manager.get_strategy_positions_by_symbol("BTCUSDT")
-        
-        assert len(positions) == 2
-        position_ids = [p["strategy_position_id"] for p in positions]
-        assert position_id_1 in position_ids
-        assert position_id_2 in position_ids
-        assert position_id_3 not in position_ids
+        contributions = strategy_position_manager.get_contributions(exchange_key)
+        assert len(contributions) == 1
+        assert contributions[0]["contribution_id"] == contribution["contribution_id"]
 

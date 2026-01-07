@@ -26,47 +26,52 @@ class TestDataManagerClientBasic:
         assert hasattr(data_manager_client, 'nats_client')
 
     @pytest.mark.asyncio
-    async def test_get_open_positions(self, data_manager_client):
-        """Test getting open positions"""
-        with patch('shared.nats_client.nats_client') as mock_nats:
-            mock_nats.request = AsyncMock(return_value={
-                "data": []
-            })
-            data_manager_client.nats_client = mock_nats
+    async def test_get_global_config(self, data_manager_client):
+        """Test getting global config"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.query = AsyncMock(return_value={"data": []})
             
-            positions = await data_manager_client.get_open_positions()
-            assert isinstance(positions, list)
+            config = await data_manager_client.get_global_config()
+            # May return None if no config exists
+            assert config is None or hasattr(config, 'symbol')
 
     @pytest.mark.asyncio
-    async def test_get_open_positions_with_error(self, data_manager_client):
-        """Test getting open positions with error handling"""
-        with patch('shared.nats_client.nats_client') as mock_nats:
-            mock_nats.request = AsyncMock(side_effect=Exception("Connection error"))
-            data_manager_client.nats_client = mock_nats
+    async def test_get_global_config_with_error(self, data_manager_client):
+        """Test getting global config with error handling"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
             
-            positions = await data_manager_client.get_open_positions()
-            # Should return empty list on error
-            assert isinstance(positions, list)
+            config = await data_manager_client.get_global_config()
+            # Should return None on error
+            assert config is None
 
     @pytest.mark.asyncio
-    async def test_update_daily_pnl(self, data_manager_client):
-        """Test updating daily PnL"""
-        with patch('shared.nats_client.nats_client') as mock_nats:
-            mock_nats.request = AsyncMock(return_value={"status": "success"})
-            data_manager_client.nats_client = mock_nats
+    async def test_get_symbol_config(self, data_manager_client):
+        """Test getting symbol config"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.query = AsyncMock(return_value={"data": []})
             
-            result = await data_manager_client.update_daily_pnl("2024-01-01", 100.0)
-            # May return None or success status
-            assert result is None or isinstance(result, dict)
+            config = await data_manager_client.get_symbol_config("BTCUSDT")
+            # May return None if no config exists
+            assert config is None or hasattr(config, 'symbol')
 
     @pytest.mark.asyncio
-    async def test_update_daily_pnl_with_error(self, data_manager_client):
-        """Test updating daily PnL with error handling"""
-        with patch('shared.nats_client.nats_client') as mock_nats:
-            mock_nats.request = AsyncMock(side_effect=Exception("Connection error"))
-            data_manager_client.nats_client = mock_nats
+    async def test_get_symbol_config_with_error(self, data_manager_client):
+        """Test getting symbol config with error handling"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
             
-            result = await data_manager_client.update_daily_pnl("2024-01-01", 100.0)
-            # Should handle error gracefully
-            assert result is None or isinstance(result, dict)
+            config = await data_manager_client.get_symbol_config("BTCUSDT")
+            # Should return None on error
+            assert config is None
+
+    @pytest.mark.asyncio
+    async def test_health_check(self, data_manager_client):
+        """Test health check"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.health = AsyncMock(return_value={"status": "healthy"})
+            
+            health = await data_manager_client.health_check()
+            assert isinstance(health, dict)
+            assert "status" in health
 

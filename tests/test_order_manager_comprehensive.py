@@ -678,6 +678,69 @@ class TestConditionalOrderMonitoring:
         # Should not raise exception
 
     @pytest.mark.asyncio
+    async def test_execute_conditional_order_full_flow(self, order_manager, sample_order):
+        """Test executing conditional order with full flow"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "execute_full_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock exchange execution
+        order_manager.exchange = Mock()
+        order_manager.exchange.execute = AsyncMock(return_value={
+            "status": "filled",
+            "order_id": "execute_full_123",
+            "fill_price": 52000.0
+        })
+        
+        # Mock price fetch
+        order_manager._get_current_price = AsyncMock(return_value=52000.0)
+        
+        await order_manager._execute_conditional_order("execute_full_123")
+        
+        # Order should be executed and moved to history
+        assert "execute_full_123" not in order_manager.conditional_orders
+        executed_order = next(
+            (o for o in order_manager.order_history if o.get("order_id") == "execute_full_123"),
+            None
+        )
+        assert executed_order is not None
+        assert executed_order.get("status") == "executed"
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_refreshes_cache(self, order_manager):
+        """Test that _get_current_price refreshes cache when expired"""
+        # Set old cache
+        order_manager.price_cache["BTCUSDT"] = 50000.0
+        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(seconds=35)
+        
+        # Mock price fetch
+        order_manager.exchange = Mock()
+        order_manager.exchange.get_price = AsyncMock(return_value=51000.0)
+        
+        price = await order_manager._get_current_price("BTCUSDT")
+        
+        # Should get new price
+        assert price == 51000.0
+        assert order_manager.price_cache["BTCUSDT"] == 51000.0
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_no_cache(self, order_manager):
+        """Test that _get_current_price fetches when no cache exists"""
+        # No cache set
+        order_manager.exchange = Mock()
+        order_manager.exchange.get_price = AsyncMock(return_value=50000.0)
+        
+        price = await order_manager._get_current_price("BTCUSDT")
+        
+        # Should fetch and cache
+        assert price == 50000.0
+        assert order_manager.price_cache["BTCUSDT"] == 50000.0
+
+    @pytest.mark.asyncio
     async def test_monitor_conditional_order_condition_met_executes(self, order_manager, sample_order):
         """Test that monitoring executes order when condition is met"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT

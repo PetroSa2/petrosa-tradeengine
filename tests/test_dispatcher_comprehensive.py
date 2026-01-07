@@ -828,6 +828,65 @@ class TestDispatchCompletionPaths:
         assert result is not None
         assert ("BTCUSDT", "LONG") not in dispatcher.last_accumulation_time
 
+    @pytest.mark.asyncio
+    async def test_cancel_oco_pair_no_oco_list_found(self, dispatcher):
+        """Test cancel_oco_pair when no OCO list is found"""
+        # No OCO pairs set up
+        result = await dispatcher.oco_manager.cancel_oco_pair(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        # Should return False when no OCO pairs found
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_oco_pair_with_dict_structure(self, dispatcher):
+        """Test cancel_oco_pair with dict structure (backward compatibility)"""
+        # Set up OCO pair as dict
+        dispatcher.oco_manager.active_oco_pairs["pos_123"] = {
+            "position_id": "pos_123",
+            "sl_order_id": "sl_123",
+            "tp_order_id": "tp_123",
+            "status": "active"
+        }
+        
+        # Mock exchange client
+        dispatcher.exchange.client = Mock()
+        dispatcher.exchange.client.futures_cancel_order = Mock(return_value={
+            "orderId": "sl_123",
+            "status": "CANCELED"
+        })
+        
+        result = await dispatcher.oco_manager.cancel_oco_pair(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        # Should cancel successfully
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_cancel_oco_pair_skips_inactive_orders(self, dispatcher):
+        """Test cancel_oco_pair skips orders that are not active"""
+        # Set up OCO pair with inactive status
+        dispatcher.oco_manager.active_oco_pairs["BTCUSDT_LONG"] = [
+            {
+                "position_id": "pos_123",
+                "sl_order_id": "sl_123",
+                "tp_order_id": "tp_123",
+                "status": "cancelled"  # Not active
+            }
+        ]
+        
+        result = await dispatcher.oco_manager.cancel_oco_pair(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        # Should return True (no active orders to cancel)
+        assert result is True
+
 
 class TestOCOMetricsAndLogging:
     """Test OCO metrics and logging paths"""

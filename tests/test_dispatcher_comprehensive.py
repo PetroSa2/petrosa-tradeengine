@@ -358,16 +358,21 @@ class TestHoldSignalFiltering:
     """Test hold signal filtering"""
 
     @pytest.mark.asyncio
-    async def test_hold_signal_filtered(self, dispatcher):
+    async def test_hold_signal_filtered(self, dispatcher, sample_signal):
         """Test that hold signals are filtered and not executed"""
-        # The code checks signal.action == "hold" as a string
-        # SignalAction enum values are strings, so we can use the enum or string
+        # Modify sample signal to be a hold signal
         hold_signal = Signal(
-            strategy_id="test-strategy",
-            symbol="BTCUSDT",
-            action="hold",  # Use string directly to match code check
-            current_price=50000.0,
-            timestamp=datetime.utcnow(),
+            strategy_id=sample_signal.strategy_id,
+            symbol=sample_signal.symbol,
+            action="hold",
+            confidence=sample_signal.confidence,
+            price=sample_signal.price,
+            quantity=sample_signal.quantity,
+            current_price=sample_signal.current_price,
+            target_price=sample_signal.target_price,
+            source=sample_signal.source,
+            strategy=sample_signal.strategy,
+            timestamp=sample_signal.timestamp,
         )
         result = await dispatcher.dispatch(hold_signal)
         assert result.get("status") == "hold"
@@ -384,7 +389,11 @@ class TestAccumulationCooldown:
         dispatcher.position_manager.positions = {
             ("BTCUSDT", "LONG"): {"quantity": 0.001}
         }
-        dispatcher.last_accumulation_time[("BTCUSDT", "LONG")] = 0  # Very recent
+        import time
+        dispatcher.last_accumulation_time[("BTCUSDT", "LONG")] = time.time()  # Very recent
+        
+        # Mock process_signal to return success so we get to the cooldown check
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         
         result = await dispatcher.dispatch(sample_signal)
         assert result.get("status") == "rejected"

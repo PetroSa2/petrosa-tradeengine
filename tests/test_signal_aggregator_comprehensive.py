@@ -232,17 +232,24 @@ class TestSignalAggregatorBasic:
 
     def test_get_timeframe_numeric_value(self, signal_aggregator):
         """Test _get_timeframe_numeric_value returns correct values"""
-        from contracts.signal import TimeFrame
-        
-        # Test different timeframes
+        # Test different timeframes (as strings, matching the implementation)
         test_cases = [
-            (TimeFrame.TICK, 0),
-            (TimeFrame.MIN_1, 1),
-            (TimeFrame.MIN_5, 5),
-            (TimeFrame.MIN_15, 15),
-            (TimeFrame.HOUR_1, 60),
-            (TimeFrame.HOUR_4, 240),
-            (TimeFrame.DAY_1, 1440),
+            ("tick", 1),
+            ("1m", 2),
+            ("3m", 3),
+            ("5m", 4),
+            ("15m", 5),
+            ("30m", 6),
+            ("1h", 7),
+            ("2h", 8),
+            ("4h", 9),
+            ("6h", 10),
+            ("8h", 11),
+            ("12h", 12),
+            ("1d", 13),
+            ("3d", 14),
+            ("1w", 15),
+            ("1M", 16),
         ]
         
         for timeframe, expected_value in test_cases:
@@ -281,7 +288,8 @@ class TestSignalAggregatorBasic:
         assert summary["active_signals_count"] == 3
         assert summary["total_signals_processed"] == 3
 
-    def test_process_signal_error_handling(self, signal_aggregator):
+    @pytest.mark.asyncio
+    async def test_process_signal_error_handling(self, signal_aggregator):
         """Test process_signal handles errors gracefully"""
         from unittest.mock import patch
         

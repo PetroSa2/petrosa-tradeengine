@@ -16,14 +16,17 @@ def signal_aggregator():
 @pytest.fixture
 def sample_signal():
     """Create a sample signal for testing"""
+    from datetime import datetime
     return Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
         action="buy",
         confidence=0.8,
         current_price=50000.0,
+        price=50000.0,
         timeframe="1h",
         quantity=0.001,
+        timestamp=datetime.utcnow(),
     )
 
 

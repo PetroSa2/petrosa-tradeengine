@@ -542,7 +542,7 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_update_strategy_position_closure_error(self, strategy_position_manager):
         """Test _update_strategy_position_closure error handling"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch('tradeengine.strategy_position_manager.position_client') as mock_client:
             mock_client.update_position = AsyncMock(side_effect=Exception("DB error"))
             
             position = {

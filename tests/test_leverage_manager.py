@@ -221,19 +221,25 @@ class TestLeverageManagerBasic:
     async def test_ensure_leverage_binance_error_4028(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test ensure_leverage handling Binance error -4028 (open position)"""
         from binance.exceptions import BinanceAPIException
+        from unittest.mock import Mock
         
         class MockResponse:
-            code = -4028
-            text = "Leverage not changed"
+            def __init__(self):
+                self.status_code = 400
+                self.headers = {}
         
         leverage_manager.binance_client = mock_binance_client
         leverage_manager.mongodb_client = mock_mongodb_client
         mock_mongodb_client.set_leverage_status = AsyncMock()
         
         leverage_manager.get_leverage_status = AsyncMock(return_value=None)
-        mock_binance_client.futures_change_leverage = Mock(
-            side_effect=BinanceAPIException(MockResponse(), "Leverage not changed")
-        )
+        
+        # Create exception with code attribute
+        exception = BinanceAPIException(MockResponse(), "Leverage not changed")
+        exception.code = -4028
+        exception.message = "Leverage not changed"
+        
+        mock_binance_client.futures_change_leverage = Mock(side_effect=exception)
         
         result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
         # Should return False but not be critical
@@ -243,19 +249,25 @@ class TestLeverageManagerBasic:
     async def test_ensure_leverage_binance_error_other(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test ensure_leverage handling other Binance errors"""
         from binance.exceptions import BinanceAPIException
+        from unittest.mock import Mock
         
         class MockResponse:
-            code = -1000
-            text = "Other error"
+            def __init__(self):
+                self.status_code = 400
+                self.headers = {}
         
         leverage_manager.binance_client = mock_binance_client
         leverage_manager.mongodb_client = mock_mongodb_client
         mock_mongodb_client.set_leverage_status = AsyncMock()
         
         leverage_manager.get_leverage_status = AsyncMock(return_value=None)
-        mock_binance_client.futures_change_leverage = Mock(
-            side_effect=BinanceAPIException(MockResponse(), "Other error")
-        )
+        
+        # Create exception with code attribute
+        exception = BinanceAPIException(MockResponse(), "Other error")
+        exception.code = -1000
+        exception.message = "Other error"
+        
+        mock_binance_client.futures_change_leverage = Mock(side_effect=exception)
         
         result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
         assert result is False
@@ -273,16 +285,22 @@ class TestLeverageManagerBasic:
     async def test_force_leverage_binance_error(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test force_leverage handling Binance error"""
         from binance.exceptions import BinanceAPIException
+        from unittest.mock import Mock
         
         class MockResponse:
-            code = -1000
-            text = "Error message"
+            def __init__(self):
+                self.status_code = 400
+                self.headers = {}
         
         leverage_manager.binance_client = mock_binance_client
         leverage_manager.mongodb_client = mock_mongodb_client
-        mock_binance_client.futures_change_leverage = Mock(
-            side_effect=BinanceAPIException(MockResponse(), "Error message")
-        )
+        
+        # Create exception with code and message attributes
+        exception = BinanceAPIException(MockResponse(), "Error message")
+        exception.code = -1000
+        exception.message = "Error message"
+        
+        mock_binance_client.futures_change_leverage = Mock(side_effect=exception)
         
         result = await leverage_manager.force_leverage("BTCUSDT", 20)
         assert result["success"] is False

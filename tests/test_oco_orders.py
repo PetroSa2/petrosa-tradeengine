@@ -838,6 +838,10 @@ class TestOCOPairFinding:
             }
         ]
         
+        # Mock exchange client for cancellation
+        dispatcher.exchange.client = Mock()
+        dispatcher.exchange.client.futures_cancel_order = Mock(return_value={"orderId": "tp_123", "status": "CANCELED"})
+        
         found, reason = await dispatcher.oco_manager.handle_oco_fill(
             position_id="pos_123",
             filled_order_id="sl_123",
@@ -858,6 +862,10 @@ class TestOCOPairFinding:
             "tp_order_id": "tp_123"
         }
         
+        # Mock exchange client for cancellation
+        dispatcher.exchange.client = Mock()
+        dispatcher.exchange.client.futures_cancel_order = Mock(return_value={"orderId": "sl_123", "status": "CANCELED"})
+        
         found, reason = await dispatcher.oco_manager.handle_oco_fill(
             position_id="pos_123",
             filled_order_id="tp_123",
@@ -872,6 +880,8 @@ class TestOCOPairFinding:
     async def test_oco_pair_not_found(self, dispatcher):
         """Test OCO pair not found scenario"""
         # No OCO pairs set up
+        # Mock exchange client
+        dispatcher.exchange.client = Mock()
         
         found, reason = await dispatcher.oco_manager.handle_oco_fill(
             position_id="pos_123",

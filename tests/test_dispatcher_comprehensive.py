@@ -843,7 +843,7 @@ class TestDispatchCompletionPaths:
     @pytest.mark.asyncio
     async def test_cancel_oco_pair_with_dict_structure(self, dispatcher):
         """Test cancel_oco_pair with dict structure (backward compatibility)"""
-        # Set up OCO pair as dict
+        # Set up OCO pair as dict using position_id key (backward compatibility)
         dispatcher.oco_manager.active_oco_pairs["pos_123"] = {
             "position_id": "pos_123",
             "sl_order_id": "sl_123",
@@ -860,8 +860,8 @@ class TestDispatchCompletionPaths:
         
         result = await dispatcher.oco_manager.cancel_oco_pair(
             position_id="pos_123",
-            symbol="BTCUSDT",
-            position_side="LONG"
+            symbol=None,  # Don't provide symbol/position_side to use backward compat path
+            position_side=None
         )
         # Should cancel successfully
         assert result is True

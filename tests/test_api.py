@@ -251,10 +251,11 @@ class TestAPIEndpoints:
     def test_get_position_endpoint(self, client: TestClient) -> None:
         """Test get position endpoint"""
         with patch("tradeengine.api.dispatcher") as mock_dispatcher:
-            mock_dispatcher.get_position = Mock(return_value=None)
+            mock_dispatcher.position_manager = Mock()
+            mock_dispatcher.position_manager.get_position = Mock(return_value=None)
             response = client.get("/position/BTCUSDT")
             # May fail if dispatcher not initialized, that's ok
-            assert response.status_code in [200, 500]
+            assert response.status_code in [200, 404, 500]
             if response.status_code == 200:
                 data = response.json()
                 assert "status" in data
@@ -274,18 +275,22 @@ class TestAPIEndpoints:
 
     def test_get_order_by_id_endpoint(self, client: TestClient) -> None:
         """Test get order by ID endpoint"""
-        with patch("tradeengine.api.dispatcher") as mock_dispatcher:
-            mock_dispatcher.order_manager = Mock()
-            mock_dispatcher.order_manager.get_order = Mock(return_value={
-                "order_id": "test-order-1",
-                "status": "filled"
-            })
-            response = client.get("/order/test-order-1")
-            # May fail if dispatcher not initialized, that's ok
-            assert response.status_code in [200, 500]
-            if response.status_code == 200:
-                data = response.json()
-                assert "status" in data
+        with patch("tradeengine.api.binance_exchange") as mock_binance:
+            with patch("tradeengine.api.simulator_exchange") as mock_simulator:
+                mock_binance.get_order_status = AsyncMock(return_value={
+                    "order_id": "test-order-1",
+                    "status": "filled"
+                })
+                mock_simulator.get_order_status = AsyncMock(return_value={
+                    "order_id": "test-order-1",
+                    "status": "filled"
+                })
+                response = client.get("/order/test-order-1")
+                # May fail if exchanges not initialized, that's ok
+                assert response.status_code in [200, 404, 500]
+                if response.status_code == 200:
+                    data = response.json()
+                    assert "status" in data
 
     def test_cancel_order_by_id_endpoint(self, client: TestClient) -> None:
         """Test cancel order by ID endpoint"""

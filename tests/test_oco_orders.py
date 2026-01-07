@@ -829,7 +829,7 @@ class TestOCOPairFinding:
     @pytest.mark.asyncio
     async def test_find_oco_pair_from_list(self, dispatcher):
         """Test finding OCO pair from list structure"""
-        # Set up OCO pairs as list
+        # Set up OCO pairs as list (new structure with exchange_position_key)
         dispatcher.oco_manager.active_oco_pairs["BTCUSDT_LONG"] = [
             {
                 "position_id": "pos_123",
@@ -854,9 +854,9 @@ class TestOCOPairFinding:
 
     @pytest.mark.asyncio
     async def test_find_oco_pair_from_dict(self, dispatcher):
-        """Test finding OCO pair from dict structure"""
-        # Set up OCO pair as dict
-        dispatcher.oco_manager.active_oco_pairs["BTCUSDT_LONG"] = {
+        """Test finding OCO pair from dict structure (backward compatibility)"""
+        # Set up OCO pair as dict using position_id key (backward compatibility)
+        dispatcher.oco_manager.active_oco_pairs["pos_123"] = {
             "position_id": "pos_123",
             "sl_order_id": "sl_123",
             "tp_order_id": "tp_123"

@@ -245,8 +245,8 @@ class TestLeverageManagerBasic:
         # Should return False but not be critical
         assert result is False
 
-    @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
     async def test_ensure_leverage_binance_error_other(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test ensure_leverage handling other Binance errors"""
         from binance.exceptions import BinanceAPIException
@@ -283,8 +283,8 @@ class TestLeverageManagerBasic:
         result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
         assert result is False
 
-    @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
     async def test_force_leverage_binance_error(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test force_leverage handling Binance error"""
         from binance.exceptions import BinanceAPIException

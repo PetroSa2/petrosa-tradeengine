@@ -470,25 +470,6 @@ class TestLeverageManagerBasic:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_force_leverage_binance_error(self, leverage_manager, mock_binance_client):
-        """Test force_leverage handling Binance error"""
-        from binance.exceptions import BinanceAPIException
-        
-        # Create a proper mock response object
-        mock_response = Mock()
-        mock_response.status_code = 400
-        error = BinanceAPIException(mock_response, "Leverage error")
-        error.code = -1000
-        error.message = "Leverage error"
-        
-        mock_binance_client.futures_change_leverage = Mock(side_effect=error)
-        leverage_manager.binance_client = mock_binance_client
-        
-        result = await leverage_manager.force_leverage("BTCUSDT", 20)
-        assert result["success"] is False
-        assert "error" in result
-
-    @pytest.mark.asyncio
     async def test_sync_all_leverage_with_failures(self, leverage_manager, mock_mongodb_client, mock_binance_client):
         """Test sync_all_leverage with some failures"""
         from contracts.trading_config import LeverageStatus

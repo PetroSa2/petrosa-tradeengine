@@ -199,6 +199,202 @@ class TestLeverageManagerBasic:
         assert len(result["symbols"]) == 2
 
     @pytest.mark.asyncio
+    async def test_ensure_leverage_success(self, leverage_manager, mock_binance_client, mock_mongodb_client):
+        """Test ensure_leverage successful leverage change"""
+        from contracts.trading_config import LeverageStatus
+        from binance.exceptions import BinanceAPIException
+        
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.set_leverage_status = AsyncMock()
+        
+        # No existing leverage status
+        leverage_manager.get_leverage_status = AsyncMock(return_value=None)
+        
+        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        assert result is True
+        mock_binance_client.futures_change_leverage.assert_called_once_with(
+            symbol="BTCUSDT", leverage=10
+        )
+
+    @pytest.mark.asyncio
+    async def test_ensure_leverage_binance_error_4028(self, leverage_manager, mock_binance_client, mock_mongodb_client):
+        """Test ensure_leverage handling Binance error -4028 (open position)"""
+        from binance.exceptions import BinanceAPIException
+        
+        class MockResponse:
+            code = -4028
+            text = "Leverage not changed"
+        
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.set_leverage_status = AsyncMock()
+        
+        leverage_manager.get_leverage_status = AsyncMock(return_value=None)
+        mock_binance_client.futures_change_leverage = Mock(
+            side_effect=BinanceAPIException(MockResponse(), "Leverage not changed")
+        )
+        
+        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        # Should return False but not be critical
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_ensure_leverage_binance_error_other(self, leverage_manager, mock_binance_client, mock_mongodb_client):
+        """Test ensure_leverage handling other Binance errors"""
+        from binance.exceptions import BinanceAPIException
+        
+        class MockResponse:
+            code = -1000
+            text = "Other error"
+        
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.set_leverage_status = AsyncMock()
+        
+        leverage_manager.get_leverage_status = AsyncMock(return_value=None)
+        mock_binance_client.futures_change_leverage = Mock(
+            side_effect=BinanceAPIException(MockResponse(), "Other error")
+        )
+        
+        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_ensure_leverage_exception(self, leverage_manager, mock_binance_client):
+        """Test ensure_leverage handling unexpected exceptions"""
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.get_leverage_status = AsyncMock(side_effect=Exception("Unexpected error"))
+        
+        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_force_leverage_binance_error(self, leverage_manager, mock_binance_client, mock_mongodb_client):
+        """Test force_leverage handling Binance error"""
+        from binance.exceptions import BinanceAPIException
+        
+        class MockResponse:
+            code = -1000
+            text = "Error message"
+        
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_binance_client.futures_change_leverage = Mock(
+            side_effect=BinanceAPIException(MockResponse(), "Error message")
+        )
+        
+        result = await leverage_manager.force_leverage("BTCUSDT", 20)
+        assert result["success"] is False
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_sync_all_leverage_with_failures(self, leverage_manager, mock_mongodb_client, mock_binance_client):
+        """Test sync_all_leverage with some failures"""
+        from contracts.trading_config import LeverageStatus
+        
+        status1 = LeverageStatus(
+            id=None,
+            symbol="BTCUSDT",
+            configured_leverage=10,
+            actual_leverage=10,
+            last_sync_at=datetime.utcnow(),
+            last_sync_success=True,
+            last_sync_error=None,
+            updated_at=datetime.utcnow(),
+        )
+        status2 = LeverageStatus(
+            id=None,
+            symbol="ETHUSDT",
+            configured_leverage=5,
+            actual_leverage=5,
+            last_sync_at=datetime.utcnow(),
+            last_sync_success=True,
+            last_sync_error=None,
+            updated_at=datetime.utcnow(),
+        )
+        
+        leverage_manager.mongodb_client = mock_mongodb_client
+        leverage_manager.binance_client = mock_binance_client
+        mock_mongodb_client.get_all_leverage_status = AsyncMock(return_value=[status1, status2])
+        
+        # Mock ensure_leverage to return mixed results
+        async def mock_ensure(symbol, leverage):
+            return symbol == "BTCUSDT"  # BTC succeeds, ETH fails
+        
+        leverage_manager.ensure_leverage = mock_ensure
+        
+        result = await leverage_manager.sync_all_leverage()
+        assert result["total"] == 2
+        assert result["synced"] == 1
+        assert result["failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_sync_all_leverage_exception(self, leverage_manager, mock_mongodb_client):
+        """Test sync_all_leverage handling exceptions"""
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.get_all_leverage_status = AsyncMock(side_effect=Exception("DB error"))
+        
+        result = await leverage_manager.sync_all_leverage()
+        assert result["success"] is False
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_update_leverage_status(self, leverage_manager, mock_mongodb_client):
+        """Test _update_leverage_status updating cache and database"""
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.set_leverage_status = AsyncMock()
+        
+        await leverage_manager._update_leverage_status(
+            symbol="BTCUSDT",
+            configured=10,
+            actual=10,
+            success=True,
+            error=None,
+        )
+        
+        assert "BTCUSDT" in leverage_manager._leverage_cache
+        status = leverage_manager._leverage_cache["BTCUSDT"]
+        assert status.configured_leverage == 10
+        assert status.actual_leverage == 10
+        assert status.last_sync_success is True
+        mock_mongodb_client.set_leverage_status.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_leverage_status_no_mongodb(self, leverage_manager):
+        """Test _update_leverage_status when MongoDB not connected"""
+        leverage_manager.mongodb_client = None
+        
+        await leverage_manager._update_leverage_status(
+            symbol="BTCUSDT",
+            configured=10,
+            actual=10,
+            success=True,
+            error=None,
+        )
+        
+        # Should still update cache
+        assert "BTCUSDT" in leverage_manager._leverage_cache
+
+    @pytest.mark.asyncio
+    async def test_update_leverage_status_error(self, leverage_manager, mock_mongodb_client):
+        """Test _update_leverage_status error handling"""
+        leverage_manager.mongodb_client = mock_mongodb_client
+        mock_mongodb_client.set_leverage_status = AsyncMock(side_effect=Exception("DB error"))
+        
+        # Should not raise, just log error
+        await leverage_manager._update_leverage_status(
+            symbol="BTCUSDT",
+            configured=10,
+            actual=10,
+            success=True,
+            error=None,
+        )
+        
+        # Cache should still be updated
+        assert "BTCUSDT" in leverage_manager._leverage_cache
+
+    @pytest.mark.asyncio
     async def test_ensure_leverage_sets_leverage(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test ensure_leverage successfully setting leverage"""
         leverage_manager.binance_client = mock_binance_client

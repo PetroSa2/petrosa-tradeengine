@@ -349,6 +349,238 @@ class TestStrategyPositionManagerBasic:
             mock_client.create_position = AsyncMock()
             
             # Create initial position
+            strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "current_quantity": 0.001,
+                "weighted_avg_price": 50000.0,
+                "contributing_strategies": ["strategy-1"],
+                "total_contributions": 1,
+            }
+            
+            # Add more to position
+            await strategy_position_manager._update_exchange_position(
+                exchange_position_key="BTCUSDT_LONG",
+                symbol="BTCUSDT",
+                side="LONG",
+                quantity=0.002,
+                price=51000.0,
+                strategy_id="strategy-2",
+            )
+            
+            position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
+            assert position["current_quantity"] == 0.003  # 0.001 + 0.002
+            assert position["total_contributions"] == 2
+            assert "strategy-2" in position["contributing_strategies"]
+            # Weighted avg: (0.001*50000 + 0.002*51000) / 0.003 = 50666.67
+            assert position["weighted_avg_price"] == pytest.approx(50666.67, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_reduce_exchange_position(self, strategy_position_manager):
+        """Test _reduce_exchange_position reducing quantity"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # Create position
+            strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "current_quantity": 0.003,
+                "weighted_avg_price": 50000.0,
+                "status": "open",
+            }
+            
+            # Reduce position
+            await strategy_position_manager._reduce_exchange_position(
+                exchange_position_key="BTCUSDT_LONG",
+                quantity=0.001,
+                price=51000.0,
+            )
+            
+            position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
+            assert position["current_quantity"] == 0.002  # 0.003 - 0.001
+            assert position["status"] == "open"
+
+    @pytest.mark.asyncio
+    async def test_reduce_exchange_position_to_zero(self, strategy_position_manager):
+        """Test _reduce_exchange_position closing position"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # Create position
+            strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+                "current_quantity": 0.001,
+                "weighted_avg_price": 50000.0,
+                "status": "open",
+            }
+            
+            # Close position
+            await strategy_position_manager._reduce_exchange_position(
+                exchange_position_key="BTCUSDT_LONG",
+                quantity=0.001,
+                price=51000.0,
+            )
+            
+            position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
+            assert position["current_quantity"] == 0.0
+            assert position["status"] == "closed"
+
+    @pytest.mark.asyncio
+    async def test_reduce_exchange_position_not_found(self, strategy_position_manager):
+        """Test _reduce_exchange_position when position not found"""
+        # Should not raise error
+        await strategy_position_manager._reduce_exchange_position(
+            exchange_position_key="NONEXISTENT_LONG",
+            quantity=0.001,
+            price=50000.0,
+        )
+        # Should complete without error
+
+    @pytest.mark.asyncio
+    async def test_create_contribution(self, strategy_position_manager):
+        """Test _create_contribution creating contribution record"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # Set up exchange position
+            strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "current_quantity": 0.001,
+                "total_contributions": 1,
+            }
+            
+            await strategy_position_manager._create_contribution(
+                strategy_position_id="strat_pos_123",
+                exchange_position_key="BTCUSDT_LONG",
+                strategy_id="test-strategy",
+                symbol="BTCUSDT",
+                position_side="LONG",
+                quantity=0.001,
+                price=50000.0,
+            )
+            
+            assert "BTCUSDT_LONG" in strategy_position_manager.contributions
+            contributions = strategy_position_manager.contributions["BTCUSDT_LONG"]
+            assert len(contributions) == 1
+            assert contributions[0]["strategy_position_id"] == "strat_pos_123"
+
+    @pytest.mark.asyncio
+    async def test_create_contribution_new_exchange_position(self, strategy_position_manager):
+        """Test _create_contribution for new exchange position"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # No exchange position exists yet
+            await strategy_position_manager._create_contribution(
+                strategy_position_id="strat_pos_456",
+                exchange_position_key="ETHUSDT_LONG",
+                strategy_id="test-strategy",
+                symbol="ETHUSDT",
+                position_side="LONG",
+                quantity=0.01,
+                price=3000.0,
+            )
+            
+            assert "ETHUSDT_LONG" in strategy_position_manager.contributions
+            contributions = strategy_position_manager.contributions["ETHUSDT_LONG"]
+            assert len(contributions) == 1
+            assert contributions[0]["position_sequence"] == 1  # First contribution
+
+    @pytest.mark.asyncio
+    async def test_close_contribution(self, strategy_position_manager):
+        """Test _close_contribution closing contribution record"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.update_position = AsyncMock()
+            
+            await strategy_position_manager._close_contribution(
+                strategy_position_id="strat_pos_123",
+                exit_price=51000.0,
+                pnl=10.0,
+                pnl_pct=2.0,
+                close_reason="take_profit",
+            )
+            
+            # Should complete without error
+            mock_client.update_position.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_exchange_position(self, strategy_position_manager):
+        """Test _persist_exchange_position persisting to Data Manager"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # Set up exchange position
+            strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            }
+            
+            await strategy_position_manager._persist_exchange_position("BTCUSDT_LONG")
+            
+            mock_client.create_position.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_strategy_position_error(self, strategy_position_manager):
+        """Test _persist_strategy_position error handling"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock(side_effect=Exception("DB error"))
+            
+            position = {
+                "strategy_position_id": "test_123",
+                "symbol": "BTCUSDT",
+            }
+            
+            # Should not raise, just log error
+            await strategy_position_manager._persist_strategy_position(position)
+
+    @pytest.mark.asyncio
+    async def test_update_strategy_position_closure_error(self, strategy_position_manager):
+        """Test _update_strategy_position_closure error handling"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.update_position = AsyncMock(side_effect=Exception("DB error"))
+            
+            position = {
+                "strategy_position_id": "test_123",
+                "status": "closed",
+            }
+            
+            # Should not raise, just log error
+            await strategy_position_manager._update_strategy_position_closure("test_123", position)
+
+    @pytest.mark.asyncio
+    async def test_update_exchange_position_new(self, strategy_position_manager):
+        """Test _update_exchange_position creating new position"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            await strategy_position_manager._update_exchange_position(
+                exchange_position_key="BTCUSDT_LONG",
+                symbol="BTCUSDT",
+                side="LONG",
+                quantity=0.001,
+                price=50000.0,
+                strategy_id="test-strategy",
+            )
+            
+            assert "BTCUSDT_LONG" in strategy_position_manager.exchange_positions
+            position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
+            assert position["current_quantity"] == 0.001
+            assert position["weighted_avg_price"] == 50000.0
+            assert "test-strategy" in position["contributing_strategies"]
+
+    @pytest.mark.asyncio
+    async def test_update_exchange_position_existing(self, strategy_position_manager):
+        """Test _update_exchange_position updating existing position"""
+        with patch('shared.mysql_client.position_client') as mock_client:
+            mock_client.create_position = AsyncMock()
+            
+            # Create initial position
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 symbol="BTCUSDT",

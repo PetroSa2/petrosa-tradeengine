@@ -343,13 +343,12 @@ class TestConditionalOrderEdgeCases:
 class TestOrderManagerHelperMethods:
     """Test order manager helper methods"""
 
-    @pytest.mark.asyncio
-    async def test_log_event(self, order_manager):
+    def test_log_event(self, order_manager):
         """Test logging events"""
-        # _log_event is a method that calls audit_logger
+        # log_event is a method that calls audit_logger
         # Should not raise exception
         with patch('tradeengine.order_manager.audit_logger') as mock_audit:
-            order_manager._log_event("test_event", {"test": "data"})
+            order_manager.log_event("test_event", {"test": "data"})
             # Verify audit logger was called
             mock_audit.log_event.assert_called_once()
 

@@ -716,6 +716,44 @@ class TestSignalDispatchCompletion:
         # Check that accumulation time was updated (may need to check after execution)
         assert result is not None
 
+
+class TestOrderAmountCalculationEdgeCases:
+    """Test order amount calculation edge cases"""
+
+    @pytest.mark.asyncio
+    async def test_calculate_order_amount_with_zero_price(self, dispatcher, sample_signal):
+        """Test order amount calculation with zero price raises error"""
+        sample_signal.current_price = 0.0
+        sample_signal.quantity = None
+        
+        # Mock exchange to raise exception
+        dispatcher.exchange.calculate_min_order_amount = Mock(side_effect=Exception("Price error"))
+        
+        with pytest.raises(ValueError, match="Cannot calculate order amount"):
+            dispatcher._calculate_order_amount(sample_signal)
+
+    @pytest.mark.asyncio
+    async def test_calculate_order_amount_fallback_path(self, dispatcher, sample_signal):
+        """Test order amount calculation fallback path"""
+        sample_signal.current_price = 50000.0
+        sample_signal.quantity = None
+        
+        # Mock exchange to raise exception, triggering fallback
+        dispatcher.exchange.calculate_min_order_amount = Mock(side_effect=Exception("Exchange error"))
+        
+        amount = dispatcher._calculate_order_amount(sample_signal)
+        # Should use fallback calculation ($25 / price)
+        assert amount == pytest.approx(25.0 / 50000.0, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_execute_order_simulated(self, dispatcher, sample_order):
+        """Test executing simulated order"""
+        sample_order.simulate = True
+        
+        result = await dispatcher.execute_order(sample_order)
+        assert result.get("status") == "pending"
+        assert result.get("simulated") is True
+
     @pytest.mark.asyncio
     async def test_dispatch_with_exception(self, dispatcher, sample_signal):
         """Test dispatch handling exceptions"""

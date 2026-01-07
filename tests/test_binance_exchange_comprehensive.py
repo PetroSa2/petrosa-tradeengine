@@ -553,6 +553,79 @@ class TestInitialization:
         assert "min_quantity" in result
         assert "notional_value" in result
 
+    @pytest.mark.asyncio
+    async def test_validate_and_adjust_price_exception_handling(self, binance_exchange):
+        """Test price validation exception handling"""
+        # Mock to raise exception
+        binance_exchange._get_current_price = AsyncMock(side_effect=Exception("Price fetch error"))
+        binance_exchange.get_percent_price_filter = Mock(side_effect=Exception("Filter error"))
+        
+        # Should handle exception gracefully
+        is_adjusted, adjusted_price, msg = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
+        )
+        # Should return original price on error (fail open)
+        assert adjusted_price == 50000.0
+
+    @pytest.mark.asyncio
+    async def test_validate_price_within_percent_filter_invalid(self, binance_exchange):
+        """Test price validation with invalid price"""
+        # Mock get_percent_price_filter
+        binance_exchange.get_percent_price_filter = Mock(return_value={
+            "multiplierUp": "1.1",
+            "multiplierDown": "0.9"
+        })
+        binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
+        
+        # Price too high (above 1.1 * 50000 = 55000)
+        is_valid, error_msg = await binance_exchange.validate_price_within_percent_filter(
+            "BTCUSDT", 60000.0, "LIMIT"
+        )
+        assert is_valid is False
+        assert "PERCENT_PRICE filter violation" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_validate_price_within_percent_filter_exception(self, binance_exchange):
+        """Test price validation exception handling"""
+        # Mock to raise exception
+        binance_exchange._get_current_price = AsyncMock(side_effect=Exception("Price error"))
+        
+        # Should handle exception gracefully (fail open)
+        is_valid, error_msg = await binance_exchange.validate_price_within_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
+        )
+        assert is_valid is True  # Fail open
+        assert error_msg == ""
+
+    def test_calculate_min_order_amount_with_exception(self, binance_exchange):
+        """Test calculate_min_order_amount with exception"""
+        # Mock to raise exception
+        binance_exchange.get_min_order_amount = Mock(side_effect=Exception("Error"))
+        
+        # Should return fallback value
+        result = binance_exchange.calculate_min_order_amount("BTCUSDT", 50000.0)
+        assert result == 0.001  # Fallback value
+
+    def test_calculate_min_order_amount_with_step_size(self, binance_exchange):
+        """Test calculate_min_order_amount with step size rounding"""
+        # Ensure symbol_info has proper step_size
+        binance_exchange.symbol_info["BTCUSDT"]["filters"].append({
+            "filterType": "LOT_SIZE",
+            "stepSize": "0.0001"
+        })
+        
+        # Mock get_min_order_amount to return proper structure
+        binance_exchange.get_min_order_amount = Mock(return_value={
+            "min_qty": 0.001,
+            "min_notional": 20.0,
+            "step_size": 0.0001,
+            "precision": 4
+        })
+        
+        result = binance_exchange.calculate_min_order_amount("BTCUSDT", 50000.0)
+        assert result >= 0.001
+        assert isinstance(result, float)
+
 
 class TestPriceValidationAndFormatting:
     """Test price validation and formatting methods"""

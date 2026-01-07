@@ -17,16 +17,25 @@ def signal_aggregator():
 def sample_signal():
     """Create a sample signal for testing"""
     from datetime import datetime
+    from contracts.signal import SignalStrength, StrategyMode
+    from contracts.order import OrderType, TimeInForce
     return Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
+        signal_type="buy",
         action="buy",
         confidence=0.8,
+        strength=SignalStrength.MEDIUM,
         current_price=50000.0,
         price=50000.0,
         timeframe="1h",
         quantity=0.001,
+        source="test",
+        strategy="test-strategy",
+        strategy_mode=StrategyMode.DETERMINISTIC,
         timestamp=datetime.utcnow(),
+        order_type=OrderType.MARKET,
+        time_in_force=TimeInForce.GTC,
     )
 
 

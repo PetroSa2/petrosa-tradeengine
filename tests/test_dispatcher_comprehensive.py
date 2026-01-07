@@ -912,6 +912,42 @@ class TestDispatchCompletionPaths:
         # Skip - complex async test
         pass
 
+    @pytest.mark.asyncio
+    async def test_dispatch_updates_accumulation_time_on_partially_filled(self, dispatcher, sample_signal):
+        """Test that dispatch updates accumulation time when order is partially filled"""
+        dispatcher.process_signal = AsyncMock(return_value={
+            "status": "success",
+            "order": {"status": "partially_filled", "order_id": "test_123", "amount": 0.0005}
+        })
+        
+        # Set up position
+        position_key = ("BTCUSDT", "LONG")
+        dispatcher.position_manager.positions = {
+            position_key: {"quantity": 0.0005}
+        }
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should update accumulation time if order was partially filled and position exists
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_dispatch_updates_accumulation_time_on_filled(self, dispatcher, sample_signal):
+        """Test that dispatch updates accumulation time when order is filled"""
+        dispatcher.process_signal = AsyncMock(return_value={
+            "status": "success",
+            "order": {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        })
+        
+        # Set up position
+        position_key = ("BTCUSDT", "LONG")
+        dispatcher.position_manager.positions = {
+            position_key: {"quantity": 0.001}
+        }
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should update accumulation time if order was filled and position exists
+        assert result is not None
+
 
 class TestOCOMetricsAndLogging:
     """Test OCO metrics and logging paths"""

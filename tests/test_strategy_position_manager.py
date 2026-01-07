@@ -24,6 +24,7 @@ def sample_signal():
         strategy_id="test-strategy-1",
         symbol="BTCUSDT",
         action="buy",
+        price=50000.0,
         current_price=50000.0,
         quantity=0.001,
         confidence=0.85,
@@ -31,6 +32,7 @@ def sample_signal():
         take_profit=52000.0,
         stop_loss=48000.0,
         source="test",
+        strategy="test-strategy-1",
         order_type="market",
         time_in_force=TimeInForce.GTC,
     )

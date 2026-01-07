@@ -630,6 +630,9 @@ class TestOrderQueriesAndCancellation:
 
     def test_get_order_summary_counts(self, order_manager):
         """Test get_order_summary returns correct counts"""
+        # Clear history first to get clean counts
+        order_manager.order_history.clear()
+        
         # Add some orders
         order_manager.active_orders["active1"] = {"order_id": "active1", "status": "pending"}
         order_manager.conditional_orders["cond1"] = {"order_id": "cond1", "status": "waiting"}
@@ -639,11 +642,10 @@ class TestOrderQueriesAndCancellation:
         summary = order_manager.get_order_summary()
         assert summary["active_orders"] == 1
         assert summary["conditional_orders"] == 1
-        # total_orders = active + conditional + history
-        assert summary["total_orders"] >= 3  # At least 3, may be more if history has other entries
+        assert summary["total_orders"] == 4  # 1 active + 1 conditional + 2 history
         assert "status_distribution" in summary
-        assert summary["status_distribution"].get("filled", 0) >= 1
-        assert summary["status_distribution"].get("cancelled", 0) >= 1
+        assert summary["status_distribution"].get("filled", 0) == 1
+        assert summary["status_distribution"].get("cancelled", 0) == 1
 
 
 class TestConditionalOrderMonitoring:

@@ -639,12 +639,13 @@ class TestRetryLogic:
         from binance.exceptions import BinanceAPIException
         
         # Create error with non-retryable code (-2010: Insufficient balance)
-        # BinanceAPIException needs message and code
-        error = BinanceAPIException(message="Insufficient balance", code=-2010)
+        # BinanceAPIException constructor: BinanceAPIException(message, code)
+        error = BinanceAPIException("Insufficient balance", -2010)
         mock_func = Mock(side_effect=error)
         
-        with pytest.raises(BinanceAPIException):
+        with pytest.raises(BinanceAPIException) as exc_info:
             await binance_exchange._execute_with_retry(mock_func, param1="value1")
         
         # Should not retry - should fail immediately
         assert mock_func.call_count == 1
+        assert exc_info.value.code == -2010

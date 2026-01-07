@@ -346,8 +346,12 @@ class TestOrderManagerHelperMethods:
     @pytest.mark.asyncio
     async def test_log_event(self, order_manager):
         """Test logging events"""
+        # _log_event is a method that calls audit_logger
         # Should not raise exception
-        order_manager._log_event("test_event", {"test": "data"})
+        with patch('tradeengine.order_manager.audit_logger') as mock_audit:
+            order_manager._log_event("test_event", {"test": "data"})
+            # Verify audit logger was called
+            mock_audit.log_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_account_info(self, order_manager):

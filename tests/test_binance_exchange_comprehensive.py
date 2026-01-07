@@ -644,6 +644,25 @@ class TestInitialization:
         # Verify it meets minimum notional
         assert result * 10000.0 >= 20.0
 
+    def test_calculate_min_order_amount_with_notional_verification_adds_step(self, binance_exchange):
+        """Test calculate_min_order_amount adds step_size when notional not met"""
+        # Mock get_min_order_amount to return values that need step_size addition
+        binance_exchange.get_min_order_amount = Mock(return_value={
+            "min_qty": 0.001,
+            "min_notional": 20.0,
+            "step_size": 0.0001,
+            "precision": 4
+        })
+        
+        # Use a price where initial calculation might not meet notional
+        # This will trigger the step_size addition logic at lines 808-810
+        result = binance_exchange.calculate_min_order_amount("BTCUSDT", 15000.0)
+        # Should add step_size if notional not met
+        assert result >= 0.001
+        assert isinstance(result, float)
+        # Verify it meets minimum notional after step addition
+        assert result * 15000.0 >= 20.0
+
     def test_calculate_min_order_amount_without_price(self, binance_exchange):
         """Test calculate_min_order_amount without current price"""
         # Mock get_min_order_amount

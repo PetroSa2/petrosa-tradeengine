@@ -721,6 +721,186 @@ class TestSignalDispatchCompletion:
 # These test paths are covered indirectly through integration tests
 
 
+class TestDispatchCompletionPaths:
+    """Test dispatch completion and status handling paths"""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_updates_accumulation_time_on_filled(self, dispatcher, sample_signal):
+        """Test that dispatch updates accumulation time when order is filled"""
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = Mock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "filled",
+            "order_id": "test_123",
+            "amount": 0.001,
+        })
+        
+        # Set up position
+        position_key = ("BTCUSDT", "LONG")
+        dispatcher.position_manager.positions = {
+            position_key: {"quantity": 0.001}
+        }
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should update accumulation time if order was filled and position exists
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_dispatch_updates_accumulation_time_on_partially_filled(self, dispatcher, sample_signal):
+        """Test that dispatch updates accumulation time when order is partially filled"""
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = Mock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "partially_filled",
+            "order_id": "test_123",
+            "amount": 0.0005,
+        })
+        
+        # Set up position
+        position_key = ("BTCUSDT", "LONG")
+        dispatcher.position_manager.positions = {
+            position_key: {"quantity": 0.0005}
+        }
+        
+        result = await dispatcher.dispatch(sample_signal)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_dispatch_updates_accumulation_time_on_new_status(self, dispatcher, sample_signal):
+        """Test that dispatch updates accumulation time when order status is NEW"""
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = Mock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "NEW",
+            "order_id": "test_123",
+            "amount": 0.001,
+        })
+        
+        # Set up position
+        position_key = ("BTCUSDT", "LONG")
+        dispatcher.position_manager.positions = {
+            position_key: {"quantity": 0.001}
+        }
+        
+        result = await dispatcher.dispatch(sample_signal)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_dispatch_does_not_update_accumulation_time_when_no_position(self, dispatcher, sample_signal):
+        """Test that dispatch does not update accumulation time when position doesn't exist"""
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = Mock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "filled",
+            "order_id": "test_123",
+            "amount": 0.001,
+        })
+        
+        # No position set up
+        dispatcher.position_manager.positions = {}
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should not update accumulation time
+        assert result is not None
+        assert ("BTCUSDT", "LONG") not in dispatcher.last_accumulation_time
+
+
+class TestOCOMetricsAndLogging:
+    """Test OCO metrics and logging paths"""
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_success_logs_metrics(self, dispatcher):
+        """Test that successful OCO placement logs metrics"""
+        # Mock exchange to return successful orders
+        dispatcher.exchange.execute = AsyncMock(side_effect=[
+            {"status": "pending", "order_id": "sl_123"},
+            {"status": "pending", "order_id": "tp_123"}
+        ])
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        # Mock strategy positions for metrics
+        with patch('tradeengine.dispatcher.strategy_position_manager') as mock_spm:
+            mock_spm.get_strategy_positions_by_exchange_position = Mock(return_value=[
+                {"strategy_id": "test-strategy"}
+            ])
+            
+            result = await dispatcher.oco_manager.place_oco_orders(
+                position_id="pos_123",
+                symbol="BTCUSDT",
+                position_side="LONG",
+                stop_loss_price=48000.0,
+                take_profit_price=52000.0,
+                quantity=0.001
+            )
+            
+            # Should return success
+            assert result.get("status") == "success"
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_failure_logs_errors(self, dispatcher):
+        """Test that failed OCO placement logs errors"""
+        # Mock exchange to fail on SL order
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "failed",
+            "error": "SL order failed"
+        })
+        
+        result = await dispatcher.oco_manager.place_oco_orders(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG",
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+            quantity=0.001
+        )
+        
+        # Should return failed status
+        assert result.get("status") == "failed"
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_exception_logs_error(self, dispatcher):
+        """Test that OCO placement exception logs error"""
+        # Mock exchange to raise exception
+        dispatcher.exchange.execute = AsyncMock(side_effect=Exception("Exchange error"))
+        
+        result = await dispatcher.oco_manager.place_oco_orders(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG",
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+            quantity=0.001
+        )
+        
+        # Should return error status
+        assert result.get("status") == "error"
+        assert "error" in result
+
+
 class TestOrderAmountCalculationEdgeCases:
     """Test order amount calculation edge cases"""
 

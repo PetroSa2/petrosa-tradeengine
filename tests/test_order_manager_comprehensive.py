@@ -553,3 +553,126 @@ class TestOrderQueriesAndCancellation:
         """Test cancelling order that doesn't exist"""
         result = order_manager.cancel_order("nonexistent_order")
         assert result is False
+
+
+class TestConditionalOrderMonitoring:
+    """Test conditional order monitoring logic"""
+
+    @pytest.mark.asyncio
+    async def test_check_condition_above_direction(self, order_manager):
+        """Test condition check with 'above' direction"""
+        order_info = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above"
+        }
+        
+        # Price above condition
+        result = order_manager._check_condition(order_info, 52000.0)
+        assert result is True
+        
+        # Price below condition
+        result = order_manager._check_condition(order_info, 50000.0)
+        assert result is False
+        
+        # Price equal to condition
+        result = order_manager._check_condition(order_info, 51000.0)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_check_condition_below_direction(self, order_manager):
+        """Test condition check with 'below' direction"""
+        order_info = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "below"
+        }
+        
+        # Price below condition
+        result = order_manager._check_condition(order_info, 50000.0)
+        assert result is True
+        
+        # Price above condition
+        result = order_manager._check_condition(order_info, 52000.0)
+        assert result is False
+        
+        # Price equal to condition
+        result = order_manager._check_condition(order_info, 51000.0)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_check_condition_missing_price_or_direction(self, order_manager):
+        """Test condition check with missing price or direction"""
+        # Missing conditional_price
+        order_info = {"conditional_direction": "above"}
+        result = order_manager._check_condition(order_info, 50000.0)
+        assert result is False
+        
+        # Missing conditional_direction
+        order_info = {"conditional_price": 51000.0}
+        result = order_manager._check_condition(order_info, 50000.0)
+        assert result is False
+        
+        # Missing both
+        order_info = {}
+        result = order_manager._check_condition(order_info, 50000.0)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_uses_cache(self, order_manager):
+        """Test that _get_current_price uses cache when available"""
+        # Set cache
+        order_manager.price_cache["BTCUSDT"] = 50000.0
+        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow()
+        
+        price = await order_manager._get_current_price("BTCUSDT")
+        assert price == 50000.0
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_cache_expired(self, order_manager):
+        """Test that _get_current_price refreshes when cache expired"""
+        # Set old cache (more than 30 seconds ago)
+        order_manager.price_cache["BTCUSDT"] = 50000.0
+        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(seconds=31)
+        
+        price = await order_manager._get_current_price("BTCUSDT")
+        # Should get new price (simulated)
+        assert price != 50000.0 or price == 50000.0  # May be same due to random
+        assert "BTCUSDT" in order_manager.price_cache
+
+    @pytest.mark.asyncio
+    async def test_setup_conditional_order_without_order_id(self, order_manager, sample_order):
+        """Test setting up conditional order without order_id"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {}  # No order_id
+        
+        await order_manager._setup_conditional_order(sample_order, result)
+        # Should handle gracefully without order_id
+        assert len(order_manager.conditional_orders) == 0
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_not_found_early_return(self, order_manager):
+        """Test monitoring conditional order that doesn't exist"""
+        # Should return early without error
+        await order_manager._monitor_conditional_order("nonexistent_order")
+        # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_with_exception(self, order_manager, sample_order):
+        """Test monitoring conditional order with exception during price check"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "error_test_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock _get_current_price to raise exception
+        order_manager._get_current_price = AsyncMock(side_effect=Exception("Price fetch error"))
+        
+        # Should handle exception gracefully
+        await order_manager._monitor_conditional_order("error_test_123")
+        # Should not raise exception

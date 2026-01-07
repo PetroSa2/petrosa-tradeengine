@@ -462,3 +462,27 @@ class TestOrderManagerHelperMethods:
             and o.get("status") == "executed"
             for o in order_manager.order_history
         )
+
+    @pytest.mark.asyncio
+    async def test_execute_conditional_order_updates_execution_price(self, order_manager, sample_order):
+        """Test that executing conditional order updates execution price"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "conditional_price_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock price fetch
+        order_manager._get_current_price = AsyncMock(return_value=52000.0)
+        
+        await order_manager._execute_conditional_order("conditional_price_123")
+        
+        # Check execution price was set
+        executed_order = next(
+            (o for o in order_manager.order_history if o.get("order_id") == "conditional_price_123"),
+            None
+        )
+        assert executed_order is not None
+        assert executed_order.get("execution_price") == 52000.0

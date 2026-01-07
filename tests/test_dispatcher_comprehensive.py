@@ -717,6 +717,106 @@ class TestSignalDispatchCompletion:
         assert result is not None
 
 
+class TestPositionRecordCreation:
+    """Test position record creation with error handling"""
+
+    @pytest.mark.asyncio
+    async def test_position_record_creation_with_timeout(self, dispatcher, sample_order):
+        """Test position record creation with timeout"""
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock position_manager.create_position_record to timeout
+        dispatcher.position_manager.create_position_record = AsyncMock(
+            side_effect=asyncio.TimeoutError()
+        )
+        
+        # Mock order_to_signal mapping
+        dispatcher.order_to_signal[sample_order.order_id] = None
+        
+        # Should handle timeout gracefully
+        await dispatcher._execute_order_with_consensus(sample_order)
+        # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_position_record_creation_with_exception(self, dispatcher, sample_order):
+        """Test position record creation with exception"""
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock position_manager.create_position_record to raise exception
+        dispatcher.position_manager.create_position_record = AsyncMock(
+            side_effect=Exception("Position creation error")
+        )
+        
+        # Mock order_to_signal mapping
+        dispatcher.order_to_signal[sample_order.order_id] = None
+        
+        # Should handle exception gracefully
+        await dispatcher._execute_order_with_consensus(sample_order)
+        # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_strategy_position_creation(self, dispatcher, sample_order, sample_signal):
+        """Test strategy position creation"""
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock position_manager.create_position_record to succeed
+        dispatcher.position_manager.create_position_record = AsyncMock(return_value=None)
+        
+        # Mock order_to_signal mapping
+        dispatcher.order_to_signal[sample_order.order_id] = sample_signal
+        
+        # Mock strategy_position_manager
+        with patch('tradeengine.dispatcher.strategy_position_manager') as mock_spm:
+            mock_spm.create_strategy_position = AsyncMock(return_value="strategy_pos_123")
+            
+            await dispatcher._execute_order_with_consensus(sample_order)
+            
+            # Should create strategy position
+            assert sample_order.order_id in dispatcher.order_to_strategy_position
+
+
+class TestStopLossPlacementFallback:
+    """Test stop loss placement with fallback strategies"""
+
+    @pytest.mark.asyncio
+    async def test_stop_loss_placement_with_immediate_trigger_error(self, dispatcher, sample_order):
+        """Test stop loss placement with immediate trigger error"""
+        sample_order.stop_loss = 48000.0
+        sample_order.target_price = 50000.0
+        sample_order.side = "buy"  # LONG position
+        
+        # Mock exchange to return error indicating immediate trigger
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "failed",
+            "error": "Order would immediately trigger -2021"
+        })
+        
+        # Mock _place_stop_loss_order
+        result = await dispatcher._place_stop_loss_order(sample_order, {"status": "filled"})
+        
+        # Should attempt fallback strategies
+        assert dispatcher.exchange.execute.called
+
+    @pytest.mark.asyncio
+    async def test_stop_loss_placement_with_adjusted_price(self, dispatcher, sample_order):
+        """Test stop loss placement with adjusted price"""
+        sample_order.stop_loss = 48000.0
+        sample_order.target_price = 50000.0
+        sample_order.side = "buy"  # LONG position
+        
+        # Mock exchange to return error, then success on retry
+        dispatcher.exchange.execute = AsyncMock(side_effect=[
+            {"status": "failed", "error": "Order would immediately trigger -2021"},
+            {"status": "pending", "order_id": "sl_123"}
+        ])
+        
+        # Mock _place_stop_loss_order
+        result = await dispatcher._place_stop_loss_order(sample_order, {"status": "filled"})
+        
+        # Should attempt with adjusted price
+        assert dispatcher.exchange.execute.call_count >= 2
+
+
 class TestOrderAmountCalculationEdgeCases:
     """Test order amount calculation edge cases"""
 

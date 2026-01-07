@@ -907,3 +907,33 @@ async def test_update_position_over_close(
         # Position should be closed (quantity becomes 0 or negative)
         position = position_manager.get_position("BTCUSDT", "LONG")
         assert position is None  # Position removed when quantity <= 0
+
+
+class TestPositionManagerHelperMethods:
+    """Test position manager helper methods for coverage"""
+
+    def test_get_portfolio_summary_helper(self, position_manager):
+        """Test getting portfolio summary"""
+        summary = position_manager.get_portfolio_summary()
+        assert isinstance(summary, dict)
+        assert "total_positions" in summary or "positions" in summary
+
+    def test_get_daily_pnl_helper(self, position_manager):
+        """Test getting daily PnL"""
+        pnl = position_manager.get_daily_pnl()
+        assert isinstance(pnl, (int, float))
+
+    def test_get_total_unrealized_pnl_helper(self, position_manager):
+        """Test getting total unrealized PnL"""
+        pnl = position_manager.get_total_unrealized_pnl()
+        assert isinstance(pnl, (int, float))
+
+    @pytest.mark.asyncio
+    async def test_reset_daily_pnl_helper(self, position_manager):
+        """Test resetting daily PnL"""
+        position_manager.daily_pnl = 100.0
+        with patch(
+            "shared.mysql_client.position_client.update_daily_pnl", new_callable=AsyncMock
+        ):
+            await position_manager.reset_daily_pnl()
+            assert position_manager.daily_pnl == 0.0

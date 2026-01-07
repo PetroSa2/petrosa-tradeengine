@@ -120,7 +120,7 @@ class TestConditionalOrders:
         # Set up cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
         order_manager.last_price_update["BTCUSDT"] = datetime.utcnow()
-        
+
         price = await order_manager._get_current_price("BTCUSDT")
         assert price == 50000.0
 
@@ -141,7 +141,7 @@ class TestOrderQueries:
         """Test getting order from active orders"""
         result = {"status": "pending", "order_id": "test_order_123"}
         await order_manager.track_order(sample_order, result)
-        
+
         order = order_manager.get_order("test_order_123")
         assert order is not None
         assert order["order_id"] == "test_order_123"
@@ -156,7 +156,7 @@ class TestOrderQueries:
         }
         result = {"status": "pending", "order_id": "conditional_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         order = order_manager.get_order("conditional_123")
         assert order is not None
         assert order["order_id"] == "conditional_123"
@@ -168,26 +168,42 @@ class TestOrderQueries:
         assert order is None
 
     @pytest.mark.asyncio
-    async def test_get_orders_by_symbol(self, order_manager):
-        """Test getting orders by symbol"""
-        order1 = TradeOrder(symbol="BTCUSDT", side="buy", type=OrderType.MARKET, amount=0.001, target_price=50000.0, order_id="order1")
-        order2 = TradeOrder(symbol="ETHUSDT", side="buy", type=OrderType.MARKET, amount=0.01, target_price=3000.0, order_id="order2")
-        order3 = TradeOrder(symbol="BTCUSDT", side="sell", type=OrderType.MARKET, amount=0.001, target_price=51000.0, order_id="order3")
-        
-        await order_manager.track_order(order1, {"status": "pending", "order_id": "order1"})
-        await order_manager.track_order(order2, {"status": "pending", "order_id": "order2"})
-        await order_manager.track_order(order3, {"status": "pending", "order_id": "order3"})
-        
-        btc_orders = order_manager.get_orders_by_symbol("BTCUSDT")
-        assert len(btc_orders) == 2
-        assert all(o["symbol"] == "BTCUSDT" for o in btc_orders)
+    async def test_get_active_orders(self, order_manager):
+        """Test getting all active orders"""
+        order1 = TradeOrder(
+            symbol="BTCUSDT",
+            side="buy",
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            order_id="order1",
+        )
+        order2 = TradeOrder(
+            symbol="ETHUSDT",
+            side="buy",
+            type=OrderType.MARKET,
+            amount=0.01,
+            target_price=3000.0,
+            order_id="order2",
+        )
+
+        await order_manager.track_order(
+            order1, {"status": "pending", "order_id": "order1"}
+        )
+        await order_manager.track_order(
+            order2, {"status": "pending", "order_id": "order2"}
+        )
+
+        active_orders = order_manager.get_active_orders()
+        assert len(active_orders) == 2
+        assert all(o["order_id"] in ["order1", "order2"] for o in active_orders)
 
     @pytest.mark.asyncio
     async def test_get_order_history(self, order_manager, sample_order):
         """Test getting order history"""
         result = {"status": "filled", "order_id": "test_order_123"}
         await order_manager.track_order(sample_order, result)
-        
+
         history = order_manager.get_order_history()
         assert len(history) > 0
         assert any(o["order_id"] == "test_order_123" for o in history)
@@ -201,15 +217,14 @@ class TestOrderCancellation:
         """Test cancelling active order"""
         result = {"status": "pending", "order_id": "test_order_123"}
         await order_manager.track_order(sample_order, result)
-        
-        cancelled = await order_manager.cancel_order("test_order_123")
+
+        cancelled = order_manager.cancel_order("test_order_123")
         assert cancelled is True
         assert "test_order_123" not in order_manager.active_orders
 
-    @pytest.mark.asyncio
-    async def test_cancel_order_not_found(self, order_manager):
+    def test_cancel_order_not_found(self, order_manager):
         """Test cancelling non-existent order"""
-        cancelled = await order_manager.cancel_order("nonexistent")
+        cancelled = order_manager.cancel_order("nonexistent")
         assert cancelled is False
 
     @pytest.mark.asyncio
@@ -222,10 +237,10 @@ class TestOrderCancellation:
         }
         result = {"status": "pending", "order_id": "conditional_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Give a small delay for the monitoring task to be scheduled
         await asyncio.sleep(0.1)
-        
+
         cancelled = await order_manager.cancel_conditional_order("conditional_123")
         assert cancelled is True
         assert "conditional_123" not in order_manager.conditional_orders
@@ -245,4 +260,3 @@ class TestInitialization:
         """Test OrderManager cleanup"""
         await order_manager.close()
         # Should not raise exception
-

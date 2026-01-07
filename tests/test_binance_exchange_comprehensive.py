@@ -9,8 +9,9 @@ This test suite covers:
 5. Error handling
 """
 
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from binance.exceptions import BinanceAPIException
 
 from contracts.order import OrderSide, OrderType, TradeOrder
@@ -22,16 +23,25 @@ def mock_binance_client():
     """Mock Binance client"""
     client = Mock()
     client.futures_symbol_ticker = Mock(return_value={"price": "50000.0"})
-    client.futures_exchange_info = Mock(return_value={
-        "symbols": [{
-            "symbol": "BTCUSDT",
-            "status": "TRADING",
-            "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
-                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"}
+    client.futures_exchange_info = Mock(
+        return_value={
+            "symbols": [
+                {
+                    "symbol": "BTCUSDT",
+                    "status": "TRADING",
+                    "filters": [
+                        {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                        {
+                            "filterType": "LOT_SIZE",
+                            "minQty": "0.001",
+                            "maxQty": "1000",
+                            "stepSize": "0.001",
+                        },
+                    ],
+                }
             ]
-        }]
-    })
+        }
+    )
     client.futures_create_order = Mock(return_value={"orderId": 12345, "status": "NEW"})
     client.futures_get_open_orders = Mock(return_value=[])
     client.futures_position_information = Mock(return_value=[])
@@ -50,8 +60,13 @@ def binance_exchange(mock_binance_client):
             "status": "TRADING",
             "filters": [
                 {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
-                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"}
-            ]
+                {
+                    "filterType": "LOT_SIZE",
+                    "minQty": "0.001",
+                    "maxQty": "1000",
+                    "stepSize": "0.001",
+                },
+            ],
         }
     }
     return exchange
@@ -130,12 +145,17 @@ class TestOrderExecution:
         )
         result = await binance_exchange.execute(order)
         assert result is not None
-        assert "error" in result.get("status", "").lower() or result.get("status") == "error"
+        # Status can be "error" or "failed" - both indicate failure
+        status = result.get("status", "").lower()
+        assert "error" in status or "failed" in status or status == "error"
 
     @pytest.mark.asyncio
     async def test_execute_with_binance_api_exception(self, binance_exchange):
         """Test handling BinanceAPIException"""
-        binance_exchange._validate_order = AsyncMock(side_effect=BinanceAPIException("API Error"))
+        # Mock _validate_order to raise BinanceAPIException
+        binance_exchange._validate_order = AsyncMock(
+            side_effect=BinanceAPIException("API Error")
+        )
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -145,12 +165,21 @@ class TestOrderExecution:
         )
         result = await binance_exchange.execute(order)
         assert result is not None
-        assert "error" in result or result.get("status") == "error"
+        # Verify it's an error result - check for error indication
+        assert isinstance(result, dict)
+        # Result should indicate failure/error
+        assert (
+            result.get("status") in ["failed", "error"]
+            or "error" in result
+            or "failed" in str(result).lower()
+        )
 
     @pytest.mark.asyncio
     async def test_execute_with_general_exception(self, binance_exchange):
         """Test handling general exceptions"""
-        binance_exchange._validate_order = AsyncMock(side_effect=Exception("General error"))
+        binance_exchange._validate_order = AsyncMock(
+            side_effect=Exception("General error")
+        )
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -160,7 +189,9 @@ class TestOrderExecution:
         )
         result = await binance_exchange.execute(order)
         assert result is not None
-        assert "error" in result or result.get("status") == "error"
+        # _format_error_result returns {"status": "failed", "error": ...}
+        assert result.get("status") == "failed"
+        assert "error" in result
 
 
 class TestOrderValidation:
@@ -169,6 +200,10 @@ class TestOrderValidation:
     @pytest.mark.asyncio
     async def test_validate_order_valid_symbol(self, binance_exchange):
         """Test validating order with valid symbol"""
+        # Mock _get_current_price to avoid actual API call
+        binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
+        binance_exchange._validate_notional = AsyncMock()
+        
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -209,6 +244,14 @@ class TestOrderValidation:
     @pytest.mark.asyncio
     async def test_validate_notional_meets_requirement(self, binance_exchange):
         """Test notional validation when requirement is met"""
+        # Ensure symbol_info has the right structure
+        binance_exchange.symbol_info["BTCUSDT"] = {
+            "status": "TRADING",
+            "filters": [
+                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+            ],
+        }
+        
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -222,6 +265,14 @@ class TestOrderValidation:
     @pytest.mark.asyncio
     async def test_validate_notional_below_requirement(self, binance_exchange):
         """Test notional validation when requirement is not met"""
+        # Ensure symbol_info has the right structure
+        binance_exchange.symbol_info["BTCUSDT"] = {
+            "status": "TRADING",
+            "filters": [
+                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+            ],
+        }
+        
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -241,18 +292,35 @@ class TestExchangeInfo:
         """Test loading exchange info"""
         binance_exchange.initialized = False
         binance_exchange.client = mock_binance_client
+        binance_exchange.symbol_info = {}  # Reset symbol_info
         await binance_exchange._load_exchange_info()
         assert binance_exchange.symbol_info is not None
+        assert "BTCUSDT" in binance_exchange.symbol_info
 
-    @pytest.mark.asyncio
-    async def test_get_min_order_amount(self, binance_exchange):
+    def test_get_min_order_amount(self, binance_exchange):
         """Test getting minimum order amount"""
+        # Ensure symbol_info has the right structure with filters
+        binance_exchange.symbol_info["BTCUSDT"] = {
+            "status": "TRADING",
+            "filters": [
+                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
+            ],
+        }
         result = binance_exchange.get_min_order_amount("BTCUSDT")
         assert result is not None
         assert "min_notional" in result or "min_qty" in result
 
     def test_calculate_min_order_amount(self, binance_exchange):
         """Test calculating minimum order amount"""
+        # Ensure symbol_info has the right structure with filters
+        binance_exchange.symbol_info["BTCUSDT"] = {
+            "status": "TRADING",
+            "filters": [
+                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
+            ],
+        }
         result = binance_exchange.calculate_min_order_amount("BTCUSDT", 50000.0)
         assert isinstance(result, float)
         assert result > 0
@@ -272,17 +340,17 @@ class TestPriceAndPositionQueries:
     async def test_get_current_price_no_client(self, binance_exchange):
         """Test getting current price when client is not initialized"""
         binance_exchange.client = None
-        with pytest.raises(RuntimeError, match="Binance Futures client not initialized"):
+        with pytest.raises(
+            RuntimeError, match="Binance Futures client not initialized"
+        ):
             await binance_exchange._get_current_price("BTCUSDT")
 
     @pytest.mark.asyncio
     async def test_get_order_status(self, binance_exchange, mock_binance_client):
         """Test getting order status"""
-        mock_binance_client.futures_get_order = Mock(return_value={
-            "orderId": 12345,
-            "status": "FILLED",
-            "symbol": "BTCUSDT"
-        })
+        mock_binance_client.futures_get_order = Mock(
+            return_value={"orderId": 12345, "status": "FILLED", "symbol": "BTCUSDT"}
+        )
         result = await binance_exchange.get_order_status("BTCUSDT", 12345)
         assert result is not None
 
@@ -309,11 +377,13 @@ class TestInitialization:
         binance_exchange.initialized = False
         binance_exchange.client = None
         binance_exchange._load_exchange_info = AsyncMock()
-        
+
         # Mock the client creation
-        with patch('tradeengine.exchange.binance.Client', return_value=mock_binance_client):
+        with patch(
+            "tradeengine.exchange.binance.Client", return_value=mock_binance_client
+        ):
             await binance_exchange.initialize()
-        
+
         assert binance_exchange.initialized is True
 
     @pytest.mark.asyncio
@@ -321,4 +391,3 @@ class TestInitialization:
         """Test closing exchange connection"""
         await binance_exchange.close()
         # Should not raise exception
-

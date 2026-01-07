@@ -136,6 +136,110 @@ class TestOrderExecution:
         assert "status" in result
 
     @pytest.mark.asyncio
+    async def test_execute_stop_limit_order(self, binance_exchange):
+        """Test executing stop limit order"""
+        # Mock validation
+        binance_exchange.validate_price_within_percent_filter = AsyncMock(
+            return_value=(True, None)
+        )
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.STOP_LIMIT,
+            amount=0.001,
+            target_price=48000.0,
+            stop_loss=48000.0,
+        )
+        result = await binance_exchange.execute(order)
+        assert result is not None
+        assert "status" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_take_profit_limit_order(self, binance_exchange):
+        """Test executing take profit limit order"""
+        # Mock validation
+        binance_exchange.validate_price_within_percent_filter = AsyncMock(
+            return_value=(True, None)
+        )
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.TAKE_PROFIT_LIMIT,
+            amount=0.001,
+            target_price=52000.0,
+            take_profit=52000.0,
+        )
+        result = await binance_exchange.execute(order)
+        assert result is not None
+        assert "status" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_stop_limit_order_with_validation_error(self, binance_exchange):
+        """Test stop limit order with validation error"""
+        # Mock validation to fail
+        binance_exchange.validate_price_within_percent_filter = AsyncMock(
+            return_value=(False, "Price out of range")
+        )
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.STOP_LIMIT,
+            amount=0.001,
+            target_price=48000.0,
+            stop_loss=48000.0,
+        )
+        with pytest.raises(ValueError, match="Price out of range"):
+            await binance_exchange.execute(order)
+
+    @pytest.mark.asyncio
+    async def test_execute_take_profit_limit_order_with_validation_error(self, binance_exchange):
+        """Test take profit limit order with validation error"""
+        # Mock validation to fail
+        binance_exchange.validate_price_within_percent_filter = AsyncMock(
+            return_value=(False, "Price out of range")
+        )
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.TAKE_PROFIT_LIMIT,
+            amount=0.001,
+            target_price=52000.0,
+            take_profit=52000.0,
+        )
+        with pytest.raises(ValueError, match="Price out of range"):
+            await binance_exchange.execute(order)
+
+    @pytest.mark.asyncio
+    async def test_execute_order_with_position_side(self, binance_exchange):
+        """Test executing order with position side (hedge mode)"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            position_side="LONG",
+        )
+        result = await binance_exchange.execute(order)
+        assert result is not None
+        assert "status" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_order_with_reduce_only(self, binance_exchange):
+        """Test executing order with reduce_only flag"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            reduce_only=True,
+        )
+        result = await binance_exchange.execute(order)
+        assert result is not None
+        assert "status" in result
+
+    @pytest.mark.asyncio
     async def test_execute_unsupported_order_type(self, binance_exchange):
         """Test executing unsupported order type raises error"""
         order = TradeOrder(

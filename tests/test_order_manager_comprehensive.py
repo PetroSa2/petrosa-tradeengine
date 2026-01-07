@@ -261,3 +261,68 @@ class TestInitialization:
         """Test OrderManager cleanup"""
         await order_manager.close()
         # Should not raise exception
+
+
+class TestConditionalOrderEdgeCases:
+    """Test conditional order edge cases"""
+
+    @pytest.mark.asyncio
+    async def test_setup_conditional_order_without_order_id(self, order_manager, sample_order):
+        """Test setting up conditional order without order_id in result"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending"}  # No order_id
+        await order_manager._setup_conditional_order(sample_order, result)
+        # Should handle gracefully without order_id
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_not_found(self, order_manager):
+        """Test monitoring conditional order that doesn't exist"""
+        await order_manager._monitor_conditional_order("nonexistent_order_id")
+        # Should return early without error
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_timeout(self, order_manager, sample_order):
+        """Test conditional order timing out"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+            "conditional_timeout": 0.1,  # Very short timeout
+        }
+        result = {"status": "pending", "order_id": "timeout_test_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Wait for timeout
+        await asyncio.sleep(0.2)
+        
+        # Order should be removed from conditional_orders
+        assert "timeout_test_123" not in order_manager.conditional_orders
+
+    @pytest.mark.asyncio
+    async def test_execute_conditional_order_not_found(self, order_manager):
+        """Test executing conditional order that doesn't exist"""
+        await order_manager._execute_conditional_order("nonexistent_order_id")
+        # Should return early without error
+
+    @pytest.mark.asyncio
+    async def test_get_order_summary(self, order_manager, sample_order):
+        """Test getting order summary"""
+        # Add some orders
+        await order_manager.track_order(
+            sample_order, {"status": "pending", "order_id": "order1"}
+        )
+        await order_manager.track_order(
+            sample_order, {"status": "filled", "order_id": "order2"}
+        )
+        
+        summary = order_manager.get_order_summary()
+        assert "active_orders" in summary
+        assert "conditional_orders" in summary
+        assert "total_orders" in summary
+        assert "status_distribution" in summary
+        assert summary["active_orders"] >= 1
+        assert summary["total_orders"] >= 1

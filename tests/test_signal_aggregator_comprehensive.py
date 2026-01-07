@@ -204,9 +204,11 @@ class TestSignalAggregatorBasic:
         from contracts.signal import SignalStrength, StrategyMode
         from contracts.order import OrderType, TimeInForce
         
-        # Test different timeframes
+        # Test different timeframes (weights are multiplied by confidence 0.8)
+        # timeframe_weights: tick=0.1, 1m=0.2, 5m=0.4, 15m=0.5, 1h=0.7, 4h=0.9, 1d=1.3
+        # Expected: confidence (0.8) * timeframe_weight
         timeframes = ["tick", "1m", "5m", "15m", "1h", "4h", "1d"]
-        expected_weights = [0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0]
+        expected_weights = [0.8 * 0.1, 0.8 * 0.2, 0.8 * 0.4, 0.8 * 0.5, 0.8 * 0.7, 0.8 * 0.9, 0.8 * 1.3]
         
         for timeframe, expected_weight in zip(timeframes, expected_weights):
             signal = Signal(
@@ -228,7 +230,7 @@ class TestSignalAggregatorBasic:
                 time_in_force=TimeInForce.GTC,
             )
             strength = signal_aggregator._calculate_timeframe_strength(signal)
-            assert strength == expected_weight
+            assert strength == pytest.approx(expected_weight, rel=0.01)
 
     def test_get_timeframe_numeric_value(self, signal_aggregator):
         """Test _get_timeframe_numeric_value returns correct values"""

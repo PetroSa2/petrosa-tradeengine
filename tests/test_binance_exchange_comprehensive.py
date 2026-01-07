@@ -542,3 +542,108 @@ class TestInitialization:
         """Test closing exchange connection"""
         await binance_exchange.close()
         # Should not raise exception
+
+
+class TestPriceValidationAndFormatting:
+    """Test price validation and formatting methods"""
+
+    @pytest.mark.asyncio
+    async def test_validate_and_adjust_price_for_percent_filter(self, binance_exchange):
+        """Test price validation and adjustment"""
+        # Mock get_percent_price_filter
+        binance_exchange.get_percent_price_filter = Mock(return_value={
+            "multiplierUp": "1.1",
+            "multiplierDown": "0.9"
+        })
+        binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
+        
+        # Price within range
+        is_adjusted, adjusted_price, msg = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
+        )
+        assert isinstance(is_adjusted, bool)
+        assert isinstance(adjusted_price, float)
+
+    @pytest.mark.asyncio
+    async def test_validate_and_adjust_price_too_low(self, binance_exchange):
+        """Test price adjustment when price is too low"""
+        # Mock get_percent_price_filter
+        binance_exchange.get_percent_price_filter = Mock(return_value={
+            "multiplierUp": "1.1",
+            "multiplierDown": "0.9"
+        })
+        binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
+        
+        # Price too low (below 0.9 * 50000 = 45000)
+        is_adjusted, adjusted_price, msg = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 40000.0, "LIMIT"
+        )
+        assert is_adjusted is True
+        assert adjusted_price > 40000.0
+
+    @pytest.mark.asyncio
+    async def test_validate_and_adjust_price_too_high(self, binance_exchange):
+        """Test price adjustment when price is too high"""
+        # Mock get_percent_price_filter
+        binance_exchange.get_percent_price_filter = Mock(return_value={
+            "multiplierUp": "1.1",
+            "multiplierDown": "0.9"
+        })
+        binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
+        
+        # Price too high (above 1.1 * 50000 = 55000)
+        is_adjusted, adjusted_price, msg = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 60000.0, "LIMIT"
+        )
+        assert is_adjusted is True
+        assert adjusted_price < 60000.0
+
+    def test_get_percent_price_filter(self, binance_exchange):
+        """Test getting PERCENT_PRICE filter"""
+        # Ensure symbol_info has PERCENT_PRICE filter
+        binance_exchange.symbol_info["BTCUSDT"]["filters"].append({
+            "filterType": "PERCENT_PRICE",
+            "multiplierUp": "1.1",
+            "multiplierDown": "0.9"
+        })
+        
+        filter_info = binance_exchange.get_percent_price_filter("BTCUSDT")
+        assert "multiplierUp" in filter_info
+        assert "multiplierDown" in filter_info
+
+    def test_format_quantity(self, binance_exchange):
+        """Test formatting quantity"""
+        quantity = binance_exchange._format_quantity("BTCUSDT", 0.001234)
+        assert isinstance(quantity, str)
+
+    def test_format_price(self, binance_exchange):
+        """Test formatting price"""
+        price = binance_exchange._format_price("BTCUSDT", 50000.123)
+        assert isinstance(price, str)
+
+
+class TestRetryLogic:
+    """Test retry logic for API calls"""
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_success(self, binance_exchange):
+        """Test retry logic with successful call"""
+        mock_func = Mock(return_value={"success": True})
+        result = await binance_exchange._execute_with_retry(mock_func, param1="value1")
+        assert result == {"success": True}
+        assert mock_func.called
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_non_retryable_error(self, binance_exchange):
+        """Test retry logic with non-retryable error"""
+        from binance.exceptions import BinanceAPIException
+        
+        # Create error with non-retryable code (-2010: Insufficient balance)
+        error = BinanceAPIException("Insufficient balance", -2010)
+        mock_func = Mock(side_effect=error)
+        
+        with pytest.raises(BinanceAPIException):
+            await binance_exchange._execute_with_retry(mock_func, param1="value1")
+        
+        # Should not retry
+        assert mock_func.call_count == 1

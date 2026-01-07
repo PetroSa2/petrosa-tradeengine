@@ -486,3 +486,70 @@ class TestOrderManagerHelperMethods:
         )
         assert executed_order is not None
         assert executed_order.get("execution_price") == 52000.0
+
+
+class TestOrderQueriesAndCancellation:
+    """Test order queries and cancellation methods"""
+
+    def test_get_order_from_active_orders(self, order_manager, sample_order):
+        """Test getting order from active orders"""
+        order_manager.active_orders["test_order_123"] = {
+            "order_id": "test_order_123",
+            "symbol": "BTCUSDT",
+            "status": "pending"
+        }
+        
+        order = order_manager.get_order("test_order_123")
+        assert order is not None
+        assert order["order_id"] == "test_order_123"
+
+    def test_get_order_from_conditional_orders(self, order_manager, sample_order):
+        """Test getting order from conditional orders"""
+        order_manager.conditional_orders["conditional_123"] = {
+            "order_id": "conditional_123",
+            "symbol": "BTCUSDT",
+            "status": "waiting_for_condition"
+        }
+        
+        order = order_manager.get_order("conditional_123")
+        assert order is not None
+        assert order["order_id"] == "conditional_123"
+
+    def test_get_order_from_history(self, order_manager):
+        """Test getting order from history"""
+        order_manager.order_history.append({
+            "order_id": "history_123",
+            "symbol": "BTCUSDT",
+            "status": "filled"
+        })
+        
+        order = order_manager.get_order("history_123")
+        assert order is not None
+        assert order["order_id"] == "history_123"
+
+    def test_get_order_not_found(self, order_manager):
+        """Test getting order that doesn't exist"""
+        order = order_manager.get_order("nonexistent_order")
+        assert order is None
+
+    def test_cancel_conditional_order(self, order_manager):
+        """Test cancelling conditional order"""
+        order_manager.conditional_orders["conditional_123"] = {
+            "order_id": "conditional_123",
+            "symbol": "BTCUSDT",
+            "status": "waiting_for_condition"
+        }
+        
+        result = order_manager.cancel_order("conditional_123")
+        assert result is True
+        assert "conditional_123" not in order_manager.conditional_orders
+        assert any(
+            o.get("order_id") == "conditional_123"
+            and o.get("status") == "cancelled"
+            for o in order_manager.order_history
+        )
+
+    def test_cancel_order_not_found(self, order_manager):
+        """Test cancelling order that doesn't exist"""
+        result = order_manager.cancel_order("nonexistent_order")
+        assert result is False

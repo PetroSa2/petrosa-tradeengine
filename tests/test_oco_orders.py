@@ -36,7 +36,7 @@ def mock_exchange():
         _order_counter += 1
         # Get order type as string (order.type is already a string in TradeOrder)
         order_type_str = str(order.type)
-        
+
         # For OCO orders (STOP and TAKE_PROFIT), return "pending" status
         # For regular orders, return "filled"
         is_oco_order = order_type_str in ["stop", "take_profit"]
@@ -45,7 +45,10 @@ def mock_exchange():
         return {
             "status": order_status,
             "order_id": order_id,
-            "fill_price": order.target_price or order.stop_loss or order.take_profit or 50000.0,
+            "fill_price": order.target_price
+            or order.stop_loss
+            or order.take_profit
+            or 50000.0,
             "amount": order.amount,
             "symbol": order.symbol,
         }
@@ -438,12 +441,15 @@ async def test_dispatcher_places_oco_orders_on_position_open(
 
             # Give a small delay for async OCO placement to complete
             import asyncio
+
             await asyncio.sleep(0.1)
 
             # Verify OCO manager has active pairs
             # Check if exchange.execute was called (should be called for main order + 2 OCO orders = 3 times)
-            assert mock_exchange.execute.called, "Exchange execute should have been called"
-            
+            assert (
+                mock_exchange.execute.called
+            ), "Exchange execute should have been called"
+
             # Verify OCO manager has active pairs
             assert len(dispatcher.oco_manager.active_oco_pairs) > 0, (
                 f"Expected OCO pairs but found none. "

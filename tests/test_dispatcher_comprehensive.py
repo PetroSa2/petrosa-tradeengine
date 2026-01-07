@@ -360,12 +360,12 @@ class TestHoldSignalFiltering:
     @pytest.mark.asyncio
     async def test_hold_signal_filtered(self, dispatcher):
         """Test that hold signals are filtered and not executed"""
-        from contracts.signal import SignalAction
-        
+        # The code checks signal.action == "hold" as a string
+        # SignalAction enum values are strings, so we can use the enum or string
         hold_signal = Signal(
             strategy_id="test-strategy",
             symbol="BTCUSDT",
-            action=SignalAction.HOLD,
+            action="hold",  # Use string directly to match code check
             current_price=50000.0,
             timestamp=datetime.utcnow(),
         )

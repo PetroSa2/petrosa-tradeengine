@@ -738,8 +738,9 @@ class TestOrderAmountCalculationEdgeCases:
         sample_signal.current_price = 50000.0
         sample_signal.quantity = None
         
-        # Mock exchange to raise exception, triggering fallback
-        with patch.object(dispatcher.exchange, 'calculate_min_order_amount', side_effect=Exception("Exchange error")):
+        # Mock binance_exchange from tradeengine.api to raise exception, triggering fallback
+        with patch('tradeengine.dispatcher.binance_exchange') as mock_binance:
+            mock_binance.calculate_min_order_amount = Mock(side_effect=Exception("Exchange error"))
             amount = dispatcher._calculate_order_amount(sample_signal)
             # Should use fallback calculation ($25 / price)
             assert amount == pytest.approx(25.0 / 50000.0, rel=0.01)
@@ -749,12 +750,18 @@ class TestOrderAmountCalculationEdgeCases:
         """Test executing simulated order"""
         sample_order.simulate = True
         
-        # Mock order_manager.track_order
-        dispatcher.order_manager.track_order = AsyncMock()
-        
-        result = await dispatcher.execute_order(sample_order)
-        assert result.get("status") == "pending"
-        assert result.get("simulated") is True
+        # Mock audit_logger
+        with patch('tradeengine.dispatcher.audit_logger') as mock_audit:
+            mock_audit.enabled = True
+            mock_audit.connected = True
+            mock_audit.log_order = Mock()
+            
+            # Mock order_manager.track_order
+            dispatcher.order_manager.track_order = AsyncMock()
+            
+            result = await dispatcher.execute_order(sample_order)
+            assert result.get("status") == "pending"
+            assert result.get("simulated") is True
 
     @pytest.mark.asyncio
     async def test_dispatch_with_exception(self, dispatcher, sample_signal):

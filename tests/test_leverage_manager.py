@@ -248,7 +248,7 @@ class TestLeverageManagerBasic:
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
-    async def test_ensure_leverage_binance_error_other(self, leverage_manager, mock_binance_client, mock_mongodb_client):
+    async def test_ensure_leverage_binance_error_other_error(self, leverage_manager, mock_binance_client, mock_mongodb_client):
         """Test ensure_leverage handling other Binance errors"""
         from binance.exceptions import BinanceAPIException
         from unittest.mock import Mock

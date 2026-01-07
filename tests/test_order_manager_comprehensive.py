@@ -676,3 +676,72 @@ class TestConditionalOrderMonitoring:
         # Should handle exception gracefully
         await order_manager._monitor_conditional_order("error_test_123")
         # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_condition_met_executes(self, order_manager, sample_order):
+        """Test that monitoring executes order when condition is met"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "condition_met_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock price to meet condition
+        order_manager._get_current_price = AsyncMock(return_value=52000.0)
+        order_manager._execute_conditional_order = AsyncMock()
+        
+        # Manually call monitor (normally runs in background)
+        await order_manager._monitor_conditional_order("condition_met_123")
+        
+        # Should execute conditional order
+        order_manager._execute_conditional_order.assert_called_once_with("condition_met_123")
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_timeout_cleanup(self, order_manager, sample_order):
+        """Test that monitoring cleans up on timeout"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+            "conditional_timeout": 0.1,  # Very short timeout
+        }
+        result = {"status": "pending", "order_id": "timeout_cleanup_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock price to not meet condition
+        order_manager._get_current_price = AsyncMock(return_value=50000.0)
+        
+        # Manually call monitor with short timeout
+        await order_manager._monitor_conditional_order("timeout_cleanup_123")
+        
+        # Wait for timeout
+        await asyncio.sleep(0.2)
+        
+        # Order should be moved to history with timeout status
+        assert "timeout_cleanup_123" not in order_manager.conditional_orders
+        assert any(
+            o.get("order_id") == "timeout_cleanup_123"
+            and o.get("status") == "timeout"
+            for o in order_manager.order_history
+        )
+
+    @pytest.mark.asyncio
+    async def test_setup_conditional_order_with_order_id(self, order_manager, sample_order):
+        """Test setting up conditional order with order_id"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "setup_test_123"}
+        
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Should be in conditional_orders
+        assert "setup_test_123" in order_manager.conditional_orders
+        order_info = order_manager.conditional_orders["setup_test_123"]
+        assert order_info["status"] == "waiting_for_condition"
+        assert order_info["conditional_price"] == 51000.0
+        assert order_info["conditional_direction"] == "above"

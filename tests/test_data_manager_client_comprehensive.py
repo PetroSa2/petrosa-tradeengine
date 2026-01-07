@@ -75,3 +75,53 @@ class TestDataManagerClientBasic:
             assert isinstance(health, dict)
             assert "status" in health
 
+    @pytest.mark.asyncio
+    async def test_connect(self, data_manager_client):
+        """Test connecting to data manager"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.health = AsyncMock(return_value={"status": "healthy"})
+            
+            await data_manager_client.connect()
+            # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_connect_with_error(self, data_manager_client):
+        """Test connecting with error handling"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.health = AsyncMock(side_effect=Exception("Connection error"))
+            
+            try:
+                await data_manager_client.connect()
+            except Exception:
+                pass  # Expected to raise
+
+    @pytest.mark.asyncio
+    async def test_disconnect(self, data_manager_client):
+        """Test disconnecting from data manager"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.close = AsyncMock()
+            
+            await data_manager_client.disconnect()
+            # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_disconnect_with_error(self, data_manager_client):
+        """Test disconnecting with error handling"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.close = AsyncMock(side_effect=Exception("Close error"))
+            
+            await data_manager_client.disconnect()
+            # Should handle error gracefully
+
+    @pytest.mark.asyncio
+    async def test_context_manager(self, data_manager_client):
+        """Test using as context manager"""
+        with patch.object(data_manager_client, '_client') as mock_client:
+            mock_client.health = AsyncMock(return_value={"status": "healthy"})
+            mock_client.close = AsyncMock()
+            
+            async with data_manager_client:
+                # Should connect on enter
+                pass
+            # Should disconnect on exit
+

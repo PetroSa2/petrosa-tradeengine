@@ -194,13 +194,18 @@ class TestAPIEndpoints:
 
     def test_get_order_status_endpoint(self, client: TestClient) -> None:
         """Test get order status endpoint"""
-        with patch("tradeengine.api.dispatcher") as mock_dispatcher:
-            mock_dispatcher.order_manager.get_order = Mock(return_value={
-                "order_id": "test-order-1",
-                "status": "filled"
-            })
-            response = client.get("/order/BTCUSDT/test-order-1/status")
-            assert response.status_code in [200, 500]
+        with patch("tradeengine.api.binance_exchange") as mock_binance:
+            with patch("tradeengine.api.simulator_exchange") as mock_simulator:
+                mock_binance.get_order_status = AsyncMock(return_value={
+                    "order_id": "test-order-1",
+                    "status": "filled"
+                })
+                mock_simulator.get_order_status = AsyncMock(return_value={
+                    "order_id": "test-order-1",
+                    "status": "filled"
+                })
+                response = client.get("/order/BTCUSDT/test-order-1/status")
+                assert response.status_code in [200, 500]
 
     def test_get_signal_summary_endpoint(self, client: TestClient) -> None:
         """Test get signal summary endpoint"""

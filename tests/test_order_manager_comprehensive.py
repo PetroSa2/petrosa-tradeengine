@@ -338,3 +338,124 @@ class TestConditionalOrderEdgeCases:
         assert "status_distribution" in summary
         assert summary["active_orders"] >= 1
         assert summary["total_orders"] >= 1
+
+
+class TestOrderManagerHelperMethods:
+    """Test order manager helper methods"""
+
+    @pytest.mark.asyncio
+    async def test_log_event(self, order_manager):
+        """Test logging events"""
+        # Should not raise exception
+        order_manager._log_event("test_event", {"test": "data"})
+
+    @pytest.mark.asyncio
+    async def test_get_account_info(self, order_manager):
+        """Test getting account info"""
+        info = await order_manager.get_account_info()
+        assert isinstance(info, dict)
+
+    @pytest.mark.asyncio
+    async def test_get_price(self, order_manager):
+        """Test getting price"""
+        price = await order_manager.get_price("BTCUSDT")
+        assert isinstance(price, float)
+
+    def test_get_metrics(self, order_manager):
+        """Test getting metrics"""
+        metrics = order_manager.get_metrics()
+        assert isinstance(metrics, dict)
+
+    @pytest.mark.asyncio
+    async def test_track_order_with_partial_status(self, order_manager, sample_order):
+        """Test tracking order with partial status"""
+        result = {"status": "partial", "order_id": "partial_123"}
+        await order_manager.track_order(sample_order, result)
+        assert "partial_123" in order_manager.active_orders
+
+    @pytest.mark.asyncio
+    async def test_track_order_with_conditional_limit(self, order_manager, sample_order):
+        """Test tracking conditional limit order"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "conditional_limit_123"}
+        await order_manager.track_order(sample_order, result)
+        assert "conditional_limit_123" in order_manager.conditional_orders
+
+    @pytest.mark.asyncio
+    async def test_track_order_with_conditional_stop(self, order_manager, sample_order):
+        """Test tracking conditional stop order"""
+        sample_order.type = "conditional_stop"  # String type
+        sample_order.meta = {
+            "conditional_price": 49000.0,
+            "conditional_direction": "below",
+        }
+        result = {"status": "pending", "order_id": "conditional_stop_123"}
+        await order_manager.track_order(sample_order, result)
+        assert "conditional_stop_123" in order_manager.conditional_orders
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_executes_on_condition(self, order_manager, sample_order):
+        """Test that conditional order executes when condition is met"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "conditional_exec_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock _get_current_price to return price above condition
+        order_manager._get_current_price = AsyncMock(return_value=52000.0)
+        order_manager._execute_conditional_order = AsyncMock()
+        
+        # Manually call monitor (normally runs in background)
+        await order_manager._monitor_conditional_order("conditional_exec_123")
+        
+        # Should execute conditional order
+        order_manager._execute_conditional_order.assert_called_once_with("conditional_exec_123")
+
+    @pytest.mark.asyncio
+    async def test_monitor_conditional_order_handles_exception(self, order_manager, sample_order):
+        """Test that monitoring handles exceptions gracefully"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "conditional_error_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock _get_current_price to raise exception
+        order_manager._get_current_price = AsyncMock(side_effect=Exception("Price fetch error"))
+        
+        # Should handle exception gracefully
+        await order_manager._monitor_conditional_order("conditional_error_123")
+        # Should not raise exception
+
+    @pytest.mark.asyncio
+    async def test_execute_conditional_order_updates_status(self, order_manager, sample_order):
+        """Test that executing conditional order updates status correctly"""
+        sample_order.type = OrderType.CONDITIONAL_LIMIT
+        sample_order.meta = {
+            "conditional_price": 51000.0,
+            "conditional_direction": "above",
+        }
+        result = {"status": "pending", "order_id": "conditional_exec_123"}
+        await order_manager._setup_conditional_order(sample_order, result)
+        
+        # Mock price fetch
+        order_manager._get_current_price = AsyncMock(return_value=50000.0)
+        
+        await order_manager._execute_conditional_order("conditional_exec_123")
+        
+        # Order should be removed from conditional_orders and added to history
+        assert "conditional_exec_123" not in order_manager.conditional_orders
+        assert any(
+            o.get("order_id") == "conditional_exec_123"
+            and o.get("status") == "executed"
+            for o in order_manager.order_history
+        )

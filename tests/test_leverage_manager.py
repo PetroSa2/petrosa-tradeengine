@@ -256,7 +256,13 @@ class TestLeverageManagerBasic:
         """Test force_leverage handling Binance error"""
         from binance.exceptions import BinanceAPIException
         
-        error = BinanceAPIException(Mock(), "Leverage error", -1000)
+        # Create a proper mock response object
+        mock_response = Mock()
+        mock_response.status_code = 400
+        error = BinanceAPIException(mock_response, "Leverage error")
+        error.code = -1000
+        error.message = "Leverage error"
+        
         mock_binance_client.futures_change_leverage = Mock(side_effect=error)
         leverage_manager.binance_client = mock_binance_client
         

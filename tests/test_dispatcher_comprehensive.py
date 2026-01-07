@@ -360,10 +360,12 @@ class TestHoldSignalFiltering:
     @pytest.mark.asyncio
     async def test_hold_signal_filtered(self, dispatcher):
         """Test that hold signals are filtered and not executed"""
+        from contracts.signal import SignalAction
+        
         hold_signal = Signal(
             strategy_id="test-strategy",
             symbol="BTCUSDT",
-            action="hold",
+            action=SignalAction.HOLD,
             current_price=50000.0,
             timestamp=datetime.utcnow(),
         )

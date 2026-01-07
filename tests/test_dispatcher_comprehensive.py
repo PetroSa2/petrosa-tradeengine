@@ -739,16 +739,18 @@ class TestOrderAmountCalculationEdgeCases:
         sample_signal.quantity = None
         
         # Mock exchange to raise exception, triggering fallback
-        dispatcher.exchange.calculate_min_order_amount = Mock(side_effect=Exception("Exchange error"))
-        
-        amount = dispatcher._calculate_order_amount(sample_signal)
-        # Should use fallback calculation ($25 / price)
-        assert amount == pytest.approx(25.0 / 50000.0, rel=0.01)
+        with patch.object(dispatcher.exchange, 'calculate_min_order_amount', side_effect=Exception("Exchange error")):
+            amount = dispatcher._calculate_order_amount(sample_signal)
+            # Should use fallback calculation ($25 / price)
+            assert amount == pytest.approx(25.0 / 50000.0, rel=0.01)
 
     @pytest.mark.asyncio
     async def test_execute_order_simulated(self, dispatcher, sample_order):
         """Test executing simulated order"""
         sample_order.simulate = True
+        
+        # Mock order_manager.track_order
+        dispatcher.order_manager.track_order = AsyncMock()
         
         result = await dispatcher.execute_order(sample_order)
         assert result.get("status") == "pending"

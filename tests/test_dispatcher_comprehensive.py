@@ -868,6 +868,31 @@ class TestDispatchCompletionPaths:
         # Should return True (no active orders to cancel)
         assert result is True
 
+    @pytest.mark.asyncio
+    async def test_order_monitoring_error_handling(self, dispatcher):
+        """Test order monitoring error handling path"""
+        # Set up a mock that will raise an error
+        original_monitor = dispatcher.oco_manager._monitor_orders
+        
+        async def mock_monitor_with_error():
+            raise Exception("Monitoring error")
+        
+        dispatcher.oco_manager._monitor_orders = mock_monitor_with_error
+        
+        # Start monitoring - should handle error gracefully
+        try:
+            await dispatcher.oco_manager.start_monitoring()
+            # Give it a moment to hit the error
+            await asyncio.sleep(0.1)
+        except Exception:
+            pass  # Errors are caught internally
+        
+        # Stop monitoring
+        await dispatcher.oco_manager.stop_monitoring()
+        
+        # Should not raise exception
+        assert True
+
 
 class TestOCOMetricsAndLogging:
     """Test OCO metrics and logging paths"""

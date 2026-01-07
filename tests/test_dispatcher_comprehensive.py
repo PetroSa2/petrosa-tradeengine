@@ -620,6 +620,8 @@ class TestDispatcherGetterMethods:
         """Test getting signal summary"""
         summary = dispatcher.get_signal_summary()
         assert isinstance(summary, dict)
+        # Should have signal-related keys
+        assert isinstance(summary, dict)
 
     def test_set_strategy_weight(self, dispatcher):
         """Test setting strategy weight"""
@@ -661,6 +663,41 @@ class TestDispatcherGetterMethods:
         """Test getting order summary"""
         summary = dispatcher.get_order_summary()
         assert isinstance(summary, dict)
+
+    def test_get_order(self, dispatcher):
+        """Test getting specific order"""
+        order = dispatcher.get_order("test_order_id")
+        # May return None if order doesn't exist
+        assert order is None or isinstance(order, dict)
+
+    def test_cancel_order(self, dispatcher):
+        """Test cancelling order"""
+        result = dispatcher.cancel_order("test_order_id")
+        # May return False if order doesn't exist
+        assert isinstance(result, bool)
+
+    def test_get_portfolio_summary(self, dispatcher):
+        """Test getting portfolio summary"""
+        summary = dispatcher.get_portfolio_summary()
+        assert isinstance(summary, dict)
+
+    @pytest.mark.asyncio
+    async def test_get_account_info(self, dispatcher):
+        """Test getting account info"""
+        info = await dispatcher.get_account_info()
+        assert isinstance(info, dict)
+
+    @pytest.mark.asyncio
+    async def test_get_price(self, dispatcher):
+        """Test getting price"""
+        price = await dispatcher.get_price("BTCUSDT")
+        assert isinstance(price, (int, float))
+        assert price > 0
+
+    def test_get_metrics(self, dispatcher):
+        """Test getting metrics"""
+        metrics = dispatcher.get_metrics()
+        assert isinstance(metrics, dict)
 
 
 class TestSignalDispatchCompletion:

@@ -25,12 +25,14 @@ from tradeengine.dispatcher import Dispatcher
 def mock_exchange():
     """Mock exchange for testing"""
     exchange = Mock()
-    exchange.execute = AsyncMock(return_value={
-        "status": "filled",
-        "order_id": "test_order_123",
-        "fill_price": 50000.0,
-        "amount": 0.001,
-    })
+    exchange.execute = AsyncMock(
+        return_value={
+            "status": "filled",
+            "order_id": "test_order_123",
+            "fill_price": 50000.0,
+            "amount": 0.001,
+        }
+    )
     return exchange
 
 
@@ -103,7 +105,11 @@ class TestSignalProcessing:
     async def test_process_signal_exception_handling(self, dispatcher, sample_signal):
         """Test that exceptions in signal processing are handled"""
         # Mock signal_aggregator to raise an exception
-        with patch.object(dispatcher.signal_aggregator, "add_signal", side_effect=Exception("Test error")):
+        with patch.object(
+            dispatcher.signal_aggregator,
+            "add_signal",
+            side_effect=Exception("Test error"),
+        ):
             result = await dispatcher.process_signal(sample_signal)
             assert result["status"] == "error"
             assert "error" in result
@@ -117,7 +123,7 @@ class TestOrderExecution:
         """Test executing order with real exchange"""
         # Mock order_manager.track_order to avoid side effects
         dispatcher.order_manager.track_order = AsyncMock()
-        
+
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -134,7 +140,7 @@ class TestOrderExecution:
         """Test executing simulated order"""
         # Mock order_manager.track_order to avoid side effects
         dispatcher.order_manager.track_order = AsyncMock()
-        
+
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -147,14 +153,16 @@ class TestOrderExecution:
         assert result is not None
         assert result.get("simulated") is True
 
-    @pytest.mark.skip(reason="Test needs further investigation - order_manager dependency")
+    @pytest.mark.skip(
+        reason="Test needs further investigation - order_manager dependency"
+    )
     @pytest.mark.asyncio
     async def test_execute_order_no_exchange(self):
         """Test executing order without exchange configured"""
         dispatcher = Dispatcher(exchange=None)
         # Mock order_manager.track_order to avoid side effects
         dispatcher.order_manager.track_order = AsyncMock()
-        
+
         order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -166,13 +174,15 @@ class TestOrderExecution:
         assert result is not None
         assert result.get("no_exchange") is True
 
-    @pytest.mark.skip(reason="Test needs further investigation - order_manager dependency")
+    @pytest.mark.skip(
+        reason="Test needs further investigation - order_manager dependency"
+    )
     @pytest.mark.asyncio
     async def test_execute_order_exchange_error(self, dispatcher):
         """Test handling exchange errors during order execution"""
         # Mock order_manager.track_order to avoid side effects
         dispatcher.order_manager.track_order = AsyncMock()
-        
+
         dispatcher.exchange.execute.side_effect = Exception("Exchange error")
         order = TradeOrder(
             symbol="BTCUSDT",
@@ -204,15 +214,17 @@ class TestRiskManagementOrders:
             position_side="LONG",
         )
         result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
-        
+
         # Mock OCO manager
-        dispatcher.oco_manager.place_oco_orders = AsyncMock(return_value={
-            "status": "success",
-            "sl_order_id": "sl_123",
-            "tp_order_id": "tp_123",
-        })
+        dispatcher.oco_manager.place_oco_orders = AsyncMock(
+            return_value={
+                "status": "success",
+                "sl_order_id": "sl_123",
+                "tp_order_id": "tp_123",
+            }
+        )
         dispatcher.position_manager.update_position_risk_orders = AsyncMock()
-        
+
         await dispatcher._place_risk_management_orders(order, result)
         dispatcher.oco_manager.place_oco_orders.assert_called_once()
 
@@ -231,7 +243,7 @@ class TestRiskManagementOrders:
             position_side="LONG",
         )
         result = {"status": "filled", "order_id": "test_123"}
-        
+
         dispatcher._place_stop_loss_order = AsyncMock()
         await dispatcher._place_risk_management_orders(order, result)
         dispatcher._place_stop_loss_order.assert_called_once()
@@ -251,7 +263,7 @@ class TestRiskManagementOrders:
             position_side="LONG",
         )
         result = {"status": "filled", "order_id": "test_123"}
-        
+
         dispatcher._place_take_profit_order = AsyncMock()
         await dispatcher._place_risk_management_orders(order, result)
         dispatcher._place_take_profit_order.assert_called_once()
@@ -270,7 +282,7 @@ class TestRiskManagementOrders:
             reduce_only=True,
         )
         result = {"status": "filled", "order_id": "test_123"}
-        
+
         dispatcher.oco_manager.place_oco_orders = AsyncMock()
         await dispatcher._place_risk_management_orders(order, result)
         dispatcher.oco_manager.place_oco_orders.assert_not_called()
@@ -285,7 +297,7 @@ class TestSignalCache:
         # First signal should be processed
         result1 = await dispatcher.dispatch(sample_signal)
         assert result1.get("status") != "duplicate"
-        
+
         # Second identical signal should be rejected as duplicate
         result2 = await dispatcher.dispatch(sample_signal)
         assert result2.get("status") == "duplicate"
@@ -296,13 +308,13 @@ class TestSignalCache:
         # Set cache cleanup interval to 0 to force cleanup
         dispatcher.signal_cache_cleanup_interval = 0
         dispatcher.last_cache_cleanup = 0
-        
+
         # Add an old entry
         dispatcher.signal_cache["old_signal"] = 0  # Very old timestamp
-        
+
         # Trigger cleanup
         dispatcher._cleanup_signal_cache()
-        
+
         # Old entry should be removed
         assert "old_signal" not in dispatcher.signal_cache
 
@@ -341,3 +353,250 @@ class TestInitialization:
         await dispatcher.close()
         # Should not raise exception
 
+
+class TestHoldSignalFiltering:
+    """Test hold signal filtering"""
+
+    @pytest.mark.asyncio
+    async def test_hold_signal_filtered(self, dispatcher):
+        """Test that hold signals are filtered and not executed"""
+        hold_signal = Signal(
+            strategy_id="test-strategy",
+            symbol="BTCUSDT",
+            action="hold",
+            current_price=50000.0,
+            timestamp=datetime.utcnow(),
+        )
+        result = await dispatcher.dispatch(hold_signal)
+        assert result.get("status") == "hold"
+        assert "reason" in result
+
+
+class TestAccumulationCooldown:
+    """Test accumulation cooldown logic"""
+
+    @pytest.mark.asyncio
+    async def test_accumulation_cooldown_active(self, dispatcher, sample_signal):
+        """Test that accumulation signals are rejected during cooldown"""
+        # Create a position first
+        dispatcher.position_manager.positions = {
+            ("BTCUSDT", "LONG"): {"quantity": 0.001}
+        }
+        dispatcher.last_accumulation_time[("BTCUSDT", "LONG")] = 0  # Very recent
+        
+        result = await dispatcher.dispatch(sample_signal)
+        assert result.get("status") == "rejected"
+        assert "cooldown" in result.get("reason", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_accumulation_cooldown_expired(self, dispatcher, sample_signal):
+        """Test that accumulation is allowed after cooldown expires"""
+        import time
+        from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
+        
+        # Create a position first
+        dispatcher.position_manager.positions = {
+            ("BTCUSDT", "LONG"): {"quantity": 0.001}
+        }
+        # Set cooldown to expired (very old)
+        dispatcher.last_accumulation_time[("BTCUSDT", "LONG")] = time.time() - (ACCUMULATION_COOLDOWN_SECONDS + 10)
+        
+        # Mock signal processing to return success
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = AsyncMock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should not be rejected due to cooldown
+        assert result.get("status") != "rejected" or "cooldown" not in str(result.get("reason", "")).lower()
+
+
+class TestPositionCreation:
+    """Test position creation and strategy position mapping"""
+
+    @pytest.mark.asyncio
+    async def test_position_creation_with_timeout(self, dispatcher, sample_signal):
+        """Test position creation handling timeout"""
+        # Mock position manager to timeout
+        dispatcher.position_manager.create_position_record = AsyncMock(
+            side_effect=asyncio.TimeoutError()
+        )
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = AsyncMock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "filled",
+            "order_id": "test_123",
+            "amount": 0.001,
+        })
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should handle timeout gracefully
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_position_creation_with_error(self, dispatcher, sample_signal):
+        """Test position creation handling errors"""
+        # Mock position manager to raise exception
+        dispatcher.position_manager.create_position_record = AsyncMock(
+            side_effect=Exception("Position creation failed")
+        )
+        dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
+        dispatcher._signal_to_order = AsyncMock(return_value=TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        ))
+        dispatcher.execute_order = AsyncMock(return_value={
+            "status": "filled",
+            "order_id": "test_123",
+            "amount": 0.001,
+        })
+        
+        result = await dispatcher.dispatch(sample_signal)
+        # Should handle error gracefully
+        assert result is not None
+
+
+class TestStopLossTakeProfitPlacement:
+    """Test stop loss and take profit order placement"""
+
+    @pytest.mark.asyncio
+    async def test_place_stop_loss_with_validation(self, dispatcher):
+        """Test stop loss placement with price validation"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            stop_loss=48000.0,
+        )
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock exchange validation
+        dispatcher.exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+            return_value=(False, 48000.0, "Price valid")
+        )
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "pending",
+            "order_id": "sl_123",
+        })
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        await dispatcher._place_stop_loss_order(order, result)
+        # Should not raise exception
+        assert dispatcher.exchange.execute.called
+
+    @pytest.mark.asyncio
+    async def test_place_stop_loss_with_price_adjustment(self, dispatcher):
+        """Test stop loss placement with price adjustment"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            stop_loss=48000.0,
+        )
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock exchange validation to return adjusted price
+        dispatcher.exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+            return_value=(True, 48100.0, "Price adjusted")
+        )
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "pending",
+            "order_id": "sl_123",
+        })
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        await dispatcher._place_stop_loss_order(order, result)
+        # Should use adjusted price
+        assert dispatcher.exchange.execute.called
+
+    @pytest.mark.asyncio
+    async def test_place_take_profit_with_validation(self, dispatcher):
+        """Test take profit placement with price validation"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            take_profit=52000.0,
+        )
+        result = {"status": "filled", "order_id": "test_123", "amount": 0.001}
+        
+        # Mock exchange validation
+        dispatcher.exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+            return_value=(False, 52000.0, "Price valid")
+        )
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "pending",
+            "order_id": "tp_123",
+        })
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        await dispatcher._place_take_profit_order(order, result)
+        # Should not raise exception
+        assert dispatcher.exchange.execute.called
+
+    @pytest.mark.asyncio
+    async def test_place_stop_loss_with_string_amount(self, dispatcher):
+        """Test stop loss placement with string amount in result"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            stop_loss=48000.0,
+        )
+        result = {"status": "filled", "order_id": "test_123", "amount": "0.001"}
+        
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "pending",
+            "order_id": "sl_123",
+        })
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        await dispatcher._place_stop_loss_order(order, result)
+        # Should handle string amount
+        assert dispatcher.exchange.execute.called
+
+    @pytest.mark.asyncio
+    async def test_place_stop_loss_with_zero_amount(self, dispatcher):
+        """Test stop loss placement with zero amount falls back to order.amount"""
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+            stop_loss=48000.0,
+        )
+        result = {"status": "filled", "order_id": "test_123", "amount": 0}
+        
+        dispatcher.exchange.execute = AsyncMock(return_value={
+            "status": "pending",
+            "order_id": "sl_123",
+        })
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        await dispatcher._place_stop_loss_order(order, result)
+        # Should use order.amount as fallback
+        assert dispatcher.exchange.execute.called

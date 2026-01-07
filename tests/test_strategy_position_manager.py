@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from tradeengine.strategy_position_manager import StrategyPositionManager
-from contracts.signal import Signal, SignalAction, StrategyMode, TimeInForce
+from contracts.signal import Signal, TimeInForce
 from contracts.order import TradeOrder, OrderSide, OrderType
 
 
@@ -23,7 +23,7 @@ def sample_signal():
         signal_id="test_signal_123",
         strategy_id="test-strategy-1",
         symbol="BTCUSDT",
-        action=SignalAction.BUY,
+        action="buy",
         current_price=50000.0,
         quantity=0.001,
         confidence=0.85,

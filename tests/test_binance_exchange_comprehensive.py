@@ -30,7 +30,7 @@ def mock_binance_client():
                     "symbol": "BTCUSDT",
                     "status": "TRADING",
                     "filters": [
-                        {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                        {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
                         {
                             "filterType": "LOT_SIZE",
                             "minQty": "0.001",
@@ -57,9 +57,11 @@ def binance_exchange(mock_binance_client):
     exchange.initialized = True
     exchange.symbol_info = {
         "BTCUSDT": {
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
             "status": "TRADING",
             "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
                 {
                     "filterType": "LOT_SIZE",
                     "minQty": "0.001",
@@ -245,11 +247,15 @@ class TestOrderValidation:
     @pytest.mark.asyncio
     async def test_validate_notional_meets_requirement(self, binance_exchange):
         """Test notional validation when requirement is met"""
-        # Ensure symbol_info has the right structure
+        # Ensure symbol_info has the right structure with filters
+        # The code checks for "notional" key in MIN_NOTIONAL filter, not "minNotional"
         binance_exchange.symbol_info["BTCUSDT"] = {
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
             "status": "TRADING",
             "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
+                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
             ],
         }
         
@@ -266,11 +272,15 @@ class TestOrderValidation:
     @pytest.mark.asyncio
     async def test_validate_notional_below_requirement(self, binance_exchange):
         """Test notional validation when requirement is not met"""
-        # Ensure symbol_info has the right structure
+        # Ensure symbol_info has the right structure with filters
+        # The code checks for "notional" key in MIN_NOTIONAL filter
         binance_exchange.symbol_info["BTCUSDT"] = {
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
             "status": "TRADING",
             "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
+                {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
             ],
         }
         
@@ -301,10 +311,13 @@ class TestExchangeInfo:
     def test_get_min_order_amount(self, binance_exchange):
         """Test getting minimum order amount"""
         # Ensure symbol_info has the right structure with filters
+        # The code checks for "notional" key in MIN_NOTIONAL filter
         binance_exchange.symbol_info["BTCUSDT"] = {
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
             "status": "TRADING",
             "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
                 {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
             ],
         }
@@ -315,10 +328,13 @@ class TestExchangeInfo:
     def test_calculate_min_order_amount(self, binance_exchange):
         """Test calculating minimum order amount"""
         # Ensure symbol_info has the right structure with filters
+        # The code checks for "notional" key in MIN_NOTIONAL filter
         binance_exchange.symbol_info["BTCUSDT"] = {
+            "baseAsset": "BTC",
+            "quoteAsset": "USDT",
             "status": "TRADING",
             "filters": [
-                {"filterType": "MIN_NOTIONAL", "minNotional": "20.0"},
+                {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
                 {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001"},
             ],
         }

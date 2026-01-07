@@ -752,5 +752,138 @@ async def test_oco_order_placement_without_sl_or_tp():
         await dispatcher.oco_manager.stop_monitoring()
 
 
+class TestOCOPlacementFailures:
+    """Test OCO placement failure scenarios"""
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_failure_when_sl_fails(self, dispatcher):
+        """Test OCO placement when stop loss order fails"""
+        # Mock exchange to fail on SL order
+        dispatcher.exchange.execute = AsyncMock(side_effect=[
+            {"status": "failed", "error": "SL order failed"},  # SL fails
+            {"status": "pending", "order_id": "tp_123"}  # TP succeeds
+        ])
+        
+        # Mock position_manager
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        oco_result = await dispatcher.oco_manager.place_oco_orders(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG",
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+            quantity=0.001
+        )
+        
+        # Should return failed status
+        assert oco_result.get("status") == "failed"
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_failure_when_tp_fails(self, dispatcher):
+        """Test OCO placement when take profit order fails"""
+        # Mock exchange to fail on TP order
+        dispatcher.exchange.execute = AsyncMock(side_effect=[
+            {"status": "pending", "order_id": "sl_123"},  # SL succeeds
+            {"status": "failed", "error": "TP order failed"}  # TP fails
+        ])
+        
+        # Mock position_manager
+        dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+        
+        oco_result = await dispatcher.oco_manager.place_oco_orders(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG",
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+            quantity=0.001
+        )
+        
+        # Should return failed status
+        assert oco_result.get("status") == "failed"
+
+    @pytest.mark.asyncio
+    async def test_oco_placement_exception_handling(self, dispatcher):
+        """Test OCO placement exception handling"""
+        # Mock exchange to raise exception
+        dispatcher.exchange.execute = AsyncMock(side_effect=Exception("Exchange error"))
+        
+        oco_result = await dispatcher.oco_manager.place_oco_orders(
+            position_id="pos_123",
+            symbol="BTCUSDT",
+            position_side="LONG",
+            stop_loss_price=48000.0,
+            take_profit_price=52000.0,
+            quantity=0.001
+        )
+        
+        # Should return error status
+        assert oco_result.get("status") == "error"
+        assert "error" in oco_result
+
+
+class TestOCOPairFinding:
+    """Test OCO pair finding logic"""
+
+    @pytest.mark.asyncio
+    async def test_find_oco_pair_from_list(self, dispatcher):
+        """Test finding OCO pair from list structure"""
+        # Set up OCO pairs as list
+        dispatcher.oco_manager.active_oco_pairs["BTCUSDT_LONG"] = [
+            {
+                "position_id": "pos_123",
+                "sl_order_id": "sl_123",
+                "tp_order_id": "tp_123"
+            }
+        ]
+        
+        found, reason = await dispatcher.oco_manager.handle_oco_fill(
+            position_id="pos_123",
+            filled_order_id="sl_123",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        
+        # Should find the OCO pair
+        assert found is True
+
+    @pytest.mark.asyncio
+    async def test_find_oco_pair_from_dict(self, dispatcher):
+        """Test finding OCO pair from dict structure"""
+        # Set up OCO pair as dict
+        dispatcher.oco_manager.active_oco_pairs["BTCUSDT_LONG"] = {
+            "position_id": "pos_123",
+            "sl_order_id": "sl_123",
+            "tp_order_id": "tp_123"
+        }
+        
+        found, reason = await dispatcher.oco_manager.handle_oco_fill(
+            position_id="pos_123",
+            filled_order_id="tp_123",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        
+        # Should find the OCO pair
+        assert found is True
+
+    @pytest.mark.asyncio
+    async def test_oco_pair_not_found(self, dispatcher):
+        """Test OCO pair not found scenario"""
+        # No OCO pairs set up
+        
+        found, reason = await dispatcher.oco_manager.handle_oco_fill(
+            position_id="pos_123",
+            filled_order_id="unknown_order",
+            symbol="BTCUSDT",
+            position_side="LONG"
+        )
+        
+        # Should not find OCO pair
+        assert found is False
+        assert reason == "unknown"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

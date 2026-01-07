@@ -241,7 +241,8 @@ class TestOrderCancellation:
         # Give a small delay for the monitoring task to be scheduled
         await asyncio.sleep(0.1)
 
-        cancelled = await order_manager.cancel_conditional_order("conditional_123")
+        # cancel_order works for both active and conditional orders
+        cancelled = order_manager.cancel_order("conditional_123")
         assert cancelled is True
         assert "conditional_123" not in order_manager.conditional_orders
 

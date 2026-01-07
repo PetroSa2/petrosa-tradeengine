@@ -304,6 +304,30 @@ class TestExchangeInfo:
         binance_exchange.initialized = False
         binance_exchange.client = mock_binance_client
         binance_exchange.symbol_info = {}  # Reset symbol_info
+        
+        # Update mock to include baseAsset and quoteAsset
+        mock_binance_client.futures_exchange_info = Mock(
+            return_value={
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "baseAsset": "BTC",
+                        "quoteAsset": "USDT",
+                        "status": "TRADING",
+                        "filters": [
+                            {"filterType": "MIN_NOTIONAL", "notional": "20.0"},
+                            {
+                                "filterType": "LOT_SIZE",
+                                "minQty": "0.001",
+                                "maxQty": "1000",
+                                "stepSize": "0.001",
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        
         await binance_exchange._load_exchange_info()
         assert binance_exchange.symbol_info is not None
         assert "BTCUSDT" in binance_exchange.symbol_info

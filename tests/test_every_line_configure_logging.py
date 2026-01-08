@@ -8,8 +8,8 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk._logs import LoggerProvider  # noqa: E402
+from opentelemetry.sdk.resources import Resource  # noqa: E402
 
 # Mock OpenTelemetry imports before importing otel_init
 
@@ -20,7 +20,7 @@ sys.modules["opentelemetry.instrumentation.requests"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib3"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib"] = MagicMock()
 
-import otel_init
+import otel_init  # noqa: E402
 
 
 # TODO: Fix test isolation issue - see GitHub issue #217

@@ -10,8 +10,8 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
-from opentelemetry.sdk._logs import LoggerProvider
-from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk._logs import LoggerProvider  # noqa: E402
+from opentelemetry.sdk.resources import Resource  # noqa: E402
 
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()

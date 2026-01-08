@@ -16,7 +16,7 @@ sys.modules["opentelemetry.instrumentation.requests"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib3"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib"] = MagicMock()
 
-import otel_init
+import otel_init  # noqa: E402
 
 
 # TODO: Fix test isolation issue - see GitHub issue #217

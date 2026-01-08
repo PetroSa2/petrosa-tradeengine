@@ -301,6 +301,7 @@ class TestConditionalOrderEdgeCases:
 
         # Verify order was set up
         assert "timeout_test_123" in order_manager.conditional_orders
+        old_timestamp = datetime.utcnow()
 
         # Wait for timeout (monitoring runs in background task)
         await asyncio.sleep(0.3)  # Wait longer than timeout

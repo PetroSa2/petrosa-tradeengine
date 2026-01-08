@@ -372,6 +372,10 @@ def cleanup_logging_state():
             if hasattr(module, "_global_logger_provider"):
                 module._global_logger_provider = None
     except (ImportError, AttributeError, KeyError, Exception):
+        # Best-effort recovery: if resetting global state fails,
+        # we intentionally ignore the error. At this point in the cleanup
+        # path during test setup, failing hard would make tests more
+        # fragile without improving correctness.
         pass
 
 

@@ -95,8 +95,11 @@ def test_complete_logging_flow_without_otlp():
                 configure_logging = sys.modules["otel_init"].configure_logging
                 configure_logging()
                 root = logging.getLogger()  # Refresh root logger
-            except:
-                pass
+        except Exception as exc:
+            pytest.fail(
+                f"Failed to reload and configure otel_init during logging integration "
+                f"test: {exc}"
+            )
     assert root.level == logging.INFO
     assert len(root.handlers) > 0
 

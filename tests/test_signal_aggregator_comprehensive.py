@@ -57,6 +57,7 @@ class TestSignalAggregatorBasic:
     def test_set_strategy_weight(self, signal_aggregator):
         """Test setting strategy weight"""
         signal_aggregator.set_strategy_weight("test-strategy", 0.5)
+        assert signal_aggregator.strategy_weights.get("test-strategy") == 0.5
         # Should not raise exception
 
     @pytest.mark.asyncio

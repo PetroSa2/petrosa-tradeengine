@@ -138,6 +138,7 @@ class TestTradingConfigManagerCache:
         """Test cache invalidation when key not found"""
         config_manager.invalidate_cache("BTCUSDT", "LONG")
         # Should not raise exception
+        assert "BTCUSDT:LONG" not in config_manager._cache
 
     @pytest.mark.asyncio
     async def test_cache_refresh_loop(self, config_manager):

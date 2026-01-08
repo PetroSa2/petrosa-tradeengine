@@ -655,6 +655,7 @@ class TestDispatcherGetterMethods:
     def test_set_strategy_weight(self, dispatcher):
         """Test setting strategy weight"""
         dispatcher.set_strategy_weight("test-strategy", 0.5)
+        assert dispatcher.signal_aggregator.strategy_weights.get("test-strategy") == 0.5
         # Should not raise exception
 
     def test_get_positions(self, dispatcher):

@@ -251,8 +251,11 @@ class TestFallbackAmountCalculation:
             )
 
             # Should raise ValueError when no price is available
-            with pytest.raises(ValueError, match="Cannot calculate order amount"):
+            with pytest.raises(
+                ValueError, match="Cannot calculate order amount"
+            ) as exc_info:
                 dispatcher._calculate_order_amount(btc_signal)
+            assert "Cannot calculate order amount" in str(exc_info.value)
 
     def test_fallback_with_zero_price(self, dispatcher, btc_signal):
         """Test fallback when signal has zero price raises ValueError"""

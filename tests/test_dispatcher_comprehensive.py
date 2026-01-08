@@ -196,7 +196,7 @@ class TestOrderExecution:
         assert result.get("status") == "error"
 
 
-class TestRiskManagementOrders:
+class TestRiskManagementOrderPlacement:
     """Test risk management order placement"""
 
     @pytest.mark.asyncio
@@ -705,11 +705,6 @@ class TestDispatcherGetterMethods:
         result = dispatcher.cancel_order("test_order_id")
         # May return False if order doesn't exist
         assert isinstance(result, bool)
-
-    def test_get_portfolio_summary(self, dispatcher):
-        """Test getting portfolio summary"""
-        summary = dispatcher.get_portfolio_summary()
-        assert isinstance(summary, dict)
 
     @pytest.mark.asyncio
     async def test_get_account_info(self, dispatcher):

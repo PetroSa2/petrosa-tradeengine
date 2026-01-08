@@ -150,6 +150,10 @@ def _restore_all_otel_init_patches():
                                 ):
                                     otel_init_attr.configure_logging = original_func
             except (AttributeError, KeyError, Exception):
+                # Best-effort recovery: if updating module references fails,
+                # we intentionally ignore the error. At this point in the cleanup
+                # path during test setup, failing hard would make tests more
+                # fragile without improving correctness.
                 pass
 
 

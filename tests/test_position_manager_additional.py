@@ -16,8 +16,8 @@ Focus on uncovered methods:
 - reset_daily_pnl
 """
 
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from datetime import datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

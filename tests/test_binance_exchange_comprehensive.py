@@ -292,7 +292,7 @@ class TestOrderExecution:
         """Test handling BinanceAPIException"""
         # Mock _validate_order to raise BinanceAPIException
         binance_exchange._validate_order = AsyncMock(
-            side_effect=BinanceAPIException("API Error")
+            side_effect=BinanceAPIException({"code": -1021}, "API Error")
         )
         order = TradeOrder(
             symbol="BTCUSDT",

@@ -2,8 +2,6 @@
 Comprehensive tests for tradeengine/defaults.py to increase coverage
 """
 
-import pytest
-
 from tradeengine.defaults import (
     DEFAULT_TRADING_PARAMETERS,
     PARAMETER_SCHEMA,

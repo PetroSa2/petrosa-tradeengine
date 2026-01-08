@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
+from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import Signal, StrategyMode, TimeInForce
 from tradeengine.dispatcher import Dispatcher
 

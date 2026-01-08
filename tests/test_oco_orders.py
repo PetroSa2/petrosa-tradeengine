@@ -462,7 +462,6 @@ async def test_dispatcher_places_oco_orders_on_position_open(
             mock_position_manager.create_position_record.assert_called()
 
             # Give a small delay for async OCO placement to complete
-            import asyncio
 
             # Wait for OCO orders to be placed (poll up to 2 seconds)
             for _ in range(20):
@@ -549,7 +548,6 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
             assert result is not None
 
             # Step 2: Wait for OCO orders to be placed (poll up to 2 seconds)
-            import asyncio
 
             exchange_position_key = "BTCUSDT_LONG"
             for _ in range(20):
@@ -649,7 +647,6 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
             assert result is not None
 
             # Step 2: Wait for OCO orders to be placed (poll up to 2 seconds)
-            import asyncio
 
             exchange_position_key = "ETHUSDT_SHORT"
             for _ in range(20):
@@ -745,7 +742,6 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
                 await dispatcher.dispatch(signal)
 
             # Wait for OCO orders to be placed (poll up to 2 seconds)
-            import asyncio
 
             exchange_position_key = "BTCUSDT_LONG"
             for _ in range(20):

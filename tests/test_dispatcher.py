@@ -589,7 +589,7 @@ async def test_signal_to_order_negative_price(dispatcher: Dispatcher) -> None:
     ):
         # This will raise ValueError because negative price can't be used for fallback
         with pytest.raises(ValueError, match="Cannot calculate order amount"):
-            order = dispatcher._signal_to_order(signal)
+            dispatcher._signal_to_order(signal)
 
 
 @pytest.mark.asyncio

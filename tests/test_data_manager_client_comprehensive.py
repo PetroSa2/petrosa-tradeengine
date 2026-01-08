@@ -3,7 +3,7 @@ Comprehensive tests for tradeengine/services/data_manager_client.py to increase 
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

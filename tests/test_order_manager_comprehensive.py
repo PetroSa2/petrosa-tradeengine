@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from contracts.order import OrderStatus, OrderType, TradeOrder
+from contracts.order import OrderType, TradeOrder
 from tradeengine.order_manager import OrderManager
 
 

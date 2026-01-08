@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 sys.modules["petrosa_otel"] = MagicMock()
-from petrosa_otel import extract_trace_context
+from petrosa_otel import extract_trace_context  # noqa: E402
 
 extract_trace_context = MagicMock(return_value=None)
 
-from contracts.order import TradeOrder
-from contracts.signal import Signal
-from tradeengine.consumer import SignalConsumer
+from contracts.order import TradeOrder  # noqa: E402
+from contracts.signal import Signal  # noqa: E402
+from tradeengine.consumer import SignalConsumer  # noqa: E402
 
 
 @pytest.fixture

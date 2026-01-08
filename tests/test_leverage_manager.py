@@ -12,8 +12,8 @@ mock_binance.exceptions = MagicMock()
 sys.modules["binance"] = mock_binance
 sys.modules["binance.exceptions"] = mock_binance.exceptions
 
-from contracts.trading_config import LeverageStatus
-from tradeengine.leverage_manager import LeverageManager
+from contracts.trading_config import LeverageStatus  # noqa: E402
+from tradeengine.leverage_manager import LeverageManager  # noqa: E402
 
 
 @pytest.fixture

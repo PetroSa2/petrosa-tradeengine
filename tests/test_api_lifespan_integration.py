@@ -27,7 +27,7 @@ mock_petrosa_otel = MagicMock()
 mock_petrosa_otel.extract_trace_context = MagicMock(return_value=MagicMock())
 sys.modules["petrosa_otel"] = mock_petrosa_otel
 
-import pytest
+import pytest  # noqa: E402
 
 
 @pytest.mark.asyncio

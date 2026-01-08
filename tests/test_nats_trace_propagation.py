@@ -9,24 +9,24 @@ Tests verify that:
 """
 
 import json
-import sys
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+import sys  # noqa: E402
+from datetime import datetime  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 
-import pytest
-from nats.aio.msg import Msg
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+import pytest  # noqa: E402
+from nats.aio.msg import Msg  # noqa: E402
+from opentelemetry import trace  # noqa: E402
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # noqa: E402
 
 # Mock petrosa_otel before importing consumer
 sys.modules["petrosa_otel"] = MagicMock()
 sys.modules["petrosa_otel.extract_trace_context"] = MagicMock(return_value=MagicMock())
 
-from contracts.signal import Signal
-from tradeengine.consumer import SignalConsumer
-from tradeengine.dispatcher import Dispatcher
+from contracts.signal import Signal  # noqa: E402
+from tradeengine.consumer import SignalConsumer  # noqa: E402
+from tradeengine.dispatcher import Dispatcher  # noqa: E402
 
 
 @pytest.fixture(scope="session")

@@ -30,9 +30,9 @@ sys.modules["binance"] = binance_module
 sys.modules["binance.enums"] = binance_enums
 sys.modules["binance.exceptions"] = binance_exceptions
 
-from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
-from tradeengine.api import app
+from contracts.order import OrderStatus, TradeOrder  # noqa: E402
+from contracts.signal import Signal  # noqa: E402
+from tradeengine.api import app  # noqa: E402
 
 
 @pytest.fixture

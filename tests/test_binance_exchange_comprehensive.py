@@ -9,10 +9,10 @@ This test suite covers:
 5. Error handling
 """
 
-import sys
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+import sys  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
 # Mock binance module before importing
 mock_binance = MagicMock()
@@ -32,8 +32,8 @@ class MockBinanceAPIException(Exception):
 
 mock_binance.exceptions.BinanceAPIException = MockBinanceAPIException
 
-from contracts.order import OrderSide, OrderType, TradeOrder
-from tradeengine.exchange.binance import BinanceFuturesExchange
+from contracts.order import OrderSide, OrderType, TradeOrder  # noqa: E402
+from tradeengine.exchange.binance import BinanceFuturesExchange  # noqa: E402
 
 # Alias for tests
 BinanceAPIException = MockBinanceAPIException

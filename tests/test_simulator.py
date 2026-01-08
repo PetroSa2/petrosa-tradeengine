@@ -149,8 +149,10 @@ class TestSimulatorEdgeCases:
             type="market",
             amount=0.1,
         )
-        
-        with patch("random.random", return_value=0.95):  # Force failure (> 0.9 success_rate)
+
+        with patch(
+            "random.random", return_value=0.95
+        ):  # Force failure (> 0.9 success_rate)
             result = await exchange.execute_order(order)
             # May return failed status
             assert "status" in result or result is None
@@ -394,3 +396,77 @@ class TestTradeSimulator:
         prices = [await exchange.get_price("BTCUSDT") for _ in range(10)]
         # Prices should vary (not all exactly 45000)
         assert len(set(prices)) > 1 or all(44100 <= p <= 45900 for p in prices)
+
+    @pytest.mark.asyncio
+    async def test_calculate_fill_price_no_target_price(self):
+        """Test fill price calculation when target_price is None"""
+        simulator = TradeSimulator()
+        order = TradeOrder(
+            exchange="binance",
+            strategy_id="test_strategy",
+            symbol="BTCUSDT",
+            side="buy",
+            type="market",
+            amount=0.1,
+            target_price=None,
+        )
+        fill_price = simulator._calculate_fill_price(order)
+        # Should use default 45000.0
+        expected = 45000.0 * (1 + simulator.simulated_slippage)
+        assert fill_price == expected
+
+    @pytest.mark.asyncio
+    async def test_calculate_fill_price_stop_order_no_stop_loss(self):
+        """Test fill price calculation for stop order without stop_loss"""
+        simulator = TradeSimulator()
+        order = TradeOrder(
+            exchange="binance",
+            strategy_id="test_strategy",
+            symbol="BTCUSDT",
+            side="sell",
+            type="stop",
+            amount=0.1,
+            target_price=45000.0,
+            stop_loss=None,  # No stop_loss
+        )
+        fill_price = simulator._calculate_fill_price(order)
+        # Should fall back to slippage calculation
+        expected = 45000.0 * (1 - simulator.simulated_slippage)
+        assert fill_price == expected
+
+    @pytest.mark.asyncio
+    async def test_calculate_fill_price_take_profit_order_no_take_profit(self):
+        """Test fill price calculation for take_profit order without take_profit"""
+        simulator = TradeSimulator()
+        order = TradeOrder(
+            exchange="binance",
+            strategy_id="test_strategy",
+            symbol="BTCUSDT",
+            side="sell",
+            type="take_profit",
+            amount=0.1,
+            target_price=45000.0,
+            take_profit=None,  # No take_profit
+        )
+        fill_price = simulator._calculate_fill_price(order)
+        # Should fall back to slippage calculation
+        expected = 45000.0 * (1 - simulator.simulated_slippage)
+        assert fill_price == expected
+
+    @pytest.mark.asyncio
+    async def test_calculate_fill_price_limit_order(self):
+        """Test fill price calculation for limit order"""
+        simulator = TradeSimulator()
+        order = TradeOrder(
+            exchange="binance",
+            strategy_id="test_strategy",
+            symbol="BTCUSDT",
+            side="buy",
+            type="limit",
+            amount=0.1,
+            target_price=45000.0,
+        )
+        fill_price = simulator._calculate_fill_price(order)
+        # Should use slippage calculation
+        expected = 45000.0 * (1 + simulator.simulated_slippage)
+        assert fill_price == expected

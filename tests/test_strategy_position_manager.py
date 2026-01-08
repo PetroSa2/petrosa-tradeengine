@@ -1,12 +1,14 @@
 """Tests for strategy_position_manager module"""
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
-import uuid
 
-from tradeengine.strategy_position_manager import StrategyPositionManager
+import uuid
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+import pytest
+
+from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import Signal, TimeInForce
-from contracts.order import TradeOrder, OrderSide, OrderType
+from tradeengine.strategy_position_manager import StrategyPositionManager
 
 
 @pytest.fixture
@@ -67,25 +69,31 @@ class TestStrategyPositionManagerBasic:
     def test_initialization(self, strategy_position_manager):
         """Test StrategyPositionManager initialization"""
         assert strategy_position_manager is not None
-        assert hasattr(strategy_position_manager, 'strategy_positions')
-        assert hasattr(strategy_position_manager, 'exchange_positions')
-        assert hasattr(strategy_position_manager, 'contributions')
+        assert hasattr(strategy_position_manager, "strategy_positions")
+        assert hasattr(strategy_position_manager, "exchange_positions")
+        assert hasattr(strategy_position_manager, "contributions")
 
     @pytest.mark.asyncio
-    async def test_create_strategy_position(self, strategy_position_manager, sample_signal, sample_order, sample_execution_result):
+    async def test_create_strategy_position(
+        self,
+        strategy_position_manager,
+        sample_signal,
+        sample_order,
+        sample_execution_result,
+    ):
         """Test creating a strategy position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             position_id = await strategy_position_manager.create_strategy_position(
                 signal=sample_signal,
                 order=sample_order,
                 execution_result=sample_execution_result,
             )
-            
+
             assert position_id is not None
             assert isinstance(position_id, str)
-            
+
             # Verify position was created
             position = strategy_position_manager.get_strategy_position(position_id)
             assert position is not None
@@ -105,7 +113,7 @@ class TestStrategyPositionManagerBasic:
             "symbol": "BTCUSDT",
             "side": "LONG",
         }
-        
+
         position = strategy_position_manager.get_strategy_position(position_id)
         assert position is not None
         assert position["strategy_position_id"] == position_id
@@ -121,7 +129,7 @@ class TestStrategyPositionManagerBasic:
         position_id_1 = str(uuid.uuid4())
         position_id_2 = str(uuid.uuid4())
         position_id_3 = str(uuid.uuid4())
-        
+
         strategy_position_manager.strategy_positions[position_id_1] = {
             "strategy_position_id": position_id_1,
             "strategy_id": "test-strategy",
@@ -137,9 +145,11 @@ class TestStrategyPositionManagerBasic:
             "strategy_id": "other-strategy",
             "symbol": "BTCUSDT",
         }
-        
-        positions = strategy_position_manager.get_strategy_positions_by_strategy("test-strategy")
-        
+
+        positions = strategy_position_manager.get_strategy_positions_by_strategy(
+            "test-strategy"
+        )
+
         assert len(positions) == 2
         position_ids = [p["strategy_position_id"] for p in positions]
         assert position_id_1 in position_ids
@@ -147,12 +157,14 @@ class TestStrategyPositionManagerBasic:
         assert position_id_3 not in position_ids
 
     @pytest.mark.asyncio
-    async def test_get_open_strategy_positions_by_exchange_key(self, strategy_position_manager):
+    async def test_get_open_strategy_positions_by_exchange_key(
+        self, strategy_position_manager
+    ):
         """Test getting open positions by exchange key"""
         # Manually add positions
         position_id_1 = str(uuid.uuid4())
         position_id_2 = str(uuid.uuid4())
-        
+
         strategy_position_manager.strategy_positions[position_id_1] = {
             "strategy_position_id": position_id_1,
             "strategy_id": "test-strategy",
@@ -169,9 +181,13 @@ class TestStrategyPositionManagerBasic:
             "exchange_position_key": "BTCUSDT_LONG",
             "status": "closed",
         }
-        
-        positions = await strategy_position_manager.get_open_strategy_positions_by_exchange_key("BTCUSDT_LONG")
-        
+
+        positions = (
+            await strategy_position_manager.get_open_strategy_positions_by_exchange_key(
+                "BTCUSDT_LONG"
+            )
+        )
+
         assert len(positions) == 1
         assert positions[0]["strategy_position_id"] == position_id_1
 
@@ -184,7 +200,7 @@ class TestStrategyPositionManagerBasic:
             "symbol": "BTCUSDT",
             "side": "LONG",
         }
-        
+
         position = strategy_position_manager.get_exchange_position(exchange_key)
         assert position is not None
         assert position["exchange_position_key"] == exchange_key
@@ -199,7 +215,7 @@ class TestStrategyPositionManagerBasic:
             "exchange_position_key": exchange_key,
         }
         strategy_position_manager.contributions[exchange_key] = [contribution]
-        
+
         contributions = strategy_position_manager.get_contributions(exchange_key)
         assert len(contributions) == 1
         assert contributions[0]["contribution_id"] == contribution["contribution_id"]
@@ -219,58 +235,70 @@ class TestStrategyPositionManagerBasic:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_close_strategy_position_partial(self, strategy_position_manager, sample_signal, sample_order, sample_execution_result):
+    async def test_close_strategy_position_partial(
+        self,
+        strategy_position_manager,
+        sample_signal,
+        sample_order,
+        sample_execution_result,
+    ):
         """Test closing a strategy position partially"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
             mock_client.update_position = AsyncMock()
-            
+
             position_id = await strategy_position_manager.create_strategy_position(
                 signal=sample_signal,
                 order=sample_order,
                 execution_result=sample_execution_result,
             )
-            
+
             # Close partially
             result = await strategy_position_manager.close_strategy_position(
                 strategy_position_id=position_id,
                 exit_price=51000.0,
                 exit_quantity=0.0005,  # Half of 0.001
             )
-            
+
             assert result is not None
             assert "realized_pnl" in result
             position = strategy_position_manager.get_strategy_position(position_id)
             assert position["status"] == "partial"
 
     @pytest.mark.asyncio
-    async def test_close_strategy_position_long_pnl(self, strategy_position_manager, sample_signal, sample_order, sample_execution_result):
+    async def test_close_strategy_position_long_pnl(
+        self,
+        strategy_position_manager,
+        sample_signal,
+        sample_order,
+        sample_execution_result,
+    ):
         """Test closing LONG position PnL calculation"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
             mock_client.update_position = AsyncMock()
-            
+
             position_id = await strategy_position_manager.create_strategy_position(
                 signal=sample_signal,
                 order=sample_order,
                 execution_result=sample_execution_result,
             )
-            
+
             # Close at higher price (profit for LONG)
             result = await strategy_position_manager.close_strategy_position(
                 strategy_position_id=position_id,
                 exit_price=51000.0,  # Higher than entry 50000.0
                 close_reason="take_profit",
             )
-            
+
             assert result["realized_pnl"] > 0  # Profit for LONG
 
     @pytest.mark.asyncio
     async def test_close_strategy_position_short_pnl(self, strategy_position_manager):
         """Test closing SHORT position PnL calculation"""
+        from contracts.order import OrderSide, OrderType, TradeOrder
         from contracts.signal import Signal, TimeInForce
-        from contracts.order import TradeOrder, OrderSide, OrderType
-        
+
         short_signal = Signal(
             signal_id="test_signal_short",
             strategy_id="test-strategy-1",
@@ -286,7 +314,7 @@ class TestStrategyPositionManagerBasic:
             order_type="market",
             time_in_force=TimeInForce.GTC,
         )
-        
+
         short_order = TradeOrder(
             symbol="BTCUSDT",
             side=OrderSide.SELL,
@@ -294,39 +322,39 @@ class TestStrategyPositionManagerBasic:
             amount=0.001,
             target_price=50000.0,
         )
-        
+
         execution_result = {
             "status": "filled",
             "order_id": "test_order_short",
             "fill_price": 50000.0,
             "amount": 0.001,
         }
-        
-        with patch('shared.mysql_client.position_client') as mock_client:
+
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
             mock_client.update_position = AsyncMock()
-            
+
             position_id = await strategy_position_manager.create_strategy_position(
                 signal=short_signal,
                 order=short_order,
                 execution_result=execution_result,
             )
-            
+
             # Close at lower price (profit for SHORT)
             result = await strategy_position_manager.close_strategy_position(
                 strategy_position_id=position_id,
                 exit_price=49000.0,  # Lower than entry 50000.0
                 close_reason="take_profit",
             )
-            
+
             assert result["realized_pnl"] > 0  # Profit for SHORT
 
     @pytest.mark.asyncio
     async def test_update_exchange_position_new(self, strategy_position_manager):
         """Test _update_exchange_position creating new position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 symbol="BTCUSDT",
@@ -335,7 +363,7 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy",
             )
-            
+
             assert "BTCUSDT_LONG" in strategy_position_manager.exchange_positions
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.001
@@ -345,9 +373,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_update_exchange_position_existing(self, strategy_position_manager):
         """Test _update_exchange_position updating existing position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create initial position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
@@ -358,7 +386,7 @@ class TestStrategyPositionManagerBasic:
                 "contributing_strategies": ["strategy-1"],
                 "total_contributions": 1,
             }
-            
+
             # Add more to position
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -368,7 +396,7 @@ class TestStrategyPositionManagerBasic:
                 price=51000.0,
                 strategy_id="strategy-2",
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.003  # 0.001 + 0.002
             assert position["total_contributions"] == 2
@@ -379,9 +407,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_reduce_exchange_position(self, strategy_position_manager):
         """Test _reduce_exchange_position reducing quantity"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
@@ -391,14 +419,14 @@ class TestStrategyPositionManagerBasic:
                 "weighted_avg_price": 50000.0,
                 "status": "open",
             }
-            
+
             # Reduce position
             await strategy_position_manager._reduce_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 quantity=0.001,
                 price=51000.0,
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.002  # 0.003 - 0.001
             assert position["status"] == "open"
@@ -406,9 +434,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_reduce_exchange_position_to_zero(self, strategy_position_manager):
         """Test _reduce_exchange_position closing position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
@@ -418,14 +446,14 @@ class TestStrategyPositionManagerBasic:
                 "weighted_avg_price": 50000.0,
                 "status": "open",
             }
-            
+
             # Close position
             await strategy_position_manager._reduce_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 quantity=0.001,
                 price=51000.0,
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.0
             assert position["status"] == "closed"
@@ -444,16 +472,16 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_create_contribution(self, strategy_position_manager):
         """Test _create_contribution creating contribution record"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Set up exchange position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
                 "current_quantity": 0.001,
                 "total_contributions": 1,
             }
-            
+
             await strategy_position_manager._create_contribution(
                 strategy_position_id="strat_pos_123",
                 exchange_position_key="BTCUSDT_LONG",
@@ -463,18 +491,20 @@ class TestStrategyPositionManagerBasic:
                 quantity=0.001,
                 price=50000.0,
             )
-            
+
             assert "BTCUSDT_LONG" in strategy_position_manager.contributions
             contributions = strategy_position_manager.contributions["BTCUSDT_LONG"]
             assert len(contributions) == 1
             assert contributions[0]["strategy_position_id"] == "strat_pos_123"
 
     @pytest.mark.asyncio
-    async def test_create_contribution_new_exchange_position(self, strategy_position_manager):
+    async def test_create_contribution_new_exchange_position(
+        self, strategy_position_manager
+    ):
         """Test _create_contribution for new exchange position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # No exchange position exists yet
             await strategy_position_manager._create_contribution(
                 strategy_position_id="strat_pos_456",
@@ -485,7 +515,7 @@ class TestStrategyPositionManagerBasic:
                 quantity=0.01,
                 price=3000.0,
             )
-            
+
             assert "ETHUSDT_LONG" in strategy_position_manager.contributions
             contributions = strategy_position_manager.contributions["ETHUSDT_LONG"]
             assert len(contributions) == 1
@@ -494,9 +524,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_close_contribution(self, strategy_position_manager):
         """Test _close_contribution closing contribution record"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.update_position = AsyncMock()
-            
+
             await strategy_position_manager._close_contribution(
                 strategy_position_id="strat_pos_123",
                 exit_price=51000.0,
@@ -504,61 +534,67 @@ class TestStrategyPositionManagerBasic:
                 pnl_pct=2.0,
                 close_reason="take_profit",
             )
-            
+
             # Should complete without error
             mock_client.update_position.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_persist_exchange_position(self, strategy_position_manager):
         """Test _persist_exchange_position persisting to Data Manager"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Set up exchange position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
                 "symbol": "BTCUSDT",
                 "side": "LONG",
             }
-            
+
             await strategy_position_manager._persist_exchange_position("BTCUSDT_LONG")
-            
+
             mock_client.create_position.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_persist_strategy_position_error(self, strategy_position_manager):
         """Test _persist_strategy_position error handling"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock(side_effect=Exception("DB error"))
-            
+
             position = {
                 "strategy_position_id": "test_123",
                 "symbol": "BTCUSDT",
             }
-            
+
             # Should not raise, just log error
             await strategy_position_manager._persist_strategy_position(position)
 
     @pytest.mark.asyncio
-    async def test_update_strategy_position_closure_error(self, strategy_position_manager):
+    async def test_update_strategy_position_closure_error(
+        self, strategy_position_manager
+    ):
         """Test _update_strategy_position_closure error handling"""
-        with patch('tradeengine.strategy_position_manager.position_client') as mock_client:
+        with patch(
+            "tradeengine.strategy_position_manager.position_client"
+        ) as mock_client:
             mock_client.update_position = AsyncMock(side_effect=Exception("DB error"))
-            
+
             position = {
                 "strategy_position_id": "test_123",
                 "status": "closed",
             }
-            
+
             # Should not raise, just log error
-            await strategy_position_manager._update_strategy_position_closure("test_123", position)
+            await strategy_position_manager._update_strategy_position_closure(
+                "test_123", position
+            )
 
     @pytest.mark.asyncio
     async def test_update_exchange_position_new(self, strategy_position_manager):
         """Test _update_exchange_position creating new position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 symbol="BTCUSDT",
@@ -567,7 +603,7 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy",
             )
-            
+
             assert "BTCUSDT_LONG" in strategy_position_manager.exchange_positions
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.001
@@ -577,9 +613,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_update_exchange_position_existing(self, strategy_position_manager):
         """Test _update_exchange_position updating existing position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create initial position
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -589,7 +625,7 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy-1",
             )
-            
+
             # Update with additional quantity
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -599,7 +635,7 @@ class TestStrategyPositionManagerBasic:
                 price=51000.0,
                 strategy_id="test-strategy-2",
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.003  # 0.001 + 0.002
             # Weighted avg: (0.001*50000 + 0.002*51000) / 0.003 = 50666.67
@@ -611,9 +647,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_reduce_exchange_position(self, strategy_position_manager):
         """Test _reduce_exchange_position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create position
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -623,23 +659,23 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy",
             )
-            
+
             # Reduce position
             await strategy_position_manager._reduce_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 quantity=0.0005,
                 price=51000.0,
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.0005  # 0.001 - 0.0005
 
     @pytest.mark.asyncio
     async def test_reduce_exchange_position_to_zero(self, strategy_position_manager):
         """Test _reduce_exchange_position closing position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create position
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -649,14 +685,14 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy",
             )
-            
+
             # Close position completely
             await strategy_position_manager._reduce_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
                 quantity=0.001,
                 price=51000.0,
             )
-            
+
             position = strategy_position_manager.exchange_positions["BTCUSDT_LONG"]
             assert position["current_quantity"] == 0.0
             assert position["status"] == "closed"
@@ -675,9 +711,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_create_contribution(self, strategy_position_manager):
         """Test _create_contribution"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch("shared.mysql_client.position_client") as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create exchange position first
             await strategy_position_manager._update_exchange_position(
                 exchange_position_key="BTCUSDT_LONG",
@@ -687,7 +723,7 @@ class TestStrategyPositionManagerBasic:
                 price=50000.0,
                 strategy_id="test-strategy",
             )
-            
+
             # Create contribution
             await strategy_position_manager._create_contribution(
                 strategy_position_id="strat_pos_123",
@@ -698,7 +734,7 @@ class TestStrategyPositionManagerBasic:
                 quantity=0.001,
                 price=50000.0,
             )
-            
+
             assert "BTCUSDT_LONG" in strategy_position_manager.contributions
             contributions = strategy_position_manager.contributions["BTCUSDT_LONG"]
             assert len(contributions) == 1
@@ -707,9 +743,11 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_close_contribution(self, strategy_position_manager):
         """Test _close_contribution"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch(
+            "tradeengine.strategy_position_manager.position_client"
+        ) as mock_client:
             mock_client.update_position = AsyncMock()
-            
+
             await strategy_position_manager._close_contribution(
                 strategy_position_id="strat_pos_123",
                 exit_price=51000.0,
@@ -717,52 +755,61 @@ class TestStrategyPositionManagerBasic:
                 pnl_pct=2.0,
                 close_reason="take_profit",
             )
-            
+
             # Should complete without error
             mock_client.update_position.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_persist_strategy_position(self, strategy_position_manager):
         """Test _persist_strategy_position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch(
+            "tradeengine.strategy_position_manager.position_client"
+        ) as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             position = {
                 "strategy_position_id": "test_pos_123",
                 "strategy_id": "test-strategy",
                 "symbol": "BTCUSDT",
             }
-            
+
             await strategy_position_manager._persist_strategy_position(position)
             mock_client.create_position.assert_called_once_with(position)
 
     @pytest.mark.asyncio
     async def test_update_strategy_position_closure(self, strategy_position_manager):
         """Test _update_strategy_position_closure"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch(
+            "tradeengine.strategy_position_manager.position_client"
+        ) as mock_client:
             mock_client.update_position = AsyncMock()
-            
+
             position = {
                 "strategy_position_id": "test_pos_123",
                 "status": "closed",
             }
-            
-            await strategy_position_manager._update_strategy_position_closure("test_pos_123", position)
-            mock_client.update_position.assert_called_once_with("test_pos_123", position)
+
+            await strategy_position_manager._update_strategy_position_closure(
+                "test_pos_123", position
+            )
+            mock_client.update_position.assert_called_once_with(
+                "test_pos_123", position
+            )
 
     @pytest.mark.asyncio
     async def test_persist_exchange_position(self, strategy_position_manager):
         """Test _persist_exchange_position"""
-        with patch('shared.mysql_client.position_client') as mock_client:
+        with patch(
+            "tradeengine.strategy_position_manager.position_client"
+        ) as mock_client:
             mock_client.create_position = AsyncMock()
-            
+
             # Create exchange position
             strategy_position_manager.exchange_positions["BTCUSDT_LONG"] = {
                 "exchange_position_key": "BTCUSDT_LONG",
                 "symbol": "BTCUSDT",
                 "side": "LONG",
             }
-            
+
             await strategy_position_manager._persist_exchange_position("BTCUSDT_LONG")
             mock_client.create_position.assert_called_once()
-

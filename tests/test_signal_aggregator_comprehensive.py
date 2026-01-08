@@ -3,7 +3,9 @@ Comprehensive tests for tradeengine/signal_aggregator.py to increase coverage
 """
 
 import pytest
-from contracts.signal import Signal
+
+from contracts.order import OrderType
+from contracts.signal import Signal, SignalStrength, StrategyMode, TimeInForce
 from tradeengine.signal_aggregator import SignalAggregator
 
 
@@ -17,7 +19,7 @@ def signal_aggregator():
 def sample_signal():
     """Create a sample signal for testing"""
     from datetime import datetime
-    from contracts.signal import SignalStrength, StrategyMode
+
     return Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
@@ -41,11 +43,11 @@ def sample_signal():
 class TestSignalAggregatorBasic:
     """Test basic SignalAggregator functionality"""
 
-    @pytest.mark.skip(reason="Signal fixture has validation issues - skip for now")
     def test_add_signal(self, signal_aggregator, sample_signal):
         """Test adding a signal"""
         signal_aggregator.add_signal(sample_signal)
         # Should not raise exception
+        assert len(signal_aggregator.active_signals) > 0
 
     def test_get_signal_summary(self, signal_aggregator):
         """Test getting signal summary"""
@@ -57,19 +59,18 @@ class TestSignalAggregatorBasic:
         signal_aggregator.set_strategy_weight("test-strategy", 0.5)
         # Should not raise exception
 
-    @pytest.mark.skip(reason="Signal fixture has validation issues - skip for now")
     @pytest.mark.asyncio
     async def test_process_signal(self, signal_aggregator, sample_signal):
         """Test processing a signal"""
         result = await signal_aggregator.process_signal(sample_signal)
         assert isinstance(result, dict)
         assert "status" in result
+        assert result["status"] in ["executed", "error"]
 
     def test_cleanup_old_signals(self, signal_aggregator):
         """Test _cleanup_old_signals removes expired signals"""
         from datetime import datetime, timedelta
-        from contracts.signal import SignalStrength, StrategyMode
-        
+
         # Create old signal (2 hours ago)
         old_signal = Signal(
             strategy_id="old-strategy",
@@ -89,7 +90,7 @@ class TestSignalAggregatorBasic:
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
-        
+
         # Create recent signal
         recent_signal = Signal(
             strategy_id="recent-strategy",
@@ -109,14 +110,14 @@ class TestSignalAggregatorBasic:
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
-        
+
         # Add signals manually to active_signals
         signal_aggregator.active_signals["old_key"] = old_signal
         signal_aggregator.active_signals["recent_key"] = recent_signal
-        
+
         # Call cleanup
         signal_aggregator._cleanup_old_signals()
-        
+
         # Old signal should be removed, recent should remain
         assert "old_key" not in signal_aggregator.active_signals
         assert "recent_key" in signal_aggregator.active_signals
@@ -124,8 +125,7 @@ class TestSignalAggregatorBasic:
     def test_cancel_opposing_signals(self, signal_aggregator):
         """Test _cancel_opposing_signals removes signals for symbol"""
         from datetime import datetime
-        from contracts.signal import SignalStrength, StrategyMode
-        
+
         # Create signals for same symbol
         signal1 = Signal(
             strategy_id="strategy-1",
@@ -145,7 +145,7 @@ class TestSignalAggregatorBasic:
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
-        
+
         signal2 = Signal(
             strategy_id="strategy-2",
             symbol="BTCUSDT",
@@ -164,7 +164,7 @@ class TestSignalAggregatorBasic:
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
-        
+
         # Add signals manually
         signal_aggregator.active_signals["key1"] = signal1
         signal_aggregator.active_signals["key2"] = signal2
@@ -186,29 +186,36 @@ class TestSignalAggregatorBasic:
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
-        
+
         # Cancel opposing signals for BTCUSDT
         signal_aggregator._cancel_opposing_signals("BTCUSDT")
-        
+
         # BTCUSDT signals should be removed, ETHUSDT should remain
         assert "key1" not in signal_aggregator.active_signals
         assert "key2" not in signal_aggregator.active_signals
         assert "key3" in signal_aggregator.active_signals
 
-    @pytest.mark.skip(reason="Signal fixture has validation issues - skip for now")
     def test_calculate_timeframe_strength(self, signal_aggregator):
         """Test _calculate_timeframe_strength returns correct weights"""
         from datetime import datetime
-        from contracts.signal import SignalStrength, StrategyMode, TimeInForce
-        from contracts.order import OrderType
-        
+
         # Test different timeframes (weights are multiplied by confidence 0.8)
         # timeframe_weights: tick=0.1, 1m=0.2, 5m=0.4, 15m=0.5, 1h=0.7, 4h=0.9, 1d=1.3
         # Expected: confidence (0.8) * timeframe_weight
         timeframes = ["tick", "1m", "5m", "15m", "1h", "4h", "1d"]
-        expected_weights = [0.8 * 0.1, 0.8 * 0.2, 0.8 * 0.4, 0.8 * 0.5, 0.8 * 0.7, 0.8 * 0.9, 0.8 * 1.3]
-        
-        for timeframe, expected_weight in zip(timeframes, expected_weights):
+        expected_weights = [
+            0.8 * 0.1,
+            0.8 * 0.2,
+            0.8 * 0.4,
+            0.8 * 0.5,
+            0.8 * 0.7,
+            0.8 * 0.9,
+            0.8 * 1.3,
+        ]
+
+        for timeframe, expected_weight in zip(
+            timeframes, expected_weights, strict=False
+        ):
             signal = Signal(
                 strategy_id="test",
                 symbol="BTCUSDT",
@@ -251,7 +258,7 @@ class TestSignalAggregatorBasic:
             ("1w", 15),
             ("1M", 16),
         ]
-        
+
         for timeframe, expected_value in test_cases:
             value = signal_aggregator._get_timeframe_numeric_value(timeframe)
             assert value == expected_value
@@ -259,8 +266,7 @@ class TestSignalAggregatorBasic:
     def test_get_signal_summary_with_signals(self, signal_aggregator):
         """Test get_signal_summary includes signal counts"""
         from datetime import datetime
-        from contracts.signal import SignalStrength, StrategyMode
-        
+
         # Add some signals
         for i in range(3):
             signal = Signal(
@@ -282,7 +288,7 @@ class TestSignalAggregatorBasic:
                 time_in_force=TimeInForce.GTC,
             )
             signal_aggregator.add_signal(signal)
-        
+
         summary = signal_aggregator.get_signal_summary()
         assert summary["active_signals_count"] == 3
         assert summary["total_signals_processed"] == 3
@@ -291,13 +297,13 @@ class TestSignalAggregatorBasic:
     @pytest.mark.asyncio
     async def test_process_signal_error_handling(self, signal_aggregator):
         """Test process_signal handles errors gracefully"""
+        from datetime import datetime
         from unittest.mock import patch
-        
+
         # Mock add_signal to raise exception
-        with patch.object(signal_aggregator, 'add_signal', side_effect=Exception("Test error")):
-            from datetime import datetime
-            from contracts.signal import SignalStrength, StrategyMode
-            
+        with patch.object(
+            signal_aggregator, "add_signal", side_effect=Exception("Test error")
+        ):
             signal = Signal(
                 strategy_id="test",
                 symbol="BTCUSDT",
@@ -316,8 +322,7 @@ class TestSignalAggregatorBasic:
                 order_type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
             )
-            
+
             result = await signal_aggregator.process_signal(signal)
             assert result["status"] == "error"
             assert "error" in result
-

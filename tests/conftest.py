@@ -450,6 +450,10 @@ def get_real_configure_logging():
                                 ):
                                     sys.modules[module_name] = fresh_otel_init
                             except (AttributeError, KeyError, Exception):
+                                # Best-effort recovery: if updating module references fails,
+                                # we intentionally ignore the error. At this point in the cleanup
+                                # path during test setup, failing hard would make tests more
+                                # fragile without improving correctness.
                                 pass
 
                         # CRITICAL: Also update globals in calling frame if possible
@@ -514,6 +518,10 @@ def get_real_configure_logging():
                                         else True
                                     )
                                 except Exception:
+                                    # Best-effort recovery: if reloading or stopping patches fails,
+                                    # we intentionally ignore the error. At this point in the cleanup
+                                    # path during test setup, failing hard would make tests more
+                                    # fragile without improving correctness.
                                     pass
 
                             if fresh_func and not reloaded_is_mock:

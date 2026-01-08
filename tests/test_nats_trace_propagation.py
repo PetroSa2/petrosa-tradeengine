@@ -18,7 +18,9 @@ from nats.aio.msg import Msg  # noqa: E402
 from opentelemetry import trace  # noqa: E402
 from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter  # noqa: E402
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,  # noqa: E402
+)
 
 # Mock petrosa_otel before importing consumer
 sys.modules["petrosa_otel"] = MagicMock()

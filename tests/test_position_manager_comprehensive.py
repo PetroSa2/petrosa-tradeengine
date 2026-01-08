@@ -933,7 +933,8 @@ class TestPositionManagerHelperMethods:
         """Test resetting daily PnL"""
         position_manager.daily_pnl = 100.0
         with patch(
-            "shared.mysql_client.position_client.update_daily_pnl", new_callable=AsyncMock
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
         ):
             await position_manager.reset_daily_pnl()
             assert position_manager.daily_pnl == 0.0

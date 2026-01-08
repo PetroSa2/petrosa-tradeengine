@@ -267,7 +267,9 @@ class TestConditionalOrderEdgeCases:
     """Test conditional order edge cases"""
 
     @pytest.mark.asyncio
-    async def test_setup_conditional_order_without_order_id(self, order_manager, sample_order):
+    async def test_setup_conditional_order_without_order_id(
+        self, order_manager, sample_order
+    ):
         """Test setting up conditional order without order_id in result"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -296,22 +298,18 @@ class TestConditionalOrderEdgeCases:
         }
         result = {"status": "pending", "order_id": "timeout_test_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Verify order was set up
         assert "timeout_test_123" in order_manager.conditional_orders
-        
+
         # Wait for timeout (monitoring runs in background task)
         await asyncio.sleep(0.3)  # Wait longer than timeout
-        
+
         # Order should be removed from conditional_orders or moved to history
         # The monitoring task may still be running, so check both
-        assert (
-            "timeout_test_123" not in order_manager.conditional_orders
-            or any(
-                o.get("order_id") == "timeout_test_123"
-                and o.get("status") == "timeout"
-                for o in order_manager.order_history
-            )
+        assert "timeout_test_123" not in order_manager.conditional_orders or any(
+            o.get("order_id") == "timeout_test_123" and o.get("status") == "timeout"
+            for o in order_manager.order_history
         )
 
     @pytest.mark.asyncio
@@ -330,7 +328,7 @@ class TestConditionalOrderEdgeCases:
         await order_manager.track_order(
             sample_order, {"status": "filled", "order_id": "order2"}
         )
-        
+
         summary = order_manager.get_order_summary()
         assert "active_orders" in summary
         assert "conditional_orders" in summary
@@ -347,7 +345,7 @@ class TestOrderManagerHelperMethods:
         """Test logging events"""
         # log_event is a method that calls audit_logger
         # Should not raise exception
-        with patch('tradeengine.order_manager.audit_logger') as mock_audit:
+        with patch("tradeengine.order_manager.audit_logger") as mock_audit:
             order_manager.log_event("test_event", {"test": "data"})
             # Verify audit logger was called
             mock_audit.log_event.assert_called_once()
@@ -377,7 +375,9 @@ class TestOrderManagerHelperMethods:
         assert "partial_123" in order_manager.active_orders
 
     @pytest.mark.asyncio
-    async def test_track_order_with_conditional_limit(self, order_manager, sample_order):
+    async def test_track_order_with_conditional_limit(
+        self, order_manager, sample_order
+    ):
         """Test tracking conditional limit order"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -401,7 +401,9 @@ class TestOrderManagerHelperMethods:
         assert "conditional_stop_123" in order_manager.conditional_orders
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_executes_on_condition(self, order_manager, sample_order):
+    async def test_monitor_conditional_order_executes_on_condition(
+        self, order_manager, sample_order
+    ):
         """Test that conditional order executes when condition is met"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -410,19 +412,23 @@ class TestOrderManagerHelperMethods:
         }
         result = {"status": "pending", "order_id": "conditional_exec_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock _get_current_price to return price above condition
         order_manager._get_current_price = AsyncMock(return_value=52000.0)
         order_manager._execute_conditional_order = AsyncMock()
-        
+
         # Manually call monitor (normally runs in background)
         await order_manager._monitor_conditional_order("conditional_exec_123")
-        
+
         # Should execute conditional order
-        order_manager._execute_conditional_order.assert_called_once_with("conditional_exec_123")
+        order_manager._execute_conditional_order.assert_called_once_with(
+            "conditional_exec_123"
+        )
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_handles_exception(self, order_manager, sample_order):
+    async def test_monitor_conditional_order_handles_exception(
+        self, order_manager, sample_order
+    ):
         """Test that monitoring handles exceptions gracefully"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -431,16 +437,20 @@ class TestOrderManagerHelperMethods:
         }
         result = {"status": "pending", "order_id": "conditional_error_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock _get_current_price to raise exception
-        order_manager._get_current_price = AsyncMock(side_effect=Exception("Price fetch error"))
-        
+        order_manager._get_current_price = AsyncMock(
+            side_effect=Exception("Price fetch error")
+        )
+
         # Should handle exception gracefully
         await order_manager._monitor_conditional_order("conditional_error_123")
         # Should not raise exception
 
     @pytest.mark.asyncio
-    async def test_execute_conditional_order_updates_status(self, order_manager, sample_order):
+    async def test_execute_conditional_order_updates_status(
+        self, order_manager, sample_order
+    ):
         """Test that executing conditional order updates status correctly"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -449,12 +459,12 @@ class TestOrderManagerHelperMethods:
         }
         result = {"status": "pending", "order_id": "conditional_exec_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock price fetch
         order_manager._get_current_price = AsyncMock(return_value=50000.0)
-        
+
         await order_manager._execute_conditional_order("conditional_exec_123")
-        
+
         # Order should be removed from conditional_orders and added to history
         assert "conditional_exec_123" not in order_manager.conditional_orders
         assert any(
@@ -464,7 +474,9 @@ class TestOrderManagerHelperMethods:
         )
 
     @pytest.mark.asyncio
-    async def test_execute_conditional_order_updates_execution_price(self, order_manager, sample_order):
+    async def test_execute_conditional_order_updates_execution_price(
+        self, order_manager, sample_order
+    ):
         """Test that executing conditional order updates execution price"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -473,16 +485,20 @@ class TestOrderManagerHelperMethods:
         }
         result = {"status": "pending", "order_id": "conditional_price_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock price fetch
         order_manager._get_current_price = AsyncMock(return_value=52000.0)
-        
+
         await order_manager._execute_conditional_order("conditional_price_123")
-        
+
         # Check execution price was set
         executed_order = next(
-            (o for o in order_manager.order_history if o.get("order_id") == "conditional_price_123"),
-            None
+            (
+                o
+                for o in order_manager.order_history
+                if o.get("order_id") == "conditional_price_123"
+            ),
+            None,
         )
         assert executed_order is not None
         assert executed_order.get("execution_price") == 52000.0
@@ -496,9 +512,9 @@ class TestOrderQueriesAndCancellation:
         order_manager.active_orders["test_order_123"] = {
             "order_id": "test_order_123",
             "symbol": "BTCUSDT",
-            "status": "pending"
+            "status": "pending",
         }
-        
+
         order = order_manager.get_order("test_order_123")
         assert order is not None
         assert order["order_id"] == "test_order_123"
@@ -508,21 +524,19 @@ class TestOrderQueriesAndCancellation:
         order_manager.conditional_orders["conditional_123"] = {
             "order_id": "conditional_123",
             "symbol": "BTCUSDT",
-            "status": "waiting_for_condition"
+            "status": "waiting_for_condition",
         }
-        
+
         order = order_manager.get_order("conditional_123")
         assert order is not None
         assert order["order_id"] == "conditional_123"
 
     def test_get_order_from_history(self, order_manager):
         """Test getting order from history"""
-        order_manager.order_history.append({
-            "order_id": "history_123",
-            "symbol": "BTCUSDT",
-            "status": "filled"
-        })
-        
+        order_manager.order_history.append(
+            {"order_id": "history_123", "symbol": "BTCUSDT", "status": "filled"}
+        )
+
         order = order_manager.get_order("history_123")
         assert order is not None
         assert order["order_id"] == "history_123"
@@ -537,15 +551,14 @@ class TestOrderQueriesAndCancellation:
         order_manager.conditional_orders["conditional_123"] = {
             "order_id": "conditional_123",
             "symbol": "BTCUSDT",
-            "status": "waiting_for_condition"
+            "status": "waiting_for_condition",
         }
-        
+
         result = order_manager.cancel_order("conditional_123")
         assert result is True
         assert "conditional_123" not in order_manager.conditional_orders
         assert any(
-            o.get("order_id") == "conditional_123"
-            and o.get("status") == "cancelled"
+            o.get("order_id") == "conditional_123" and o.get("status") == "cancelled"
             for o in order_manager.order_history
         )
 
@@ -559,14 +572,14 @@ class TestOrderQueriesAndCancellation:
         order_manager.active_orders["order1"] = {
             "order_id": "order1",
             "symbol": "BTCUSDT",
-            "status": "pending"
+            "status": "pending",
         }
         order_manager.active_orders["order2"] = {
             "order_id": "order2",
             "symbol": "ETHUSDT",
-            "status": "filled"
+            "status": "filled",
         }
-        
+
         active_orders = order_manager.get_active_orders()
         assert isinstance(active_orders, list)
         assert len(active_orders) == 2
@@ -578,14 +591,14 @@ class TestOrderQueriesAndCancellation:
         order_manager.conditional_orders["cond1"] = {
             "order_id": "cond1",
             "symbol": "BTCUSDT",
-            "status": "waiting_for_condition"
+            "status": "waiting_for_condition",
         }
         order_manager.conditional_orders["cond2"] = {
             "order_id": "cond2",
             "symbol": "ETHUSDT",
-            "status": "waiting_for_condition"
+            "status": "waiting_for_condition",
         }
-        
+
         conditional_orders = order_manager.get_conditional_orders()
         assert isinstance(conditional_orders, list)
         assert len(conditional_orders) == 2
@@ -594,17 +607,13 @@ class TestOrderQueriesAndCancellation:
 
     def test_get_order_history_returns_list(self, order_manager):
         """Test get_order_history returns list of historical orders"""
-        order_manager.order_history.append({
-            "order_id": "hist1",
-            "symbol": "BTCUSDT",
-            "status": "filled"
-        })
-        order_manager.order_history.append({
-            "order_id": "hist2",
-            "symbol": "ETHUSDT",
-            "status": "cancelled"
-        })
-        
+        order_manager.order_history.append(
+            {"order_id": "hist1", "symbol": "BTCUSDT", "status": "filled"}
+        )
+        order_manager.order_history.append(
+            {"order_id": "hist2", "symbol": "ETHUSDT", "status": "cancelled"}
+        )
+
         history = order_manager.get_order_history()
         assert isinstance(history, list)
         assert len(history) == 2
@@ -616,15 +625,14 @@ class TestOrderQueriesAndCancellation:
         order_manager.active_orders["cancel_test"] = {
             "order_id": "cancel_test",
             "symbol": "BTCUSDT",
-            "status": "pending"
+            "status": "pending",
         }
-        
+
         result = order_manager.cancel_order("cancel_test")
         assert result is True
         assert "cancel_test" not in order_manager.active_orders
         assert any(
-            o.get("order_id") == "cancel_test"
-            and o.get("status") == "cancelled"
+            o.get("order_id") == "cancel_test" and o.get("status") == "cancelled"
             for o in order_manager.order_history
         )
 
@@ -632,13 +640,19 @@ class TestOrderQueriesAndCancellation:
         """Test get_order_summary returns correct counts"""
         # Clear history first to get clean counts
         order_manager.order_history.clear()
-        
+
         # Add some orders
-        order_manager.active_orders["active1"] = {"order_id": "active1", "status": "pending"}
-        order_manager.conditional_orders["cond1"] = {"order_id": "cond1", "status": "waiting"}
+        order_manager.active_orders["active1"] = {
+            "order_id": "active1",
+            "status": "pending",
+        }
+        order_manager.conditional_orders["cond1"] = {
+            "order_id": "cond1",
+            "status": "waiting",
+        }
         order_manager.order_history.append({"order_id": "hist1", "status": "filled"})
         order_manager.order_history.append({"order_id": "hist2", "status": "cancelled"})
-        
+
         summary = order_manager.get_order_summary()
         assert summary["active_orders"] == 1
         assert summary["conditional_orders"] == 1
@@ -654,19 +668,16 @@ class TestConditionalOrderMonitoring:
     @pytest.mark.asyncio
     async def test_check_condition_above_direction(self, order_manager):
         """Test condition check with 'above' direction"""
-        order_info = {
-            "conditional_price": 51000.0,
-            "conditional_direction": "above"
-        }
-        
+        order_info = {"conditional_price": 51000.0, "conditional_direction": "above"}
+
         # Price above condition
         result = order_manager._check_condition(order_info, 52000.0)
         assert result is True
-        
+
         # Price below condition
         result = order_manager._check_condition(order_info, 50000.0)
         assert result is False
-        
+
         # Price equal to condition
         result = order_manager._check_condition(order_info, 51000.0)
         assert result is True
@@ -674,19 +685,16 @@ class TestConditionalOrderMonitoring:
     @pytest.mark.asyncio
     async def test_check_condition_below_direction(self, order_manager):
         """Test condition check with 'below' direction"""
-        order_info = {
-            "conditional_price": 51000.0,
-            "conditional_direction": "below"
-        }
-        
+        order_info = {"conditional_price": 51000.0, "conditional_direction": "below"}
+
         # Price below condition
         result = order_manager._check_condition(order_info, 50000.0)
         assert result is True
-        
+
         # Price above condition
         result = order_manager._check_condition(order_info, 52000.0)
         assert result is False
-        
+
         # Price equal to condition
         result = order_manager._check_condition(order_info, 51000.0)
         assert result is True
@@ -698,12 +706,12 @@ class TestConditionalOrderMonitoring:
         order_info = {"conditional_direction": "above"}
         result = order_manager._check_condition(order_info, 50000.0)
         assert result is False
-        
+
         # Missing conditional_direction
         order_info = {"conditional_price": 51000.0}
         result = order_manager._check_condition(order_info, 50000.0)
         assert result is False
-        
+
         # Missing both
         order_info = {}
         result = order_manager._check_condition(order_info, 50000.0)
@@ -715,7 +723,7 @@ class TestConditionalOrderMonitoring:
         # Set cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
         order_manager.last_price_update["BTCUSDT"] = datetime.utcnow()
-        
+
         price = await order_manager._get_current_price("BTCUSDT")
         assert price == 50000.0
 
@@ -724,15 +732,19 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price refreshes when cache expired"""
         # Set old cache (more than 30 seconds ago)
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(seconds=31)
-        
+        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(
+            seconds=31
+        )
+
         price = await order_manager._get_current_price("BTCUSDT")
         # Should get new price (simulated)
         assert price != 50000.0 or price == 50000.0  # May be same due to random
         assert "BTCUSDT" in order_manager.price_cache
 
     @pytest.mark.asyncio
-    async def test_setup_conditional_order_without_order_id(self, order_manager, sample_order):
+    async def test_setup_conditional_order_without_order_id(
+        self, order_manager, sample_order
+    ):
         """Test setting up conditional order without order_id"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -740,20 +752,24 @@ class TestConditionalOrderMonitoring:
             "conditional_direction": "above",
         }
         result = {}  # No order_id
-        
+
         await order_manager._setup_conditional_order(sample_order, result)
         # Should handle gracefully without order_id
         assert len(order_manager.conditional_orders) == 0
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_not_found_early_return(self, order_manager):
+    async def test_monitor_conditional_order_not_found_early_return(
+        self, order_manager
+    ):
         """Test monitoring conditional order that doesn't exist"""
         # Should return early without error
         await order_manager._monitor_conditional_order("nonexistent_order")
         # Should not raise exception
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_with_exception(self, order_manager, sample_order):
+    async def test_monitor_conditional_order_with_exception(
+        self, order_manager, sample_order
+    ):
         """Test monitoring conditional order with exception during price check"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -762,16 +778,20 @@ class TestConditionalOrderMonitoring:
         }
         result = {"status": "pending", "order_id": "error_test_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock _get_current_price to raise exception
-        order_manager._get_current_price = AsyncMock(side_effect=Exception("Price fetch error"))
-        
+        order_manager._get_current_price = AsyncMock(
+            side_effect=Exception("Price fetch error")
+        )
+
         # Should handle exception gracefully
         await order_manager._monitor_conditional_order("error_test_123")
         # Should not raise exception
 
     @pytest.mark.asyncio
-    async def test_execute_conditional_order_full_flow(self, order_manager, sample_order):
+    async def test_execute_conditional_order_full_flow(
+        self, order_manager, sample_order
+    ):
         """Test executing conditional order with full flow"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -780,25 +800,31 @@ class TestConditionalOrderMonitoring:
         }
         result = {"status": "pending", "order_id": "execute_full_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock exchange execution
         order_manager.exchange = Mock()
-        order_manager.exchange.execute = AsyncMock(return_value={
-            "status": "filled",
-            "order_id": "execute_full_123",
-            "fill_price": 52000.0
-        })
-        
+        order_manager.exchange.execute = AsyncMock(
+            return_value={
+                "status": "filled",
+                "order_id": "execute_full_123",
+                "fill_price": 52000.0,
+            }
+        )
+
         # Mock price fetch
         order_manager._get_current_price = AsyncMock(return_value=52000.0)
-        
+
         await order_manager._execute_conditional_order("execute_full_123")
-        
+
         # Order should be executed and moved to history
         assert "execute_full_123" not in order_manager.conditional_orders
         executed_order = next(
-            (o for o in order_manager.order_history if o.get("order_id") == "execute_full_123"),
-            None
+            (
+                o
+                for o in order_manager.order_history
+                if o.get("order_id") == "execute_full_123"
+            ),
+            None,
         )
         assert executed_order is not None
         assert executed_order.get("status") == "executed"
@@ -808,10 +834,12 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price refreshes cache when expired"""
         # Set old cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(seconds=35)
-        
+        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(
+            seconds=35
+        )
+
         price = await order_manager._get_current_price("BTCUSDT")
-        
+
         # Should get new price (random, but should be different from cached)
         assert price != 50000.0 or price == 50000.0  # May be same due to random
         assert "BTCUSDT" in order_manager.price_cache
@@ -821,14 +849,16 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price fetches when no cache exists"""
         # No cache set
         price = await order_manager._get_current_price("BTCUSDT")
-        
+
         # Should fetch and cache (random price around 45000)
         assert isinstance(price, float)
         assert price > 0
         assert "BTCUSDT" in order_manager.price_cache
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_condition_met_executes(self, order_manager, sample_order):
+    async def test_monitor_conditional_order_condition_met_executes(
+        self, order_manager, sample_order
+    ):
         """Test that monitoring executes order when condition is met"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -837,19 +867,23 @@ class TestConditionalOrderMonitoring:
         }
         result = {"status": "pending", "order_id": "condition_met_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock price to meet condition
         order_manager._get_current_price = AsyncMock(return_value=52000.0)
         order_manager._execute_conditional_order = AsyncMock()
-        
+
         # Manually call monitor (normally runs in background)
         await order_manager._monitor_conditional_order("condition_met_123")
-        
+
         # Should execute conditional order
-        order_manager._execute_conditional_order.assert_called_once_with("condition_met_123")
+        order_manager._execute_conditional_order.assert_called_once_with(
+            "condition_met_123"
+        )
 
     @pytest.mark.asyncio
-    async def test_monitor_conditional_order_timeout_cleanup(self, order_manager, sample_order):
+    async def test_monitor_conditional_order_timeout_cleanup(
+        self, order_manager, sample_order
+    ):
         """Test that monitoring cleans up on timeout"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -859,26 +893,27 @@ class TestConditionalOrderMonitoring:
         }
         result = {"status": "pending", "order_id": "timeout_cleanup_123"}
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Mock price to not meet condition
         order_manager._get_current_price = AsyncMock(return_value=50000.0)
-        
+
         # Manually call monitor with short timeout
         await order_manager._monitor_conditional_order("timeout_cleanup_123")
-        
+
         # Wait for timeout
         await asyncio.sleep(0.2)
-        
+
         # Order should be moved to history with timeout status
         assert "timeout_cleanup_123" not in order_manager.conditional_orders
         assert any(
-            o.get("order_id") == "timeout_cleanup_123"
-            and o.get("status") == "timeout"
+            o.get("order_id") == "timeout_cleanup_123" and o.get("status") == "timeout"
             for o in order_manager.order_history
         )
 
     @pytest.mark.asyncio
-    async def test_setup_conditional_order_with_order_id(self, order_manager, sample_order):
+    async def test_setup_conditional_order_with_order_id(
+        self, order_manager, sample_order
+    ):
         """Test setting up conditional order with order_id"""
         sample_order.type = OrderType.CONDITIONAL_LIMIT
         sample_order.meta = {
@@ -886,9 +921,9 @@ class TestConditionalOrderMonitoring:
             "conditional_direction": "above",
         }
         result = {"status": "pending", "order_id": "setup_test_123"}
-        
+
         await order_manager._setup_conditional_order(sample_order, result)
-        
+
         # Should be in conditional_orders
         assert "setup_test_123" in order_manager.conditional_orders
         order_info = order_manager.conditional_orders["setup_test_123"]

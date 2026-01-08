@@ -166,14 +166,14 @@ class TestCalculatePnL:
     )
     def test_calculate_realized_pnl_short(self, position_manager):
         """Test realized PnL calculation for SHORT position"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
     @pytest.mark.skip(
         reason="PnL calculation is done inline in update_position, not as separate method"
     )
     def test_calculate_realized_pnl_partial_close(self, position_manager):
         """Test realized PnL for partial position close"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
 
 class TestUpdatePositionRiskOrders:
@@ -214,35 +214,35 @@ class TestValidatePositionData:
     )
     def test_validate_position_data_valid(self, position_manager):
         """Test validation with valid position data"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
     @pytest.mark.skip(
         reason="Position validation is done inline in update_position, not as separate method"
     )
     def test_validate_position_data_missing_symbol(self, position_manager):
         """Test validation with missing symbol"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
     @pytest.mark.skip(
         reason="Position validation is done inline in update_position, not as separate method"
     )
     def test_validate_position_data_missing_side(self, position_manager):
         """Test validation with missing side"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
     @pytest.mark.skip(
         reason="Position validation is done inline in update_position, not as separate method"
     )
     def test_validate_position_data_invalid_quantity(self, position_manager):
         """Test validation with invalid quantity"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
     @pytest.mark.skip(
         reason="Position validation is done inline in update_position, not as separate method"
     )
     def test_validate_position_data_invalid_price(self, position_manager):
         """Test validation with invalid entry price"""
-        pass
+        assert True  # Skipped test - placeholder assertion
 
 
 class TestSyncPosition:

@@ -230,15 +230,39 @@ class SignalConsumer:
                     span.set_attribute("messaging.system", "nats")
                     span.set_attribute("messaging.destination", "signals.trading")
                     span.set_attribute("messaging.operation", "receive")
+
+                    # Add business context attributes to span
                     span.set_attribute(
                         "signal.strategy_id", signal_data.get("strategy_id", "unknown")
+                    )
+                    span.set_attribute(
+                        "strategy.name",
+                        signal_data.get(
+                            "strategy", signal_data.get("strategy_id", "unknown")
+                        ),
                     )
                     span.set_attribute(
                         "signal.symbol", signal_data.get("symbol", "unknown")
                     )
                     span.set_attribute(
+                        "signal.timeframe", signal_data.get("timeframe", "unknown")
+                    )
+                    span.set_attribute(
                         "signal.action", signal_data.get("action", "unknown")
                     )
+                    span.set_attribute(
+                        "signal.type",
+                        signal_data.get(
+                            "action", signal_data.get("signal_type", "unknown")
+                        ),
+                    )
+                    span.set_attribute(
+                        "signal.strength", str(signal_data.get("strength", "unknown"))
+                    )
+                    if signal_data.get("confidence") is not None:
+                        span.set_attribute(
+                            "signal.confidence", float(signal_data.get("confidence", 0))
+                        )
 
                     # Parse timestamp with better error handling and fallback
                     timestamp_raw = signal_data.get("timestamp")

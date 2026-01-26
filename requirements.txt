@@ -64,7 +64,7 @@ python-dotenv==1.2.1
 
 # Security and authentication
 python-jose[cryptography]==3.5.0
-python-multipart==0.0.20
+python-multipart==0.0.22
 ruff==0.1.15
 sqlalchemy[asyncio]==2.0.36
 structlog==25.5.0

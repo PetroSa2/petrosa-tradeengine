@@ -48,24 +48,26 @@ class TestOrderAmountCalculation:
 
     def test_successful_amount_calculation(self, dispatcher, base_signal):
         """Test that amount calculation works in normal scenario"""
-        # Mock binance_exchange.calculate_min_order_amount
-        with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
-            mock_binance.calculate_min_order_amount.return_value = 0.002
+        # Mock binance_exchange.calculate_min_order_amount with proper path
+        with mock.patch(
+            "tradeengine.api.binance_exchange.calculate_min_order_amount"
+        ) as mock_calculate:
+            mock_calculate.return_value = 0.002
 
             amount = dispatcher._calculate_order_amount(base_signal)
 
             # Signal quantity (0.001) is below minimum (0.002), so should use minimum
             assert amount == 0.002
-            mock_binance.calculate_min_order_amount.assert_called_once_with(
-                "BTCUSDT", 50000.0
-            )
+            mock_calculate.assert_called_once_with("BTCUSDT", 50000.0)
 
     def test_signal_quantity_above_minimum(self, dispatcher, base_signal):
         """Test that signal quantity is used when above minimum"""
         base_signal.quantity = 0.01  # Above typical minimum
 
-        with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
-            mock_binance.calculate_min_order_amount.return_value = 0.002
+        with mock.patch(
+            "tradeengine.api.binance_exchange.calculate_min_order_amount"
+        ) as mock_calculate:
+            mock_calculate.return_value = 0.002
 
             amount = dispatcher._calculate_order_amount(base_signal)
 
@@ -76,8 +78,10 @@ class TestOrderAmountCalculation:
         """Test that minimum is used when signal quantity is below"""
         base_signal.quantity = 0.0001  # Well below minimum
 
-        with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
-            mock_binance.calculate_min_order_amount.return_value = 0.002
+        with mock.patch(
+            "tradeengine.api.binance_exchange.calculate_min_order_amount"
+        ) as mock_calculate:
+            mock_calculate.return_value = 0.002
 
             amount = dispatcher._calculate_order_amount(base_signal)
 
@@ -88,8 +92,10 @@ class TestOrderAmountCalculation:
         """Test that minimum is used when signal has no quantity"""
         base_signal.quantity = None
 
-        with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
-            mock_binance.calculate_min_order_amount.return_value = 0.002
+        with mock.patch(
+            "tradeengine.api.binance_exchange.calculate_min_order_amount"
+        ) as mock_calculate:
+            mock_calculate.return_value = 0.002
 
             amount = dispatcher._calculate_order_amount(base_signal)
 
@@ -245,8 +251,11 @@ class TestFallbackAmountCalculation:
             )
 
             # Should raise ValueError when no price is available
-            with pytest.raises(ValueError, match="Cannot calculate order amount"):
+            with pytest.raises(
+                ValueError, match="Cannot calculate order amount"
+            ) as exc_info:
                 dispatcher._calculate_order_amount(btc_signal)
+            assert "Cannot calculate order amount" in str(exc_info.value)
 
     def test_fallback_with_zero_price(self, dispatcher, btc_signal):
         """Test fallback when signal has zero price raises ValueError"""

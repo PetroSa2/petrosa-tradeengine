@@ -25,6 +25,7 @@ def sample_order():
         take_profit=47000.0,
         position_side="LONG",
         exchange="binance",
+        order_id="test-order-123",  # Add order_id
         strategy_metadata={
             "strategy_id": "test_strategy",
             "source": "test",
@@ -51,17 +52,18 @@ def sample_result():
 async def test_create_position_record(sample_order, sample_result):
     """Test creating a position record with dual persistence"""
     position_manager = PositionManager()
-    position_manager.mongodb_db = MagicMock()
 
-    # Mock MongoDB collection
-    mock_collection = AsyncMock()
-    position_manager.mongodb_db.positions = mock_collection
+    # Mock position_client (Data Manager client) - patch it where it's imported
+    with patch("tradeengine.position_manager.position_client") as mock_position_client:
+        mock_position_client.create_position = AsyncMock()
 
-    # Create position record
-    await position_manager.create_position_record(sample_order, sample_result)
+        # Create position record
+        await position_manager.create_position_record(sample_order, sample_result)
 
-    # Verify MongoDB insert was called
-    assert mock_collection.insert_one.called
+        # Verify position_client.create_position was called
+        # The method should be called if order.position_id is present
+        assert sample_order.position_id is not None, "Order must have position_id"
+        mock_position_client.create_position.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -111,33 +113,32 @@ async def test_position_side_determination():
 async def test_close_position_record():
     """Test closing a position record with PnL calculation"""
     position_manager = PositionManager()
-    position_manager.mongodb_db = MagicMock()
 
-    # Mock MongoDB collection
-    mock_collection = AsyncMock()
-    position_manager.mongodb_db.positions = mock_collection
+    # Mock position_client (Data Manager client) - patch it where it's imported
+    with patch("tradeengine.position_manager.position_client") as mock_position_client:
+        mock_position_client.update_position = AsyncMock()
 
-    exit_result = {
-        "position_id": "test-position-123",
-        "strategy_id": "test_strategy",
-        "symbol": "BTCUSDT",
-        "position_side": "LONG",
-        "exchange": "binance",
-        "entry_price": 45000.0,
-        "exit_price": 47000.0,
-        "quantity": 0.001,
-        "entry_time": datetime.utcnow(),
-        "entry_commission": 0.045,
-        "exit_commission": 0.047,
-        "order_id": "exit-order-123",
-        "close_reason": "take_profit",
-    }
+        exit_result = {
+            "position_id": "test-position-123",
+            "strategy_id": "test_strategy",
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "exchange": "binance",
+            "entry_price": 45000.0,
+            "exit_price": 47000.0,
+            "quantity": 0.001,
+            "entry_time": datetime.utcnow(),
+            "entry_commission": 0.045,
+            "exit_commission": 0.047,
+            "order_id": "exit-order-123",
+            "close_reason": "take_profit",
+        }
 
-    # Close position record
-    await position_manager.close_position_record("test-position-123", exit_result)
+        # Close position record
+        await position_manager.close_position_record("test-position-123", exit_result)
 
-    # Verify MongoDB update was called
-    assert mock_collection.update_one.called
+        # Verify position_client.update_position was called
+        mock_position_client.update_position.assert_called_once()
 
 
 def test_order_has_position_tracking_fields(sample_order):
@@ -173,13 +174,15 @@ async def test_metrics_export_on_position_open(sample_order, sample_result):
 @pytest.mark.asyncio
 async def test_mysql_position_persistence():
     """Test MySQL position persistence"""
-    from shared.mysql_client import MySQLClient
+    from shared.mysql_client import position_client
 
-    mysql_client = MySQLClient()
+    # Mock position_client to avoid actual database connection
+    with patch("shared.mysql_client.position_client") as mock_position_client:
+        mock_position_client.create_position = AsyncMock()
+        mock_position_client.update_position = AsyncMock()
 
-    # Note: This test would require a MySQL connection to run
-    # In real testing, this would use a test database or mock
-    assert mysql_client is not None
+        # Verify the client is available
+        assert mock_position_client is not None
 
     # Example position data structure
     # position_data = {

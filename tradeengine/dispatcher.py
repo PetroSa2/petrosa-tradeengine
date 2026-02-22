@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Any, Dict, List
 
+from opentelemetry import trace
 from prometheus_client import Counter, Histogram
 
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
@@ -59,6 +60,9 @@ signals_duplicate = Counter(
     "Total duplicate signals detected and rejected",
     ["strategy", "symbol", "action"],
 )
+
+# OpenTelemetry tracer for business context spans
+tracer = trace.get_tracer(__name__)
 
 
 class OCOManager:
@@ -1089,197 +1093,249 @@ class Dispatcher:
 
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing with distributed state management"""
-        try:
-            # Track signal reception time for latency measurement
-            signal_received_at = time.time()
-
-            # Track signal reception in metrics
-            signals_received.labels(
-                strategy=signal.strategy_id, symbol=signal.symbol, action=signal.action
-            ).inc()
-
-            # Enhanced logging for signal reception
-            self.logger.info(
-                f"📩 SIGNAL RECEIVED: {signal.strategy_id} | "
-                f"{signal.symbol} {signal.action.upper()} @ {signal.current_price} | "
-                f"Confidence: {signal.confidence:.2%} | "
-                f"Timeframe: {signal.timeframe}"
+        with tracer.start_as_current_span("dispatcher.dispatch") as span:
+            # Add business context attributes to span
+            span.set_attribute("signal.symbol", signal.symbol)
+            span.set_attribute("signal.timeframe", signal.timeframe)
+            span.set_attribute("signal.action", signal.action)
+            span.set_attribute(
+                "signal.type",
+                signal.signal_type.value if signal.signal_type else signal.action,
             )
-
-            # Check for duplicate signals (prevents double processing from HTTP + NATS)
-            signal_id = self._generate_signal_id(signal)
-            current_time = time.time()
-
-            if signal_id in self.signal_cache:
-                age = current_time - self.signal_cache[signal_id]
-                if age < self.signal_cache_ttl:
-                    # Duplicate detected within TTL window
-                    self.logger.warning(
-                        f"🚫 DUPLICATE SIGNAL DETECTED AND REJECTED: {signal.strategy_id} | "
-                        f"{signal.symbol} {signal.action.upper()} | "
-                        f"Age: {age:.2f}s | Original received {age:.2f}s ago"
-                    )
-                    signals_duplicate.labels(
-                        strategy=signal.strategy_id,
-                        symbol=signal.symbol,
-                        action=signal.action,
-                    ).inc()
-                    return {
-                        "status": "duplicate",
-                        "reason": f"Duplicate signal detected (age: {age:.2f}s)",
-                        "original_time": self.signal_cache[signal_id],
-                        "duplicate_age_seconds": age,
-                    }
-
-            # Store signal in cache
-            self.signal_cache[signal_id] = current_time
-
-            # Cleanup old cache entries periodically
-            self._cleanup_signal_cache()
-
-            # Handle hold signals
-            if signal.action == "hold":
-                self.logger.info(
-                    f"⏸️  HOLD SIGNAL FILTERED: {signal.strategy_id} | "
-                    f"{signal.symbol} | No action taken"
-                )
-                signals_processed.labels(status="hold", action="hold").inc()
-                return {"status": "hold", "reason": "Signal indicates hold action"}
-
-            # NEW: Check accumulation cooldown
-            position_side = "LONG" if signal.action == "buy" else "SHORT"
-            position_key = (signal.symbol, position_side)
-
-            if position_key in self.position_manager.positions:
-                existing_quantity = self.position_manager.positions[position_key][
-                    "quantity"
-                ]
-
-                if existing_quantity > 0:  # Position exists
-                    # Check cooldown
-                    if position_key in self.last_accumulation_time:
-                        from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
-
-                        elapsed = (
-                            time.time() - self.last_accumulation_time[position_key]
-                        )
-
-                        if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
-                            remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
-                            self.logger.info(
-                                f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
-                                f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
-                            )
-                            return {
-                                "status": "rejected",
-                                "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
-                            }
-
-            # Log signal processing
-            self.logger.info(
-                f"⚙️  PROCESSING SIGNAL: {signal.strategy_id} | "
-                f"{signal.symbol} {signal.action.upper()}"
+            span.set_attribute(
+                "signal.strength",
+                (
+                    signal.strength.value
+                    if hasattr(signal.strength, "value")
+                    else str(signal.strength)
+                ),
             )
+            span.set_attribute("signal.confidence", signal.confidence)
+            span.set_attribute("strategy.id", signal.strategy_id)
+            span.set_attribute("strategy.name", signal.strategy)
+            span.set_attribute("signal.current_price", signal.current_price)
+            if signal.target_price:
+                span.set_attribute("signal.target_price", signal.target_price)
 
-            # Process the signal
-            result = await self.process_signal(signal)
+            try:
+                # Track signal reception time for latency measurement
+                signal_received_at = time.time()
 
-            # If processing was successful, execute the order with distributed lock
-            # Signal processors can return "success" or "executed" - both are valid for order execution
-            signal_status = result.get("status")
-            if signal_status in ("success", "executed"):
+                # Track signal reception in metrics
+                signals_received.labels(
+                    strategy=signal.strategy_id,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                ).inc()
+
+                # Enhanced logging for signal reception
                 self.logger.info(
-                    f"✅ SIGNAL VALIDATED: {signal.strategy_id} | "
-                    f"Converting to order for {signal.symbol} | "
-                    f"Processing status: {signal_status}"
+                    f"📩 SIGNAL RECEIVED: {signal.strategy_id} | "
+                    f"{signal.symbol} {signal.action.upper()} @ {signal.current_price} | "
+                    f"Confidence: {signal.confidence:.2%} | "
+                    f"Timeframe: {signal.timeframe}"
                 )
-                order = self._signal_to_order(signal)
 
-                # Store signal for strategy position creation later
-                self.order_to_signal[order.order_id] = signal
+                # Check for duplicate signals (prevents double processing from HTTP + NATS)
+                signal_id = self._generate_signal_id(signal)
+                current_time = time.time()
 
-                # Store signal received time for latency tracking
-                order.meta = order.meta or {}
-                order.meta["signal_received_at"] = signal_received_at
-
-                # Generate unique signal fingerprint for deduplication across replicas
-                # This prevents multiple pods from processing the same signal
-                signal_fingerprint = self._generate_signal_fingerprint(signal)
-
-                self.logger.info(
-                    f"🔐 ACQUIRING DISTRIBUTED LOCK: signal_{signal_fingerprint}"
-                )
-                # Execute order with distributed lock to ensure consensus
-                # Lock key includes signal fingerprint to prevent duplicate processing
-                try:
-                    execution_result = await distributed_lock_manager.execute_with_lock(
-                        f"signal_{signal_fingerprint}",
-                        self._execute_order_with_consensus,
-                        order,
-                    )
-                except Exception as lock_error:
-                    if "Failed to acquire lock" in str(lock_error):
-                        self.logger.info(
-                            f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
-                            f"Signal already being processed by another pod - SKIPPING"
+                if signal_id in self.signal_cache:
+                    age = current_time - self.signal_cache[signal_id]
+                    if age < self.signal_cache_ttl:
+                        # Duplicate detected within TTL window
+                        self.logger.warning(
+                            f"🚫 DUPLICATE SIGNAL DETECTED AND REJECTED: {signal.strategy_id} | "
+                            f"{signal.symbol} {signal.action.upper()} | "
+                            f"Age: {age:.2f}s | Original received {age:.2f}s ago"
                         )
-                        signals_processed.labels(
-                            status="skipped_duplicate", action=signal.action
+                        signals_duplicate.labels(
+                            strategy=signal.strategy_id,
+                            symbol=signal.symbol,
+                            action=signal.action,
                         ).inc()
+                        span.set_attribute("signal.duplicate", True)
+                        span.set_status(trace.Status(trace.StatusCode.OK))
                         return {
-                            "status": "skipped_duplicate",
-                            "reason": "Signal already being processed by another pod",
-                            "signal_fingerprint": signal_fingerprint,
+                            "status": "duplicate",
+                            "reason": f"Duplicate signal detected (age: {age:.2f}s)",
+                            "original_time": self.signal_cache[signal_id],
+                            "duplicate_age_seconds": age,
                         }
-                    else:
-                        # Re-raise other lock-related errors
-                        raise
 
-                result["execution_result"] = execution_result
-                result["status"] = (
-                    "executed"  # Change status to executed for consistency
-                )
+                # Store signal in cache
+                self.signal_cache[signal_id] = current_time
 
-                # NEW: Update last accumulation time if order was executed successfully
-                if execution_result.get("status") in (
-                    "filled",
-                    "partially_filled",
-                    "NEW",
-                ):
-                    if position_key in self.position_manager.positions:
-                        if (
-                            self.position_manager.positions[position_key]["quantity"]
-                            > 0
-                        ):
-                            self.last_accumulation_time[position_key] = time.time()
+                # Cleanup old cache entries periodically
+                self._cleanup_signal_cache()
 
+                # Handle hold signals
+                if signal.action == "hold":
+                    self.logger.info(
+                        f"⏸️  HOLD SIGNAL FILTERED: {signal.strategy_id} | "
+                        f"{signal.symbol} | No action taken"
+                    )
+                    signals_processed.labels(status="hold", action="hold").inc()
+                    span.set_attribute("signal.action", "hold")
+                    span.set_status(trace.Status(trace.StatusCode.OK))
+                    return {"status": "hold", "reason": "Signal indicates hold action"}
+
+                # NEW: Check accumulation cooldown
+                position_side = "LONG" if signal.action == "buy" else "SHORT"
+                position_key = (signal.symbol, position_side)
+
+                if position_key in self.position_manager.positions:
+                    existing_quantity = self.position_manager.positions[position_key][
+                        "quantity"
+                    ]
+
+                    if existing_quantity > 0:  # Position exists
+                        # Check cooldown
+                        if position_key in self.last_accumulation_time:
+                            from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
+
+                            elapsed = (
+                                time.time() - self.last_accumulation_time[position_key]
+                            )
+
+                            if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
+                                remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
+                                self.logger.info(
+                                    f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
+                                    f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
+                                )
+                                span.set_attribute("signal.rejected", True)
+                                span.set_attribute(
+                                    "rejection.reason", "accumulation_cooldown"
+                                )
+                                span.set_status(trace.Status(trace.StatusCode.OK))
+                                return {
+                                    "status": "rejected",
+                                    "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
+                                }
+
+                # Log signal processing
                 self.logger.info(
-                    f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
-                    f"Execution status: {execution_result.get('status')}"
+                    f"⚙️  PROCESSING SIGNAL: {signal.strategy_id} | "
+                    f"{signal.symbol} {signal.action.upper()}"
                 )
-                signals_processed.labels(status="executed", action=signal.action).inc()
-            elif signal_status == "rejected":
-                self.logger.info(
-                    f"⛔ SIGNAL REJECTED: {signal.strategy_id} | "
-                    f"Reason: {result.get('reason', 'Unknown')}"
-                )
-                signals_processed.labels(status="rejected", action=signal.action).inc()
-            else:
-                self.logger.warning(
-                    f"⚠️  SIGNAL VALIDATION FAILED: {signal.strategy_id} | "
-                    f"Status: {signal_status} | Reason: {result.get('reason', 'Unknown')}"
-                )
-                signals_processed.labels(status="failed", action=signal.action).inc()
 
-            return result
+                # Process the signal
+                result = await self.process_signal(signal)
 
-        except Exception as e:
-            self.logger.error(
-                f"❌ DISPATCH ERROR: {signal.strategy_id if hasattr(signal, 'strategy_id') else 'Unknown'} | "
-                f"Error: {e}",
-                exc_info=True,
-            )
-            return {"status": "error", "error": str(e)}
+                # If processing was successful, execute the order with distributed lock
+                # Signal processors can return "success" or "executed" - both are valid for order execution
+                signal_status = result.get("status")
+                if signal_status in ("success", "executed"):
+                    self.logger.info(
+                        f"✅ SIGNAL VALIDATED: {signal.strategy_id} | "
+                        f"Converting to order for {signal.symbol} | "
+                        f"Processing status: {signal_status}"
+                    )
+                    order = self._signal_to_order(signal)
+
+                    # Store signal for strategy position creation later
+                    self.order_to_signal[order.order_id] = signal
+
+                    # Store signal received time for latency tracking
+                    order.meta = order.meta or {}
+                    order.meta["signal_received_at"] = signal_received_at
+
+                    # Generate unique signal fingerprint for deduplication across replicas
+                    # This prevents multiple pods from processing the same signal
+                    signal_fingerprint = self._generate_signal_fingerprint(signal)
+
+                    self.logger.info(
+                        f"🔐 ACQUIRING DISTRIBUTED LOCK: signal_{signal_fingerprint}"
+                    )
+                    # Execute order with distributed lock to ensure consensus
+                    # Lock key includes signal fingerprint to prevent duplicate processing
+                    try:
+                        execution_result = (
+                            await distributed_lock_manager.execute_with_lock(
+                                f"signal_{signal_fingerprint}",
+                                self._execute_order_with_consensus,
+                                order,
+                            )
+                        )
+                    except Exception as lock_error:
+                        if "Failed to acquire lock" in str(lock_error):
+                            self.logger.info(
+                                f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
+                                f"Signal already being processed by another pod - SKIPPING"
+                            )
+                            signals_processed.labels(
+                                status="skipped_duplicate", action=signal.action
+                            ).inc()
+                            span.set_attribute("signal.skipped", True)
+                            span.set_attribute("skip.reason", "lock_acquisition_failed")
+                            span.set_status(trace.Status(trace.StatusCode.OK))
+                            return {
+                                "status": "skipped_duplicate",
+                                "reason": "Signal already being processed by another pod",
+                                "signal_fingerprint": signal_fingerprint,
+                            }
+                        else:
+                            # Re-raise other lock-related errors
+                            raise
+
+                    result["execution_result"] = execution_result
+                    result["status"] = (
+                        "executed"  # Change status to executed for consistency
+                    )
+
+                    # NEW: Update last accumulation time if order was executed successfully
+                    if execution_result.get("status") in (
+                        "filled",
+                        "partially_filled",
+                        "NEW",
+                    ):
+                        if position_key in self.position_manager.positions:
+                            if (
+                                self.position_manager.positions[position_key][
+                                    "quantity"
+                                ]
+                                > 0
+                            ):
+                                self.last_accumulation_time[position_key] = time.time()
+
+                    self.logger.info(
+                        f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
+                        f"Execution status: {execution_result.get('status')}"
+                    )
+                    signals_processed.labels(
+                        status="executed", action=signal.action
+                    ).inc()
+                elif signal_status == "rejected":
+                    self.logger.info(
+                        f"⛔ SIGNAL REJECTED: {signal.strategy_id} | "
+                        f"Reason: {result.get('reason', 'Unknown')}"
+                    )
+                    signals_processed.labels(
+                        status="rejected", action=signal.action
+                    ).inc()
+                else:
+                    self.logger.warning(
+                        f"⚠️  SIGNAL VALIDATION FAILED: {signal.strategy_id} | "
+                        f"Status: {signal_status} | Reason: {result.get('reason', 'Unknown')}"
+                    )
+                    signals_processed.labels(
+                        status="failed", action=signal.action
+                    ).inc()
+
+                span.set_attribute("dispatch.status", result.get("status", "unknown"))
+                span.set_status(trace.Status(trace.StatusCode.OK))
+                return result
+
+            except Exception as e:
+                self.logger.error(
+                    f"❌ DISPATCH ERROR: {signal.strategy_id if hasattr(signal, 'strategy_id') else 'Unknown'} | "
+                    f"Error: {e}",
+                    exc_info=True,
+                )
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                return {"status": "error", "error": str(e)}
 
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order with distributed consensus"""
@@ -1652,137 +1708,159 @@ class Dispatcher:
 
         start_time = time.time()
 
-        try:
-            # Enhanced logging for order execution
-            self.logger.info(
-                f"🔨 EXECUTING ORDER: {order.symbol} {order.side.upper()} "
-                f"{order.amount} @ {order.target_price} | "
-                f"Type: {order.type} | ID: {order.order_id}"
-            )
+        with tracer.start_as_current_span("dispatcher.execute_order") as span:
+            # Add business context attributes to span
+            span.set_attribute("order.id", order.order_id or "unknown")
+            span.set_attribute("order.symbol", order.symbol)
+            span.set_attribute("order.side", order.side)
+            span.set_attribute("order.type", order.type)
+            span.set_attribute("order.quantity", order.amount)
+            if order.target_price:
+                span.set_attribute("order.price", order.target_price)
+            if order.position_side:
+                span.set_attribute("order.position_side", order.position_side)
+            span.set_attribute("order.simulate", order.simulate)
 
-            # Log order
-            if audit_logger.enabled and audit_logger.connected:
-                audit_logger.log_order(order.model_dump())
-
-            # Execute order on Binance exchange
-            if order.simulate:
-                # Simulated order - just track locally
+            try:
+                # Enhanced logging for order execution
                 self.logger.info(
-                    f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
+                    f"🔨 EXECUTING ORDER: {order.symbol} {order.side.upper()} "
+                    f"{order.amount} @ {order.target_price} | "
+                    f"Type: {order.type} | ID: {order.order_id}"
                 )
-                result = {"status": "pending", "simulated": True}
-                await self.order_manager.track_order(order, result)
-            else:
-                # Real order - execute on Binance
-                if self.exchange:
-                    try:
-                        self.logger.info(
-                            f"📤 SENDING TO BINANCE: {order.symbol} {order.side} "
-                            f"{order.amount} @ {order.target_price}"
-                        )
-                        result = await self.exchange.execute(order)
-                        await self.order_manager.track_order(order, result)
 
-                        # Log success with details
-                        self.logger.info(
-                            f"✅ BINANCE ORDER EXECUTED: {order.symbol} {order.side} | "
-                            f"Status: {result.get('status')} | "
-                            f"Order ID: {result.get('order_id', 'N/A')} | "
-                            f"Fill Price: {result.get('fill_price', 'N/A')} | "
-                            f"Result: {result}"
-                        )
-                    except Exception as exchange_error:
-                        self.logger.error(
-                            f"❌ BINANCE EXCHANGE ERROR: {order.symbol} {order.side} | "
-                            f"Error: {exchange_error} | Order ID: {order.order_id}",
-                            exc_info=True,
-                        )
-                        result = {"status": "error", "error": str(exchange_error)}
-                        await self.order_manager.track_order(order, result)
-                else:
-                    # No exchange provided, just track locally
-                    self.logger.warning(
-                        f"⚠️  NO EXCHANGE CONFIGURED: Order {order.order_id} tracked locally only"
+                # Log order
+                if audit_logger.enabled and audit_logger.connected:
+                    audit_logger.log_order(order.model_dump())
+
+                # Execute order on Binance exchange
+                if order.simulate:
+                    # Simulated order - just track locally
+                    self.logger.info(
+                        f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
                     )
-                    result = {"status": "pending", "no_exchange": True}
+                    result = {"status": "pending", "simulated": True}
                     await self.order_manager.track_order(order, result)
+                else:
+                    # Real order - execute on Binance
+                    if self.exchange:
+                        try:
+                            self.logger.info(
+                                f"📤 SENDING TO BINANCE: {order.symbol} {order.side} "
+                                f"{order.amount} @ {order.target_price}"
+                            )
+                            result = await self.exchange.execute(order)
+                            await self.order_manager.track_order(order, result)
 
-            # Log result
-            if audit_logger.enabled and audit_logger.connected:
-                audit_logger.log_order(
-                    {
-                        "order": order.model_dump(),
-                        "result": result,
-                    }
-                )
+                            # Log success with details
+                            self.logger.info(
+                                f"✅ BINANCE ORDER EXECUTED: {order.symbol} {order.side} | "
+                                f"Status: {result.get('status')} | "
+                                f"Order ID: {result.get('order_id', 'N/A')} | "
+                                f"Fill Price: {result.get('fill_price', 'N/A')} | "
+                                f"Result: {result}"
+                            )
+                        except Exception as exchange_error:
+                            self.logger.error(
+                                f"❌ BINANCE EXCHANGE ERROR: {order.symbol} {order.side} | "
+                                f"Error: {exchange_error} | Order ID: {order.order_id}",
+                                exc_info=True,
+                            )
+                            result = {"status": "error", "error": str(exchange_error)}
+                            await self.order_manager.track_order(order, result)
+                    else:
+                        # No exchange provided, just track locally
+                        self.logger.warning(
+                            f"⚠️  NO EXCHANGE CONFIGURED: Order {order.order_id} tracked locally only"
+                        )
+                        result = {"status": "pending", "no_exchange": True}
+                        await self.order_manager.track_order(order, result)
 
-            self.logger.info(
-                f"📊 ORDER EXECUTION COMPLETE: {order.order_id} | Status: {result.get('status')}"
-            )
-
-            # Track order execution metrics
-            execution_time = time.time() - start_time
-            order_execution_time.labels(symbol=order.symbol, side=order.side).observe(
-                execution_time
-            )
-            orders_executed.labels(
-                symbol=order.symbol,
-                side=order.side,
-                status=result.get("status", "unknown"),
-            ).inc()
-
-            # Track business metrics
-            order_status = result.get("status", "unknown")
-
-            # Emit order execution by type metric
-            orders_executed_by_type.labels(
-                order_type=order.type,
-                side=order.side,
-                symbol=order.symbol,
-                exchange=order.exchange,
-            ).inc()
-
-            # Calculate and emit order latency (signal → execution)
-            if order.meta and "signal_received_at" in order.meta:
-                signal_latency = time.time() - order.meta["signal_received_at"]
-                order_execution_latency_seconds.labels(
-                    symbol=order.symbol,
-                    order_type=order.type,
-                    exchange=order.exchange,
-                ).observe(signal_latency)
+                # Log result
+                if audit_logger.enabled and audit_logger.connected:
+                    audit_logger.log_order(
+                        {
+                            "order": order.model_dump(),
+                            "result": result,
+                        }
+                    )
 
                 self.logger.info(
-                    f"📊 ORDER LATENCY: {signal_latency:.3f}s from signal receipt to execution complete"
+                    f"📊 ORDER EXECUTION COMPLETE: {order.order_id} | Status: {result.get('status')}"
                 )
 
-            # Track order failures
-            if order_status in ["error", "rejected", "cancelled"]:
-                failure_reason = result.get("error", "unknown")
-                order_failures_total.labels(
+                # Track order execution metrics
+                execution_time = time.time() - start_time
+                order_execution_time.labels(
+                    symbol=order.symbol, side=order.side
+                ).observe(execution_time)
+                orders_executed.labels(
                     symbol=order.symbol,
+                    side=order.side,
+                    status=result.get("status", "unknown"),
+                ).inc()
+
+                # Track business metrics
+                order_status = result.get("status", "unknown")
+
+                # Emit order execution by type metric
+                orders_executed_by_type.labels(
                     order_type=order.type,
-                    failure_reason=str(failure_reason)[
-                        :50
-                    ],  # Truncate long error messages
+                    side=order.side,
+                    symbol=order.symbol,
                     exchange=order.exchange,
                 ).inc()
 
-            return result
+                # Calculate and emit order latency (signal → execution)
+                if order.meta and "signal_received_at" in order.meta:
+                    signal_latency = time.time() - order.meta["signal_received_at"]
+                    order_execution_latency_seconds.labels(
+                        symbol=order.symbol,
+                        order_type=order.type,
+                        exchange=order.exchange,
+                    ).observe(signal_latency)
 
-        except Exception as e:
-            self.logger.error(
-                f"❌ ORDER EXECUTION FAILED: {order.order_id} | Error: {e}",
-                exc_info=True,
-            )
-            if audit_logger.enabled and audit_logger.connected:
-                audit_logger.log_error(
-                    {
-                        "error": str(e),
-                        "order": order.model_dump(),
-                        "endpoint": "execute_order",
-                    }
+                    self.logger.info(
+                        f"📊 ORDER LATENCY: {signal_latency:.3f}s from signal receipt to execution complete"
+                    )
+
+                # Track order failures
+                if order_status in ["error", "rejected", "cancelled"]:
+                    failure_reason = result.get("error", "unknown")
+                    order_failures_total.labels(
+                        symbol=order.symbol,
+                        order_type=order.type,
+                        failure_reason=str(failure_reason)[
+                            :50
+                        ],  # Truncate long error messages
+                        exchange=order.exchange,
+                    ).inc()
+
+                # Update span with execution result
+                span.set_attribute("order.status", result.get("status", "unknown"))
+                if result.get("order_id"):
+                    span.set_attribute("order.exchange_id", result.get("order_id"))
+                if result.get("fill_price"):
+                    span.set_attribute("order.fill_price", result.get("fill_price"))
+                span.set_status(trace.Status(trace.StatusCode.OK))
+                return result
+
+            except Exception as e:
+                self.logger.error(
+                    f"❌ ORDER EXECUTION FAILED: {order.order_id} | Error: {e}",
+                    exc_info=True,
                 )
-            return {"status": "error", "error": str(e)}
+                if audit_logger.enabled and audit_logger.connected:
+                    audit_logger.log_error(
+                        {
+                            "error": str(e),
+                            "order": order.model_dump(),
+                            "endpoint": "execute_order",
+                        }
+                    )
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                return {"status": "error", "error": str(e)}
 
     def get_signal_summary(self) -> dict[str, Any]:
         """Get signal processing summary"""

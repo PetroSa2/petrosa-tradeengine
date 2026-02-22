@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from opentelemetry import trace
 from pydantic import BaseModel
 
 # Import OpenTelemetry initialization
@@ -26,6 +27,9 @@ from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
+
+# OpenTelemetry tracer for business context spans
+tracer = trace.get_tracer(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -387,110 +391,204 @@ async def process_trade(
     request: TradeRequest, background_tasks: BackgroundTasks
 ) -> TradeResponse:
     """Process trading signals with distributed state management"""
-    try:
-        # Get distributed state info
-        from shared.distributed_lock import distributed_lock_manager
+    with tracer.start_as_current_span("api.process_trade") as span:
+        try:
+            # Add business context attributes to span
+            span.set_attribute("request.signal_count", len(request.signals))
+            span.set_attribute("request.audit_logging", request.audit_logging)
 
-        leader_info = await distributed_lock_manager.get_leader_info()
+            # Get distributed state info
+            from shared.distributed_lock import distributed_lock_manager
 
-        # Process signals
-        orders = []
-        signals_processed = 0
-        conflicts_resolved = 0
-        audit_logs = []
+            leader_info = await distributed_lock_manager.get_leader_info()
 
-        for signal in request.signals:
-            try:
-                # Process signal with distributed consensus
-                result = await dispatcher.dispatch(signal)
+            # Process signals
+            orders = []
+            signals_processed = 0
+            conflicts_resolved = 0
+            audit_logs = []
 
-                if result.get("status") == "executed":
-                    signals_processed += 1
-                    if result.get("conflicts_resolved"):
-                        conflicts_resolved += result["conflicts_resolved"]
-
-                    # Add order info
-                    if "execution_result" in result:
-                        orders.append(
-                            {
-                                "signal": signal.model_dump(),
-                                "result": result["execution_result"],
-                                "distributed_state": {
-                                    "pod_id": distributed_lock_manager.pod_id,
-                                    "is_leader": distributed_lock_manager.is_leader,
-                                    "leader_info": leader_info,
-                                },
-                            }
+            for signal in request.signals:
+                try:
+                    # Create span for API signal processing
+                    with tracer.start_as_current_span(
+                        "api.process_trade_signal"
+                    ) as signal_span:
+                        # Add business context attributes to span
+                        signal_span.set_attribute("signal.symbol", signal.symbol)
+                        signal_span.set_attribute("signal.timeframe", signal.timeframe)
+                        signal_span.set_attribute("signal.action", signal.action)
+                        signal_span.set_attribute(
+                            "signal.type",
+                            (
+                                signal.signal_type.value
+                                if signal.signal_type
+                                else signal.action
+                            ),
                         )
+                        signal_span.set_attribute(
+                            "signal.strength",
+                            (
+                                signal.strength.value
+                                if hasattr(signal.strength, "value")
+                                else str(signal.strength)
+                            ),
+                        )
+                        signal_span.set_attribute(
+                            "signal.confidence", signal.confidence
+                        )
+                        signal_span.set_attribute("strategy.id", signal.strategy_id)
+                        signal_span.set_attribute("strategy.name", signal.strategy)
 
-                # Log for audit
-                if request.audit_logging and audit_logger.enabled:
-                    audit_logs.append(
+                        # Process signal with distributed consensus
+                        result = await dispatcher.dispatch(signal)
+
+                        # Update span with result
+                        signal_span.set_attribute(
+                            "signal.processed",
+                            result.get("status") in ("success", "executed"),
+                        )
+                        signal_span.set_status(trace.Status(trace.StatusCode.OK))
+
+                        if result.get("status") == "executed":
+                            signals_processed += 1
+                            if result.get("conflicts_resolved"):
+                                conflicts_resolved += result["conflicts_resolved"]
+
+                            # Add order info
+                            if "execution_result" in result:
+                                orders.append(
+                                    {
+                                        "signal": signal.model_dump(),
+                                        "result": result["execution_result"],
+                                        "distributed_state": {
+                                            "pod_id": distributed_lock_manager.pod_id,
+                                            "is_leader": distributed_lock_manager.is_leader,
+                                            "leader_info": leader_info,
+                                        },
+                                    }
+                                )
+
+                        # Log for audit
+                        if request.audit_logging and audit_logger.enabled:
+                            audit_logs.append(
+                                {
+                                    "signal": signal.model_dump(),
+                                    "result": result,
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                }
+                            )
+
+                except Exception as e:
+                    logger.error(f"Error processing signal: {e}")
+                    orders.append(
                         {
                             "signal": signal.model_dump(),
-                            "result": result,
-                            "timestamp": datetime.utcnow().isoformat(),
+                            "error": str(e),
+                            "distributed_state": {
+                                "pod_id": distributed_lock_manager.pod_id,
+                                "is_leader": distributed_lock_manager.is_leader,
+                                "leader_info": leader_info,
+                            },
                         }
                     )
 
-            except Exception as e:
-                logger.error(f"Error processing signal: {e}")
-                orders.append(
-                    {
-                        "signal": signal.model_dump(),
-                        "error": str(e),
-                        "distributed_state": {
-                            "pod_id": distributed_lock_manager.pod_id,
-                            "is_leader": distributed_lock_manager.is_leader,
-                            "leader_info": leader_info,
-                        },
-                    }
-                )
+            span.set_attribute("signals.processed_count", signals_processed)
+            span.set_attribute("conflicts.resolved_count", conflicts_resolved)
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            return TradeResponse(
+                status="success",
+                orders=orders,
+                signals_processed=signals_processed,
+                conflicts_resolved=conflicts_resolved,
+                audit_logs=audit_logs,
+            )
 
-        return TradeResponse(
-            status="success",
-            orders=orders,
-            signals_processed=signals_processed,
-            conflicts_resolved=conflicts_resolved,
-            audit_logs=audit_logs,
-        )
-
-    except Exception as e:
-        logger.error(f"Trade processing error: {e}")
-        raise HTTPException(status_code=500, detail=f"Trade processing failed: {e}")
+        except Exception as e:
+            logger.error(f"Trade processing error: {e}")
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise HTTPException(status_code=500, detail=f"Trade processing failed: {e}")
 
 
 @app.post("/trade/signal")
 async def process_single_signal(signal: Signal) -> dict[str, Any]:
     """Process a single trading signal"""
-    try:
-        result = await dispatcher.dispatch(signal)
-        return {
-            "status": "success",
-            "signal": signal.model_dump(),
-            "result": result,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"Single signal processing error: {e}")
-        raise HTTPException(status_code=500, detail=f"Signal processing failed: {e}")
+    with tracer.start_as_current_span("api.process_single_signal") as span:
+        # Add business context attributes to span
+        span.set_attribute("signal.symbol", signal.symbol)
+        span.set_attribute("signal.timeframe", signal.timeframe)
+        span.set_attribute("signal.action", signal.action)
+        span.set_attribute(
+            "signal.type",
+            signal.signal_type.value if signal.signal_type else signal.action,
+        )
+        span.set_attribute(
+            "signal.strength",
+            (
+                signal.strength.value
+                if hasattr(signal.strength, "value")
+                else str(signal.strength)
+            ),
+        )
+        span.set_attribute("signal.confidence", signal.confidence)
+        span.set_attribute("strategy.id", signal.strategy_id)
+        span.set_attribute("strategy.name", signal.strategy)
+
+        try:
+            result = await dispatcher.dispatch(signal)
+            span.set_attribute(
+                "signal.processed", result.get("status") in ("success", "executed")
+            )
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            return {
+                "status": "success",
+                "signal": signal.model_dump(),
+                "result": result,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Single signal processing error: {e}")
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise HTTPException(
+                status_code=500, detail=f"Signal processing failed: {e}"
+            )
 
 
 @app.post("/order")
 async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
     """Place an advanced order with specific parameters"""
-    try:
-        # Process the order through the dispatcher
-        result = await dispatcher.execute_order(order)
-        return {
-            "status": "success",
-            "order": order.model_dump(),
-            "result": result,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"Advanced order placement error: {e}")
-        raise HTTPException(status_code=500, detail=f"Order placement failed: {e}")
+    with tracer.start_as_current_span("api.place_advanced_order") as span:
+        # Add business context attributes to span
+        span.set_attribute("order.id", order.order_id or "unknown")
+        span.set_attribute("order.symbol", order.symbol)
+        span.set_attribute("order.side", order.side)
+        span.set_attribute("order.type", order.type)
+        span.set_attribute("order.quantity", order.amount)
+        if order.target_price:
+            span.set_attribute("order.price", order.target_price)
+        if order.position_side:
+            span.set_attribute("order.position_side", order.position_side)
+
+        try:
+            # Process the order through the dispatcher
+            result = await dispatcher.execute_order(order)
+            span.set_attribute("order.status", result.get("status", "unknown"))
+            if result.get("order_id"):
+                span.set_attribute("order.exchange_id", result.get("order_id"))
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            return {
+                "status": "success",
+                "order": order.model_dump(),
+                "result": result,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Advanced order placement error: {e}")
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise HTTPException(status_code=500, detail=f"Order placement failed: {e}")
 
 
 @app.get("/account", response_model=AccountResponse)

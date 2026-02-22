@@ -3,9 +3,31 @@ Integration tests for api.py lifespan function.
 Actually executes the lifespan to achieve patch coverage for api.py changes.
 """
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+# Mock OpenTelemetry imports before any imports that might trigger them
+mock_logging_instrumentor = MagicMock()
+mock_logging_module = MagicMock()
+mock_logging_module.LoggingInstrumentor = mock_logging_instrumentor
+sys.modules["opentelemetry.instrumentation.logging"] = mock_logging_module
+
+mock_fastapi_instrumentor = MagicMock()
+mock_fastapi_module = MagicMock()
+mock_fastapi_module.FastAPIInstrumentor = mock_fastapi_instrumentor
+sys.modules["opentelemetry.instrumentation.fastapi"] = mock_fastapi_module
+
+sys.modules["opentelemetry.instrumentation.httpx"] = MagicMock()
+sys.modules["opentelemetry.instrumentation.requests"] = MagicMock()
+sys.modules["opentelemetry.instrumentation.urllib3"] = MagicMock()
+sys.modules["opentelemetry.instrumentation.urllib"] = MagicMock()
+
+# Mock petrosa_otel module (used by consumer)
+mock_petrosa_otel = MagicMock()
+mock_petrosa_otel.extract_trace_context = MagicMock(return_value=MagicMock())
+sys.modules["petrosa_otel"] = mock_petrosa_otel
+
+import pytest  # noqa: E402
 
 
 @pytest.mark.asyncio
@@ -16,6 +38,7 @@ async def test_lifespan_startup_calls_configure_logging():
     """
     # Import inside test to ensure fresh state
     import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module  # Import to ensure module exists
 
     configure_was_called = []
 
@@ -36,7 +59,7 @@ async def test_lifespan_startup_calls_configure_logging():
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
         patch.object(api_module, "dispatcher") as mock_disp,
-        patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+        patch.object(consumer_module, "signal_consumer") as mock_consumer,
     ):
         # Setup async mocks
         mock_config = AsyncMock()
@@ -52,6 +75,8 @@ async def test_lifespan_startup_calls_configure_logging():
         mock_disp.close = AsyncMock()
         mock_consumer.initialize = AsyncMock(return_value=False)
         mock_consumer.running = False
+        mock_consumer.start_consuming = AsyncMock()
+        mock_consumer.stop_consuming = AsyncMock()
 
         # Execute lifespan - THIS RUNS THE ACTUAL api.py CODE
         async with api_module.lifespan(mock_app):
@@ -65,6 +90,7 @@ async def test_lifespan_startup_calls_configure_logging():
 async def test_lifespan_startup_calls_setup_signal_handlers():
     """Test that lifespan startup calls setup_signal_handlers."""
     import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module  # Import to ensure module exists
 
     setup_was_called = []
 
@@ -84,7 +110,7 @@ async def test_lifespan_startup_calls_setup_signal_handlers():
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
         patch.object(api_module, "dispatcher") as mock_disp,
-        patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+        patch.object(consumer_module, "signal_consumer") as mock_consumer,
     ):
         mock_config = AsyncMock()
         mock_config.start = AsyncMock()
@@ -99,6 +125,8 @@ async def test_lifespan_startup_calls_setup_signal_handlers():
         mock_disp.close = AsyncMock()
         mock_consumer.initialize = AsyncMock(return_value=False)
         mock_consumer.running = False
+        mock_consumer.start_consuming = AsyncMock()
+        mock_consumer.stop_consuming = AsyncMock()
 
         async with api_module.lifespan(mock_app):
             pass
@@ -111,6 +139,7 @@ async def test_lifespan_startup_calls_setup_signal_handlers():
 async def test_lifespan_shutdown_calls_flush_telemetry():
     """Test that lifespan shutdown calls flush_telemetry and shutdown_telemetry."""
     import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module  # Import to ensure module exists
 
     flush_was_called = []
     shutdown_was_called = []
@@ -136,7 +165,7 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
         patch.object(api_module, "dispatcher") as mock_disp,
-        patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+        patch.object(consumer_module, "signal_consumer") as mock_consumer,
     ):
         mock_config = AsyncMock()
         mock_config.start = AsyncMock()
@@ -151,6 +180,8 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
         mock_disp.close = AsyncMock()
         mock_consumer.initialize = AsyncMock(return_value=False)
         mock_consumer.running = False
+        mock_consumer.start_consuming = AsyncMock()
+        mock_consumer.stop_consuming = AsyncMock()
 
         async with api_module.lifespan(mock_app):
             pass
@@ -169,6 +200,7 @@ async def test_lifespan_logs_configured_message():
     import logging
 
     import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module  # Import to ensure module exists
 
     log_messages = []
 
@@ -193,7 +225,7 @@ async def test_lifespan_logs_configured_message():
             patch.object(api_module, "binance_exchange") as mock_binance,
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
-            patch("tradeengine.consumer.signal_consumer") as mock_consumer,
+            patch.object(consumer_module, "signal_consumer") as mock_consumer,
         ):
             mock_config = AsyncMock()
             mock_config.start = AsyncMock()
@@ -232,6 +264,7 @@ async def test_lifespan_error_path_without_watchdog():
     import logging
 
     import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module  # Import to ensure module exists
 
     error_messages = []
 

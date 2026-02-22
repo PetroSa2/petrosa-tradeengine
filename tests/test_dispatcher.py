@@ -203,13 +203,18 @@ async def test_create_order_from_signal(
 ) -> None:
     """Test order creation from signal"""
     # Mock binance_exchange.calculate_min_order_amount to return a minimum amount that allows signal quantity
-    from unittest.mock import patch
+    import sys
+    from unittest.mock import MagicMock, patch
 
+    # Mock the problematic imports
+    sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
+    sys.modules["otel_init"] = MagicMock()
+
+    # Mock the function that's imported inside _calculate_order_amount
     with patch(
-        "tradeengine.api.binance_exchange.calculate_min_order_amount"
-    ) as mock_calculate_min:
-        mock_calculate_min.return_value = 0.001  # Below signal quantity
-
+        "tradeengine.api.binance_exchange.calculate_min_order_amount",
+        return_value=0.001,
+    ):
         order = dispatcher._signal_to_order(sample_signal)
         assert order.symbol == "BTCUSDT"
         assert order.type == "market"
@@ -553,6 +558,13 @@ async def test_signal_to_order_close_signal(dispatcher: Dispatcher) -> None:
 @pytest.mark.asyncio
 async def test_signal_to_order_negative_price(dispatcher: Dispatcher) -> None:
     """Test _signal_to_order with negative price (edge case)"""
+    import sys
+    from unittest.mock import MagicMock, patch
+
+    # Mock the problematic imports
+    sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
+    sys.modules["otel_init"] = MagicMock()
+
     signal = Signal(
         strategy_id="test-strategy",
         symbol="BTCUSDT",
@@ -569,12 +581,15 @@ async def test_signal_to_order_negative_price(dispatcher: Dispatcher) -> None:
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
 
-    order = dispatcher._signal_to_order(signal)
-
-    # Should still create order (validation happens elsewhere)
-    assert order.symbol == "BTCUSDT"
-    assert order.side == "buy"
-    assert order.target_price == -100.0
+    # Mock calculate_min_order_amount to raise exception, triggering fallback path
+    # The fallback path will fail because negative price can't be used
+    with patch(
+        "tradeengine.api.binance_exchange.calculate_min_order_amount",
+        side_effect=Exception("Test error"),
+    ):
+        # This will raise ValueError because negative price can't be used for fallback
+        with pytest.raises(ValueError, match="Cannot calculate order amount"):
+            dispatcher._signal_to_order(signal)
 
 
 @pytest.mark.asyncio

@@ -926,6 +926,27 @@ class Dispatcher:
                 "Strategy position manager initialization started in background"
             )
 
+            # PROACTIVE LEVERAGE SETUP
+            if self.exchange:
+                try:
+                    self.logger.info("🔧 SETTING PROACTIVE LEVERAGE (10x)...")
+                    from shared.constants import SUPPORTED_SYMBOLS
+
+                    for symbol in SUPPORTED_SYMBOLS:
+                        try:
+                            # Use futures_change_leverage directly from the exchange client
+                            # Adjusting to 10x as a safe default
+                            self.exchange.client.futures_change_leverage(
+                                symbol=symbol, leverage=10
+                            )
+                            self.logger.info(f"✅ Leverage set to 10x for {symbol}")
+                        except Exception as lev_err:
+                            self.logger.warning(
+                                f"⚠️ Failed to set leverage for {symbol}: {lev_err}"
+                            )
+                except Exception as e:
+                    self.logger.error(f"❌ PROACTIVE LEVERAGE SETUP FAILED: {e}")
+
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"
             )

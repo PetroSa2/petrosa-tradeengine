@@ -222,7 +222,7 @@ app = FastAPI(
     description=(
         "Advanced cryptocurrency trading engine with multi-strategy signal aggregation"
     ),
-    version="1.1.0",
+    version="1.1.176",
     lifespan=lifespan,
 )
 

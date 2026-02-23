@@ -4,7 +4,6 @@ import pytest
 
 # Disable OpenTelemetry auto-initialization during tests
 os.environ["OTEL_NO_AUTO_INIT"] = "1"
-os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
 
 
@@ -13,7 +12,6 @@ def pytest_configure(config):
     Setup before any tests are run.
     """
     os.environ["OTEL_NO_AUTO_INIT"] = "1"
-    os.environ["OTEL_SDK_DISABLED"] = "true"
 
 
 """

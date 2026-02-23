@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -9,8 +10,13 @@ from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
 from pydantic import BaseModel
 
-# Import OpenTelemetry initialization
-import otel_init
+# Optional OpenTelemetry imports
+try:
+    from petrosa_otel import attach_logging_handler, flush_telemetry, setup_telemetry
+except ImportError:
+    setup_telemetry = None
+    attach_logging_handler = None
+    flush_telemetry = None
 
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
@@ -40,15 +46,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     logger.info("Starting Petrosa Trading Engine...")
 
-    # Configure logging using simplified dictConfig approach
-    # This replaces the old attach_logging_handler() + watchdog pattern
-    # Handlers will survive logging.basicConfig() calls automatically
-    otel_init.configure_logging()
-    logger.info("✅ Logging configured (no monitoring needed)")
-
-    # Set up signal handlers for graceful telemetry shutdown
-    otel_init.setup_signal_handlers()
-    logger.info("✅ Signal handlers registered for graceful telemetry shutdown")
+    # Initialize telemetry
+    if setup_telemetry and not os.getenv("OTEL_NO_AUTO_INIT"):
+        try:
+            setup_telemetry(
+                service_name="tradeengine",
+                service_type="fastapi",
+                enable_fastapi=True,
+                enable_mongodb=True,
+                auto_attach_logging=True,
+            )
+            logger.info("✅ Telemetry initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize telemetry: {e}")
 
     # Initialize components
     startup_success = True
@@ -175,11 +185,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Petrosa Trading Engine...")
     try:
-        # Flush telemetry first to prevent data loss
-        logger.info("Flushing telemetry data...")
-        otel_init.flush_telemetry()
+        # Flush telemetry first
+        if flush_telemetry:
+            flush_telemetry()
+            logger.info("✅ Telemetry flushed")
 
-        # Stop NATS consumer first
         from tradeengine.consumer import signal_consumer
 
         if signal_consumer.running:
@@ -207,10 +217,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("✅ Trading configuration manager stopped")
 
         logger.info("Trading engine shutdown completed")
-
-        # Shutdown telemetry providers after all other cleanup
-        logger.info("Shutting down telemetry providers...")
-        otel_init.shutdown_telemetry()
     except Exception as e:
         logger.error(f"Shutdown error: {e}")
     logger.info("Petrosa Trading Engine shut down complete")
@@ -225,9 +231,6 @@ app = FastAPI(
     version="1.1.178",
     lifespan=lifespan,
 )
-
-# Instrument FastAPI app with OpenTelemetry
-otel_init.instrument_fastapi_app(app)
 
 # Include configuration API routes
 app.include_router(config_router)

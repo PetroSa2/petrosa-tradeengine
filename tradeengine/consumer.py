@@ -9,7 +9,16 @@ import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import context, trace
 from opentelemetry.propagate import extract
-from petrosa_otel import extract_trace_context
+
+# Conditional import for compatibility
+try:
+    from petrosa_otel import extract_trace_context
+except ImportError:
+    # Fallback for environments without petrosa_otel or name mismatch
+    def extract_trace_context(data: Any) -> Any:
+        return None
+
+
 from prometheus_client import Counter
 
 from contracts.signal import Signal

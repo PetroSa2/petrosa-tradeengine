@@ -415,6 +415,54 @@ class DataManagerConfigClient:
         """
         return await self.create_audit_record(audit)
 
+    async def rollback_config(
+        self,
+        changed_by: str,
+        symbol: Optional[str] = None,
+        side: Optional[str] = None,
+        target_version: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """
+        Rollback configuration via Data Manager.
+
+        Args:
+            changed_by: Who is performing the rollback
+            symbol: Optional symbol
+            side: Optional side
+            target_version: Optional specific version
+            reason: Optional reason
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            payload = {
+                "changed_by": changed_by,
+                "target_version": target_version,
+                "reason": reason
+            }
+            
+            # Map tradeengine scopes to data-manager strategy_id
+            strategy_id = "tradeengine"
+            
+            url = f"/api/v1/config/rollback/strategies/{strategy_id}"
+            params = {}
+            if symbol:
+                params["symbol"] = symbol
+            if side:
+                params["side"] = side
+                
+            # Use the internal _client which handles base_url and auth
+            response = await self.data_manager_client._client.post(
+                url, json=payload, params=params
+            )
+            
+            return response is not None
+        except Exception as e:
+            logger.error(f"Failed to rollback config via Data Manager: {e}")
+            return False
+
     @property
     def connected(self) -> bool:
         """

@@ -141,11 +141,84 @@ class ConfigValidationRequest(BaseModel):
     )
 
 
+class RollbackRequest(BaseModel):
+    """Request model for configuration rollback."""
+
+    target_version: Optional[int] = Field(None, description="Specific version to rollback to")
+    changed_by: str = Field(..., description="Who is performing the rollback")
+    reason: Optional[str] = Field(None, description="Reason for rollback")
+
+
 # =============================================================================
 # API Router
 # =============================================================================
 
 router = APIRouter(prefix="/api/v1/config", tags=["trading-configuration"])
+
+
+@router.post(
+    "/rollback",
+    response_model=APIResponse,
+    summary="Rollback trading configuration",
+    description="""
+    **For LLM Agents**: Revert trading configuration to a previous version.
+
+    Reverts global, symbol, or symbol-side specific settings.
+
+    **Example Request**: `POST /api/v1/config/rollback?symbol=BTCUSDT`
+    ```json
+    {
+      "changed_by": "llm_agent_v1",
+      "reason": "Previous leverage settings were safer",
+      "target_version": 5
+    }
+    ```
+    """,
+)
+async def rollback_config(
+    request: RollbackRequest,
+    symbol: Optional[str] = Query(None, description="Trading symbol"),
+    side: Optional[Literal["LONG", "SHORT"]] = Query(None, description="Position side"),
+):
+    """Rollback configuration."""
+    try:
+        manager = get_config_manager()
+        success, config, errors = await manager.rollback_config(
+            changed_by=request.changed_by,
+            symbol=symbol.upper() if symbol else None,
+            side=side,
+            target_version=request.target_version,
+            reason=request.reason,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "ROLLBACK_FAILED",
+                    "message": "Failed to rollback configuration",
+                    "details": {"errors": errors},
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data=ConfigResponse(
+                symbol=symbol,
+                side=side,
+                parameters=config.parameters if config else {},
+                version=config.version if config else 0,
+                source="data_manager",
+                created_at=None,
+                updated_at=datetime.utcnow().isoformat(),
+            ),
+            metadata={"action": "rollback", "scope": "trading"},
+        )
+    except Exception as e:
+        logger.error(f"Error rolling back config: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
 
 
 @router.get(
@@ -785,10 +858,10 @@ async def validate_config(request: ConfigValidationRequest):
 
 # Service URLs for cross-service conflict detection
 SERVICE_URLS = {
-    "data-manager": os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:8080"),
-    "ta-bot": os.getenv("TA_BOT_URL", "http://petrosa-ta-bot:8080"),
+    "data-manager": os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:80"),
+    "ta-bot": os.getenv("TA_BOT_URL", "http://petrosa-ta-bot-service:80"),
     "realtime-strategies": os.getenv(
-        "REALTIME_STRATEGIES_URL", "http://petrosa-realtime-strategies:8080"
+        "REALTIME_STRATEGIES_URL", "http://petrosa-realtime-strategies:80"
     ),
 }
 

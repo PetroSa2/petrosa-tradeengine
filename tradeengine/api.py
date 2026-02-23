@@ -12,11 +12,19 @@ from pydantic import BaseModel
 
 # Optional OpenTelemetry imports
 try:
-    from petrosa_otel import attach_logging_handler, flush_telemetry, setup_telemetry
+    from petrosa_otel import (
+        ConfigRateLimiter,
+        attach_logging_handler,
+        config_rate_limit_middleware,
+        flush_telemetry,
+        setup_telemetry,
+    )
 except ImportError:
     setup_telemetry = None
     attach_logging_handler = None
     flush_telemetry = None
+    ConfigRateLimiter = None
+    config_rate_limit_middleware = None
 
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
@@ -88,6 +96,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Store in app state
         app.state.trading_config_manager = trading_config_manager
         logger.info("✅ Trading configuration manager initialized")
+
+        # Initialize and register configuration rate limiter
+        if ConfigRateLimiter:
+            rate_limiter = ConfigRateLimiter(
+                mongodb_client=config_client,
+                service_name="tradeengine",
+                per_agent_limit=int(os.getenv("CONFIG_RATE_LIMIT_PER_AGENT", "10")),
+                cooldown_seconds=int(os.getenv("CONFIG_RATE_LIMIT_COOLDOWN", "300")),
+            )
+            app.state.rate_limiter = rate_limiter
+            logger.info("✅ Configuration rate limiter initialized")
 
         # Initialize audit logger
         if audit_logger.enabled and audit_logger.connected:
@@ -231,6 +250,11 @@ app = FastAPI(
     version="1.1.178",
     lifespan=lifespan,
 )
+
+# Register configuration rate limit middleware
+if config_rate_limit_middleware:
+    app.middleware("http")(config_rate_limit_middleware)
+    logger.info("✅ Configuration rate limit middleware registered")
 
 # Include configuration API routes
 app.include_router(config_router)

@@ -330,6 +330,61 @@ class TradingConfigManager:
             logger.error(f"Error setting config: {e}")
             return False, None, [str(e)]
 
+    async def rollback_config(
+        self,
+        changed_by: str,
+        symbol: Optional[str] = None,
+        side: Optional[str] = None,
+        target_version: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> tuple[bool, Optional[TradingConfig], list[str]]:
+        """
+        Rollback configuration to a previous version.
+
+        Args:
+            changed_by: Who is performing the rollback
+            symbol: Optional symbol
+            side: Optional side
+            target_version: Optional specific version
+            reason: Optional reason
+
+        Returns:
+            Tuple of (success, config, errors)
+        """
+        try:
+            # If using Data Manager proxy
+            if hasattr(self.mongodb_client, "rollback_config"):
+                success = await self.mongodb_client.rollback_config(
+                    changed_by=changed_by,
+                    symbol=symbol,
+                    side=side,
+                    target_version=target_version,
+                    reason=reason
+                )
+                if success:
+                    # Invalidate cache
+                    self.invalidate_cache(symbol, side)
+                    # Get the new config (resolved)
+                    params = await self.get_config(symbol, side)
+                    
+                    # Return a synthetic config object
+                    config = TradingConfig(
+                        symbol=symbol,
+                        side=side,  # type: ignore
+                        parameters=params,
+                        version=0,
+                        created_by=changed_by,
+                        updated_at=datetime.utcnow()
+                    )
+                    return True, config, []
+                else:
+                    return False, None, ["Rollback failed in Data Manager"]
+            
+            return False, None, ["Rollback not supported by current database client"]
+        except Exception as e:
+            logger.error(f"Error rolling back config: {e}")
+            return False, None, [str(e)]
+
     async def delete_config(
         self,
         changed_by: str,

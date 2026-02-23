@@ -268,13 +268,15 @@ def configure_logging() -> bool:
     global _global_logger_provider
 
     try:
+        import sys
+
         # Build handlers configuration
         handlers_config = {
             "stdout": {
                 "class": "logging.StreamHandler",
                 "level": "INFO",
                 "formatter": "standard",
-                "stream": "ext://sys.stdout",
+                "stream": sys.stdout,
             }
         }
 

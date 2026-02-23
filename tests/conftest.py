@@ -1,19 +1,3 @@
-import os
-
-import pytest
-
-# Disable OpenTelemetry auto-initialization during tests
-os.environ["OTEL_NO_AUTO_INIT"] = "1"
-os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
-
-
-def pytest_configure(config):
-    """
-    Setup before any tests are run.
-    """
-    os.environ["OTEL_NO_AUTO_INIT"] = "1"
-
-
 """
 Global test configuration and fixtures for petrosa-tradeengine.
 """
@@ -23,6 +7,16 @@ from typing import Generator
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+
+# Disable OpenTelemetry auto-initialization during tests
+os.environ["OTEL_NO_AUTO_INIT"] = "1"
+os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
+
+
+def pytest_configure(config):
+    """Setup before any tests are run."""
+    os.environ["OTEL_NO_AUTO_INIT"] = "1"
+
 
 # Set up test environment BEFORE any imports that might trigger validation
 os.environ.update(

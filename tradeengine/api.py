@@ -90,8 +90,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Initialize exchanges
         logger.info("Initializing Binance exchange...")
         await binance_exchange.initialize()
+
+        # TEST BINANCE CONNECTION AND BALANCE
+        try:
+            logger.info("🧪 TESTING BINANCE CONNECTION AND BALANCE...")
+            account_info = await binance_exchange.get_account_info()
+            usdt_balance = next(
+                (a for a in account_info.get("assets", []) if a.get("asset") == "USDT"),
+                {},
+            )
+            logger.info(
+                f"💰 BINANCE ACCOUNT STATUS: "
+                f"USDT Balance: {usdt_balance.get('availableBalance', 'N/A')} | "
+                f"Total Wallet: {usdt_balance.get('walletBalance', 'N/A')} | "
+                f"Can Trade: {account_info.get('can_trade')}"
+            )
+
+            # Test specific symbol info
+            ticker = await binance_exchange.get_symbol_price("BTCUSDT")
+            logger.info(f"📈 BTCUSDT Connection Test: Current Price ${ticker:,.2f}")
+
+        except Exception as test_error:
+            logger.error(f"❌ BINANCE CONNECTION TEST FAILED: {test_error}")
+
         logger.info("Initializing simulator exchange...")
-        await simulator_exchange.initialize()
 
         # Initialize dispatcher
         logger.info("Initializing dispatcher...")

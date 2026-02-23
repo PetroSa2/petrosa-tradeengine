@@ -278,7 +278,7 @@ MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.05"))  # 5%
 MAX_POSITION_SIZE = float(
     os.getenv("MAX_POSITION_SIZE", "100.0")
 )  # Max quantity per position (default)
-MAX_ACCUMULATIONS_PER_POSITION = int(os.getenv("MAX_ACCUMULATIONS_PER_POSITION", "3"))
+MAX_ACCUMULATIONS_PER_POSITION = int(os.getenv("MAX_ACCUMULATIONS_PER_POSITION", "10"))
 ACCUMULATION_COOLDOWN_SECONDS = int(
     os.getenv("ACCUMULATION_COOLDOWN_SECONDS", "300")
 )  # 5 minutes

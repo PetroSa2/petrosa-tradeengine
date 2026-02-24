@@ -348,7 +348,8 @@ class TestTradingConfigManagerSetConfig:
     async def test_set_config_with_validation_error(self, config_manager):
         """Test set_config with invalid parameters"""
         success, config, errors = await config_manager.set_config(
-            parameters={"leverage": 200}, changed_by="test_user"  # Invalid: > 125
+            parameters={"leverage": 200},
+            changed_by="test_user",  # Invalid: > 125
         )
         assert success is False
         assert config is None

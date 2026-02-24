@@ -84,7 +84,7 @@ async def check_mongodb_detailed() -> bool:
 
         leader = await db.leader_election.find_one({"status": "leader"})
         if leader:
-            print(f'👑 Current leader: {leader.get("pod_id", "unknown")}')
+            print(f"👑 Current leader: {leader.get('pod_id', 'unknown')}")
         else:
             print("👑 No leader elected")
 

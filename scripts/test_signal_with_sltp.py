@@ -76,9 +76,9 @@ async def send_test_signal():
         # Convert to dict for NATS
         signal_data = signal.model_dump()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("SENDING TEST SIGNAL WITH SL/TP")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
         logger.info(f"Symbol: {signal.symbol}")
         logger.info(f"Action: {signal.action}")
         logger.info(f"Quantity: {signal.quantity}")
@@ -100,9 +100,9 @@ async def send_test_signal():
         # Close connection
         await nc.close()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("SIGNAL SENT - CHECK TRADING ENGINE LOGS")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
         logger.info("Look for these log messages:")
         logger.info("  📉 PLACING STOP LOSS: ...")
         logger.info("  ✅ STOP LOSS PLACED: ...")

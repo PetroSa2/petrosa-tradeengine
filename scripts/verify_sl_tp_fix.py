@@ -62,9 +62,9 @@ async def verify_fix():
         tp_price = f"{current_price * 1.02:.1f}"  # 2% above
 
         # 1. Open test position
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("📍 OPENING TEST POSITION")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         position_params = {
             "symbol": symbol,
@@ -82,9 +82,9 @@ async def verify_fix():
         await asyncio.sleep(2)
 
         # 2. Place SL order (with FIX - no reduceOnly parameter)
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("📉 PLACING STOP LOSS (WITH FIX)")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         sl_params = {
             "symbol": symbol,
@@ -103,9 +103,9 @@ async def verify_fix():
         )
 
         # 3. Place TP order (with FIX - no reduceOnly parameter)
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("📈 PLACING TAKE PROFIT (WITH FIX)")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         tp_params = {
             "symbol": symbol,
@@ -126,9 +126,9 @@ async def verify_fix():
         # 4. Verify orders exist
         await asyncio.sleep(2)
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🔍 VERIFYING ORDERS ON BINANCE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         open_orders = client.futures_get_open_orders(symbol=symbol)
         sl_orders = [o for o in open_orders if o["type"] == "STOP_MARKET"]
@@ -144,9 +144,9 @@ async def verify_fix():
             )
 
         # 5. Cleanup
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🧹 CLEANING UP")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Cancel all orders
         client.futures_cancel_all_open_orders(symbol=symbol)
@@ -164,9 +164,9 @@ async def verify_fix():
         logger.info("Closed test position")
 
         # Final verification
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("✅ FIX VERIFICATION RESULT")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         if len(sl_orders) > 0 and len(tp_orders) > 0:
             logger.info(

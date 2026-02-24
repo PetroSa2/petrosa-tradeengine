@@ -38,7 +38,7 @@ class DataManagerConfigClient:
         await self.data_manager_client.disconnect()
         logger.info("Disconnected from Data Manager service")
 
-    async def get_global_config(self) -> Optional[TradingConfig]:
+    async def get_global_config(self) -> TradingConfig | None:
         """
         Get global trading configuration from Data Manager.
 
@@ -96,7 +96,7 @@ class DataManagerConfigClient:
             logger.error(f"Failed to upsert global config via Data Manager: {e}")
             return False
 
-    async def get_symbol_config(self, symbol: str) -> Optional[TradingConfig]:
+    async def get_symbol_config(self, symbol: str) -> TradingConfig | None:
         """
         Get symbol-specific trading configuration from Data Manager.
 
@@ -273,7 +273,7 @@ class DataManagerConfigClient:
 
     async def get_symbol_side_config(
         self, symbol: str, side: str
-    ) -> Optional[TradingConfig]:
+    ) -> TradingConfig | None:
         """
         Get symbol-side specific trading configuration from Data Manager.
 
@@ -418,10 +418,10 @@ class DataManagerConfigClient:
     async def rollback_config(
         self,
         changed_by: str,
-        symbol: Optional[str] = None,
-        side: Optional[str] = None,
-        target_version: Optional[int] = None,
-        reason: Optional[str] = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        target_version: int | None = None,
+        reason: str | None = None,
     ) -> bool:
         """
         Rollback configuration via Data Manager.
@@ -440,7 +440,7 @@ class DataManagerConfigClient:
             payload = {
                 "changed_by": changed_by,
                 "target_version": target_version,
-                "reason": reason
+                "reason": reason,
             }
 
             # Map tradeengine scopes to data-manager strategy_id

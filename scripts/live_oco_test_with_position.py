@@ -42,9 +42,9 @@ async def test_live_oco_with_position():
     """Comprehensive live test of OCO implementation with real position"""
 
     try:
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🚀 LIVE OCO IMPLEMENTATION TEST WITH POSITION")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Initialize components
         exchange = BinanceFuturesExchange()
@@ -100,10 +100,10 @@ async def test_live_oco_with_position():
 
         logger.info(f"Position ID: {position_id}")
         logger.info(
-            f"Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price/btc_price-1)*100):+.2f}%)"
+            f"Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price / btc_price - 1) * 100):+.2f}%)"
         )
         logger.info(
-            f"Take Profit: ${take_profit_price:,.2f} ({((take_profit_price/btc_price-1)*100):+.2f}%)"
+            f"Take Profit: ${take_profit_price:,.2f} ({((take_profit_price / btc_price - 1) * 100):+.2f}%)"
         )
 
         oco_result = await dispatcher.oco_manager.place_oco_orders(
@@ -206,7 +206,7 @@ async def test_live_oco_with_position():
                 # Let monitoring run and check for any changes
                 for i in range(3):
                     await asyncio.sleep(5)
-                    logger.info(f"  Monitoring check {i+1}/3...")
+                    logger.info(f"  Monitoring check {i + 1}/3...")
 
                     # Check if orders still exist
                     try:
@@ -314,9 +314,9 @@ async def test_live_oco_with_position():
             logger.error(f"❌ OCO ORDERS FAILED: {oco_result}")
             return False
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🎉 LIVE OCO IMPLEMENTATION TEST COMPLETED")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Final status check
         logger.info("\n📊 FINAL STATUS CHECK")

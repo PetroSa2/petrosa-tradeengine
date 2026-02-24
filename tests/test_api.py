@@ -401,7 +401,6 @@ class TestAPIRootAndBasic:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
@@ -438,7 +437,6 @@ class TestTradeEndpoints:
             patch("tradeengine.api.dispatcher") as mock_dispatcher,
             patch("shared.distributed_lock.distributed_lock_manager") as mock_lock,
         ):
-
             mock_dispatcher.dispatch = AsyncMock(
                 return_value={
                     "status": "executed",
@@ -476,7 +474,6 @@ class TestTradeEndpoints:
             patch("tradeengine.api.dispatcher") as mock_dispatcher,
             patch("shared.distributed_lock.distributed_lock_manager") as mock_lock,
         ):
-
             mock_dispatcher.dispatch = AsyncMock(
                 side_effect=Exception("Processing error")
             )
@@ -575,7 +572,6 @@ class TestOrderEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.get_order_status = AsyncMock(
                 return_value={
                     "order_id": "test-order-1",
@@ -600,7 +596,6 @@ class TestOrderEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.cancel_order = AsyncMock(return_value={"status": "cancelled"})
             mock_simulator.cancel_order = AsyncMock(
                 return_value={"status": "cancelled"}
@@ -752,7 +747,6 @@ class TestAccountAndPriceEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.get_account_info = AsyncMock(
                 return_value={
                     "balances": [{"asset": "USDT", "free": "1000.0", "locked": "0.0"}],
@@ -783,7 +777,6 @@ class TestAccountAndPriceEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.get_account_info = AsyncMock(
                 return_value={
                     "balances": [],
@@ -831,7 +824,6 @@ class TestAccountAndPriceEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.get_price = AsyncMock(side_effect=Exception("Binance error"))
             mock_simulator.get_price = AsyncMock(return_value=45000.0)
 
@@ -848,7 +840,6 @@ class TestAccountAndPriceEndpoints:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
         ):
-
             mock_binance.get_price = AsyncMock(side_effect=Exception("Binance error"))
             mock_simulator.get_price = AsyncMock(
                 side_effect=Exception("Simulator error")

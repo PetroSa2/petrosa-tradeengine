@@ -30,9 +30,9 @@ async def test_oco_direct():
         dispatcher = Dispatcher(exchange)
         await dispatcher.initialize()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("TESTING OCO IMPLEMENTATION DIRECTLY")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Test 1: Place OCO orders directly
         logger.info("\n📊 TEST 1: PLACING OCO ORDERS DIRECTLY")
@@ -136,9 +136,9 @@ async def test_oco_direct():
         else:
             logger.error(f"❌ OCO ORDERS FAILED: {oco_result}")
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("OCO DIRECT TEST COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Cleanup
         await dispatcher.shutdown()

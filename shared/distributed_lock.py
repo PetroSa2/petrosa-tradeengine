@@ -150,8 +150,7 @@ class DistributedLockManager:
                     return True
                 else:
                     logger.debug(
-                        f"Failed to acquire lock '{lock_name}' for pod "
-                        f"{self.pod_id}"
+                        f"Failed to acquire lock '{lock_name}' for pod {self.pod_id}"
                     )
                     return False
 
@@ -175,8 +174,7 @@ class DistributedLockManager:
                 return True
             else:
                 logger.debug(
-                    f"Lock '{lock_name}' not found or not owned by pod "
-                    f"{self.pod_id}"
+                    f"Lock '{lock_name}' not found or not owned by pod {self.pod_id}"
                 )
                 return False
 
@@ -208,8 +206,7 @@ class DistributedLockManager:
                     self.is_leader = False
                     self.leader_pod_id = current_leader_pod
                     logger.info(
-                        f"Pod {self.pod_id} is a follower. Leader: "
-                        f"{current_leader_pod}"
+                        f"Pod {self.pod_id} is a follower. Leader: {current_leader_pod}"
                     )
                     return False
 

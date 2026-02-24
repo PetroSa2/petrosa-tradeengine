@@ -71,8 +71,8 @@ try:
     # Send test logs
     print("\n6. Sending test logs...")
     for i in range(3):
-        test_logger.info(f"SIMPLE TEST LOG {i+1} - {datetime.utcnow().isoformat()}")
-        print(f"   Sent log {i+1}")
+        test_logger.info(f"SIMPLE TEST LOG {i + 1} - {datetime.utcnow().isoformat()}")
+        print(f"   Sent log {i + 1}")
         time.sleep(1)
 
     # Wait and flush

@@ -79,9 +79,9 @@ logger = logging.getLogger(__name__)
 
 for i in range(10):
     logger.info(
-        f"Test log message {i+1} - Testing OTLP log export at {datetime.utcnow().isoformat()}"
+        f"Test log message {i + 1} - Testing OTLP log export at {datetime.utcnow().isoformat()}"
     )
-    logger.warning(f"Test warning message {i+1}")
+    logger.warning(f"Test warning message {i + 1}")
     if i == 5:
         logger.error("Test error message - This is a test error")
     time.sleep(1)

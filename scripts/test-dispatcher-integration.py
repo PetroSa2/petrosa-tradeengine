@@ -322,7 +322,7 @@ class DispatcherIntegrationTester:
         print(f"\nTests Passed: {passed}/{total}")
         print(f"Tests Failed: {failed}/{total}")
         if total > 0:
-            print(f"Success Rate: {(passed/total)*100:.1f}%")
+            print(f"Success Rate: {(passed / total) * 100:.1f}%")
 
         print("\nDetailed Results:")
         for test_name, result in self.test_results.items():

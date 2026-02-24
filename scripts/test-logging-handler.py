@@ -16,7 +16,7 @@ print(f"\nRoot logger level: {logging.getLevelName(root_logger.level)}")
 print(f"Root logger handlers: {len(root_logger.handlers)}")
 print("\nHandlers:")
 for i, handler in enumerate(root_logger.handlers):
-    print(f"  {i+1}. {type(handler).__name__}: {handler}")
+    print(f"  {i + 1}. {type(handler).__name__}: {handler}")
     if hasattr(handler, "level"):
         print(f"     Level: {logging.getLevelName(handler.level)}")
 print()

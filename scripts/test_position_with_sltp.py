@@ -57,9 +57,9 @@ async def test_position_with_sltp():
     position_side = "LONG"
 
     try:
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 1: GET CURRENT PRICE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         ticker = client.futures_symbol_ticker(symbol=symbol)
         current_price = float(ticker["price"])
@@ -73,9 +73,9 @@ async def test_position_with_sltp():
         logger.info(f"📈 Take Profit will be: ${tp_price}")
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 2: OPEN POSITION")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         position_params = {
             "symbol": symbol,
@@ -96,9 +96,9 @@ async def test_position_with_sltp():
         await asyncio.sleep(2)
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 3: PLACE STOP-LOSS (WITH FIX)")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # THIS IS THE FIXED APPROACH - NO reduceOnly parameter
         sl_params = {
@@ -124,9 +124,9 @@ async def test_position_with_sltp():
         logger.info(f"   Close Position: {sl_result.get('closePosition')}")
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 4: PLACE TAKE-PROFIT (WITH FIX)")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # THIS IS THE FIXED APPROACH - NO reduceOnly parameter
         tp_params = {
@@ -154,9 +154,9 @@ async def test_position_with_sltp():
         await asyncio.sleep(2)
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 5: VERIFY ORDERS ON BINANCE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Get current position
         positions = client.futures_position_information(symbol=symbol)
@@ -207,9 +207,9 @@ async def test_position_with_sltp():
             logger.info("  ❌ No Take Profit Orders")
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🎨 HOW BINANCE UI DISPLAYS THIS")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         if sl_orders or tp_orders:
             sl_display = sl_orders[0]["stopPrice"] if sl_orders else "--"
@@ -223,9 +223,9 @@ async def test_position_with_sltp():
             logger.info("\n⚠️  Orders NOT visible in Binance UI!")
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("STEP 6: CLEANUP")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Cancel all orders
         logger.info("Cancelling all open orders...")
@@ -245,9 +245,9 @@ async def test_position_with_sltp():
         logger.info("✅ Position closed")
 
         # ============================================================
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("✅ TEST COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         success = len(sl_orders) > 0 and len(tp_orders) > 0
 

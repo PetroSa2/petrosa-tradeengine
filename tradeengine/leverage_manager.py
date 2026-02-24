@@ -13,8 +13,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from binance import Client
-
-from binance import Client
 from binance.exceptions import BinanceAPIException
 
 from contracts.trading_config import LeverageStatus

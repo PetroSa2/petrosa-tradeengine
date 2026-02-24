@@ -621,7 +621,7 @@ class BinanceFuturesValidator:
         print(f"Tests Failed: {failed}/{total}")
         print(f"Tests Skipped: {skipped}/{total}")
         if total > 0:
-            print(f"Success Rate: {(passed/total)*100:.1f}%")
+            print(f"Success Rate: {(passed / total) * 100:.1f}%")
 
         print("\nDetailed Results:")
         for test_name, result in self.test_results.items():

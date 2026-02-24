@@ -46,9 +46,9 @@ class BinancePositionQuery:
     async def query_position_mode(self) -> dict[str, Any]:
         """Query position mode (hedge or one-way)"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info("🔍 QUERYING POSITION MODE")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             position_mode = self.client.futures_get_position_mode()
             logger.info("Position Mode Response:")
@@ -66,9 +66,9 @@ class BinancePositionQuery:
     async def query_position_information(self) -> list[dict[str, Any]]:
         """Query position information (shows current positions)"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info(f"🔍 QUERYING POSITION INFORMATION - {self.symbol}")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             positions = self.client.futures_position_information(symbol=self.symbol)
 
@@ -99,9 +99,9 @@ class BinancePositionQuery:
     async def query_open_orders(self) -> list[dict[str, Any]]:
         """Query open orders (shows all open orders)"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info(f"🔍 QUERYING OPEN ORDERS - {self.symbol}")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             orders = self.client.futures_get_open_orders(symbol=self.symbol)
 
@@ -134,9 +134,9 @@ class BinancePositionQuery:
     async def query_position_risk(self) -> list[dict[str, Any]]:
         """Query position risk (V2 endpoint - shows positions with more details)"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info(f"🔍 QUERYING POSITION RISK - {self.symbol}")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             # This uses the V2 endpoint which has more details
             risk = self.client.futures_position_information(symbol=self.symbol)
@@ -167,9 +167,9 @@ class BinancePositionQuery:
     async def query_account_information(self) -> dict[str, Any]:
         """Query account information (shows overall account state)"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info("🔍 QUERYING ACCOUNT INFORMATION")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             account = self.client.futures_account()
 
@@ -210,9 +210,9 @@ class BinancePositionQuery:
         2. Filtering by positionSide matching the position
         3. Checking reduceOnly=true flag
         """
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🎨 HOW BINANCE UI DISPLAYS SL/TP")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         try:
             # Get positions
@@ -282,9 +282,9 @@ class BinancePositionQuery:
 
     async def run_all_queries(self):
         """Run all queries"""
-        logger.info(f"\n{'#'*80}")
+        logger.info(f"\n{'#' * 80}")
         logger.info("# BINANCE API POSITION & ORDER QUERY")
-        logger.info(f"{'#'*80}\n")
+        logger.info(f"{'#' * 80}\n")
 
         # Query all endpoints
         await self.query_position_mode()
@@ -294,9 +294,9 @@ class BinancePositionQuery:
         await self.query_account_information()
         await self.check_how_ui_sees_sltp()
 
-        logger.info(f"\n{'#'*80}")
+        logger.info(f"\n{'#' * 80}")
         logger.info("# QUERY COMPLETE")
-        logger.info(f"{'#'*80}\n")
+        logger.info(f"{'#' * 80}\n")
 
 
 async def main():

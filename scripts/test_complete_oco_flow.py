@@ -40,9 +40,9 @@ async def test_complete_oco_flow():
         dispatcher = Dispatcher(exchange)
         await dispatcher.initialize()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("TESTING COMPLETE OCO IMPLEMENTATION FLOW")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Test 1: Create a signal with SL/TP values
         logger.info("\n📊 TEST 1: CREATING SIGNAL WITH SL/TP VALUES")
@@ -166,9 +166,9 @@ async def test_complete_oco_flow():
         else:
             logger.info("ℹ️  OCO MONITORING IS NOT ACTIVE")
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("OCO IMPLEMENTATION TEST COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Cleanup
         await dispatcher.shutdown()

@@ -348,7 +348,7 @@ class BinanceFuturesTestnetTester:
         total = len(self.test_results)
 
         print(f"Tests Passed: {passed}/{total}")
-        print(f"Success Rate: {(passed/total)*100:.1f}%")
+        print(f"Success Rate: {(passed / total) * 100:.1f}%")
 
         print("\nDetailed Results:")
         for test_name, result in self.test_results.items():

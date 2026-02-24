@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -492,9 +492,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        self.active_oco_pairs[position_id]["close_reason"] = (
+                            close_reason
+                        )
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (
@@ -1438,7 +1438,7 @@ class Dispatcher:
                 for attempt in range(max_retries):
                     try:
                         self.logger.info(
-                            f"🔄 Updating position for {order.symbol} (attempt {attempt+1}/{max_retries})"
+                            f"🔄 Updating position for {order.symbol} (attempt {attempt + 1}/{max_retries})"
                         )
                         await asyncio.wait_for(
                             self.position_manager.update_position(order, result),

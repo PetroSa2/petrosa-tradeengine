@@ -131,9 +131,9 @@ class BinanceSLTPTester:
     async def open_test_position(self) -> dict[str, Any] | None:
         """Open a small test position"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info("📍 OPENING TEST POSITION")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             params = {
                 "symbol": self.symbol,
@@ -173,9 +173,9 @@ class BinanceSLTPTester:
         Test Strategy A: Current approach (reduceOnly=True only)
         This is what the current code does
         """
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🧪 TEST A: Current Approach (reduceOnly=True)")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         try:
             # Calculate SL and TP prices
@@ -239,9 +239,9 @@ class BinanceSLTPTester:
         Test Strategy B: Add closePosition=True parameter
         Hypothesis: Binance may need explicit closePosition flag in hedge mode
         """
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🧪 TEST B: With closePosition=True")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         try:
             # Calculate SL and TP prices
@@ -305,9 +305,9 @@ class BinanceSLTPTester:
         Test Strategy C: Without reduceOnly parameter
         Hypothesis: Maybe reduceOnly conflicts with something in hedge mode
         """
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🧪 TEST C: Without reduceOnly")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         try:
             # Calculate SL and TP prices
@@ -371,9 +371,9 @@ class BinanceSLTPTester:
         Test Strategy D: closePosition=True WITHOUT quantity
         Hypothesis: When using closePosition, Binance might not want quantity specified
         """
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🧪 TEST D: closePosition=True without quantity")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         try:
             # Calculate SL and TP prices
@@ -439,9 +439,9 @@ class BinanceSLTPTester:
     async def close_test_position(self) -> bool:
         """Close the test position"""
         try:
-            logger.info(f"\n{'='*80}")
+            logger.info(f"\n{'=' * 80}")
             logger.info("🧹 CLOSING TEST POSITION")
-            logger.info(f"{'='*80}")
+            logger.info(f"{'=' * 80}")
 
             # First, cancel all open orders
             logger.info("Cancelling all open orders...")
@@ -481,9 +481,9 @@ class BinanceSLTPTester:
 
     async def run_all_tests(self):
         """Run all test strategies"""
-        logger.info(f"\n{'#'*80}")
+        logger.info(f"\n{'#' * 80}")
         logger.info("# BINANCE SL/TP TEST SUITE - HEDGE MODE")
-        logger.info(f"{'#'*80}\n")
+        logger.info(f"{'#' * 80}\n")
 
         # Verify hedge mode
         if not await self.verify_hedge_mode():
@@ -500,12 +500,12 @@ class BinanceSLTPTester:
         await self.get_open_orders()
 
         # Ask for confirmation
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("⚠️  READY TO START TESTS")
         logger.info(f"   Symbol: {self.symbol}")
         logger.info(f"   Quantity: {self.test_quantity}")
         logger.info(f"   Approx value: ${self.current_price * self.test_quantity:.2f}")
-        logger.info(f"{'='*80}\n")
+        logger.info(f"{'=' * 80}\n")
 
         # Run tests
         results = {}
@@ -535,9 +535,9 @@ class BinanceSLTPTester:
         await asyncio.sleep(3)
 
         # Final summary
-        logger.info(f"\n{'#'*80}")
+        logger.info(f"\n{'#' * 80}")
         logger.info("# TEST RESULTS SUMMARY")
-        logger.info(f"{'#'*80}\n")
+        logger.info(f"{'#' * 80}\n")
 
         for test_name, result in results.items():
             status = "✅ SUCCESS" if result.get("success") else "❌ FAILED"
@@ -548,9 +548,9 @@ class BinanceSLTPTester:
             else:
                 logger.info(f"   {result.get('verification', 'No verification info')}")
 
-        logger.info(f"\n{'#'*80}")
+        logger.info(f"\n{'#' * 80}")
         logger.info("# FINAL STATUS CHECK")
-        logger.info(f"{'#'*80}\n")
+        logger.info(f"{'#' * 80}\n")
 
         await self.get_open_positions()
         await self.get_open_orders()

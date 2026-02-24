@@ -30,8 +30,9 @@ def log_debug_event(
     global _debug_file
 
     if not _debug_file:
-        import tempfile
         import os
+        import tempfile
+
         log_path = os.path.join(tempfile.gettempdir(), "handler_lifecycle.log")
         _debug_file = open(log_path, "w")  # nosec: B108 - debug script
 
@@ -45,13 +46,13 @@ def log_debug_event(
     stack_trace = "".join(stack)
 
     log_entry = f"""
-{'='*80}
+{"=" * 80}
 [{timestamp}] {event_type.upper()}: {message}{handler_info}
-{'='*80}
+{"=" * 80}
 Stack Trace:
 {stack_trace}
 Current handler count: {len(logging.getLogger().handlers)}
-{'='*80}
+{"=" * 80}
 
 """
 
@@ -123,7 +124,11 @@ def track_logging_changes():
 
 def start_handler_monitoring():
     """Start monitoring logging handler changes"""
-    global _original_addHandler, _original_removeHandler, _original_basicConfig, _monitoring_active
+    global \
+        _original_addHandler, \
+        _original_removeHandler, \
+        _original_basicConfig, \
+        _monitoring_active
 
     if _monitoring_active:
         log_debug_event("MONITORING", "Handler monitoring already active")
@@ -151,7 +156,11 @@ def start_handler_monitoring():
 
 def stop_handler_monitoring():
     """Stop monitoring and restore original methods"""
-    global _original_addHandler, _original_removeHandler, _original_basicConfig, _monitoring_active
+    global \
+        _original_addHandler, \
+        _original_removeHandler, \
+        _original_basicConfig, \
+        _monitoring_active
 
     if not _monitoring_active:
         return

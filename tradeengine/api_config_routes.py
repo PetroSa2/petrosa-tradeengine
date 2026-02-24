@@ -1012,6 +1012,61 @@ async def detect_cross_service_conflicts(
 
 
 @router.get(
+    "/history",
+    response_model=APIResponse,
+    summary="Get configuration history",
+    description="""
+    **For LLM Agents**: Get history of configuration changes.
+
+    Returns audit trail of configuration changes for global, symbol,
+    or symbol-side specific settings.
+
+    **Example Request**: `GET /api/v1/config/history?symbol=BTCUSDT&side=LONG`
+    """,
+)
+async def get_config_history(
+    symbol: str | None = Query(None, description="Trading symbol"),
+    side: Literal["LONG", "SHORT"] | None = Query(None, description="Position side"),
+    limit: int = Query(20, description="Maximum number of records to return"),
+):
+    """Get configuration history."""
+    try:
+        manager = get_config_manager()
+        
+        # Get history from DataManagerConfigClient
+        if hasattr(manager.mongodb_client, "get_config_history"):
+            history = await manager.mongodb_client.get_config_history(
+                symbol=symbol.upper() if symbol else None,
+                side=side,
+                limit=limit
+            )
+            
+            return APIResponse(
+                success=True,
+                data=history,
+                metadata={
+                    "count": len(history),
+                    "symbol": symbol,
+                    "side": side,
+                    "limit": limit
+                },
+            )
+        else:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "UNSUPPORTED_OPERATION",
+                    "message": "Configuration history not supported by current database client"
+                },
+            )
+    except Exception as e:
+        logger.error(f"Error getting config history: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.get(
     "/health",
     summary="Configuration system health check",
     description="Check if configuration system is operational",

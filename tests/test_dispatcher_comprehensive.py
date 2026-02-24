@@ -716,7 +716,7 @@ class TestDispatcherGetterMethods:
     async def test_get_price(self, dispatcher):
         """Test getting price"""
         price = await dispatcher.get_price("BTCUSDT")
-        assert isinstance(price, (int, float))
+        assert isinstance(price, int | float)
         assert price > 0
 
     def test_get_metrics(self, dispatcher):

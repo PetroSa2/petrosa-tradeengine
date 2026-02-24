@@ -571,7 +571,7 @@ class TestConfigValidationEndpoint:
         assert error["code"] == "OUT_OF_RANGE"
         # Suggested value should be a number (from schema min/max/default)
         assert error["suggested_value"] is not None
-        assert isinstance(error["suggested_value"], (int, float))
+        assert isinstance(error["suggested_value"], int | float)
 
     @patch("tradeengine.api_config_routes.get_config_manager")
     @patch("tradeengine.api_config_routes.detect_cross_service_conflicts")

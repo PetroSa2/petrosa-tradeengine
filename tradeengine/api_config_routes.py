@@ -816,7 +816,7 @@ async def validate_config(request: ConfigValidationRequest):
         if "leverage" in request.parameters:
             leverage = request.parameters["leverage"]
             # Type check to avoid comparison errors with invalid types
-            if isinstance(leverage, (int, float)) and leverage > 50:
+            if isinstance(leverage, int | float) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
                 estimated_impact["warning"] = (
                     "High leverage increases risk significantly"

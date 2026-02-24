@@ -196,7 +196,7 @@ def test_signal_model_config_json_encoders() -> None:
     signal_dict = signal.model_dump()
     assert "timestamp" in signal_dict
     # Verify timestamp is serialized (should be ISO format string or datetime)
-    assert isinstance(signal_dict["timestamp"], (str, datetime))
+    assert isinstance(signal_dict["timestamp"], str | datetime)
 
 
 def test_order_serialization(sample_order: TradeOrder) -> None:
@@ -236,7 +236,7 @@ def test_order_model_config_json_encoders() -> None:
     order_dict = order.model_dump()
     if "created_at" in order_dict:
         # Verify datetime is serialized (should be ISO format string)
-        assert isinstance(order_dict["created_at"], (str, datetime))
+        assert isinstance(order_dict["created_at"], str | datetime)
 
 
 def test_signal_deserialization() -> None:

@@ -871,7 +871,7 @@ def validate_parameters(parameters: dict[str, Any]) -> tuple[bool, list[str]]:
             errors.append(f"{param_name} must be integer, got {type(param_value)}")
             continue
 
-        if param_type == "float" and not isinstance(param_value, (int, float)):
+        if param_type == "float" and not isinstance(param_value, int | float):
             errors.append(f"{param_name} must be float, got {type(param_value)}")
             continue
 

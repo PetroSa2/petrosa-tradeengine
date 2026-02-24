@@ -83,7 +83,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
                 logger.info("✓ Upserted global trading configuration via Data Manager")
                 return True
             else:
@@ -147,7 +147,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
                 logger.info(f"✓ Upserted symbol config for {symbol} via Data Manager")
                 return True
             else:
@@ -246,21 +246,40 @@ class DataManagerConfigClient:
             logger.error(f"Failed to create audit record via Data Manager: {e}")
             return False
 
-    async def get_audit_trail(self, limit: int = 100) -> list[dict[str, Any]]:
+    async def get_audit_trail(
+        self, 
+        symbol: str | None = None, 
+        side: str | None = None, 
+        limit: int = 100
+    ) -> list[dict[str, Any]]:
         """
         Get audit trail from Data Manager.
 
         Args:
+            symbol: Optional symbol to filter by
+            side: Optional side to filter by
             limit: Maximum number of records to return
 
         Returns:
             List of audit records
         """
         try:
+            # Build filter parameters
+            filter_params = {}
+            if symbol:
+                filter_params["symbol"] = symbol
+            if side:
+                filter_params["side"] = side
+
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_config_audit",
-                params={"sort_by": "timestamp", "sort_order": "desc", "limit": limit},
+                params={
+                    "filter": filter_params,
+                    "sort_by": "timestamp", 
+                    "sort_order": "desc", 
+                    "limit": limit
+                },
             )
 
             records = response.get("data", []) if response else []
@@ -270,6 +289,25 @@ class DataManagerConfigClient:
         except Exception as e:
             logger.error(f"Failed to get audit trail via Data Manager: {e}")
             return []
+
+    async def get_config_history(
+        self, 
+        symbol: str | None = None, 
+        side: str | None = None, 
+        limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """
+        Get configuration history for a specific scope.
+
+        Args:
+            symbol: Optional symbol to filter by
+            side: Optional side to filter by
+            limit: Maximum number of records to return
+
+        Returns:
+            List of configuration history records
+        """
+        return await self.get_audit_trail(symbol=symbol, side=side, limit=limit)
 
     async def get_symbol_side_config(
         self, symbol: str, side: str
@@ -353,7 +391,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
                 logger.info(
                     f"✓ Upserted symbol-side config for {symbol}-{side} via Data Manager"
                 )
@@ -463,7 +501,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
                 logger.info(
                     f"✓ Upserted strategy config for {strategy_id} via Data Manager"
                 )
@@ -517,8 +555,8 @@ class DataManagerConfigClient:
                 params["side"] = side
 
             # Use the internal _client which handles base_url and auth
-            response = await self.data_manager_client._client.post(
-                url, json=payload, params=params
+            response = await self.data_manager_client._client.request(
+                "POST", url, json=payload, params=params
             )
 
             return response is not None

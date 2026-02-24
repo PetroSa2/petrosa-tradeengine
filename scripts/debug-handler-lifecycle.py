@@ -30,7 +30,10 @@ def log_debug_event(
     global _debug_file
 
     if not _debug_file:
-        _debug_file = open("/tmp/handler_lifecycle.log", "w")
+        import tempfile
+        import os
+        log_path = os.path.join(tempfile.gettempdir(), "handler_lifecycle.log")
+        _debug_file = open(log_path, "w")  # nosec: B108 - debug script
 
     timestamp = datetime.utcnow().isoformat()
     handler_info = ""

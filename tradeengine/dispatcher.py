@@ -2546,7 +2546,7 @@ class Dispatcher:
         )
 
         # Generate hash for shorter lock key
-        fingerprint_hash = hashlib.md5(fingerprint_data.encode()).hexdigest()[:12]
+        fingerprint_hash = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:12]
 
         return f"{signal.strategy_id}_{signal.symbol}_{fingerprint_hash}"
 

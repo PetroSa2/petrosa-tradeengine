@@ -283,9 +283,9 @@ async def test_performance_no_latency_impact(
 
     # Verify trace extraction overhead is minimal
     # Allow more generous timeout for test environment
-    assert elapsed_ms < 100, (
-        f"Trace extraction took {elapsed_ms:.2f}ms (expected <100ms)"
-    )
+    assert (
+        elapsed_ms < 100
+    ), f"Trace extraction took {elapsed_ms:.2f}ms (expected <100ms)"
 
 
 @pytest.mark.asyncio

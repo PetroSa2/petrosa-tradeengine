@@ -247,10 +247,7 @@ class DataManagerConfigClient:
             return False
 
     async def get_audit_trail(
-        self, 
-        symbol: str | None = None, 
-        side: str | None = None, 
-        limit: int = 100
+        self, symbol: str | None = None, side: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
         """
         Get audit trail from Data Manager.
@@ -276,9 +273,9 @@ class DataManagerConfigClient:
                 collection="trading_config_audit",
                 params={
                     "filter": filter_params,
-                    "sort_by": "timestamp", 
-                    "sort_order": "desc", 
-                    "limit": limit
+                    "sort_by": "timestamp",
+                    "sort_order": "desc",
+                    "limit": limit,
                 },
             )
 
@@ -291,10 +288,7 @@ class DataManagerConfigClient:
             return []
 
     async def get_config_history(
-        self, 
-        symbol: str | None = None, 
-        side: str | None = None, 
-        limit: int = 20
+        self, symbol: str | None = None, side: str | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         """
         Get configuration history for a specific scope.

@@ -87,9 +87,9 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert execution_result.get("status") == "rejected", (
-        f"Expected rejected status, got {execution_result.get('status')}"
-    )
+    assert (
+        execution_result.get("status") == "rejected"
+    ), f"Expected rejected status, got {execution_result.get('status')}"
     assert (
         "risk" in execution_result.get("reason", "").lower()
         or "limit" in execution_result.get("reason", "").lower()
@@ -130,9 +130,9 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert execution_result.get("status") == "rejected", (
-        f"Expected rejected status, got {execution_result.get('status')}"
-    )
+    assert (
+        execution_result.get("status") == "rejected"
+    ), f"Expected rejected status, got {execution_result.get('status')}"
     assert (
         "daily loss" in execution_result.get("reason", "").lower()
         or "loss limit" in execution_result.get("reason", "").lower()
@@ -193,9 +193,9 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert execution_result.get("status") == "rejected", (
-        f"Expected rejected status, got {execution_result.get('status')}"
-    )
+    assert (
+        execution_result.get("status") == "rejected"
+    ), f"Expected rejected status, got {execution_result.get('status')}"
     assert (
         "risk" in execution_result.get("reason", "").lower()
         or "exposure" in execution_result.get("reason", "").lower()
@@ -300,9 +300,9 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
     )
 
     # Verify metric actually incremented (not just >= which allows no change)
-    assert final_count > initial_count, (
-        f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
-    )
+    assert (
+        final_count > initial_count
+    ), f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
 
 
 @pytest.mark.integration

@@ -67,7 +67,7 @@ router = APIRouter(prefix="/api/v1/config/filters", tags=["trading-filters"])
 
 @router.get("/strategy/{strategy_id}", response_model=APIResponse)
 async def get_strategy_filters(
-    strategy_id: str = Path(..., description="Strategy ID")
+    strategy_id: str = Path(..., description="Strategy ID"),
 ) -> APIResponse:
     """Get strategy-specific filters."""
     try:

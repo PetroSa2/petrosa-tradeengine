@@ -9,8 +9,8 @@ The trade execution filters system provides fine-grained control over which trad
 The system implements a 5-layer filter hierarchy with the following priority (highest to lowest):
 
 1. **Per-Side Filters** - Specific to symbol and position side (e.g., BTCUSDT-LONG)
-2. **Per-Pair Filters** - Specific to trading pair (e.g., BTCUSDT)
-3. **Per-Strategy Filters** - Specific to trading strategy (e.g., momentum_strategy)
+2. **Per-Strategy Filters** - Specific to trading strategy (e.g., momentum_strategy)
+3. **Per-Pair Filters** - Specific to trading pair (e.g., BTCUSDT)
 4. **Global Filters** - Applied to all trades
 5. **Hardcoded Defaults** - Built-in safety limits
 

@@ -19,6 +19,7 @@ def pytest_configure(config):
     os.environ["OTEL_NO_AUTO_INIT"] = "1"
     os.environ["OTEL_SDK_DISABLED"] = "true"
 
+
 # Set up test environment BEFORE any imports that might trigger validation
 os.environ.update(
     {

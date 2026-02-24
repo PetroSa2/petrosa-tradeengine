@@ -7,6 +7,7 @@ at global, symbol, and symbol-side levels.
 
 import logging
 import os
+from datetime import datetime
 from typing import Any, Literal
 
 import httpx
@@ -61,7 +62,7 @@ class ConfigResponse(BaseModel):
     """Response model for configuration queries."""
 
     symbol: str | None = Field(None, description="Trading symbol")
-    side: Literal["LONG", "SHORT" | None] = Field(None, description="Position side")
+    side: Literal["LONG", "SHORT"] | None = Field(None, description="Position side")
     parameters: dict[str, Any] = Field(..., description="Configuration parameters")
     version: int = Field(..., description="Configuration version")
     source: str = Field(..., description="Configuration source (mongodb/mysql/default)")
@@ -133,7 +134,7 @@ class ConfigValidationRequest(BaseModel):
     symbol: str | None = Field(
         None, description="Trading symbol (optional, for symbol-specific validation)"
     )
-    side: Literal["LONG", "SHORT" | None] = Field(
+    side: Literal["LONG", "SHORT"] | None = Field(
         None,
         description="Position side (optional, for symbol-side-specific validation)",
     )
@@ -178,7 +179,7 @@ router = APIRouter(prefix="/api/v1/config", tags=["trading-configuration"])
 async def rollback_config(
     request: RollbackRequest,
     symbol: str | None = Query(None, description="Trading symbol"),
-    side: Literal["LONG", "SHORT" | None] = Query(None, description="Position side"),
+    side: Literal["LONG", "SHORT"] | None = Query(None, description="Position side"),
 ):
     """Rollback configuration."""
     try:

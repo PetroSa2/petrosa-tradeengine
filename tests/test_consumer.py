@@ -511,7 +511,7 @@ class TestMessageHandler:
         consumer.dispatcher = mock_dispatcher
 
         mock_nc = AsyncMock()
-        mock_nc.publish = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_nc.publish = AsyncMock(side_effect=TimeoutError())
         consumer.nc = mock_nc
 
         mock_msg = AsyncMock()

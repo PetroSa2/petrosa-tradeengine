@@ -454,7 +454,7 @@ class PositionManager:
                 await asyncio.wait_for(
                     self._sync_positions_to_data_manager(), timeout=2.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"⚠️  Data Manager sync timed out for {symbol} {position_side} (non-critical, continuing)"
                 )
@@ -588,7 +588,7 @@ class PositionManager:
                     f"Position {order.position_id} created via Data Manager for "
                     f"{order.symbol} {order.position_side}"
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"⚠️  Data Manager position insert timed out for {order.position_id} (non-critical, continuing)"
                 )
@@ -602,7 +602,7 @@ class PositionManager:
                 await asyncio.wait_for(
                     self._export_position_opened_metrics(position_data), timeout=1.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"⚠️  Metrics export timed out for {order.position_id} (non-critical)"
                 )

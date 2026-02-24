@@ -74,9 +74,9 @@ class MetricsAggregator:
     async def get_metrics(
         self,
         start_time: datetime,
-        metric_filter: Optional[str] = None,
-        strategy_id: Optional[str] = None,
-        symbol: Optional[str] = None,
+        metric_filter: str | None = None,
+        strategy_id: str | None = None,
+        symbol: str | None = None,
     ) -> dict[str, Any]:
         """
         Get aggregated metrics for the specified time window.
@@ -151,9 +151,9 @@ class MetricsAggregator:
         self,
         start_time: datetime,
         end_time: datetime,
-        strategy_id: Optional[str],
-        symbol: Optional[str],
-    ) -> Optional[LatencyMetrics]:
+        strategy_id: str | None,
+        symbol: str | None,
+    ) -> LatencyMetrics | None:
         """
         Get latency metrics from monitoring system.
 
@@ -177,9 +177,9 @@ class MetricsAggregator:
         self,
         start_time: datetime,
         end_time: datetime,
-        strategy_id: Optional[str],
-        symbol: Optional[str],
-    ) -> Optional[ThroughputMetrics]:
+        strategy_id: str | None,
+        symbol: str | None,
+    ) -> ThroughputMetrics | None:
         """Get throughput metrics"""
         try:
             # TODO: Implement actual Prometheus query
@@ -201,9 +201,9 @@ class MetricsAggregator:
         self,
         start_time: datetime,
         end_time: datetime,
-        strategy_id: Optional[str],
-        symbol: Optional[str],
-    ) -> Optional[ErrorMetrics]:
+        strategy_id: str | None,
+        symbol: str | None,
+    ) -> ErrorMetrics | None:
         """Get error rate metrics"""
         try:
             # TODO: Implement actual Prometheus query
@@ -224,7 +224,7 @@ class MetricsAggregator:
         self,
         start_time: datetime,
         end_time: datetime,
-    ) -> Optional[ResourceUsageMetrics]:
+    ) -> ResourceUsageMetrics | None:
         """Get resource usage metrics"""
         try:
             # TODO: Implement actual Kubernetes/Prometheus query
@@ -240,9 +240,9 @@ class MetricsAggregator:
 
     async def get_success_rates(
         self,
-        strategy_id: Optional[str],
+        strategy_id: str | None,
         window: str,
-        symbol: Optional[str],
+        symbol: str | None,
     ) -> dict[str, Any]:
         """
         Get success rate metrics for strategies.
@@ -285,7 +285,7 @@ class MetricsAggregator:
 
     async def get_resource_usage(
         self,
-        pod_id: Optional[str],
+        pod_id: str | None,
         timeframe: str,
     ) -> dict[str, Any]:
         """
@@ -331,7 +331,7 @@ class MetricsAggregator:
         metric: str,
         period: str,
         interval: str,
-        strategy_id: Optional[str] = None,
+        strategy_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Get metric evolution over time.
@@ -383,7 +383,7 @@ class MetricsAggregator:
         self,
         before: datetime,
         after: datetime,
-        metric: Optional[str],
+        metric: str | None,
         window: int,
     ) -> dict[str, Any]:
         """
@@ -462,9 +462,9 @@ class MetricsAggregator:
     def _get_cache_key(
         self,
         start_time: datetime,
-        metric_filter: Optional[str],
-        strategy_id: Optional[str],
-        symbol: Optional[str],
+        metric_filter: str | None,
+        strategy_id: str | None,
+        symbol: str | None,
     ) -> str:
         """Generate cache key for metrics query"""
         return f"{start_time.isoformat()}:{metric_filter}:{strategy_id}:{symbol}"

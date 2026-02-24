@@ -447,7 +447,7 @@ class TestPositionCreation:
         """Test position creation handling timeout"""
         # Mock position manager to timeout
         dispatcher.position_manager.create_position_record = AsyncMock(
-            side_effect=asyncio.TimeoutError()
+            side_effect=TimeoutError()
         )
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher._signal_to_order = AsyncMock(

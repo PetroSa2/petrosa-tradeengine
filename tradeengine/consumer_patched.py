@@ -326,7 +326,7 @@ class SignalConsumer:
                                 timeout=0.5,  # 500ms timeout
                             )
                             logger.info("📤 NATS ACK SENT to %s", msg.reply)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.warning(
                                 "⏱️ ACK publish timed out for %s - continuing anyway",
                                 msg.reply,
@@ -383,7 +383,7 @@ class SignalConsumer:
                         timeout=0.5,
                     )
                     logger.info("📤 NATS ERROR RESPONSE SENT to %s", msg.reply)
-                except (asyncio.TimeoutError, Exception):
+                except (TimeoutError, Exception):
                     pass  # Don't block on error ACK
 
     def _map_signal_fields(self, signal_data: dict) -> dict:

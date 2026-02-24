@@ -1,11 +1,11 @@
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class SignalType(str, Enum):
+class SignalType(StrEnum):
     """Signal types for trading actions"""
 
     BUY = "buy"
@@ -14,7 +14,7 @@ class SignalType(str, Enum):
     CLOSE = "close"
 
 
-class SignalStrength(str, Enum):
+class SignalStrength(StrEnum):
     """Signal strength levels"""
 
     WEAK = "weak"
@@ -23,7 +23,7 @@ class SignalStrength(str, Enum):
     EXTREME = "extreme"
 
 
-class TimeFrame(str, Enum):
+class TimeFrame(StrEnum):
     """Trading timeframes for signal analysis"""
 
     TICK = "tick"  # Real-time tick data
@@ -44,7 +44,7 @@ class TimeFrame(str, Enum):
     MONTH_1 = "1M"  # 1 month
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     """Supported order types"""
 
     MARKET = "market"
@@ -57,7 +57,7 @@ class OrderType(str, Enum):
     CONDITIONAL_STOP = "conditional_stop"  # Execute if price crosses stop level
 
 
-class TimeInForce(str, Enum):
+class TimeInForce(StrEnum):
     """Order time in force options"""
 
     GTC = "GTC"  # Good Till Canceled
@@ -66,7 +66,7 @@ class TimeInForce(str, Enum):
     GTX = "GTX"  # Good Till Crossing
 
 
-class StrategyMode(str, Enum):
+class StrategyMode(StrEnum):
     """Strategy processing modes"""
 
     DETERMINISTIC = "deterministic"  # Rule-based processing

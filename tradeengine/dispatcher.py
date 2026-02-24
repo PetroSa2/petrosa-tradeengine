@@ -1456,7 +1456,7 @@ class Dispatcher:
                             f"🔍 DEBUG: position_updated={position_updated}, breaking from retry loop"
                         )
                         break  # Success, exit retry loop
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if attempt < max_retries - 1:
                             backoff = 2**attempt
                             self.logger.warning(
@@ -1502,7 +1502,7 @@ class Dispatcher:
                         self.logger.info(
                             f"✅ Position record created for {order.symbol}"
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Position record creation timed out for {order.symbol} - continuing anyway"
                         )
@@ -1539,7 +1539,7 @@ class Dispatcher:
                             self.logger.warning(
                                 f"⚠️  No signal found for order {order.order_id} - skipping strategy position creation"
                             )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Strategy position creation timed out for {order.symbol} - continuing anyway"
                         )
@@ -1566,7 +1566,7 @@ class Dispatcher:
                         self.logger.info(
                             f"✅ Risk management orders placed for {order.symbol}"
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Risk management orders timed out for {order.symbol} - continuing anyway"
                         )

@@ -95,7 +95,7 @@ class DataManagerClient:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
         timeout: int = 30,
         max_retries: int = 3,
     ):
@@ -147,7 +147,7 @@ class DataManagerClient:
 
     # Configuration Management Methods
 
-    async def get_global_config(self) -> Optional[TradingConfig]:
+    async def get_global_config(self) -> TradingConfig | None:
         """Get global trading configuration."""
         try:
             result = await self._client.query(
@@ -209,7 +209,7 @@ class DataManagerClient:
             self._logger.error(f"Error deleting global config: {e}")
             return False
 
-    async def get_symbol_config(self, symbol: str) -> Optional[TradingConfig]:
+    async def get_symbol_config(self, symbol: str) -> TradingConfig | None:
         """Get symbol-specific trading configuration."""
         try:
             result = await self._client.query(
@@ -277,7 +277,7 @@ class DataManagerClient:
 
     async def get_symbol_side_config(
         self, symbol: str, side: str
-    ) -> Optional[TradingConfig]:
+    ) -> TradingConfig | None:
         """Get symbol-side-specific trading configuration."""
         try:
             result = await self._client.query(
@@ -372,7 +372,7 @@ class DataManagerClient:
             return False
 
     async def get_audit_trail(
-        self, symbol: Optional[str] = None, side: Optional[str] = None, limit: int = 100
+        self, symbol: str | None = None, side: str | None = None, limit: int = 100
     ) -> list[TradingConfigAudit]:
         """Get audit trail records with optional filters."""
         try:
@@ -404,7 +404,7 @@ class DataManagerClient:
 
     # Leverage Status Methods
 
-    async def get_leverage_status(self, symbol: str) -> Optional[LeverageStatus]:
+    async def get_leverage_status(self, symbol: str) -> LeverageStatus | None:
         """Get leverage status for symbol."""
         try:
             result = await self._client.query(

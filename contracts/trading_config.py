@@ -25,13 +25,13 @@ class TradingConfig(BaseModel):
     - Symbol-Side: Applies to specific symbol and specific side only
     """
 
-    id: Optional[str] = Field(None, description="Configuration ID")
+    id: str | None = Field(None, description="Configuration ID")
 
     # Scope identifiers
-    symbol: Optional[str] = Field(
+    symbol: str | None = Field(
         None, description="Trading symbol (None for global configs, e.g., 'BTCUSDT')"
     )
-    side: Optional[Literal["LONG", "SHORT"]] = Field(
+    side: Literal["LONG", "SHORT"] | None = Field(
         None, description="Position side (None for global/symbol configs)"
     )
 
@@ -67,7 +67,7 @@ class TradingConfig(BaseModel):
 
     @field_validator("side")
     @classmethod
-    def validate_side(cls, v: Optional[str]) -> Optional[str]:
+    def validate_side(cls, v: str | None) -> str | None:
         """Validate position side."""
         if v is not None and v not in ["LONG", "SHORT"]:
             raise ValueError("Side must be 'LONG' or 'SHORT'")
@@ -114,14 +114,14 @@ class TradingConfigAudit(BaseModel):
     debugging, and performance analysis.
     """
 
-    id: Optional[str] = Field(None, description="Audit record ID")
+    id: str | None = Field(None, description="Audit record ID")
 
     # Scope of change
     config_type: Literal["global", "symbol", "symbol_side"] = Field(
         ..., description="Type of configuration that was changed"
     )
-    symbol: Optional[str] = Field(None, description="Symbol if applicable")
-    side: Optional[Literal["LONG", "SHORT"]] = Field(
+    symbol: str | None = Field(None, description="Symbol if applicable")
+    side: Literal["LONG", "SHORT"] | None = Field(
         None, description="Side if applicable"
     )
 
@@ -131,22 +131,22 @@ class TradingConfigAudit(BaseModel):
     )
 
     # Before/after state
-    parameters_before: Optional[dict[str, Any]] = Field(
+    parameters_before: dict[str, Any] | None = Field(
         None, description="Parameters before the change"
     )
-    parameters_after: Optional[dict[str, Any]] = Field(
+    parameters_after: dict[str, Any] | None = Field(
         None, description="Parameters after the change"
     )
-    version_before: Optional[int] = Field(
+    version_before: int | None = Field(
         None, description="Version number before the change"
     )
-    version_after: Optional[int] = Field(
+    version_after: int | None = Field(
         None, description="Version number after the change"
     )
 
     # Audit metadata
     changed_by: str = Field(..., description="Who/what made the change")
-    reason: Optional[str] = Field(None, description="Reason for the change")
+    reason: str | None = Field(None, description="Reason for the change")
     timestamp: datetime = Field(
         default_factory=datetime.utcnow, description="When the change occurred"
     )
@@ -192,7 +192,7 @@ class LeverageStatus(BaseModel):
     and actual leverage (on Binance exchange) for each symbol.
     """
 
-    id: Optional[str] = Field(None, description="Status record ID")
+    id: str | None = Field(None, description="Status record ID")
 
     symbol: str = Field(..., description="Trading symbol")
 
@@ -200,18 +200,18 @@ class LeverageStatus(BaseModel):
     configured_leverage: int = Field(
         ..., description="Leverage configured in our system", ge=1, le=125
     )
-    actual_leverage: Optional[int] = Field(
+    actual_leverage: int | None = Field(
         None, description="Actual leverage on Binance (None if unknown)", ge=1, le=125
     )
 
     # Sync status
-    last_sync_at: Optional[datetime] = Field(
+    last_sync_at: datetime | None = Field(
         None, description="When leverage was last synced with Binance"
     )
     last_sync_success: bool = Field(
         False, description="Whether last sync attempt was successful"
     )
-    last_sync_error: Optional[str] = Field(
+    last_sync_error: str | None = Field(
         None, description="Error message if sync failed"
     )
 

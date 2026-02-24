@@ -24,7 +24,7 @@ _monitoring_active = False
 
 
 def log_debug_event(
-    event_type: str, message: str, handler: Optional[logging.Handler] = None
+    event_type: str, message: str, handler: logging.Handler | None = None
 ):
     """Log debug events to file with stack trace"""
     global _debug_file

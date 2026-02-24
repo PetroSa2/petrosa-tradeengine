@@ -2,8 +2,10 @@
 Tests for configuration rollback in Trade Engine.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from tradeengine.config_manager import TradingConfigManager
 
 
@@ -21,10 +23,10 @@ async def test_trading_config_rollback(mock_mongodb_client):
     manager = TradingConfigManager(mongodb_client=mock_mongodb_client)
     # Mock get_config
     manager.get_config = AsyncMock(return_value={"leverage": 10})
-    
+
     # Execute
     success, config, errors = await manager.rollback_config("admin", symbol="BTCUSDT")
-    
+
     # Verify
     assert success is True
     assert config.symbol == "BTCUSDT"

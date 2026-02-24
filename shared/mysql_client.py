@@ -142,7 +142,7 @@ class DataManagerPositionClient:
             )
             return False
 
-    async def get_position(self, position_id: str) -> Optional[dict[str, Any]]:
+    async def get_position(self, position_id: str) -> dict[str, Any] | None:
         """
         Get a specific position by ID via Data Manager.
 
@@ -173,7 +173,7 @@ class DataManagerPositionClient:
             return None
 
     async def get_open_positions(
-        self, strategy_id: Optional[str] = None
+        self, strategy_id: str | None = None
     ) -> list[dict[str, Any]]:
         """
         Get all open positions via Data Manager.
@@ -286,7 +286,7 @@ class DataManagerPositionClient:
             )
             return False
 
-    async def get_daily_pnl(self, date: str) -> Optional[float]:
+    async def get_daily_pnl(self, date: str) -> float | None:
         """
         Get daily P&L for a specific date via Data Manager.
 

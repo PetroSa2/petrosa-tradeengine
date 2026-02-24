@@ -366,7 +366,7 @@ class TradingConfigManager:
                     self.invalidate_cache(symbol, side)
                     # Get the new config (resolved)
                     params = await self.get_config(symbol, side)
-                    
+
                     # Return a synthetic config object
                     config = TradingConfig(
                         symbol=symbol,
@@ -379,7 +379,7 @@ class TradingConfigManager:
                     return True, config, []
                 else:
                     return False, None, ["Rollback failed in Data Manager"]
-            
+
             return False, None, ["Rollback not supported by current database client"]
         except Exception as e:
             logger.error(f"Error rolling back config: {e}")

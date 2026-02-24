@@ -41,7 +41,7 @@ class MySQLConfigRepository:
         pass
 
     # Stub methods - will implement if MongoDB fails
-    async def get_global_config(self) -> Optional[TradingConfig]:
+    async def get_global_config(self) -> TradingConfig | None:
         """Get global config from MySQL."""
         return None
 
@@ -49,7 +49,7 @@ class MySQLConfigRepository:
         """Set global config in MySQL."""
         return False
 
-    async def get_symbol_config(self, symbol: str) -> Optional[TradingConfig]:
+    async def get_symbol_config(self, symbol: str) -> TradingConfig | None:
         """Get symbol config from MySQL."""
         return None
 
@@ -59,7 +59,7 @@ class MySQLConfigRepository:
 
     async def get_symbol_side_config(
         self, symbol: str, side: str
-    ) -> Optional[TradingConfig]:
+    ) -> TradingConfig | None:
         """Get symbol-side config from MySQL."""
         return None
 
@@ -71,7 +71,7 @@ class MySQLConfigRepository:
         """Add audit record to MySQL."""
         return False
 
-    async def get_leverage_status(self, symbol: str) -> Optional[LeverageStatus]:
+    async def get_leverage_status(self, symbol: str) -> LeverageStatus | None:
         """Get leverage status from MySQL."""
         return None
 

@@ -7,7 +7,7 @@ through the petrosa-data-manager service, replacing all direct MongoDB access.
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from tradeengine.services.data_manager_client import DataManagerClient
@@ -442,22 +442,22 @@ class DataManagerConfigClient:
                 "target_version": target_version,
                 "reason": reason
             }
-            
+
             # Map tradeengine scopes to data-manager strategy_id
             strategy_id = "tradeengine"
-            
+
             url = f"/api/v1/config/rollback/strategies/{strategy_id}"
             params = {}
             if symbol:
                 params["symbol"] = symbol
             if side:
                 params["side"] = side
-                
+
             # Use the internal _client which handles base_url and auth
             response = await self.data_manager_client._client.post(
                 url, json=payload, params=params
             )
-            
+
             return response is not None
         except Exception as e:
             logger.error(f"Failed to rollback config via Data Manager: {e}")

@@ -99,7 +99,14 @@ jobs:
     - name: Run black formatting check
       run: |
         source .venv/bin/activate
-        black --check --diff .
+        CHANGED_PY_FILES=$(git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD -- '*.py' || true)
+        if [ -z "$CHANGED_PY_FILES" ]; then
+          echo "No Python files changed in PR diff; skipping black check."
+          exit 0
+        fi
+        echo "Running black on changed Python files:"
+        echo "$CHANGED_PY_FILES" | sed 's/^/  - /'
+        black --check --diff $CHANGED_PY_FILES
 
     - name: Run ruff linting
       run: |

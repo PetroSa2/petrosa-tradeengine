@@ -9,7 +9,7 @@ This test suite verifies:
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest

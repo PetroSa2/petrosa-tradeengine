@@ -10,7 +10,6 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
-from typing import Dict
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce

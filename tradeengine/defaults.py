@@ -13,7 +13,7 @@ All parameters are documented with:
 - Impact description
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 # =============================================================================
 # DEFAULT TRADING PARAMETERS

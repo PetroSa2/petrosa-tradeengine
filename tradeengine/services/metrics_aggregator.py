@@ -8,7 +8,7 @@ to prevent query overload.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from tradeengine.models.metrics import (
     ErrorMetrics,

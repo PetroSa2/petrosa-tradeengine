@@ -26,10 +26,10 @@ class TestAssertionChecker(ast.NodeVisitor):
 
     def __init__(self):
         self.has_assertion = False
-        self.test_functions: list[tuple[str, int, bool]] = (
-            []
-        )  # (name, line, has_assertion)
-        self.current_test: Optional[str] = None
+        self.test_functions: list[
+            tuple[str, int, bool]
+        ] = []  # (name, line, has_assertion)
+        self.current_test: str | None = None
         self.current_line: int = 0
 
     def visit_FunctionDef(self, node: ast.FunctionDef):

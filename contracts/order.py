@@ -1,18 +1,18 @@
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     """Order side options"""
 
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     """Order type options"""
 
     MARKET = "market"
@@ -25,7 +25,7 @@ class OrderType(str, Enum):
     CONDITIONAL_STOP = "conditional_stop"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     """Order status options"""
 
     PENDING = "pending"

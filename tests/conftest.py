@@ -1,4 +1,10 @@
+"""
+Global test configuration and fixtures for petrosa-tradeengine.
+"""
+
 import os
+from collections.abc import Generator
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -9,31 +15,9 @@ os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
 
 
 def pytest_configure(config):
-    """
-    Setup before any tests are run.
-    """
-    os.environ["OTEL_NO_AUTO_INIT"] = "1"
-    os.environ["OTEL_SDK_DISABLED"] = "true"
-
-
-"""
-Global test configuration and fixtures for petrosa-tradeengine.
-"""
-
-import os
-from typing import Generator
-from unittest.mock import AsyncMock, Mock, patch
-
-import pytest
-
-# Disable OpenTelemetry auto-initialization during tests
-os.environ["OTEL_NO_AUTO_INIT"] = "1"
-os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
-
-
-def pytest_configure(config):
     """Setup before any tests are run."""
     os.environ["OTEL_NO_AUTO_INIT"] = "1"
+    os.environ["OTEL_SDK_DISABLED"] = "true"
 
 
 # Set up test environment BEFORE any imports that might trigger validation
@@ -533,9 +517,9 @@ def get_real_configure_logging():
                                     # Update references again
                                     fresh_otel_init = sys.modules["otel_init"]
                                     if "tradeengine.api" in sys.modules:
-                                        sys.modules["tradeengine.api"].otel_init = (
-                                            fresh_otel_init
-                                        )
+                                        sys.modules[
+                                            "tradeengine.api"
+                                        ].otel_init = fresh_otel_init
                                     fresh_func = getattr(
                                         fresh_otel_init, "configure_logging", None
                                     )

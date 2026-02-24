@@ -7,7 +7,7 @@ through the petrosa-data-manager service, replacing all direct MongoDB access.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from tradeengine.services.data_manager_client import DataManagerClient
@@ -38,7 +38,7 @@ class DataManagerConfigClient:
         await self.data_manager_client.disconnect()
         logger.info("Disconnected from Data Manager service")
 
-    async def get_global_config(self) -> Optional[TradingConfig]:
+    async def get_global_config(self) -> TradingConfig | None:
         """
         Get global trading configuration from Data Manager.
 
@@ -96,7 +96,7 @@ class DataManagerConfigClient:
             logger.error(f"Failed to upsert global config via Data Manager: {e}")
             return False
 
-    async def get_symbol_config(self, symbol: str) -> Optional[TradingConfig]:
+    async def get_symbol_config(self, symbol: str) -> TradingConfig | None:
         """
         Get symbol-specific trading configuration from Data Manager.
 
@@ -273,7 +273,7 @@ class DataManagerConfigClient:
 
     async def get_symbol_side_config(
         self, symbol: str, side: str
-    ) -> Optional[TradingConfig]:
+    ) -> TradingConfig | None:
         """
         Get symbol-side specific trading configuration from Data Manager.
 
@@ -414,6 +414,54 @@ class DataManagerConfigClient:
             True if successful, False otherwise
         """
         return await self.create_audit_record(audit)
+
+    async def rollback_config(
+        self,
+        changed_by: str,
+        symbol: str | None = None,
+        side: str | None = None,
+        target_version: int | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """
+        Rollback configuration via Data Manager.
+
+        Args:
+            changed_by: Who is performing the rollback
+            symbol: Optional symbol
+            side: Optional side
+            target_version: Optional specific version
+            reason: Optional reason
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            payload = {
+                "changed_by": changed_by,
+                "target_version": target_version,
+                "reason": reason,
+            }
+
+            # Map tradeengine scopes to data-manager strategy_id
+            strategy_id = "tradeengine"
+
+            url = f"/api/v1/config/rollback/strategies/{strategy_id}"
+            params = {}
+            if symbol:
+                params["symbol"] = symbol
+            if side:
+                params["side"] = side
+
+            # Use the internal _client which handles base_url and auth
+            response = await self.data_manager_client._client.post(
+                url, json=payload, params=params
+            )
+
+            return response is not None
+        except Exception as e:
+            logger.error(f"Failed to rollback config via Data Manager: {e}")
+            return False
 
     @property
     def connected(self) -> bool:

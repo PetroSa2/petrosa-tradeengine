@@ -23,9 +23,9 @@ from opentelemetry.sdk.resources import Resource
 
 def test_configuration(name, endpoint, headers=None, use_http=False):
     """Test a specific OTLP log configuration"""
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"TEST: {name}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(f"Endpoint: {endpoint}")
     print(f"Protocol: {'HTTP' if use_http else 'gRPC'}")
     print(f"Headers: {headers}")

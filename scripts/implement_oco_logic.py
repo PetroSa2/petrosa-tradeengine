@@ -10,7 +10,6 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
-from typing import Dict
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce
@@ -28,9 +27,9 @@ class OCOManager:
 
     def __init__(self, exchange: BinanceFuturesExchange):
         self.exchange = exchange
-        self.active_oco_pairs: dict[str, dict[str, str]] = (
-            {}
-        )  # position_id -> {sl_order_id, tp_order_id}
+        self.active_oco_pairs: dict[
+            str, dict[str, str]
+        ] = {}  # position_id -> {sl_order_id, tp_order_id}
 
     async def place_oco_orders(
         self,
@@ -297,9 +296,9 @@ async def demonstrate_oco_implementation():
         exchange = BinanceFuturesExchange()
         oco_manager = OCOManager(exchange)
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("OCO (ONE-CANCELLS-THE-OTHER) IMPLEMENTATION DEMO")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Example: Place OCO orders for the existing SHORT position
         position_id = "demo_short_position"
@@ -336,9 +335,9 @@ async def demonstrate_oco_implementation():
         else:
             logger.error(f"❌ FAILED TO PLACE OCO ORDERS: {result}")
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("OCO IMPLEMENTATION DEMO COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         return True
 

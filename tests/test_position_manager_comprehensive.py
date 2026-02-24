@@ -921,12 +921,12 @@ class TestPositionManagerHelperMethods:
     def test_get_daily_pnl_helper(self, position_manager):
         """Test getting daily PnL"""
         pnl = position_manager.get_daily_pnl()
-        assert isinstance(pnl, (int, float))
+        assert isinstance(pnl, int | float)
 
     def test_get_total_unrealized_pnl_helper(self, position_manager):
         """Test getting total unrealized PnL"""
         pnl = position_manager.get_total_unrealized_pnl()
-        assert isinstance(pnl, (int, float))
+        assert isinstance(pnl, int | float)
 
     @pytest.mark.asyncio
     async def test_reset_daily_pnl_helper(self, position_manager):

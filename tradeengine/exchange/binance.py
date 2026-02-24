@@ -677,7 +677,7 @@ class BinanceFuturesExchange:
                     f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
                     f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
                     f"to meet PERCENT_PRICE filter (market: ${current_price:.2f}, "
-                    f"allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                    f"allowed: {(multiplier_down - 1) * 100:+.1f}% to {(multiplier_up - 1) * 100:+.1f}%)"
                 )
                 logger.warning(adjustment_msg)
                 return (True, adjusted_price, adjustment_msg)
@@ -689,7 +689,7 @@ class BinanceFuturesExchange:
                     f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
                     f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
                     f"to meet PERCENT_PRICE filter (market: ${current_price:.2f}, "
-                    f"allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                    f"allowed: {(multiplier_down - 1) * 100:+.1f}% to {(multiplier_up - 1) * 100:+.1f}%)"
                 )
                 logger.warning(adjustment_msg)
                 return (True, adjusted_price, adjustment_msg)
@@ -698,7 +698,7 @@ class BinanceFuturesExchange:
             logger.info(
                 f"✓ PERCENT_PRICE validation passed for {symbol} {order_type}: "
                 f"${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f} "
-                f"(allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                f"(allowed: {(multiplier_down - 1) * 100:+.1f}% to {(multiplier_up - 1) * 100:+.1f}%)"
             )
             return (False, price, "")
 
@@ -748,7 +748,7 @@ class BinanceFuturesExchange:
                     f"PERCENT_PRICE filter violation for {symbol} {order_type} order: "
                     f"Order price ${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f}. "
                     f"Allowed range: ${min_price:.2f} to ${max_price:.2f} "
-                    f"({(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%). "
+                    f"({(multiplier_down - 1) * 100:+.1f}% to {(multiplier_up - 1) * 100:+.1f}%). "
                     f"This order would be rejected by Binance with error -4131."
                 )
                 logger.error(error_msg)
@@ -758,7 +758,7 @@ class BinanceFuturesExchange:
             logger.info(
                 f"✓ PERCENT_PRICE validation passed for {symbol} {order_type}: "
                 f"${price:.2f} is {deviation_pct:+.2f}% from market ${current_price:.2f} "
-                f"(allowed: {(multiplier_down-1)*100:+.1f}% to {(multiplier_up-1)*100:+.1f}%)"
+                f"(allowed: {(multiplier_down - 1) * 100:+.1f}% to {(multiplier_up - 1) * 100:+.1f}%)"
             )
             return (True, "")
 

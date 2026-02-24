@@ -62,8 +62,8 @@ print()
 # Send logs
 print("📝 Sending 5 test logs...")
 for i in range(5):
-    test_logger.info(f"DETAILED TEST LOG {i+1} - timestamp: {time.time()}")
-    print(f"  Sent log {i+1}")
+    test_logger.info(f"DETAILED TEST LOG {i + 1} - timestamp: {time.time()}")
+    print(f"  Sent log {i + 1}")
     time.sleep(1)
 
 print()

@@ -48,9 +48,9 @@ async def test_live_oco_implementation():
     """Comprehensive live test of OCO implementation"""
 
     try:
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🚀 LIVE OCO IMPLEMENTATION TEST")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Initialize components
         exchange = BinanceFuturesExchange()
@@ -73,10 +73,10 @@ async def test_live_oco_implementation():
 
         logger.info(f"Position ID: {position_id}")
         logger.info(
-            f"Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price/btc_price-1)*100):+.2f}%)"
+            f"Stop Loss: ${stop_loss_price:,.2f} ({((stop_loss_price / btc_price - 1) * 100):+.2f}%)"
         )
         logger.info(
-            f"Take Profit: ${take_profit_price:,.2f} ({((take_profit_price/btc_price-1)*100):+.2f}%)"
+            f"Take Profit: ${take_profit_price:,.2f} ({((take_profit_price / btc_price - 1) * 100):+.2f}%)"
         )
 
         # Test 2: Place OCO orders directly
@@ -182,7 +182,7 @@ async def test_live_oco_implementation():
                 # Let monitoring run and check for any changes
                 for i in range(3):
                     await asyncio.sleep(5)
-                    logger.info(f"  Monitoring check {i+1}/3...")
+                    logger.info(f"  Monitoring check {i + 1}/3...")
 
                     # Check if orders still exist
                     try:
@@ -304,9 +304,9 @@ async def test_live_oco_implementation():
             logger.info(f"ℹ️  Signal processing result: {signal_result}")
             # This might fail due to risk limits, which is expected
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🎉 LIVE OCO IMPLEMENTATION TEST COMPLETED")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Final status check
         logger.info("\n📊 FINAL STATUS CHECK")

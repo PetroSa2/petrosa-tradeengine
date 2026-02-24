@@ -32,9 +32,9 @@ async def test_position_close_cancels_orders():
         # Initialize Binance exchange
         exchange = BinanceFuturesExchange()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("TESTING: POSITION CLOSE CANCELS SL/TP ORDERS")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Step 1: Show current state
         logger.info("\n📊 STEP 1: CURRENT STATE")
@@ -101,7 +101,7 @@ async def test_position_close_cancels_orders():
 
         # Step 5: Analysis
         logger.info("\n📊 STEP 5: ANALYSIS")
-        logger.info(f"{'='*50}")
+        logger.info(f"{'=' * 50}")
 
         # Count orders by position side
         long_orders = [o for o in orders if o["positionSide"] == "LONG"]
@@ -131,9 +131,9 @@ async def test_position_close_cancels_orders():
                 f"⚠️  WARNING: Expected 2 SHORT orders, found {len(short_orders)}"
             )
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("TEST COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         return True
 

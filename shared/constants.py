@@ -9,7 +9,7 @@ All modules should import constants from this file rather than defining their ow
 
 import os
 import warnings
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 # =============================================================================
@@ -17,7 +17,7 @@ from typing import Any
 # =============================================================================
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     """Application environments"""
 
     DEVELOPMENT = "development"
@@ -26,7 +26,7 @@ class Environment(str, Enum):
     TESTING = "testing"
 
 
-class LogLevel(str, Enum):
+class LogLevel(StrEnum):
     """Logging levels"""
 
     DEBUG = "DEBUG"

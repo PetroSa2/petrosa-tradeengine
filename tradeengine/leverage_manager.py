@@ -10,7 +10,7 @@ Manages leverage configuration for futures trading with:
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from binance import Client
 from binance.exceptions import BinanceAPIException
@@ -32,8 +32,8 @@ class LeverageManager:
 
     def __init__(
         self,
-        binance_client: Optional[Client] = None,
-        mongodb_client: Optional[DataManagerConfigClient] = None,
+        binance_client: Client | None = None,
+        mongodb_client: DataManagerConfigClient | None = None,
     ):
         """
         Initialize leverage manager.
@@ -127,7 +127,7 @@ class LeverageManager:
             logger.error(f"Unexpected error in ensure_leverage for {symbol}: {e}")
             return False
 
-    async def get_leverage_status(self, symbol: str) -> Optional[LeverageStatus]:
+    async def get_leverage_status(self, symbol: str) -> LeverageStatus | None:
         """
         Get leverage status for symbol.
 
@@ -247,9 +247,9 @@ class LeverageManager:
         self,
         symbol: str,
         configured: int,
-        actual: Optional[int],
+        actual: int | None,
         success: bool,
-        error: Optional[str],
+        error: str | None,
     ) -> None:
         """Update leverage status in database and cache."""
         try:

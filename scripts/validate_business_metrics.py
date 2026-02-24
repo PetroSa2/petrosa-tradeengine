@@ -17,7 +17,6 @@ import argparse
 import math
 import sys
 import time
-from typing import Dict, List, Set
 
 import requests
 from prometheus_client.parser import text_string_to_metric_families

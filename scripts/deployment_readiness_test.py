@@ -25,9 +25,9 @@ async def test_oco_components():
     """Test all OCO components for deployment readiness"""
 
     try:
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🚀 OCO DEPLOYMENT READINESS TEST")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Test 1: Initialize components
         logger.info("\n📊 TEST 1: COMPONENT INITIALIZATION")
@@ -196,10 +196,10 @@ async def test_oco_components():
         logger.info("✅ Error handling in place")
         logger.info("✅ Shutdown procedures working")
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("🎉 OCO DEPLOYMENT READINESS TEST COMPLETED")
         logger.info("✅ ALL TESTS PASSED - READY FOR DEPLOYMENT!")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         return True
 

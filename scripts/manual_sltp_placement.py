@@ -29,9 +29,9 @@ async def place_manual_sltp_orders():
         # Initialize Binance exchange
         exchange = BinanceFuturesExchange()
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("MANUALLY PLACING SL/TP ORDERS FOR EXISTING POSITIONS")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         # Current market price (approximate)
         current_price = 107980.0
@@ -138,9 +138,9 @@ async def place_manual_sltp_orders():
         except Exception as e:
             logger.error(f"  ❌ Take Profit Failed: {e}")
 
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info("MANUAL SL/TP PLACEMENT COMPLETE")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
         logger.info("✅ Check your Binance UI now!")
         logger.info("🎨 You should see SL/TP prices instead of -- / --")
         logger.info("📊 LONG position should show SL/TP around 105820 / 112300")

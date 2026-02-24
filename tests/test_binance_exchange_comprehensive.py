@@ -610,10 +610,12 @@ class TestInitialization:
         )
 
         # Should handle exception gracefully
-        is_adjusted, adjusted_price, msg = (
-            await binance_exchange.validate_and_adjust_price_for_percent_filter(
-                "BTCUSDT", 50000.0, "LIMIT"
-            )
+        (
+            is_adjusted,
+            adjusted_price,
+            msg,
+        ) = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
         )
         # Should return original price on error (fail open)
         assert adjusted_price == 50000.0
@@ -628,10 +630,11 @@ class TestInitialization:
         binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
 
         # Price too high (above 1.1 * 50000 = 55000)
-        is_valid, error_msg = (
-            await binance_exchange.validate_price_within_percent_filter(
-                "BTCUSDT", 60000.0, "LIMIT"
-            )
+        (
+            is_valid,
+            error_msg,
+        ) = await binance_exchange.validate_price_within_percent_filter(
+            "BTCUSDT", 60000.0, "LIMIT"
         )
         assert is_valid is False
         assert "PERCENT_PRICE filter violation" in error_msg
@@ -647,10 +650,11 @@ class TestInitialization:
         )
 
         # Should handle exception gracefully (fail open)
-        is_valid, error_msg = (
-            await binance_exchange.validate_price_within_percent_filter(
-                "BTCUSDT", 50000.0, "LIMIT"
-            )
+        (
+            is_valid,
+            error_msg,
+        ) = await binance_exchange.validate_price_within_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
         )
         assert is_valid is True  # Fail open
         assert error_msg == ""
@@ -760,10 +764,12 @@ class TestPriceValidationAndFormatting:
         binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
 
         # Price within range
-        is_adjusted, adjusted_price, msg = (
-            await binance_exchange.validate_and_adjust_price_for_percent_filter(
-                "BTCUSDT", 50000.0, "LIMIT"
-            )
+        (
+            is_adjusted,
+            adjusted_price,
+            msg,
+        ) = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 50000.0, "LIMIT"
         )
         assert isinstance(is_adjusted, bool)
         assert isinstance(adjusted_price, float)
@@ -778,10 +784,12 @@ class TestPriceValidationAndFormatting:
         binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
 
         # Price too low (below 0.9 * 50000 = 45000)
-        is_adjusted, adjusted_price, msg = (
-            await binance_exchange.validate_and_adjust_price_for_percent_filter(
-                "BTCUSDT", 40000.0, "LIMIT"
-            )
+        (
+            is_adjusted,
+            adjusted_price,
+            msg,
+        ) = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 40000.0, "LIMIT"
         )
         assert is_adjusted is True
         assert adjusted_price > 40000.0
@@ -796,10 +804,12 @@ class TestPriceValidationAndFormatting:
         binance_exchange._get_current_price = AsyncMock(return_value=50000.0)
 
         # Price too high (above 1.1 * 50000 = 55000)
-        is_adjusted, adjusted_price, msg = (
-            await binance_exchange.validate_and_adjust_price_for_percent_filter(
-                "BTCUSDT", 60000.0, "LIMIT"
-            )
+        (
+            is_adjusted,
+            adjusted_price,
+            msg,
+        ) = await binance_exchange.validate_and_adjust_price_for_percent_filter(
+            "BTCUSDT", 60000.0, "LIMIT"
         )
         assert is_adjusted is True
         assert adjusted_price < 60000.0

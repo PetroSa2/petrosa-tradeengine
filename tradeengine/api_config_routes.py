@@ -7,10 +7,11 @@ at global, symbol, and symbol-side levels.
 
 import logging
 import os
-from typing import Any, Dict, List, Literal, Optional
+from datetime import datetime
+from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from tradeengine.config_manager import TradingConfigManager
@@ -19,7 +20,7 @@ from tradeengine.defaults import get_default_parameters, get_parameter_schema
 logger = logging.getLogger(__name__)
 
 # Global config manager instance (will be injected)
-_config_manager: Optional[TradingConfigManager] = None
+_config_manager: TradingConfigManager | None = None
 
 
 def set_config_manager(manager: TradingConfigManager) -> None:
@@ -51,9 +52,7 @@ class ConfigUpdateRequest(BaseModel):
     changed_by: str = Field(
         ..., description="Who is making this change (e.g., 'llm_agent_v1', 'admin')"
     )
-    reason: Optional[str] = Field(
-        None, description="Reason for the configuration change"
-    )
+    reason: str | None = Field(None, description="Reason for the configuration change")
     validate_only: bool = Field(
         False, description="If true, only validate parameters without saving"
     )
@@ -62,22 +61,22 @@ class ConfigUpdateRequest(BaseModel):
 class ConfigResponse(BaseModel):
     """Response model for configuration queries."""
 
-    symbol: Optional[str] = Field(None, description="Trading symbol")
-    side: Optional[Literal["LONG", "SHORT"]] = Field(None, description="Position side")
+    symbol: str | None = Field(None, description="Trading symbol")
+    side: Literal["LONG", "SHORT"] | None = Field(None, description="Position side")
     parameters: dict[str, Any] = Field(..., description="Configuration parameters")
     version: int = Field(..., description="Configuration version")
     source: str = Field(..., description="Configuration source (mongodb/mysql/default)")
-    created_at: Optional[str] = Field(None, description="Creation timestamp")
-    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+    created_at: str | None = Field(None, description="Creation timestamp")
+    updated_at: str | None = Field(None, description="Last update timestamp")
 
 
 class APIResponse(BaseModel):
     """Standard API response wrapper."""
 
     success: bool = Field(..., description="Whether operation succeeded")
-    data: Optional[Any] = Field(None, description="Response data")
-    error: Optional[dict[str, Any]] = Field(None, description="Error details if failed")
-    metadata: Optional[dict[str, Any]] = Field(None, description="Additional metadata")
+    data: Any | None = Field(None, description="Response data")
+    error: dict[str, Any | None] = Field(None, description="Error details if failed")
+    metadata: dict[str, Any | None] = Field(None, description="Additional metadata")
 
 
 class ValidationError(BaseModel):
@@ -88,7 +87,7 @@ class ValidationError(BaseModel):
     code: str = Field(
         ..., description="Error code (e.g., 'INVALID_TYPE', 'OUT_OF_RANGE')"
     )
-    suggested_value: Optional[Any] = Field(
+    suggested_value: Any | None = Field(
         None, description="Suggested correct value if applicable"
     )
 
@@ -132,13 +131,23 @@ class ConfigValidationRequest(BaseModel):
     parameters: dict[str, Any] = Field(
         ..., description="Configuration parameters to validate"
     )
-    symbol: Optional[str] = Field(
+    symbol: str | None = Field(
         None, description="Trading symbol (optional, for symbol-specific validation)"
     )
-    side: Optional[Literal["LONG", "SHORT"]] = Field(
+    side: Literal["LONG", "SHORT"] | None = Field(
         None,
         description="Position side (optional, for symbol-side-specific validation)",
     )
+
+
+class RollbackRequest(BaseModel):
+    """Request model for configuration rollback."""
+
+    target_version: int | None = Field(
+        None, description="Specific version to rollback to"
+    )
+    changed_by: str = Field(..., description="Who is performing the rollback")
+    reason: str | None = Field(None, description="Reason for rollback")
 
 
 # =============================================================================
@@ -146,6 +155,71 @@ class ConfigValidationRequest(BaseModel):
 # =============================================================================
 
 router = APIRouter(prefix="/api/v1/config", tags=["trading-configuration"])
+
+
+@router.post(
+    "/rollback",
+    response_model=APIResponse,
+    summary="Rollback trading configuration",
+    description="""
+    **For LLM Agents**: Revert trading configuration to a previous version.
+
+    Reverts global, symbol, or symbol-side specific settings.
+
+    **Example Request**: `POST /api/v1/config/rollback?symbol=BTCUSDT`
+    ```json
+    {
+      "changed_by": "llm_agent_v1",
+      "reason": "Previous leverage settings were safer",
+      "target_version": 5
+    }
+    ```
+    """,
+)
+async def rollback_config(
+    request: RollbackRequest,
+    symbol: str | None = Query(None, description="Trading symbol"),
+    side: Literal["LONG", "SHORT"] | None = Query(None, description="Position side"),
+):
+    """Rollback configuration."""
+    try:
+        manager = get_config_manager()
+        success, config, errors = await manager.rollback_config(
+            changed_by=request.changed_by,
+            symbol=symbol.upper() if symbol else None,
+            side=side,
+            target_version=request.target_version,
+            reason=request.reason,
+        )
+
+        if not success:
+            return APIResponse(
+                success=False,
+                error={
+                    "code": "ROLLBACK_FAILED",
+                    "message": "Failed to rollback configuration",
+                    "details": {"errors": errors},
+                },
+            )
+
+        return APIResponse(
+            success=True,
+            data=ConfigResponse(
+                symbol=symbol,
+                side=side,
+                parameters=config.parameters if config else {},
+                version=config.version if config else 0,
+                source="data_manager",
+                created_at=None,
+                updated_at=datetime.utcnow().isoformat(),
+            ),
+            metadata={"action": "rollback", "scope": "trading"},
+        )
+    except Exception as e:
+        logger.error(f"Error rolling back config: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
 
 
 @router.get(
@@ -742,7 +816,7 @@ async def validate_config(request: ConfigValidationRequest):
         if "leverage" in request.parameters:
             leverage = request.parameters["leverage"]
             # Type check to avoid comparison errors with invalid types
-            if isinstance(leverage, (int, float)) and leverage > 50:
+            if isinstance(leverage, int | float) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
                 estimated_impact["warning"] = (
                     "High leverage increases risk significantly"
@@ -785,10 +859,10 @@ async def validate_config(request: ConfigValidationRequest):
 
 # Service URLs for cross-service conflict detection
 SERVICE_URLS = {
-    "data-manager": os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:8080"),
-    "ta-bot": os.getenv("TA_BOT_URL", "http://petrosa-ta-bot:8080"),
+    "data-manager": os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:80"),
+    "ta-bot": os.getenv("TA_BOT_URL", "http://petrosa-ta-bot-service:80"),
     "realtime-strategies": os.getenv(
-        "REALTIME_STRATEGIES_URL", "http://petrosa-realtime-strategies:8080"
+        "REALTIME_STRATEGIES_URL", "http://petrosa-realtime-strategies:80"
     ),
 }
 
@@ -800,8 +874,8 @@ MAX_ERROR_MESSAGES_TO_SHOW = 2  # Limit error messages shown in conflicts
 
 async def detect_cross_service_conflicts(
     parameters: dict[str, Any],
-    symbol: Optional[str] = None,
-    side: Optional[Literal["LONG", "SHORT"]] = None,
+    symbol: str | None = None,
+    side: Literal["LONG", "SHORT" | None] = None,
 ) -> list[CrossServiceConflict]:
     """
     Detect cross-service configuration conflicts.
@@ -966,9 +1040,9 @@ async def config_health_check():
 
 @router.put("/config/limits/global", response_model=APIResponse)
 async def set_global_limits(
-    max_position_size: Optional[float] = None,
-    max_accumulations: Optional[int] = None,
-    accumulation_cooldown_seconds: Optional[int] = None,
+    max_position_size: float | None = None,
+    max_accumulations: int | None = None,
+    accumulation_cooldown_seconds: int | None = None,
 ) -> APIResponse:
     """
     Set global position limits (applies to all symbols unless overridden).
@@ -1040,9 +1114,9 @@ async def set_global_limits(
 @router.put("/config/limits/symbol/{symbol}", response_model=APIResponse)
 async def set_symbol_limits(
     symbol: str,
-    max_position_size: Optional[float] = None,
-    max_accumulations: Optional[int] = None,
-    accumulation_cooldown_seconds: Optional[int] = None,
+    max_position_size: float | None = None,
+    max_accumulations: int | None = None,
+    accumulation_cooldown_seconds: int | None = None,
 ) -> APIResponse:
     """
     Set position limits for specific symbol (overrides global limits).

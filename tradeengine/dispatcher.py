@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram
@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -492,9 +492,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        self.active_oco_pairs[position_id]["close_reason"] = (
+                            close_reason
+                        )
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (
@@ -1438,7 +1438,7 @@ class Dispatcher:
                 for attempt in range(max_retries):
                     try:
                         self.logger.info(
-                            f"🔄 Updating position for {order.symbol} (attempt {attempt+1}/{max_retries})"
+                            f"🔄 Updating position for {order.symbol} (attempt {attempt + 1}/{max_retries})"
                         )
                         await asyncio.wait_for(
                             self.position_manager.update_position(order, result),
@@ -1456,7 +1456,7 @@ class Dispatcher:
                             f"🔍 DEBUG: position_updated={position_updated}, breaking from retry loop"
                         )
                         break  # Success, exit retry loop
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if attempt < max_retries - 1:
                             backoff = 2**attempt
                             self.logger.warning(
@@ -1502,7 +1502,7 @@ class Dispatcher:
                         self.logger.info(
                             f"✅ Position record created for {order.symbol}"
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Position record creation timed out for {order.symbol} - continuing anyway"
                         )
@@ -1539,7 +1539,7 @@ class Dispatcher:
                             self.logger.warning(
                                 f"⚠️  No signal found for order {order.order_id} - skipping strategy position creation"
                             )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Strategy position creation timed out for {order.symbol} - continuing anyway"
                         )
@@ -1566,7 +1566,7 @@ class Dispatcher:
                         self.logger.info(
                             f"✅ Risk management orders placed for {order.symbol}"
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         self.logger.error(
                             f"⏱️ Risk management orders timed out for {order.symbol} - continuing anyway"
                         )
@@ -2546,7 +2546,7 @@ class Dispatcher:
         )
 
         # Generate hash for shorter lock key
-        fingerprint_hash = hashlib.md5(fingerprint_data.encode()).hexdigest()[:12]
+        fingerprint_hash = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:12]
 
         return f"{signal.strategy_id}_{signal.symbol}_{fingerprint_hash}"
 

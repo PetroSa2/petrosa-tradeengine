@@ -110,13 +110,17 @@ print(f"Current Price: ${current_price:,.2f}")
 print()
 print("Stop Loss Order:")
 print("   Type: STOP_MARKET")
-print(f"   Trigger Price: ${sl_price:,.2f} ({((sl_price/current_price-1)*100):.2f}%)")
+print(
+    f"   Trigger Price: ${sl_price:,.2f} ({((sl_price / current_price - 1) * 100):.2f}%)"
+)
 print(f"   Distance: ${current_price - sl_price:.2f}")
 print(f"   Quantity: {abs(position_amt)} BTC")
 print()
 print("Take Profit Order:")
 print("   Type: TAKE_PROFIT_MARKET")
-print(f"   Trigger Price: ${tp_price:,.2f} ({((tp_price/current_price-1)*100):.2f}%)")
+print(
+    f"   Trigger Price: ${tp_price:,.2f} ({((tp_price / current_price - 1) * 100):.2f}%)"
+)
 print(f"   Distance: ${tp_price - current_price:.2f}")
 print(f"   Quantity: {abs(position_amt)} BTC")
 print()

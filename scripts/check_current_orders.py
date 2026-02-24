@@ -2,6 +2,7 @@
 """
 Check current price and existing orders
 """
+
 import os
 
 from binance import Client
@@ -27,14 +28,14 @@ def main():
         distance = abs(current_price - stop_price)
         pct = (stop_price / current_price - 1) * 100
         print(
-            f'  {order["type"]}: ${stop_price:,.2f} ({pct:+.2f}%) - Distance: ${distance:.2f}'
+            f"  {order['type']}: ${stop_price:,.2f} ({pct:+.2f}%) - Distance: ${distance:.2f}"
         )
 
     # Get position
     positions = client.futures_position_information(symbol="BTCUSDT")
     for pos in positions:
         if float(pos["positionAmt"]) != 0:
-            print(f'\nPosition: {pos["positionAmt"]} BTC at ${pos["entryPrice"]}')
+            print(f"\nPosition: {pos['positionAmt']} BTC at ${pos['entryPrice']}")
 
 
 if __name__ == "__main__":

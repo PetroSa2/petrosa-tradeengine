@@ -20,7 +20,7 @@ Related:
 """
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -248,14 +248,14 @@ async def test_monitoring_detects_sl_fill_and_cancels_tp(oco_manager, fake_excha
             break
 
     # Verify TP order was cancelled
-    assert fake_exchange.was_cancelled(
-        tp_order_id
-    ), f"TP order {tp_order_id} should have been cancelled when SL filled"
+    assert fake_exchange.was_cancelled(tp_order_id), (
+        f"TP order {tp_order_id} should have been cancelled when SL filled"
+    )
 
     # Verify SL order was not cancelled (it was filled)
-    assert not fake_exchange.was_cancelled(
-        sl_order_id
-    ), "SL order should not be cancelled (it was filled)"
+    assert not fake_exchange.was_cancelled(sl_order_id), (
+        "SL order should not be cancelled (it was filled)"
+    )
 
     # Verify OCO pair status updated (or cleaned up)
     exchange_key = "BTCUSDT_LONG"
@@ -319,14 +319,14 @@ async def test_monitoring_detects_tp_fill_and_cancels_sl(oco_manager, fake_excha
             break
 
     # Verify SL order was cancelled
-    assert fake_exchange.was_cancelled(
-        sl_order_id
-    ), f"SL order {sl_order_id} should have been cancelled when TP filled"
+    assert fake_exchange.was_cancelled(sl_order_id), (
+        f"SL order {sl_order_id} should have been cancelled when TP filled"
+    )
 
     # Verify TP order was not cancelled (it was filled)
-    assert not fake_exchange.was_cancelled(
-        tp_order_id
-    ), "TP order should not be cancelled (it was filled)"
+    assert not fake_exchange.was_cancelled(tp_order_id), (
+        "TP order should not be cancelled (it was filled)"
+    )
 
     # Verify OCO pair status updated (or cleaned up)
     exchange_key = "BTCUSDT_LONG"
@@ -648,9 +648,9 @@ async def test_order_state_changes_trigger_cancellation(oco_manager, fake_exchan
             break
 
     # Verify cancellation was triggered
-    assert fake_exchange.was_cancelled(
-        tp_order_id
-    ), "TP should be cancelled after SL state change"
+    assert fake_exchange.was_cancelled(tp_order_id), (
+        "TP should be cancelled after SL state change"
+    )
 
     # Verify OCO pair correctly identified which order filled
     exchange_key = "BTCUSDT_LONG"

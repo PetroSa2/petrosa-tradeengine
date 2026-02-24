@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
@@ -43,8 +43,8 @@ class TradingConfigManager:
 
     def __init__(
         self,
-        mongodb_client: Optional[Any] = None,
-        mysql_repository: Optional[MySQLConfigRepository] = None,
+        mongodb_client: Any | None = None,
+        mysql_repository: MySQLConfigRepository | None = None,
         cache_ttl_seconds: int = 60,
     ):
         """
@@ -63,7 +63,7 @@ class TradingConfigManager:
         self._cache: dict[str, tuple[dict[str, Any], float]] = {}
 
         # Background tasks
-        self._cache_refresh_task: Optional[asyncio.Task[Any]] = None
+        self._cache_refresh_task: asyncio.Task[Any | None] = None
         self._running = False
 
     async def start(self) -> None:
@@ -121,14 +121,14 @@ class TradingConfigManager:
                 logger.error(f"Cache refresh loop error: {e}")
                 await asyncio.sleep(10)
 
-    def _get_cache_key(self, symbol: Optional[str], side: Optional[str]) -> str:
+    def _get_cache_key(self, symbol: str | None, side: str | None) -> str:
         """Generate cache key for config lookup."""
         symbol_part = symbol or "global"
         side_part = side or "all"
         return f"{symbol_part}:{side_part}"
 
     async def get_config(
-        self, symbol: Optional[str] = None, side: Optional[str] = None
+        self, symbol: str | None = None, side: str | None = None
     ) -> dict[str, Any]:
         """
         Get resolved trading configuration.
@@ -208,11 +208,11 @@ class TradingConfigManager:
         self,
         parameters: dict[str, Any],
         changed_by: str,
-        symbol: Optional[str] = None,
-        side: Optional[str] = None,
-        reason: Optional[str] = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        reason: str | None = None,
         validate_only: bool = False,
-    ) -> tuple[bool, Optional[TradingConfig], list[str]]:
+    ) -> tuple[bool, TradingConfig | None, list[str]]:
         """
         Set trading configuration.
 
@@ -330,12 +330,67 @@ class TradingConfigManager:
             logger.error(f"Error setting config: {e}")
             return False, None, [str(e)]
 
+    async def rollback_config(
+        self,
+        changed_by: str,
+        symbol: str | None = None,
+        side: str | None = None,
+        target_version: int | None = None,
+        reason: str | None = None,
+    ) -> tuple[bool, TradingConfig | None, list[str]]:
+        """
+        Rollback configuration to a previous version.
+
+        Args:
+            changed_by: Who is performing the rollback
+            symbol: Optional symbol
+            side: Optional side
+            target_version: Optional specific version
+            reason: Optional reason
+
+        Returns:
+            Tuple of (success, config, errors)
+        """
+        try:
+            # If using Data Manager proxy
+            if hasattr(self.mongodb_client, "rollback_config"):
+                success = await self.mongodb_client.rollback_config(
+                    changed_by=changed_by,
+                    symbol=symbol,
+                    side=side,
+                    target_version=target_version,
+                    reason=reason,
+                )
+                if success:
+                    # Invalidate cache
+                    self.invalidate_cache(symbol, side)
+                    # Get the new config (resolved)
+                    params = await self.get_config(symbol, side)
+
+                    # Return a synthetic config object
+                    config = TradingConfig(
+                        symbol=symbol,
+                        side=side,  # type: ignore
+                        parameters=params,
+                        version=0,
+                        created_by=changed_by,
+                        updated_at=datetime.utcnow(),
+                    )
+                    return True, config, []
+                else:
+                    return False, None, ["Rollback failed in Data Manager"]
+
+            return False, None, ["Rollback not supported by current database client"]
+        except Exception as e:
+            logger.error(f"Error rolling back config: {e}")
+            return False, None, [str(e)]
+
     async def delete_config(
         self,
         changed_by: str,
-        symbol: Optional[str] = None,
-        side: Optional[str] = None,
-        reason: Optional[str] = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        reason: str | None = None,
     ) -> tuple[bool, list[str]]:
         """
         Delete trading configuration.
@@ -432,7 +487,7 @@ class TradingConfigManager:
             return False, [str(e)]
 
     def invalidate_cache(
-        self, symbol: Optional[str] = None, side: Optional[str] = None
+        self, symbol: str | None = None, side: str | None = None
     ) -> None:
         """Force cache invalidation for specific config."""
         cache_key = self._get_cache_key(symbol, side)

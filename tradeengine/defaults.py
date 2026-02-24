@@ -13,7 +13,7 @@ All parameters are documented with:
 - Impact description
 """
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 # =============================================================================
 # DEFAULT TRADING PARAMETERS
@@ -336,8 +336,7 @@ PARAMETER_SCHEMA = {
         "max": 1000.0,
         "example": 100.0,
         "impact": (
-            "Overrides automatic minimum. Can cause trade failures if set "
-            "incorrectly."
+            "Overrides automatic minimum. Can cause trade failures if set incorrectly."
         ),
         "when_to_change": (
             "Only set if you know the correct value and have disabled automatic "
@@ -872,7 +871,7 @@ def validate_parameters(parameters: dict[str, Any]) -> tuple[bool, list[str]]:
             errors.append(f"{param_name} must be integer, got {type(param_value)}")
             continue
 
-        if param_type == "float" and not isinstance(param_value, (int, float)):
+        if param_type == "float" and not isinstance(param_value, int | float):
             errors.append(f"{param_name} must be float, got {type(param_value)}")
             continue
 

@@ -51,9 +51,7 @@ class ConfigUpdateRequest(BaseModel):
     changed_by: str = Field(
         ..., description="Who is making this change (e.g., 'llm_agent_v1', 'admin')"
     )
-    reason: str | None = Field(
-        None, description="Reason for the configuration change"
-    )
+    reason: str | None = Field(None, description="Reason for the configuration change")
     validate_only: bool = Field(
         False, description="If true, only validate parameters without saving"
     )

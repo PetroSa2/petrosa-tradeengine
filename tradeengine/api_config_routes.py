@@ -875,7 +875,7 @@ MAX_ERROR_MESSAGES_TO_SHOW = 2  # Limit error messages shown in conflicts
 async def detect_cross_service_conflicts(
     parameters: dict[str, Any],
     symbol: str | None = None,
-    side: Literal["LONG", "SHORT" | None] = None,
+    side: Literal["LONG", "SHORT"] | None = None,
 ) -> list[CrossServiceConflict]:
     """
     Detect cross-service configuration conflicts.

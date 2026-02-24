@@ -128,7 +128,10 @@ class TradingConfigManager:
         return f"{symbol_part}:{side_part}"
 
     async def get_config(
-        self, symbol: str | None = None, side: str | None = None
+        self,
+        symbol: str | None = None,
+        side: str | None = None,
+        strategy_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Get resolved trading configuration.
@@ -137,12 +140,14 @@ class TradingConfigManager:
         1. Cache
         2. MongoDB symbol-side
         3. MongoDB symbol
-        4. MongoDB global
-        5. Hardcoded defaults
+        4. MongoDB strategy
+        5. MongoDB global
+        6. Hardcoded defaults
 
         Args:
             symbol: Trading symbol (None for global)
             side: Position side (None for symbol-level)
+            strategy_id: Strategy identifier (None for global)
 
         Returns:
             Resolved configuration parameters
@@ -177,7 +182,20 @@ class TradingConfigManager:
                     )
                     logger.debug(f"Applied symbol config for {symbol} from MongoDB")
 
-            # Layer 3: Symbol-side config
+            # Layer 3: Strategy config
+            if strategy_id and self.mongodb_client and self.mongodb_client.connected:
+                strategy_config = await self.mongodb_client.get_strategy_config(
+                    strategy_id
+                )
+                if strategy_config:
+                    resolved_params = merge_parameters(
+                        resolved_params, strategy_config.parameters
+                    )
+                    logger.debug(
+                        f"Applied strategy config for {strategy_id} from MongoDB"
+                    )
+
+            # Layer 4: Symbol-side config
             if (
                 symbol
                 and side

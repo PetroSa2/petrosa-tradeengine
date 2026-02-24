@@ -61,8 +61,8 @@ PUT /api/v1/config/filters/pair/{symbol}/side/{side}
 
 ### Per-Strategy Filters
 ```
-GET /api/v1/config/filters/strategy/{strategy_id}
-PUT /api/v1/config/filters/strategy/{strategy_id}
+GET /api/v1/config/filters/{strategy_id}
+PUT /api/v1/config/filters/{strategy_id}
 ```
 
 ## Configuration Examples
@@ -85,7 +85,7 @@ curl -X PUT http://localhost:8000/api/v1/config/filters/global \
 
 ### Setting Strategy-Specific Filters
 ```bash
-curl -X PUT http://localhost:8000/api/v1/config/filters/strategy/momentum_strategy \
+curl -X PUT http://localhost:8000/api/v1/config/filters/momentum_strategy \
   -H "Content-Type: application/json" \
   -d '{
     "filters": {
@@ -148,7 +148,7 @@ The filter system integrates with:
 
 1. Check current filter configuration:
    ```bash
-   curl http://localhost:8000/api/v1/config/filters/strategy/momentum_strategy
+   curl http://localhost:8000/api/v1/config/filters/momentum_strategy
    ```
 
 2. Review audit trail:

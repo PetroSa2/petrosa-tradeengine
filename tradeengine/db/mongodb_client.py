@@ -415,6 +415,69 @@ class DataManagerConfigClient:
         """
         return await self.create_audit_record(audit)
 
+    async def get_strategy_config(self, strategy_id: str) -> TradingConfig | None:
+        """
+        Get strategy-specific configuration from Data Manager.
+
+        Args:
+            strategy_id: Strategy identifier
+
+        Returns:
+            TradingConfig object or None if not found
+        """
+        try:
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="trading_configs_strategy",
+                params={"filter": {"strategy_id": strategy_id}, "limit": 1},
+            )
+
+            if response and response.get("data"):
+                doc = response["data"][0]
+                doc["id"] = str(doc.pop("_id"))
+                return TradingConfig(**doc)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get strategy config: {e}")
+            return None
+
+    async def upsert_strategy_config(self, config: TradingConfig) -> bool:
+        """
+        Upsert strategy-specific configuration.
+
+        Args:
+            config: TradingConfig object to upsert
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            config_dict = config.model_dump()
+            strategy_id = config_dict.get("strategy_id", "UNKNOWN")
+            config_dict["strategy_id"] = strategy_id
+
+            response = await self.data_manager_client._client.upsert_one(
+                database="mongodb",
+                collection="trading_configs_strategy",
+                filter={"strategy_id": strategy_id},
+                record=config_dict,
+            )
+
+            if response.get("upserted_id") or response.get("modified_count", 0) > 0:
+                logger.info(
+                    f"✓ Upserted strategy config for {strategy_id} via Data Manager"
+                )
+                return True
+            else:
+                logger.error(
+                    f"Failed to upsert strategy config for {strategy_id} via Data Manager"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to upsert strategy config via Data Manager: {e}")
+            return False
+
     async def rollback_config(
         self,
         changed_by: str,

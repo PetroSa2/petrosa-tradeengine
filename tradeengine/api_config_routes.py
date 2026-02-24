@@ -818,9 +818,9 @@ async def validate_config(request: ConfigValidationRequest):
             # Type check to avoid comparison errors with invalid types
             if isinstance(leverage, int | float) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
-                estimated_impact["warning"] = (
-                    "High leverage increases risk significantly"
-                )
+                estimated_impact[
+                    "warning"
+                ] = "High leverage increases risk significantly"
 
         # Cross-service conflict detection
         conflicts = await detect_cross_service_conflicts(
@@ -1032,15 +1032,13 @@ async def get_config_history(
     """Get configuration history."""
     try:
         manager = get_config_manager()
-        
+
         # Get history from DataManagerConfigClient
         if hasattr(manager.mongodb_client, "get_config_history"):
             history = await manager.mongodb_client.get_config_history(
-                symbol=symbol.upper() if symbol else None,
-                side=side,
-                limit=limit
+                symbol=symbol.upper() if symbol else None, side=side, limit=limit
             )
-            
+
             return APIResponse(
                 success=True,
                 data=history,
@@ -1048,7 +1046,7 @@ async def get_config_history(
                     "count": len(history),
                     "symbol": symbol,
                     "side": side,
-                    "limit": limit
+                    "limit": limit,
                 },
             )
         else:
@@ -1056,7 +1054,7 @@ async def get_config_history(
                 success=False,
                 error={
                     "code": "UNSUPPORTED_OPERATION",
-                    "message": "Configuration history not supported by current database client"
+                    "message": "Configuration history not supported by current database client",
                 },
             )
     except Exception as e:

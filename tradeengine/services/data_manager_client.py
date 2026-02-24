@@ -42,7 +42,7 @@ class BaseDataManagerClient:
         limit = params.get("limit", 100)
         sort_by = params.get("sort_by", "_id")
         sort_order = params.get("sort_order", "asc")
-        
+
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return empty to avoid errors
         return {"data": []}

@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository

@@ -28,6 +28,9 @@ class TradingConfig(BaseModel):
     id: str | None = Field(None, description="Configuration ID")
 
     # Scope identifiers
+    strategy_id: str | None = Field(
+        None, description="Strategy identifier for strategy-scoped configurations"
+    )
     symbol: str | None = Field(
         None, description="Trading symbol (None for global configs, e.g., 'BTCUSDT')"
     )

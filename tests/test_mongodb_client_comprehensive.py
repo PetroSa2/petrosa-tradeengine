@@ -753,3 +753,65 @@ class TestDataManagerConfigClientAuditTrail:
 
             trail = await mongodb_client.get_audit_trail()
             assert trail == []
+
+
+class TestDataManagerConfigClientStrategyConfig:
+    """Test strategy-specific configuration methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_strategy_config_with_data(self, mongodb_client):
+        """Test getting strategy config with data."""
+        with patch.object(
+            mongodb_client.data_manager_client._client, "query", new_callable=AsyncMock
+        ) as mock_query:
+            mock_query.return_value = {
+                "data": [
+                    {
+                        "_id": "strategy_cfg",
+                        "strategy_id": "momentum",
+                        "parameters": {"leverage": 10},
+                        "created_by": "test_user",
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow(),
+                    }
+                ]
+            }
+
+            config = await mongodb_client.get_strategy_config("momentum")
+            assert config is not None
+            assert config.strategy_id == "momentum"
+
+    @pytest.mark.asyncio
+    async def test_upsert_strategy_config_requires_strategy_id(self, mongodb_client):
+        """Test strategy upsert fails fast without strategy_id."""
+        config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
+
+        with patch.object(
+            mongodb_client.data_manager_client._client,
+            "upsert_one",
+            new_callable=AsyncMock,
+        ) as mock_upsert:
+            result = await mongodb_client.upsert_strategy_config(config)
+            assert result is False
+            mock_upsert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upsert_strategy_config_success(self, mongodb_client):
+        """Test upserting strategy config with valid strategy_id."""
+        config = TradingConfig(
+            strategy_id="momentum",
+            parameters={"leverage": 10},
+            created_by="test_user",
+        )
+
+        with patch.object(
+            mongodb_client.data_manager_client._client,
+            "upsert_one",
+            new_callable=AsyncMock,
+        ) as mock_upsert:
+            mock_upsert.return_value = {"upserted_id": "strategy_cfg"}
+
+            result = await mongodb_client.upsert_strategy_config(config)
+            assert result is True
+            _, kwargs = mock_upsert.call_args
+            assert kwargs["filter"] == {"strategy_id": "momentum"}

@@ -7,19 +7,29 @@ The Petrosa Trading Engine is a **multi-strategy signal aggregation and intellig
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Strategy A    │    │   Strategy B    │    │   Strategy C    │
-│  (Momentum)     │    │   (Mean Rev)    │    │   (Arbitrage)   │
-│  Mode: Det      │    │  Mode: ML       │    │  Mode: LLM      │
+│  (Real-time)    │    │   (Mean Rev)    │    │   (Arbitrage)   │
 └─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
           │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                    ┌─────────────▼─────────────┐
-                    │     /trade endpoint      │
-                    │   Signal Aggregator      │
-                    │  - Conflict Resolution    │
+          └──────────┬───────────┴──────────┬───────────┘
+                     │                      │
+                     ▼                      ▼
+          ┌──────────────────────────────────────────────┐
+          │                petrosa-cio                   │
+          │             (Interception Layer)             │
+          │      [intent.>]  ──▶  [signals.trading]      │
+          └─────────────────────┬────────────────────────┘
+                                │
+                                ▼ APPROVED SIGNALS
+                    ┌───────────────────────────┐
+                    │     tradeengine          │
+                    │   (THIS SERVICE)         │
+                    │  - Signal Validation      │
                     │  - Risk Management        │
                     │  - Position Sizing        │
+                    │  - Smart Execution        │
                     └─────────────┬─────────────┘
+                                 │
+                     ▼
                                   │
                     ┌─────────────▼─────────────┐
                     │   Signal Processor        │

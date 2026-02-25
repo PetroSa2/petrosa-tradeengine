@@ -36,6 +36,10 @@ from tradeengine.api_config_routes import (
     router as config_router,
     set_config_manager,
 )
+from tradeengine.api_filter_routes import (
+    router as filter_router,
+    set_config_manager as set_filter_config_manager,
+)
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
@@ -92,6 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Set global config manager for API routes
         set_config_manager(trading_config_manager)
+        set_filter_config_manager(trading_config_manager)
 
         # Store in app state
         app.state.trading_config_manager = trading_config_manager
@@ -258,6 +263,9 @@ if config_rate_limit_middleware:
 
 # Include configuration API routes
 app.include_router(config_router)
+
+# Include filter API routes
+app.include_router(filter_router)
 
 # Initialize components
 settings = Settings()

@@ -328,22 +328,22 @@ Lint & Test	Checkout code	2026-02-24T21:22:40.0614301Z [command]/usr/bin/git con
 Lint & Test	Checkout code	2026-02-24T21:22:40.0638976Z ##[group]Checking out the ref
 Lint & Test	Checkout code	2026-02-24T21:22:40.0643310Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/233/merge
 Lint & Test	Checkout code	2026-02-24T21:22:40.0928027Z Note: switching to 'refs/remotes/pull/233/merge'.
-Lint & Test	Checkout code	2026-02-24T21:22:40.0928636Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0928636Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0929036Z You are in 'detached HEAD' state. You can look around, make experimental
 Lint & Test	Checkout code	2026-02-24T21:22:40.0930326Z changes and commit them, and you can discard any commits you make in this
 Lint & Test	Checkout code	2026-02-24T21:22:40.0931333Z state without impacting any branches by switching back to a branch.
-Lint & Test	Checkout code	2026-02-24T21:22:40.0931923Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0931923Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0932184Z If you want to create a new branch to retain commits you create, you may
 Lint & Test	Checkout code	2026-02-24T21:22:40.0933157Z do so (now or later) by using -c with the switch command. Example:
-Lint & Test	Checkout code	2026-02-24T21:22:40.0933733Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0933733Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0933965Z   git switch -c <new-branch-name>
-Lint & Test	Checkout code	2026-02-24T21:22:40.0934420Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0934420Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0934652Z Or undo this operation with:
-Lint & Test	Checkout code	2026-02-24T21:22:40.0935198Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0935198Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0935370Z   git switch -
-Lint & Test	Checkout code	2026-02-24T21:22:40.0935583Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0935583Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0935926Z Turn off this advice by setting config variable advice.detachedHead to false
-Lint & Test	Checkout code	2026-02-24T21:22:40.0936446Z 
+Lint & Test	Checkout code	2026-02-24T21:22:40.0936446Z
 Lint & Test	Checkout code	2026-02-24T21:22:40.0937088Z HEAD is now at 1a5c138 Merge 98e0b6d143cd9eb7b69b17f08a99631b7bcb807a into 0588192172eb36ca2e03794c5bfcfea113771f5b
 Lint & Test	Checkout code	2026-02-24T21:22:40.0939317Z ##[endgroup]
 Lint & Test	Checkout code	2026-02-24T21:22:40.0977978Z [command]/usr/bin/git log -1 --format=%H
@@ -386,7 +386,7 @@ Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0459524Z with:
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0459705Z   path: .venv
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0460049Z   key: Linux-venv-fced0987b304ad702c858140d13a33b645a729a71101881894fcadd69ed2ad47
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0460478Z   restore-keys: Linux-venv-
-Lint & Test	Cache virtual environment	
+Lint & Test	Cache virtual environment
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0460728Z   enableCrossOsArchive: false
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0460975Z   fail-on-cache-miss: false
 Lint & Test	Cache virtual environment	2026-02-24T21:22:41.0486015Z   lookup-only: false
@@ -926,7 +926,7 @@ Lint & Test	Install dependencies	2026-02-24T21:23:07.7304796Z   Stored in direct
 Lint & Test	Install dependencies	2026-02-24T21:23:07.7326490Z Successfully built nats-py
 Lint & Test	Install dependencies	2026-02-24T21:23:08.2790897Z Installing collected packages: pytz, passlib, paginate, zipp, wrapt, websockets, watchdog, uvloop, urllib3, tzlocal, typing_extensions, structlog, six, ruff, regex, pyyaml, python-multipart, python-dotenv, PyMySQL, pygments, pyflakes, pycryptodome, pycparser, pycodestyle, pyasn1, protobuf, propcache, prometheus-client, pluggy, platformdirs, pathspec, paho-mqtt, packaging, opentelemetry-util-http, nats-py, mypy-extensions, multidict, mkdocs-material-extensions, mergedeep, mccabe, markupsafe, markdown, iniconfig, idna, httptools, h11, greenlet, frozenlist, dnspython, coverage, colorama, coincurve, click, charset_normalizer, certifi, bcrypt, babel, attrs, asgiref, annotated-types, annotated-doc, aiohappyeyeballs, yarl, uvicorn, typing-inspection, sqlalchemy, rsa, requests, pyyaml-env-tag, python-dateutil, pytest, pymongo, pymdown-extensions, pydantic-core, opentelemetry-proto, mypy, jinja2, importlib-metadata, httpcore, grpcio, googleapis-common-protos, flake8, ecdsa, cffi, black, asyncio-mqtt, anyio, aiosignal, aiomysql, watchfiles, starlette, python-jose, pytest-cov, pytest-asyncio, pydantic, pycares, opentelemetry-exporter-otlp-proto-common, opentelemetry-api, motor, httpx, ghp-import, dateparser, cryptography, aiohttp, python-binance, pydantic-settings, opentelemetry-semantic-conventions, mkdocs, fastapi, aiodns, opentelemetry-sdk, opentelemetry-instrumentation, mkdocs-material, ccxt, opentelemetry-instrumentation-urllib3, opentelemetry-instrumentation-requests, opentelemetry-instrumentation-logging, opentelemetry-instrumentation-asgi, opentelemetry-exporter-otlp-proto-http, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-distro, petrosa-otel, opentelemetry-instrumentation-fastapi
 Lint & Test	Install dependencies	2026-02-24T21:23:24.6736513Z Successfully installed PyMySQL-1.1.2 aiodns-4.0.0 aiohappyeyeballs-2.6.1 aiohttp-3.13.3 aiomysql-0.3.2 aiosignal-1.4.0 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.12.1 asgiref-3.11.1 asyncio-mqtt-0.16.2 attrs-25.4.0 babel-2.18.0 bcrypt-5.0.0 black-24.3.0 ccxt-4.5.19 certifi-2026.1.4 cffi-2.0.0 charset_normalizer-3.4.4 click-8.3.1 coincurve-21.0.0 colorama-0.4.6 coverage-7.13.4 cryptography-46.0.5 dateparser-1.3.0 dnspython-2.8.0 ecdsa-0.19.1 fastapi-0.133.0 flake8-7.0.0 frozenlist-1.8.0 ghp-import-2.1.0 googleapis-common-protos-1.72.0 greenlet-3.3.2 grpcio-1.78.1 h11-0.16.0 httpcore-1.0.9 httptools-0.7.1 httpx-0.28.1 idna-3.11 importlib-metadata-8.7.1 iniconfig-2.3.0 jinja2-3.1.6 markdown-3.10.2 markupsafe-3.0.3 mccabe-0.7.0 mergedeep-1.3.4 mkdocs-1.5.3 mkdocs-material-9.4.8 mkdocs-material-extensions-1.3.1 motor-3.7.1 multidict-6.7.1 mypy-1.8.0 mypy-extensions-1.1.0 nats-py-2.12.0 opentelemetry-api-1.39.1 opentelemetry-distro-0.60b1 opentelemetry-exporter-otlp-proto-common-1.39.1 opentelemetry-exporter-otlp-proto-grpc-1.39.1 opentelemetry-exporter-otlp-proto-http-1.39.1 opentelemetry-instrumentation-0.60b1 opentelemetry-instrumentation-asgi-0.60b1 opentelemetry-instrumentation-fastapi-0.60b1 opentelemetry-instrumentation-logging-0.60b1 opentelemetry-instrumentation-requests-0.60b1 opentelemetry-instrumentation-urllib3-0.60b1 opentelemetry-proto-1.39.1 opentelemetry-sdk-1.39.1 opentelemetry-semantic-conventions-0.60b1 opentelemetry-util-http-0.60b1 packaging-26.0 paginate-0.5.7 paho-mqtt-2.1.0 passlib-1.7.4 pathspec-1.0.4 petrosa-otel-1.0.0 platformdirs-4.9.2 pluggy-1.6.0 prometheus-client-0.23.1 propcache-0.4.1 protobuf-6.33.5 pyasn1-0.6.2 pycares-5.0.1 pycodestyle-2.11.1 pycparser-3.0 pycryptodome-3.23.0 pydantic-2.12.4 pydantic-core-2.41.5 pydantic-settings-2.12.0 pyflakes-3.2.0 pygments-2.19.2 pymdown-extensions-10.21 pymongo-4.15.4 pytest-7.4.4 pytest-asyncio-0.23.5 pytest-cov-4.1.0 python-binance-1.0.32 python-dateutil-2.9.0.post0 python-dotenv-1.2.1 python-jose-3.5.0 python-multipart-0.0.20 pytz-2025.2 pyyaml-6.0.3 pyyaml-env-tag-1.1 regex-2026.2.19 requests-2.32.5 rsa-4.9.1 ruff-0.1.15 six-1.17.0 sqlalchemy-2.0.36 starlette-0.52.1 structlog-25.5.0 typing-inspection-0.4.2 typing_extensions-4.15.0 tzlocal-5.3.1 urllib3-2.6.3 uvicorn-0.38.0 uvloop-0.22.1 watchdog-6.0.0 watchfiles-1.1.1 websockets-16.0 wrapt-1.17.3 yarl-1.22.0 zipp-3.23.0
-Lint & Test	Install dependencies	2026-02-24T21:23:24.7912677Z 
+Lint & Test	Install dependencies	2026-02-24T21:23:24.7912677Z
 Lint & Test	Install dependencies	2026-02-24T21:23:24.7913379Z [notice] A new release of pip is available: 24.0 -> 26.0.1
 Lint & Test	Install dependencies	2026-02-24T21:23:24.7914050Z [notice] To update, run: pip install --upgrade pip
 Lint & Test	Install dependencies	2026-02-24T21:23:27.2969148Z Requirement already satisfied: aiomysql==0.3.2 in ./.venv/lib/python3.11/site-packages (from -r requirements.txt (line 3)) (0.3.2)
@@ -1586,7 +1586,7 @@ Lint & Test	Install dependencies	2026-02-24T21:23:52.0283871Z     Found existing
 Lint & Test	Install dependencies	2026-02-24T21:23:52.0333575Z     Uninstalling coverage-7.13.4:
 Lint & Test	Install dependencies	2026-02-24T21:23:52.1473977Z       Successfully uninstalled coverage-7.13.4
 Lint & Test	Install dependencies	2026-02-24T21:24:03.3019294Z Successfully installed ConfigArgParse-1.7.1 Flask-BasicAuth-0.2.0 Flask-Cors-6.0.2 GitPython-3.1.46 Werkzeug-3.1.6 alabaster-0.7.16 argon2-cffi-25.1.0 argon2-cffi-bindings-25.1.0 arrow-1.4.0 asttokens-3.0.1 async-lru-2.2.0 authlib-1.6.8 bandit-1.7.5 beautifulsoup4-4.14.3 bleach-6.3.0 blinker-1.9.0 brotli-1.2.0 cfgv-3.5.0 codecov-2.1.13 comm-0.2.3 coverage-7.4.1 debugpy-1.8.20 decorator-5.2.1 defusedxml-0.7.1 distlib-0.4.0 docutils-0.18.1 dparse-0.6.4 execnet-2.1.2 executing-2.2.1 fastjsonschema-2.21.2 filelock-3.24.3 flask-3.1.3 fqdn-1.5.1 gevent-25.9.1 geventhttpclient-2.3.8 gitdb-4.0.12 identify-2.6.16 imagesize-1.4.1 ipdb-0.13.13 ipykernel-7.2.0 ipython-8.18.1 ipython_pygments_lexers-1.1.1 ipywidgets-8.1.8 isoduration-20.11.0 isort-5.13.2 itsdangerous-2.2.0 jedi-0.19.2 joblib-1.5.3 json5-0.13.0 jsonpointer-3.0.0 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 jupyter-1.0.0 jupyter-client-8.8.0 jupyter-console-6.6.3 jupyter-core-5.9.1 jupyter-events-0.12.0 jupyter-lsp-2.3.0 jupyter-server-2.17.0 jupyter-server-terminals-0.5.4 jupyterlab-4.2.7 jupyterlab-pygments-0.3.0 jupyterlab-server-2.28.0 jupyterlab_widgets-3.0.16 lark-1.3.1 locust-2.17.0 markdown-it-py-4.0.0 marshmallow-4.2.2 matplotlib-inline-0.2.1 mdurl-0.1.2 mistune-3.2.0 msgpack-1.1.2 nbclient-0.10.4 nbconvert-7.17.0 nbformat-5.10.4 nest-asyncio-1.6.0 nltk-3.9.3 nodeenv-1.10.0 notebook-7.2.2 notebook-shim-0.2.4 overrides-7.7.0 pandocfilters-1.5.1 parso-0.8.6 pexpect-4.9.0 pre-commit-3.6.0 prompt-toolkit-3.0.52 psutil-7.2.2 ptyprocess-0.7.0 pure-eval-0.2.3 pytest-html-4.1.1 pytest-metadata-3.1.1 pytest-mock-3.12.0 pytest-timeout-2.1.0 pytest-xdist-3.5.0 python-json-logger-4.0.0 pyzmq-27.1.0 qtconsole-5.7.1 qtpy-2.4.3 referencing-0.37.0 rfc3339-validator-0.1.4 rfc3986-validator-0.1.1 rfc3987-syntax-1.1.0 rich-14.3.3 roundrobin-0.1.0 rpds-py-0.30.0 ruamel-yaml-0.19.1 safety-3.7.0 safety-schemas-0.0.16 send2trash-2.1.0 shellingham-1.5.4 smmap-5.0.2 snowballstemmer-3.0.1 soupsieve-2.8.3 sphinx-7.2.6 sphinx-rtd-theme-1.3.0 sphinxcontrib-applehelp-2.0.0 sphinxcontrib-devhelp-2.0.0 sphinxcontrib-htmlhelp-2.1.0 sphinxcontrib-jquery-4.1 sphinxcontrib-jsmath-1.0.1 sphinxcontrib-qthelp-2.0.0 sphinxcontrib-serializinghtml-2.0.0 stack-data-0.6.3 stevedore-5.7.0 tenacity-9.1.4 terminado-0.18.1 tinycss2-1.4.0 tomlkit-0.14.0 tornado-6.5.4 tqdm-4.67.3 traitlets-5.14.3 typer-0.24.1 types-PyMySQL-1.1.0.1 types-PyYAML-6.0.12.12 types-python-dateutil-2.8.19.20240106 types-requests-2.31.0.20240125 tzdata-2025.3 uri-template-1.3.0 virtualenv-20.39.0 wcwidth-0.6.0 webcolors-25.10.0 webencodings-0.5.1 websocket-client-1.9.0 widgetsnbextension-4.0.15 zope.event-6.1 zope.interface-8.2
-Lint & Test	Install dependencies	2026-02-24T21:24:03.5008729Z 
+Lint & Test	Install dependencies	2026-02-24T21:24:03.5008729Z
 Lint & Test	Install dependencies	2026-02-24T21:24:03.5009383Z [notice] A new release of pip is available: 24.0 -> 26.0.1
 Lint & Test	Install dependencies	2026-02-24T21:24:03.5009962Z [notice] To update, run: pip install --upgrade pip
 Lint & Test	Install pre-commit	﻿2026-02-24T21:24:04.2713807Z ##[group]Run source .venv/bin/activate
@@ -1627,7 +1627,7 @@ Lint & Test	Install pre-commit	2026-02-24T21:24:04.7969171Z Requirement already 
 Lint & Test	Install pre-commit	2026-02-24T21:24:04.8070022Z Requirement already satisfied: distlib<1,>=0.3.7 in ./.venv/lib/python3.11/site-packages (from virtualenv>=20.10.0->pre-commit) (0.4.0)
 Lint & Test	Install pre-commit	2026-02-24T21:24:04.8083625Z Requirement already satisfied: filelock<4,>=3.24.2 in ./.venv/lib/python3.11/site-packages (from virtualenv>=20.10.0->pre-commit) (3.24.3)
 Lint & Test	Install pre-commit	2026-02-24T21:24:04.8094162Z Requirement already satisfied: platformdirs<5,>=3.9.1 in ./.venv/lib/python3.11/site-packages (from virtualenv>=20.10.0->pre-commit) (4.9.2)
-Lint & Test	Install pre-commit	2026-02-24T21:24:06.1107920Z 
+Lint & Test	Install pre-commit	2026-02-24T21:24:06.1107920Z
 Lint & Test	Install pre-commit	2026-02-24T21:24:06.1108535Z [notice] A new release of pip is available: 24.0 -> 26.0.1
 Lint & Test	Install pre-commit	2026-02-24T21:24:06.1109197Z [notice] To update, run: pip install --upgrade pip
 Lint & Test	Install pre-commit	2026-02-24T21:24:06.3117680Z pre-commit installed at .git/hooks/pre-commit
@@ -1674,24 +1674,24 @@ Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:15.3352963Z [INFO] This m
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4221829Z black....................................................................Failed
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4222491Z - hook id: black
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4222767Z - files were modified by this hook
-Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4223054Z 
+Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4223054Z
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4223280Z reformatted tests/test_trading_config_rollback.py
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4223805Z reformatted tradeengine/db/mongodb_client.py
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4224355Z reformatted tradeengine/services/data_manager_client.py
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4224935Z reformatted tradeengine/api_config_routes.py
-Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4225443Z 
+Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4225443Z
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4225816Z All done! ✨ 🍰 ✨
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4226135Z 4 files reformatted, 4 files left unchanged.
-Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4226336Z 
+Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4226336Z
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4409120Z ruff.....................................................................Failed
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4409747Z - hook id: ruff
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4410068Z - exit code: 1
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4410324Z - files were modified by this hook
-Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4410497Z 
+Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4410497Z
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4410778Z tests/test_trading_config_rollback.py:6:1: UP035 `typing.Dict` is deprecated, use `dict` instead
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4411709Z tests/test_trading_config_rollback.py:6:1: UP035 `typing.List` is deprecated, use `list` instead
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4412145Z Found 3 errors (1 fixed, 2 remaining).
-Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4412322Z 
+Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4412322Z
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.4898501Z trim trailing whitespace.................................................Passed
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.5359426Z fix end of files.........................................................Passed
 Lint & Test	Run pre-commit on PR diff	2026-02-24T21:24:19.5360302Z check yaml...........................................(no files to check)Skipped
@@ -1832,22 +1832,22 @@ Security Scan	Checkout code	2026-02-24T21:22:41.8171982Z [command]/usr/bin/git c
 Security Scan	Checkout code	2026-02-24T21:22:41.8198169Z ##[group]Checking out the ref
 Security Scan	Checkout code	2026-02-24T21:22:41.8202759Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/233/merge
 Security Scan	Checkout code	2026-02-24T21:22:41.8473124Z Note: switching to 'refs/remotes/pull/233/merge'.
-Security Scan	Checkout code	2026-02-24T21:22:41.8473711Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8473711Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8474521Z You are in 'detached HEAD' state. You can look around, make experimental
 Security Scan	Checkout code	2026-02-24T21:22:41.8475768Z changes and commit them, and you can discard any commits you make in this
 Security Scan	Checkout code	2026-02-24T21:22:41.8476765Z state without impacting any branches by switching back to a branch.
-Security Scan	Checkout code	2026-02-24T21:22:41.8477317Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8477317Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8477600Z If you want to create a new branch to retain commits you create, you may
 Security Scan	Checkout code	2026-02-24T21:22:41.8478204Z do so (now or later) by using -c with the switch command. Example:
-Security Scan	Checkout code	2026-02-24T21:22:41.8478562Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8478562Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8478692Z   git switch -c <new-branch-name>
-Security Scan	Checkout code	2026-02-24T21:22:41.8478936Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8478936Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8479066Z Or undo this operation with:
-Security Scan	Checkout code	2026-02-24T21:22:41.8479277Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8479277Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8479383Z   git switch -
-Security Scan	Checkout code	2026-02-24T21:22:41.8479605Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8479605Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8479887Z Turn off this advice by setting config variable advice.detachedHead to false
-Security Scan	Checkout code	2026-02-24T21:22:41.8480315Z 
+Security Scan	Checkout code	2026-02-24T21:22:41.8480315Z
 Security Scan	Checkout code	2026-02-24T21:22:41.8480806Z HEAD is now at 1a5c138 Merge 98e0b6d143cd9eb7b69b17f08a99631b7bcb807a into 0588192172eb36ca2e03794c5bfcfea113771f5b
 Security Scan	Checkout code	2026-02-24T21:22:41.8482934Z ##[endgroup]
 Security Scan	Checkout code	2026-02-24T21:22:41.8518621Z [command]/usr/bin/git log -1 --format=%H
@@ -2022,24 +2022,24 @@ Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9535186Z env:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9535371Z   REGISTRY: docker.io
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9535667Z   IMAGE_NAME: ***/petrosa-tradeengine
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536094Z   NAMESPACE: petrosa-apps
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536321Z   INPUT_INPUT: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536321Z   INPUT_INPUT:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536513Z   INPUT_EXIT_CODE: 1
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536724Z   INPUT_IGNORE_UNFIXED: true
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9536962Z   INPUT_VULN_TYPE: os,library
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9537201Z   INPUT_SEVERITY: CRITICAL,HIGH
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9537444Z   INPUT_FORMAT: sarif
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9537650Z   INPUT_TEMPLATE: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9537650Z   INPUT_TEMPLATE:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9537861Z   INPUT_OUTPUT: trivy-results.sarif
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538122Z   INPUT_SKIP_DIRS: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538332Z   INPUT_SKIP_FILES: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538528Z   INPUT_TIMEOUT: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538725Z   INPUT_IGNORE_POLICY: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538938Z   INPUT_HIDE_PROGRESS: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538122Z   INPUT_SKIP_DIRS:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538332Z   INPUT_SKIP_FILES:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538528Z   INPUT_TIMEOUT:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538725Z   INPUT_IGNORE_POLICY:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9538938Z   INPUT_HIDE_PROGRESS:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539150Z   INPUT_LIST_ALL_PKGS: false
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539370Z   INPUT_SCANNERS: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539561Z   INPUT_TRIVY_CONFIG: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539763Z   INPUT_TF_VARS: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539947Z   INPUT_DOCKER_HOST: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539370Z   INPUT_SCANNERS:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539561Z   INPUT_TRIVY_CONFIG:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539763Z   INPUT_TF_VARS:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9539947Z   INPUT_DOCKER_HOST:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9540154Z ##[endgroup]
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9617471Z ##[group]Run entrypoint.sh
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9617724Z [36;1mentrypoint.sh[0m
@@ -2049,11 +2049,11 @@ Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9645895Z   REG
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9646179Z   IMAGE_NAME: ***/petrosa-tradeengine
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9646464Z   NAMESPACE: petrosa-apps
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9646688Z   INPUT_SCAN_TYPE: fs
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9646891Z   INPUT_IMAGE_REF: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9646891Z   INPUT_IMAGE_REF:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647088Z   INPUT_SCAN_REF: .
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647280Z   INPUT_TRIVYIGNORES: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647485Z   INPUT_GITHUB_PAT: 
-Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647696Z   INPUT_LIMIT_SEVERITIES_FOR_SARIF: 
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647280Z   INPUT_TRIVYIGNORES:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647485Z   INPUT_GITHUB_PAT:
+Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9647696Z   INPUT_LIMIT_SEVERITIES_FOR_SARIF:
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9648126Z   TRIVY_CACHE_DIR: /home/runner/work/petrosa-tradeengine/petrosa-tradeengine/.cache/trivy
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9648602Z ##[endgroup]
 Security Scan	Run Trivy vulnerability scanner	2026-02-24T21:22:47.9818099Z Building SARIF report with all severities
@@ -2226,22 +2226,22 @@ Test Quality Check	Checkout service code	2026-02-24T21:22:38.2515909Z [command]/
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2547336Z ##[group]Checking out the ref
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2552475Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/233/merge
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2831093Z Note: switching to 'refs/remotes/pull/233/merge'.
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2834577Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2834577Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2835598Z You are in 'detached HEAD' state. You can look around, make experimental
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2837946Z changes and commit them, and you can discard any commits you make in this
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2839814Z state without impacting any branches by switching back to a branch.
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2840620Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2840620Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2841266Z If you want to create a new branch to retain commits you create, you may
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2843033Z do so (now or later) by using -c with the switch command. Example:
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2843813Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2843813Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2844133Z   git switch -c <new-branch-name>
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2844873Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2844873Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2845236Z Or undo this operation with:
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2845888Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2845888Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2846172Z   git switch -
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2846564Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2846564Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2847207Z Turn off this advice by setting config variable advice.detachedHead to false
-Test Quality Check	Checkout service code	2026-02-24T21:22:38.2848201Z 
+Test Quality Check	Checkout service code	2026-02-24T21:22:38.2848201Z
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2849359Z HEAD is now at 1a5c138 Merge 98e0b6d143cd9eb7b69b17f08a99631b7bcb807a into 0588192172eb36ca2e03794c5bfcfea113771f5b
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2852937Z ##[endgroup]
 Test Quality Check	Checkout service code	2026-02-24T21:22:38.2885085Z [command]/usr/bin/git log -1 --format=%H
@@ -2493,8 +2493,8 @@ notify	Notify deployment status	2026-02-24T21:22:36.1882869Z   IMAGE_NAME: ***/p
 notify	Notify deployment status	2026-02-24T21:22:36.1883742Z   NAMESPACE: petrosa-apps
 notify	Notify deployment status	2026-02-24T21:22:36.1884455Z ##[endgroup]
 notify	Notify deployment status	2026-02-24T21:22:36.2255381Z ❌ Deployment failed!
-notify	Notify deployment status	2026-02-24T21:22:36.2255962Z 📦 Version: 
-notify	Notify deployment status	2026-02-24T21:22:36.2256410Z 🐳 Image Tag: 
+notify	Notify deployment status	2026-02-24T21:22:36.2255962Z 📦 Version:
+notify	Notify deployment status	2026-02-24T21:22:36.2256410Z 🐳 Image Tag:
 notify	Complete job	﻿2026-02-24T21:22:36.2354164Z Cleaning up orphan processes
 pipeline	Set up job	﻿2026-02-24T21:24:25.0823815Z Current runner version: '2.331.0'
 pipeline	Set up job	2026-02-24T21:24:25.0848394Z ##[group]Runner Image Provisioner

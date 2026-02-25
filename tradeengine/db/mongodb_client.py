@@ -232,7 +232,9 @@ class DataManagerConfigClient:
             audit_dict["timestamp"] = datetime.utcnow()
 
             response = await self.data_manager_client._client.insert_one(
-                database="mongodb", collection="trading_config_audit", record=audit_dict
+                database="mongodb",
+                collection="trading_configs_audit",
+                record=audit_dict,
             )
 
             if response.get("inserted_id"):
@@ -270,7 +272,7 @@ class DataManagerConfigClient:
 
             response = await self.data_manager_client._client.query(
                 database="mongodb",
-                collection="trading_config_audit",
+                collection="trading_configs_audit",
                 params={
                     "filter": filter_params,
                     "sort_by": "timestamp",
@@ -286,6 +288,83 @@ class DataManagerConfigClient:
         except Exception as e:
             logger.error(f"Failed to get audit trail via Data Manager: {e}")
             return []
+
+    async def get_audit_record_by_id(self, audit_id: str) -> dict[str, Any] | None:
+        """
+        Get a specific audit record by its ID.
+
+        Args:
+            audit_id: Audit record unique identifier
+
+        Returns:
+            Audit record or None if not found
+        """
+        try:
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="trading_configs_audit",
+                params={"filter": {"_id": audit_id}, "limit": 1},
+            )
+
+            if response and response.get("data"):
+                return response["data"][0]
+            return None
+
+        except Exception as e:
+            logger.error(
+                f"Failed to get audit record {audit_id} from Data Manager: {e}"
+            )
+            return None
+
+    async def get_audit_record_by_version(
+        self,
+        version: int,
+        config_type: str,
+        symbol: str | None = None,
+        side: str | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Get a specific audit record by its version and scope.
+
+        Args:
+            version: Version number to find
+            config_type: Type of configuration (global, symbol, symbol_side)
+            symbol: Optional symbol
+            side: Optional side
+
+        Returns:
+            Audit record or None if not found
+        """
+        try:
+            filter_dict = {
+                "version_after": version,
+                "config_type": config_type,
+            }
+            if symbol:
+                filter_dict["symbol"] = symbol
+            if side:
+                filter_dict["side"] = side
+
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="trading_configs_audit",
+                params={
+                    "filter": filter_dict,
+                    "sort_by": "timestamp",
+                    "sort_order": "desc",
+                    "limit": 1,
+                },
+            )
+
+            if response and response.get("data"):
+                return response["data"][0]
+            return None
+
+        except Exception as e:
+            logger.error(
+                f"Failed to get version {version} for {config_type} from Data Manager: {e}"
+            )
+            return None
 
     async def get_config_history(
         self, symbol: str | None = None, side: str | None = None, limit: int = 20

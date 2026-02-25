@@ -294,9 +294,7 @@ class TestAttachLoggingHandlerBackwardCompat:
         elif "otel_init" in sys.modules:
             sys.modules["otel_init"]._global_logger_provider = None
 
-        with (
-            patch("otel_init.configure_logging") as mock_configure,
-        ):
+        with (patch("otel_init.configure_logging") as mock_configure,):
             mock_configure.return_value = True
 
             # The deprecation is shown as a DeprecationWarning

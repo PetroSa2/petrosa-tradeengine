@@ -133,8 +133,7 @@ class TestTradingConfigManagerCache:
             == "BTCUSDT:LONG:all_strategies"
         )
         assert (
-            config_manager._get_cache_key(None, "LONG")
-            == "global:LONG:all_strategies"
+            config_manager._get_cache_key(None, "LONG") == "global:LONG:all_strategies"
         )
         assert (
             config_manager._get_cache_key("BTCUSDT", "LONG", "momentum")
@@ -321,7 +320,9 @@ class TestTradingConfigManagerGetConfig:
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=global_config)
         mock_mongodb_client.get_symbol_config = AsyncMock(return_value=symbol_config)
-        mock_mongodb_client.get_strategy_config = AsyncMock(return_value=strategy_config)
+        mock_mongodb_client.get_strategy_config = AsyncMock(
+            return_value=strategy_config
+        )
         mock_mongodb_client.get_symbol_side_config = AsyncMock(
             return_value=symbol_side_config
         )

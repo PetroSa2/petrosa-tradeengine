@@ -41,16 +41,46 @@ In implementation this is applied bottom-up: defaults -> global -> per-pair -> p
 
 ## API Endpoints
 
+### Global Filters
+```
+GET /api/v1/config/filters/global
+PUT /api/v1/config/filters/global
+```
+
+### Per-Pair Filters
+```
+GET /api/v1/config/filters/pair/{symbol}
+PUT /api/v1/config/filters/pair/{symbol}
+```
+
+### Per-Side Filters
+```
+GET /api/v1/config/filters/pair/{symbol}/side/{side}
+PUT /api/v1/config/filters/pair/{symbol}/side/{side}
+```
 ### Per-Strategy Filters
 ```
 GET /api/v1/config/filters/strategy/{strategy_id}
 PUT /api/v1/config/filters/strategy/{strategy_id}
 ```
 
-Note: This module currently implements strategy-scoped filter endpoints only.
-
 ## Configuration Examples
 
+### Setting Global Filters
+```bash
+curl -X PUT http://localhost:8000/api/v1/config/filters/global \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filters": {
+      "tp_distance_min_pct": 1.0,
+      "tp_distance_max_pct": 10.0,
+      "sl_distance_min_pct": 0.5,
+      "sl_distance_max_pct": 5.0
+    },
+    "changed_by": "admin",
+    "reason": "Set global TP/SL limits"
+  }'
+```
 ### Setting Strategy-Specific Filters
 ```bash
 curl -X PUT http://localhost:8000/api/v1/config/filters/strategy/momentum_strategy \

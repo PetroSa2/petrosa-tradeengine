@@ -286,12 +286,12 @@ async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager, mock_ex
     )
 
     # Verify TP order was cancelled
-    assert cancel_result[0] is True, (
-        f"Expected cancel_result[0] to be True, got {cancel_result}"
-    )
-    assert cancel_result[1] == "stop_loss", (
-        f"Expected close_reason to be 'stop_loss', got {cancel_result[1]}"
-    )
+    assert (
+        cancel_result[0] is True
+    ), f"Expected cancel_result[0] to be True, got {cancel_result}"
+    assert (
+        cancel_result[1] == "stop_loss"
+    ), f"Expected close_reason to be 'stop_loss', got {cancel_result[1]}"
 
     # Clean up
     await oco_manager.stop_monitoring()
@@ -471,17 +471,17 @@ async def test_dispatcher_places_oco_orders_on_position_open(
 
             # Verify OCO manager has active pairs
             # Check if exchange.execute was called (should be called for main order + 2 OCO orders = 3 times)
-            assert mock_exchange.execute.called, (
-                "Exchange execute should have been called"
-            )
+            assert (
+                mock_exchange.execute.called
+            ), "Exchange execute should have been called"
 
             # Verify OCO manager has active pairs (may not be placed if dispatch didn't create position)
             # The test verifies that OCO placement is attempted, not necessarily successful
             if len(dispatcher.oco_manager.active_oco_pairs) == 0:
                 # If no OCO pairs, verify that at least the main order was executed
-                assert mock_exchange.execute.call_count >= 1, (
-                    "At least main order should be executed"
-                )
+                assert (
+                    mock_exchange.execute.call_count >= 1
+                ), "At least main order should be executed"
 
             # Clean up
             await dispatcher.oco_manager.stop_monitoring()
@@ -759,9 +759,9 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
                     exchange_position_key
                 ]
                 # May have fewer pairs if some didn't get created
-                assert len(oco_list) >= 1, (
-                    f"Expected at least 1 OCO pair, got {len(oco_list)}"
-                )
+                assert (
+                    len(oco_list) >= 1
+                ), f"Expected at least 1 OCO pair, got {len(oco_list)}"
             else:
                 pytest.skip("OCO pairs not created - may be due to test environment")
 

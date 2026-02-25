@@ -67,7 +67,7 @@ router = APIRouter(prefix="/api/v1/config/filters", tags=["trading-filters"])
 
 @router.get("/strategy/{strategy_id}", response_model=APIResponse)
 async def get_strategy_filters(
-    strategy_id: str = Path(..., description="Strategy ID")
+    strategy_id: str = Path(..., description="Strategy ID"),
 ) -> APIResponse:
     """Get strategy-specific filters."""
     try:
@@ -164,6 +164,173 @@ async def update_strategy_filters(
         raise
     except Exception as e:
         logger.error(f"Error updating strategy filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+# =============================================================================
+# Global, Pair, and Side Routes
+# =============================================================================
+
+
+@router.get("/global", response_model=APIResponse)
+async def get_global_filters() -> APIResponse:
+    """Get global filters."""
+    try:
+        manager = get_config_manager()
+        config = await manager.get_config(symbol=None, side=None)
+
+        return APIResponse(
+            success=True,
+            data={"filters": config},
+            message="Global filters retrieved successfully",
+        )
+    except Exception as e:
+        logger.error(f"Error getting global filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.put("/global", response_model=APIResponse)
+async def update_global_filters(request: FilterUpdateRequest) -> APIResponse:
+    """Update global filters."""
+    try:
+        manager = get_config_manager()
+        success, config, errors = await manager.set_config(
+            parameters=request.filters,
+            changed_by=request.changed_by,
+            reason=request.reason,
+            symbol=None,
+            side=None,
+        )
+
+        if success:
+            return APIResponse(
+                success=True,
+                data={"config": config.model_dump() if config else None},
+                message="Global filters updated successfully",
+            )
+        else:
+            return APIResponse(
+                success=False,
+                error={"code": "UPDATE_FAILED", "message": ", ".join(errors)},
+            )
+    except Exception as e:
+        logger.error(f"Error updating global filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.get("/pair/{symbol}", response_model=APIResponse)
+async def get_pair_filters(
+    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)"),
+) -> APIResponse:
+    """Get pair-specific filters."""
+    try:
+        manager = get_config_manager()
+        config = await manager.get_config(symbol=symbol, side=None)
+
+        return APIResponse(
+            success=True,
+            data={"symbol": symbol, "filters": config},
+            message=f"Filters for {symbol} retrieved successfully",
+        )
+    except Exception as e:
+        logger.error(f"Error getting pair filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.put("/pair/{symbol}", response_model=APIResponse)
+async def update_pair_filters(
+    request: FilterUpdateRequest,
+    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)"),
+) -> APIResponse:
+    """Update pair-specific filters."""
+    try:
+        manager = get_config_manager()
+        success, config, errors = await manager.set_config(
+            parameters=request.filters,
+            changed_by=request.changed_by,
+            reason=request.reason,
+            symbol=symbol,
+            side=None,
+        )
+
+        if success:
+            return APIResponse(
+                success=True,
+                data={"config": config.model_dump() if config else None},
+                message=f"Filters for {symbol} updated successfully",
+            )
+        else:
+            return APIResponse(
+                success=False,
+                error={"code": "UPDATE_FAILED", "message": ", ".join(errors)},
+            )
+    except Exception as e:
+        logger.error(f"Error updating pair filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.get("/pair/{symbol}/side/{side}", response_model=APIResponse)
+async def get_side_filters(
+    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)"),
+    side: Literal["LONG", "SHORT"] = Path(..., description="Position side"),
+) -> APIResponse:
+    """Get symbol-side specific filters."""
+    try:
+        manager = get_config_manager()
+        config = await manager.get_config(symbol=symbol, side=side)
+
+        return APIResponse(
+            success=True,
+            data={"symbol": symbol, "side": side, "filters": config},
+            message=f"Filters for {symbol}-{side} retrieved successfully",
+        )
+    except Exception as e:
+        logger.error(f"Error getting side filters: {e}")
+        return APIResponse(
+            success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
+        )
+
+
+@router.put("/pair/{symbol}/side/{side}", response_model=APIResponse)
+async def update_side_filters(
+    request: FilterUpdateRequest,
+    symbol: str = Path(..., description="Trading symbol (e.g., BTCUSDT)"),
+    side: Literal["LONG", "SHORT"] = Path(..., description="Position side"),
+) -> APIResponse:
+    """Update symbol-side specific filters."""
+    try:
+        manager = get_config_manager()
+        success, config, errors = await manager.set_config(
+            parameters=request.filters,
+            changed_by=request.changed_by,
+            reason=request.reason,
+            symbol=symbol,
+            side=side,
+        )
+
+        if success:
+            return APIResponse(
+                success=True,
+                data={"config": config.model_dump() if config else None},
+                message=f"Filters for {symbol}-{side} updated successfully",
+            )
+        else:
+            return APIResponse(
+                success=False,
+                error={"code": "UPDATE_FAILED", "message": ", ".join(errors)},
+            )
+    except Exception as e:
+        logger.error(f"Error updating side filters: {e}")
         return APIResponse(
             success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
         )

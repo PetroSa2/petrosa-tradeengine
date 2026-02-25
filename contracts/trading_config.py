@@ -22,6 +22,7 @@ class TradingConfig(BaseModel):
     Configuration Hierarchy:
     - Global: Applies to all symbols and all sides
     - Symbol: Applies to specific symbol, both LONG and SHORT
+    - Strategy: Applies to specific strategy ID (e.g., 'orderbook_skew')
     - Symbol-Side: Applies to specific symbol and specific side only
     """
 
@@ -33,6 +34,9 @@ class TradingConfig(BaseModel):
     )
     side: Literal["LONG", "SHORT"] | None = Field(
         None, description="Position side (None for global/symbol configs)"
+    )
+    strategy_id: str | None = Field(
+        None, description="Strategy identifier (None for global/symbol configs)"
     )
 
     # Configuration data
@@ -117,13 +121,14 @@ class TradingConfigAudit(BaseModel):
     id: str | None = Field(None, description="Audit record ID")
 
     # Scope of change
-    config_type: Literal["global", "symbol", "symbol_side"] = Field(
+    config_type: Literal["global", "symbol", "symbol_side", "strategy"] = Field(
         ..., description="Type of configuration that was changed"
     )
     symbol: str | None = Field(None, description="Symbol if applicable")
     side: Literal["LONG", "SHORT"] | None = Field(
         None, description="Side if applicable"
     )
+    strategy_id: str | None = Field(None, description="Strategy if applicable")
 
     # Change details
     action: Literal["create", "update", "delete"] = Field(
@@ -158,6 +163,8 @@ class TradingConfigAudit(BaseModel):
 
     def get_change_summary(self) -> str:
         """Get human-readable summary of the change."""
+        if self.strategy_id:
+            return f"{self.action.upper()} strategy {self.strategy_id} by {self.changed_by}"
         scope = f"{self.symbol or 'global'}"
         if self.side:
             scope += f"-{self.side}"

@@ -121,11 +121,17 @@ class TradingConfigManager:
                 logger.error(f"Cache refresh loop error: {e}")
                 await asyncio.sleep(10)
 
-    def _get_cache_key(self, symbol: str | None, side: str | None) -> str:
+    def _get_cache_key(
+        self,
+        symbol: str | None,
+        side: str | None,
+        strategy_id: str | None = None,
+    ) -> str:
         """Generate cache key for config lookup."""
         symbol_part = symbol or "global"
         side_part = side or "all"
-        return f"{symbol_part}:{side_part}"
+        strategy_part = strategy_id or "none"
+        return f"{symbol_part}:{side_part}:{strategy_part}"
 
     async def get_config(
         self,
@@ -153,7 +159,7 @@ class TradingConfigManager:
             Resolved configuration parameters
         """
         # Check cache first
-        cache_key = self._get_cache_key(symbol, side)
+        cache_key = self._get_cache_key(symbol, side, strategy_id)
         if cache_key in self._cache:
             config, timestamp = self._cache[cache_key]
             if time.time() - timestamp < self.cache_ttl_seconds:
@@ -505,10 +511,38 @@ class TradingConfigManager:
             return False, [str(e)]
 
     def invalidate_cache(
-        self, symbol: str | None = None, side: str | None = None
+        self,
+        symbol: str | None = None,
+        side: str | None = None,
+        strategy_id: str | None = None,
     ) -> None:
-        """Force cache invalidation for specific config."""
-        cache_key = self._get_cache_key(symbol, side)
+        """Force cache invalidation for specific or all configs."""
+        if symbol is None and side is None and strategy_id is None:
+            self._cache.clear()
+            logger.debug("Cleared entire config cache")
+            return
+
+        # Targeted invalidation
+        cache_key = self._get_cache_key(symbol, side, strategy_id)
         if cache_key in self._cache:
             del self._cache[cache_key]
             logger.debug(f"Cache invalidated: {cache_key}")
+
+        # If we invalidated a higher-level config, we might need to invalidate
+        # all entries that depend on it.
+        if not (strategy_id or (symbol and side)):
+            # More general invalidation, clear all related keys
+            prefix = ""
+            if symbol:
+                prefix = f"{symbol}:"
+            else:
+                prefix = "global:"
+
+            keys_to_del = [k for k in self._cache.keys() if k.startswith(prefix)]
+            for k in keys_to_del:
+                if k in self._cache:
+                    del self._cache[k]
+            if keys_to_del:
+                logger.debug(
+                    f"Invalidated {len(keys_to_del)} related cache entries for {prefix}"
+                )

@@ -61,7 +61,7 @@ class TestStrategyFilterRoutes:
         )
 
         # Make request
-        response = client.get("/api/v1/config/filters/momentum_strategy")
+        response = client.get("/api/v1/config/filters/strategy/momentum_strategy")
 
         # Assert response
         assert response.status_code == 200
@@ -95,7 +95,7 @@ class TestStrategyFilterRoutes:
         )
 
         # Make request
-        response = client.get("/api/v1/config/filters/momentum_strategy")
+        response = client.get("/api/v1/config/filters/strategy/momentum_strategy")
 
         # Assert response
         assert (
@@ -112,12 +112,11 @@ class TestStrategyFilterRoutes:
         mock_config_manager.mongodb_client.upsert_strategy_config = AsyncMock(
             return_value=True
         )
-        mock_config_manager._cache = MagicMock()
-        mock_config_manager._cache.clear = MagicMock()
+        mock_config_manager.invalidate_cache = MagicMock()
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {
                     "tp_distance_min_pct": 2.0,
@@ -141,7 +140,9 @@ class TestStrategyFilterRoutes:
 
         # Verify config manager methods were called
         mock_config_manager.mongodb_client.upsert_strategy_config.assert_called_once()
-        mock_config_manager._cache.clear.assert_called_once()
+        mock_config_manager.invalidate_cache.assert_called_once_with(
+            strategy_id="momentum_strategy"
+        )
 
     def test_update_strategy_filters_no_db_client(self, client, mock_config_manager):
         """Test error handling when no database client is configured."""
@@ -150,7 +151,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",
@@ -173,7 +174,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",
@@ -198,7 +199,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",
@@ -212,3 +213,137 @@ class TestStrategyFilterRoutes:
         assert data["success"] is False
         assert "error" in data
         assert "INTERNAL_ERROR" in str(data["error"])
+
+
+class TestHierarchyFilterRoutes:
+    """Test global, pair, and side filter routes."""
+
+    def test_get_global_filters_success(self, client, mock_config_manager):
+        """Test successful retrieval of global filters."""
+        mock_config_manager.get_config = AsyncMock(return_value={"global_param": True})
+
+        response = client.get("/api/v1/config/filters/global")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["filters"]["global_param"] is True
+        mock_config_manager.get_config.assert_called_once_with(symbol=None, side=None)
+
+    def test_update_global_filters_success(self, client, mock_config_manager):
+        """Test successful update of global filters."""
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(True, MagicMock(model_dump=lambda: {"res": "ok"}), [])
+        )
+
+        response = client.put(
+            "/api/v1/config/filters/global",
+            json={
+                "filters": {"tp_distance_min_pct": 1.0},
+                "changed_by": "admin",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        mock_config_manager.set_config.assert_called_once()
+
+    def test_get_pair_filters_success(self, client, mock_config_manager):
+        """Test successful retrieval of pair filters."""
+        mock_config_manager.get_config = AsyncMock(
+            return_value={"symbol": "BTCUSDT", "param": 1}
+        )
+
+        response = client.get("/api/v1/config/filters/pair/BTCUSDT")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["symbol"] == "BTCUSDT"
+        mock_config_manager.get_config.assert_called_once_with(
+            symbol="BTCUSDT", side=None
+        )
+
+    def test_update_pair_filters_success(self, client, mock_config_manager):
+        """Test successful update of pair filters."""
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(True, MagicMock(model_dump=lambda: {"res": "ok"}), [])
+        )
+
+        response = client.put(
+            "/api/v1/config/filters/pair/BTCUSDT",
+            json={
+                "filters": {"tp_distance_min_pct": 1.0},
+                "changed_by": "admin",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        mock_config_manager.set_config.assert_called_once_with(
+            parameters={"tp_distance_min_pct": 1.0},
+            changed_by="admin",
+            reason=None,
+            symbol="BTCUSDT",
+            side=None,
+        )
+
+    def test_get_side_filters_success(self, client, mock_config_manager):
+        """Test successful retrieval of side filters."""
+        mock_config_manager.get_config = AsyncMock(return_value={"param": 1})
+
+        response = client.get("/api/v1/config/filters/pair/BTCUSDT/side/LONG")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["side"] == "LONG"
+        mock_config_manager.get_config.assert_called_once_with(
+            symbol="BTCUSDT", side="LONG"
+        )
+
+    def test_update_side_filters_success(self, client, mock_config_manager):
+        """Test successful update of side filters."""
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(True, MagicMock(model_dump=lambda: {"res": "ok"}), [])
+        )
+
+        response = client.put(
+            "/api/v1/config/filters/pair/BTCUSDT/side/LONG",
+            json={
+                "filters": {"tp_distance_min_pct": 1.0},
+                "changed_by": "admin",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        mock_config_manager.set_config.assert_called_once_with(
+            parameters={"tp_distance_min_pct": 1.0},
+            changed_by="admin",
+            reason=None,
+            symbol="BTCUSDT",
+            side="LONG",
+        )
+
+    def test_update_global_filters_failure(self, client, mock_config_manager):
+        """Test failure when updating global filters."""
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["Error message"])
+        )
+
+        response = client.put(
+            "/api/v1/config/filters/global",
+            json={
+                "filters": {"invalid": True},
+                "changed_by": "admin",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "Error message" in data["error"]["message"]

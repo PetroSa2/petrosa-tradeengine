@@ -485,8 +485,11 @@ class DataManagerConfigClient:
         """
         try:
             config_dict = config.model_dump()
-            strategy_id = config_dict.get("strategy_id", "UNKNOWN")
-            config_dict["strategy_id"] = strategy_id
+            strategy_id = config_dict.get("strategy_id")
+
+            if not strategy_id:
+                logger.error("Failed to upsert strategy config: strategy_id is missing")
+                return False
 
             response = await self.data_manager_client._client.upsert_one(
                 database="mongodb",

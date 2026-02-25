@@ -146,6 +146,9 @@ class RollbackRequest(BaseModel):
     target_version: int | None = Field(
         None, description="Specific version to rollback to"
     )
+    rollback_id: str | None = Field(
+        None, description="Specific audit record ID to rollback to"
+    )
     changed_by: str = Field(..., description="Who is performing the rollback")
     reason: str | None = Field(None, description="Reason for rollback")
 
@@ -189,6 +192,7 @@ async def rollback_config(
             symbol=symbol.upper() if symbol else None,
             side=side,
             target_version=request.target_version,
+            rollback_id=request.rollback_id,
             reason=request.reason,
         )
 
@@ -209,9 +213,17 @@ async def rollback_config(
                 side=side,
                 parameters=config.parameters if config else {},
                 version=config.version if config else 0,
-                source="data_manager",
-                created_at=None,
-                updated_at=datetime.utcnow().isoformat(),
+                source="mongodb",
+                created_at=(
+                    config.created_at.isoformat()
+                    if config and config.created_at
+                    else None
+                ),
+                updated_at=(
+                    config.updated_at.isoformat()
+                    if config and config.updated_at
+                    else datetime.utcnow().isoformat()
+                ),
             ),
             metadata={"action": "rollback", "scope": "trading"},
         )
@@ -220,6 +232,21 @@ async def rollback_config(
         return APIResponse(
             success=False, error={"code": "INTERNAL_ERROR", "message": str(e)}
         )
+
+
+@router.post(
+    "/restore",
+    response_model=APIResponse,
+    summary="Restore trading configuration",
+    description="Alias for rollback endpoint.",
+)
+async def restore_config(
+    request: RollbackRequest,
+    symbol: str | None = Query(None, description="Trading symbol"),
+    side: Literal["LONG", "SHORT"] | None = Query(None, description="Position side"),
+):
+    """Restore configuration (alias for rollback)."""
+    return await rollback_config(request, symbol, side)
 
 
 @router.get(
@@ -818,9 +845,9 @@ async def validate_config(request: ConfigValidationRequest):
             # Type check to avoid comparison errors with invalid types
             if isinstance(leverage, int | float) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
-                estimated_impact[
-                    "warning"
-                ] = "High leverage increases risk significantly"
+                estimated_impact["warning"] = (
+                    "High leverage increases risk significantly"
+                )
 
         # Cross-service conflict detection
         conflicts = await detect_cross_service_conflicts(

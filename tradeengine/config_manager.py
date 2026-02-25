@@ -360,6 +360,7 @@ class TradingConfigManager:
         symbol: str | None = None,
         side: str | None = None,
         target_version: int | None = None,
+        rollback_id: str | None = None,
         reason: str | None = None,
     ) -> tuple[bool, TradingConfig | None, list[str]]:
         """
@@ -370,41 +371,72 @@ class TradingConfigManager:
             symbol: Optional symbol
             side: Optional side
             target_version: Optional specific version
+            rollback_id: Optional specific audit ID to rollback to
             reason: Optional reason
 
         Returns:
             Tuple of (success, config, errors)
         """
         try:
-            # If using Data Manager proxy
-            if hasattr(self.mongodb_client, "rollback_config"):
-                success = await self.mongodb_client.rollback_config(
-                    changed_by=changed_by,
-                    symbol=symbol,
-                    side=side,
-                    target_version=target_version,
-                    reason=reason,
+            # Determine configuration to restore
+            params_to_restore = None
+
+            if rollback_id:
+                params_to_restore = await self.get_config_by_id(
+                    rollback_id, symbol=symbol, side=side
                 )
-                if success:
-                    # Invalidate cache
-                    self.invalidate_cache(symbol, side)
-                    # Get the new config (resolved)
-                    params = await self.get_config(symbol, side)
-
-                    # Return a synthetic config object
-                    config = TradingConfig(
-                        symbol=symbol,
-                        side=side,  # type: ignore
-                        parameters=params,
-                        version=0,
-                        created_by=changed_by,
-                        updated_at=datetime.utcnow(),
+                if not params_to_restore:
+                    return (
+                        False,
+                        None,
+                        [
+                            f"Audit record {rollback_id} not found for scope {symbol or 'global'}{'-' + side if side else ''}"
+                        ],
                     )
-                    return True, config, []
-                else:
-                    return False, None, ["Rollback failed in Data Manager"]
+            elif target_version is not None:
+                if target_version < 1:
+                    return False, None, ["Invalid version number (must be >= 1)"]
+                params_to_restore = await self.get_config_by_version(
+                    target_version, symbol=symbol, side=side
+                )
+                if not params_to_restore:
+                    return (
+                        False,
+                        None,
+                        [
+                            f"Version {target_version} not found for scope {symbol or 'global'}{'-' + side if side else ''}"
+                        ],
+                    )
+            else:
+                # Default to previous
+                params_to_restore = await self.get_previous_config(
+                    symbol=symbol, side=side
+                )
+                if not params_to_restore:
+                    return (
+                        False,
+                        None,
+                        [
+                            f"No previous configuration found for {symbol or 'global'}{'-' + side if side else ''}"
+                        ],
+                    )
 
-            return False, None, ["Rollback not supported by current database client"]
+            # Perform rollback using set_config
+            rollback_reason = (
+                reason
+                or f"Rollback to {'version ' + str(target_version) if target_version is not None else ('ID ' + rollback_id if rollback_id else 'previous')}"
+            )
+
+            success, config, errors = await self.set_config(
+                parameters=params_to_restore,
+                changed_by=changed_by,
+                symbol=symbol,
+                side=side,
+                reason=rollback_reason,
+            )
+
+            return success, config, errors
+
         except Exception as e:
             logger.error(f"Error rolling back config: {e}")
             return False, None, [str(e)]
@@ -509,6 +541,117 @@ class TradingConfigManager:
         except Exception as e:
             logger.error(f"Error deleting config: {e}")
             return False, [str(e)]
+
+    async def get_previous_config(
+        self, symbol: str | None = None, side: str | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Get the immediately preceding configuration version.
+
+        Args:
+            symbol: Optional symbol filter
+            side: Optional side filter
+
+        Returns:
+            Dictionary of configuration values or None if no history exists
+        """
+        if not self.mongodb_client or not self.mongodb_client.connected:
+            return None
+
+        history = await self.mongodb_client.get_config_history(
+            symbol=symbol, side=side, limit=2
+        )
+        if len(history) < 1:
+            return None
+
+        latest = history[0]
+        prev_params: dict[str, Any] | None = None
+
+        # If the latest action is an 'update', use the previous parameters
+        if latest.get("action") == "update" and latest.get("parameters_before"):
+            prev_params = latest["parameters_before"]
+        # Otherwise, if we have at least two records, fall back to the
+        # parameters from the immediately preceding audit entry.
+        elif len(history) >= 2 and history[1].get("parameters_after"):
+            prev_params = history[1]["parameters_after"]
+
+        return prev_params
+
+    async def get_config_by_version(
+        self, version: int, symbol: str | None = None, side: str | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Get a specific configuration version from audit history.
+
+        Args:
+            version: Version number to find
+            symbol: Optional symbol filter
+            side: Optional side filter
+
+        Returns:
+            Dictionary of configuration values or None if not found
+        """
+        if version < 1:
+            return None
+
+        if not self.mongodb_client or not self.mongodb_client.connected:
+            return None
+
+        # Determine config_type for lookup
+        if symbol and side:
+            config_type = "symbol_side"
+        elif symbol:
+            config_type = "symbol"
+        else:
+            config_type = "global"
+
+        record = await self.mongodb_client.get_audit_record_by_version(
+            version=version,
+            config_type=config_type,
+            symbol=symbol,
+            side=side,
+        )
+
+        if record and record.get("parameters_after"):
+            return record["parameters_after"]
+
+        return None
+
+    async def get_config_by_id(
+        self, audit_id: str, symbol: str | None = None, side: str | None = None
+    ) -> dict[str, Any] | None:
+        """
+        Get a specific configuration from a specific audit record.
+
+        Args:
+            audit_id: Audit record unique identifier
+            symbol: Expected symbol (for security validation)
+            side: Expected side (for security validation)
+
+        Returns:
+            Dictionary of configuration values or None if not found
+        """
+        if not self.mongodb_client or not self.mongodb_client.connected:
+            return None
+
+        record = await self.mongodb_client.get_audit_record_by_id(audit_id)
+        if record:
+            # Security validation: ensure audit record matches requested scope
+            if symbol and record.get("symbol") != symbol:
+                logger.warning(
+                    f"Security: Audit ID {audit_id} belongs to symbol {record.get('symbol')}, not {symbol}"
+                )
+                return None
+            if side and record.get("side") != side:
+                logger.warning(
+                    f"Security: Audit ID {audit_id} belongs to side {record.get('side')}, not {side}"
+                )
+                return None
+
+            if record.get("parameters_after"):
+                return record["parameters_after"]
+
+        return None
 
     def invalidate_cache(
         self,

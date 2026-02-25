@@ -121,11 +121,17 @@ class TradingConfigManager:
                 logger.error(f"Cache refresh loop error: {e}")
                 await asyncio.sleep(10)
 
-    def _get_cache_key(self, symbol: str | None, side: str | None) -> str:
+    def _get_cache_key(
+        self,
+        symbol: str | None,
+        side: str | None,
+        strategy_id: str | None = None,
+    ) -> str:
         """Generate cache key for config lookup."""
         symbol_part = symbol or "global"
         side_part = side or "all"
-        return f"{symbol_part}:{side_part}"
+        strategy_part = strategy_id or "all_strategies"
+        return f"{symbol_part}:{side_part}:{strategy_part}"
 
     async def get_config(
         self,
@@ -153,7 +159,7 @@ class TradingConfigManager:
             Resolved configuration parameters
         """
         # Check cache first
-        cache_key = self._get_cache_key(symbol, side)
+        cache_key = self._get_cache_key(symbol, side, strategy_id)
         if cache_key in self._cache:
             config, timestamp = self._cache[cache_key]
             if time.time() - timestamp < self.cache_ttl_seconds:
@@ -331,10 +337,8 @@ class TradingConfigManager:
             if self.mongodb_client and self.mongodb_client.connected:
                 await self.mongodb_client.add_audit_record(audit)
 
-            # Invalidate cache
-            cache_key = self._get_cache_key(symbol, side)
-            if cache_key in self._cache:
-                del self._cache[cache_key]
+            # Invalidate cache for all strategies under this scope.
+            self.invalidate_cache(symbol=symbol, side=side)
 
             logger.info(
                 f"Config updated: {config_type} "
@@ -487,10 +491,8 @@ class TradingConfigManager:
                 if self.mongodb_client and self.mongodb_client.connected:
                     await self.mongodb_client.add_audit_record(audit)
 
-            # Invalidate cache
-            cache_key = self._get_cache_key(symbol, side)
-            if cache_key in self._cache:
-                del self._cache[cache_key]
+            # Invalidate cache for all strategies under this scope.
+            self.invalidate_cache(symbol=symbol, side=side)
 
             logger.info(
                 f"Config deleted: {config_type} "
@@ -505,10 +507,39 @@ class TradingConfigManager:
             return False, [str(e)]
 
     def invalidate_cache(
-        self, symbol: str | None = None, side: str | None = None
+        self,
+        symbol: str | None = None,
+        side: str | None = None,
+        strategy_id: str | None = None,
     ) -> None:
-        """Force cache invalidation for specific config."""
-        cache_key = self._get_cache_key(symbol, side)
-        if cache_key in self._cache:
+        """Force cache invalidation for a matching scope.
+
+        Any parameter left as None acts as a wildcard.
+        """
+        keys_to_delete: list[str] = []
+
+        for cache_key in self._cache.keys():
+            parts = cache_key.split(":", 2)
+            if len(parts) == 3:
+                symbol_part, side_part, strategy_part = parts
+            elif len(parts) == 2:
+                # Backward compatibility with older cache keys.
+                symbol_part, side_part = parts
+                strategy_part = "all_strategies"
+            else:
+                continue
+
+            if symbol is not None and symbol_part != symbol:
+                continue
+            if side is not None and side_part != side:
+                continue
+            if strategy_id is not None and strategy_part != strategy_id:
+                continue
+
+            keys_to_delete.append(cache_key)
+
+        for cache_key in keys_to_delete:
             del self._cache[cache_key]
-            logger.debug(f"Cache invalidated: {cache_key}")
+
+        if keys_to_delete:
+            logger.debug(f"Cache invalidated: {len(keys_to_delete)} entries")

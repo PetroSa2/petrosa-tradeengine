@@ -123,29 +123,48 @@ class TestTradingConfigManagerCache:
 
     def test_get_cache_key(self, config_manager):
         """Test cache key generation"""
-        assert config_manager._get_cache_key(None, None) == "global:all"
-        assert config_manager._get_cache_key("BTCUSDT", None) == "BTCUSDT:all"
-        assert config_manager._get_cache_key("BTCUSDT", "LONG") == "BTCUSDT:LONG"
-        assert config_manager._get_cache_key(None, "LONG") == "global:LONG"
+        assert config_manager._get_cache_key(None, None) == "global:all:all_strategies"
+        assert (
+            config_manager._get_cache_key("BTCUSDT", None)
+            == "BTCUSDT:all:all_strategies"
+        )
+        assert (
+            config_manager._get_cache_key("BTCUSDT", "LONG")
+            == "BTCUSDT:LONG:all_strategies"
+        )
+        assert (
+            config_manager._get_cache_key(None, "LONG")
+            == "global:LONG:all_strategies"
+        )
+        assert (
+            config_manager._get_cache_key("BTCUSDT", "LONG", "momentum")
+            == "BTCUSDT:LONG:momentum"
+        )
 
     def test_invalidate_cache(self, config_manager):
         """Test cache invalidation"""
-        config_manager._cache["BTCUSDT:LONG"] = ({"leverage": 10}, time.time())
+        config_manager._cache["BTCUSDT:LONG:momentum"] = (
+            {"leverage": 10},
+            time.time(),
+        )
         config_manager.invalidate_cache("BTCUSDT", "LONG")
-        assert "BTCUSDT:LONG" not in config_manager._cache
+        assert "BTCUSDT:LONG:momentum" not in config_manager._cache
 
     def test_invalidate_cache_not_found(self, config_manager):
         """Test cache invalidation when key not found"""
         config_manager.invalidate_cache("BTCUSDT", "LONG")
         # Should not raise exception
-        assert "BTCUSDT:LONG" not in config_manager._cache
+        assert "BTCUSDT:LONG:momentum" not in config_manager._cache
 
     @pytest.mark.asyncio
     async def test_cache_refresh_loop(self, config_manager):
         """Test cache refresh loop"""
         # Add expired cache entry
         old_time = time.time() - 100  # 100 seconds ago
-        config_manager._cache["BTCUSDT:LONG"] = ({"leverage": 10}, old_time)
+        config_manager._cache["BTCUSDT:LONG:momentum"] = (
+            {"leverage": 10},
+            old_time,
+        )
         config_manager.cache_ttl_seconds = 60
 
         # Start the manager
@@ -268,6 +287,89 @@ class TestTradingConfigManagerGetConfig:
         assert config["stop_loss_pct"] == 1.5  # From symbol-side config
 
     @pytest.mark.asyncio
+    async def test_get_config_with_strategy_priority(
+        self, config_manager, mock_mongodb_client
+    ):
+        """Test strategy config overrides symbol but not symbol-side."""
+        global_config = TradingConfig(
+            parameters={"leverage": 10},
+            created_by="test",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        symbol_config = TradingConfig(
+            symbol="BTCUSDT",
+            parameters={"leverage": 20},
+            created_by="test",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        strategy_config = TradingConfig(
+            strategy_id="momentum",
+            parameters={"leverage": 30},
+            created_by="test",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        symbol_side_config = TradingConfig(
+            symbol="BTCUSDT",
+            side="LONG",
+            parameters={"leverage": 40},
+            created_by="test",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        mock_mongodb_client.get_global_config = AsyncMock(return_value=global_config)
+        mock_mongodb_client.get_symbol_config = AsyncMock(return_value=symbol_config)
+        mock_mongodb_client.get_strategy_config = AsyncMock(return_value=strategy_config)
+        mock_mongodb_client.get_symbol_side_config = AsyncMock(
+            return_value=symbol_side_config
+        )
+
+        config = await config_manager.get_config(
+            symbol="BTCUSDT", side="LONG", strategy_id="momentum"
+        )
+        assert config["leverage"] == 40
+
+    @pytest.mark.asyncio
+    async def test_get_config_strategy_cache_keys_do_not_collide(
+        self, config_manager, mock_mongodb_client
+    ):
+        """Test strategy-specific lookups have isolated cache entries."""
+        mock_mongodb_client.get_global_config = AsyncMock(return_value=None)
+        mock_mongodb_client.get_symbol_config = AsyncMock(return_value=None)
+        mock_mongodb_client.get_symbol_side_config = AsyncMock(return_value=None)
+        mock_mongodb_client.get_strategy_config = AsyncMock(
+            side_effect=[
+                TradingConfig(
+                    strategy_id="strategy_a",
+                    parameters={"leverage": 21},
+                    created_by="test",
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                ),
+                TradingConfig(
+                    strategy_id="strategy_b",
+                    parameters={"leverage": 22},
+                    created_by="test",
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                ),
+            ]
+        )
+
+        config_a = await config_manager.get_config(
+            symbol="BTCUSDT", side=None, strategy_id="strategy_a"
+        )
+        config_b = await config_manager.get_config(
+            symbol="BTCUSDT", side=None, strategy_id="strategy_b"
+        )
+
+        assert config_a["leverage"] == 21
+        assert config_b["leverage"] == 22
+        assert len(config_manager._cache) == 2
+
+    @pytest.mark.asyncio
     async def test_get_config_with_mongodb_error(
         self, config_manager, mock_mongodb_client
     ):
@@ -295,7 +397,10 @@ class TestTradingConfigManagerGetConfig:
     async def test_get_config_cache_expired(self, config_manager):
         """Test get_config when cache is expired"""
         old_time = time.time() - 100  # 100 seconds ago
-        config_manager._cache["global:all"] = ({"leverage": 15}, old_time)
+        config_manager._cache["global:all:all_strategies"] = (
+            {"leverage": 15},
+            old_time,
+        )
         config_manager.cache_ttl_seconds = 60
 
         # Should fetch fresh config (defaults)

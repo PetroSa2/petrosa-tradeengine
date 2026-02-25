@@ -10,6 +10,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel, Field
 
+from contracts.trading_config import TradingConfig
 from tradeengine.config_manager import TradingConfigManager
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,8 @@ class APIResponse(BaseModel):
 
     success: bool = Field(..., description="Whether operation succeeded")
     data: Any | None = Field(None, description="Response data")
-    message: str | None = Field(None, description="Human-readable message")
     error: dict[str, Any | None] = Field(None, description="Error details if failed")
+    metadata: dict[str, Any | None] = Field(None, description="Additional metadata")
 
 
 # =============================================================================
@@ -64,7 +65,7 @@ class APIResponse(BaseModel):
 router = APIRouter(prefix="/api/v1/config/filters", tags=["trading-filters"])
 
 
-@router.get("/{strategy_id}", response_model=APIResponse)
+@router.get("/strategy/{strategy_id}", response_model=APIResponse)
 async def get_strategy_filters(
     strategy_id: str = Path(..., description="Strategy ID")
 ) -> APIResponse:
@@ -99,8 +100,12 @@ async def get_strategy_filters(
         return APIResponse(
             success=True,
             data={"strategy_id": strategy_id, "filters": filters},
-            message=f"Filters for strategy {strategy_id} retrieved successfully",
+            metadata={
+                "message": f"Filters for strategy {strategy_id} retrieved successfully"
+            },
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting strategy filters: {e}")
         return APIResponse(
@@ -108,7 +113,7 @@ async def get_strategy_filters(
         )
 
 
-@router.put("/{strategy_id}", response_model=APIResponse)
+@router.put("/strategy/{strategy_id}", response_model=APIResponse)
 async def update_strategy_filters(
     request: FilterUpdateRequest,
     strategy_id: str = Path(..., description="Strategy ID"),
@@ -116,9 +121,6 @@ async def update_strategy_filters(
     """Update strategy-specific filters."""
     try:
         manager = get_config_manager()
-
-        # Create config with strategy_id
-        from contracts.trading_config import TradingConfig
 
         config = TradingConfig(
             strategy_id=strategy_id,
@@ -134,13 +136,16 @@ async def update_strategy_filters(
             success = await manager.mongodb_client.upsert_strategy_config(config)
 
             if success:
-                # Clear cache
-                manager._cache.clear()
+                manager.invalidate_cache(strategy_id=strategy_id)
 
                 return APIResponse(
                     success=True,
                     data={"config": config.model_dump()},
-                    message=f"Filters for strategy {strategy_id} updated successfully",
+                    metadata={
+                        "message": (
+                            f"Filters for strategy {strategy_id} updated successfully"
+                        )
+                    },
                 )
             else:
                 return APIResponse(
@@ -155,6 +160,8 @@ async def update_strategy_filters(
                 success=False,
                 error={"code": "NO_DB", "message": "MongoDB client not configured"},
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error updating strategy filters: {e}")
         return APIResponse(

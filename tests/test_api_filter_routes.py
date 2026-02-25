@@ -2,8 +2,8 @@
 Tests for strategy-specific filter API endpoints.
 
 Tests all endpoints in api_filter_routes.py:
-- GET /api/v1/config/filters/{strategy_id}
-- PUT /api/v1/config/filters/{strategy_id}
+- GET /api/v1/config/filters/strategy/{strategy_id}
+- PUT /api/v1/config/filters/strategy/{strategy_id}
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -61,7 +61,7 @@ class TestStrategyFilterRoutes:
         )
 
         # Make request
-        response = client.get("/api/v1/config/filters/momentum_strategy")
+        response = client.get("/api/v1/config/filters/strategy/momentum_strategy")
 
         # Assert response
         assert response.status_code == 200
@@ -95,7 +95,7 @@ class TestStrategyFilterRoutes:
         )
 
         # Make request
-        response = client.get("/api/v1/config/filters/momentum_strategy")
+        response = client.get("/api/v1/config/filters/strategy/momentum_strategy")
 
         # Assert response
         assert (
@@ -112,12 +112,10 @@ class TestStrategyFilterRoutes:
         mock_config_manager.mongodb_client.upsert_strategy_config = AsyncMock(
             return_value=True
         )
-        mock_config_manager._cache = MagicMock()
-        mock_config_manager._cache.clear = MagicMock()
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {
                     "tp_distance_min_pct": 2.0,
@@ -134,14 +132,14 @@ class TestStrategyFilterRoutes:
         data = response.json()
         assert data["success"] is True
         assert "config" in data["data"]
-        assert (
-            "Filters for strategy momentum_strategy updated successfully"
-            in data["message"]
-        )
+        assert "metadata" in data
+        assert "updated successfully" in data["metadata"]["message"]
 
         # Verify config manager methods were called
         mock_config_manager.mongodb_client.upsert_strategy_config.assert_called_once()
-        mock_config_manager._cache.clear.assert_called_once()
+        mock_config_manager.invalidate_cache.assert_called_once_with(
+            strategy_id="momentum_strategy"
+        )
 
     def test_update_strategy_filters_no_db_client(self, client, mock_config_manager):
         """Test error handling when no database client is configured."""
@@ -150,7 +148,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",
@@ -173,7 +171,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",
@@ -198,7 +196,7 @@ class TestStrategyFilterRoutes:
 
         # Make request
         response = client.put(
-            "/api/v1/config/filters/momentum_strategy",
+            "/api/v1/config/filters/strategy/momentum_strategy",
             json={
                 "filters": {"tp_distance_min_pct": 2.0},
                 "changed_by": "admin",

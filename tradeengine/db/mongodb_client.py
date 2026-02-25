@@ -452,8 +452,14 @@ class DataManagerConfigClient:
             True if successful, False otherwise
         """
         try:
+            strategy_id = config.strategy_id
+            if not strategy_id or not strategy_id.strip():
+                logger.error(
+                    "Cannot upsert strategy config: strategy_id is required and cannot be blank"
+                )
+                return False
+
             config_dict = config.model_dump()
-            strategy_id = config_dict.get("strategy_id", "UNKNOWN")
             config_dict["strategy_id"] = strategy_id
 
             response = await self.data_manager_client._client.upsert_one(

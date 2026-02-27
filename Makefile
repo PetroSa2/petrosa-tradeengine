@@ -165,7 +165,7 @@ coverage-check:
 security:
 	@echo "🔒 Running security scans..."
 	@echo "Running bandit security scan..."
-	bandit -r . -f json -o bandit-report.json -ll --exclude tests/,.venv,venv,htmlcov,.git,__pycache__,*.egg-info
+	bandit -r . -f json -o bandit-report.json --configfile .bandit
 	@echo "Running safety dependency check..."
 	safety check --ignore 72347,71922,77744,77745,71601,64402,77714,77149,74882,76262,65398,65215,76769,76771,60917,68094,73725,73970,76348,76349,76347,77680,76225,76219,74427,66706,70716,70715,54980,70626,51457,77942,65182,65183,72963,75114,70625,72715,59300,76378,74735,75976,64459,64396,49337,66742,64484,66947,71199,74380,74251,74252,64644,62583,62582,64642,62326,71545,70630,64278,62105,73795,73800,71642,68088,71643,54672,71987,71640,71988,66738,66736,71641,55261,77323
 	@echo "Running Trivy vulnerability scan..."

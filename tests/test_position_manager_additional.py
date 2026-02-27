@@ -17,7 +17,7 @@ Focus on uncovered methods:
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,9 +25,19 @@ from tradeengine.position_manager import PositionManager
 
 
 @pytest.fixture
-def position_manager():
+def mock_exchange():
+    """Mock exchange for testing"""
+    exchange = MagicMock()
+    exchange.get_account_info = AsyncMock(
+        return_value={"available_balance": 10000.0, "total_wallet_balance": 10000.0}
+    )
+    return exchange
+
+
+@pytest.fixture
+def position_manager(mock_exchange):
     """Create PositionManager instance for testing"""
-    pm = PositionManager()
+    pm = PositionManager(exchange=mock_exchange)
     pm.mongodb_db = None  # Disable MongoDB for unit tests
     pm.total_portfolio_value = 10000.0  # Set portfolio value for risk calculations
     return pm

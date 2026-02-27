@@ -86,7 +86,9 @@ jobs:
     - name: Run pre-commit on PR diff
       run: |
         source .venv/bin/activate
-        pre-commit run --from-ref origin/${{ github.base_ref }} --to-ref HEAD
+        BASE_REF="${{ github.base_ref }}"
+        if [ -z "$BASE_REF" ]; then BASE_REF="main"; fi
+        pre-commit run --from-ref origin/$BASE_REF --to-ref HEAD
 
     - name: Run flake8 linting
       run: |
@@ -97,7 +99,9 @@ jobs:
     - name: Run black formatting check
       run: |
         source .venv/bin/activate
-        CHANGED_PY_FILES=$(git diff --name-only --diff-filter=ACMRT origin/${{ github.base_ref }}...HEAD -- '*.py' || true)
+        BASE_REF="${{ github.base_ref }}"
+        if [ -z "$BASE_REF" ]; then BASE_REF="main"; fi
+        CHANGED_PY_FILES=$(git diff --name-only --diff-filter=ACMRT origin/$BASE_REF...HEAD -- '*.py' || true)
         if [ -z "$CHANGED_PY_FILES" ]; then
           echo "No Python files changed in PR diff; skipping black check."
           exit 0

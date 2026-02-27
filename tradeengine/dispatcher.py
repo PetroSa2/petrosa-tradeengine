@@ -858,7 +858,7 @@ class Dispatcher:
     def __init__(self, exchange: Any = None) -> None:
         self.settings = Settings()
         self.order_manager = OrderManager()
-        self.position_manager = PositionManager()
+        self.position_manager = PositionManager(exchange=exchange)
         self.signal_aggregator = SignalAggregator()
         self.exchange = exchange
         self.logger = get_logger(__name__)

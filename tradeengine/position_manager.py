@@ -47,20 +47,21 @@ class PositionManager:
     """Manages trading positions and risk limits with distributed state management
     using Data Manager API for persistence and MongoDB for coordination only."""
 
-    def __init__(self) -> None:
+    def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[str, dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
         self.max_portfolio_exposure_pct: float = MAX_PORTFOLIO_EXPOSURE_PCT
-        self.total_portfolio_value: float = (
-            10000.0  # Placeholder, would integrate with account
-        )
+        self.total_portfolio_value: float = 0.0  # Initialized from exchange
         self.last_sync_time: datetime | None = None
         self.sync_lock = asyncio.Lock()
         self.settings = Settings()
         self.mongodb_client: Any = None
         self.mongodb_db: Any = None
+        self.exchange = exchange
+        self.portfolio_value_last_update: datetime | None = None
+        self.portfolio_value_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
@@ -79,6 +80,9 @@ class PositionManager:
                 # Load daily P&L from Data Manager
                 await self._load_daily_pnl_from_data_manager()
 
+                # Fetch initial portfolio value from exchange
+                await self._refresh_portfolio_value()
+
             except Exception as data_manager_error:
                 logger.error(
                     f"Data Manager connection failed: {data_manager_error}. "
@@ -96,6 +100,46 @@ class PositionManager:
             logger.error(f"Failed to initialize position manager: {e}")
             # Fallback: load from exchange
             await self._load_positions_from_exchange()
+
+    async def _refresh_portfolio_value(self) -> bool:
+        """Fetch real-time availableBalance from Binance exchange.
+
+        Uses availableBalance (Wallet Balance - Initial Margin - Open Order Margin).
+        Implements a 5s cache duration.
+        Returns True if update succeeded, False otherwise.
+        """
+        if not self.exchange:
+            logger.warning("No exchange client configured for portfolio value refresh")
+            return False
+
+        async with self.portfolio_value_lock:
+            now = datetime.utcnow()
+            # Check cache (5s duration as per ticket AC)
+            if (
+                self.portfolio_value_last_update
+                and (now - self.portfolio_value_last_update).total_seconds() < 5
+            ):
+                return True
+
+            try:
+                account_info = await self.exchange.get_account_info()
+                available_balance = account_info.get("available_balance")
+
+                if available_balance is not None:
+                    self.total_portfolio_value = float(available_balance)
+                    self.portfolio_value_last_update = now
+                    logger.info(
+                        f"Dynamic portfolio value updated: ${self.total_portfolio_value:,.2f} (available balance)"
+                    )
+                    return True
+                else:
+                    logger.error(
+                        "Failed to extract available_balance from Binance account info"
+                    )
+                    return False
+            except Exception as e:
+                logger.error(f"Error fetching portfolio value from Binance: {e}")
+                return False
 
     async def close(self) -> None:
         """Close position manager and sync final state"""
@@ -911,6 +955,13 @@ class PositionManager:
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
+        # NEW: Refresh portfolio value before checks (mandatory as per AC)
+        if not await self._refresh_portfolio_value():
+            logger.error(
+                f"⛔ RISK REJECTION: Failed to refresh portfolio value for {order.symbol} - aborting entry"
+            )
+            return False
+
         # Refresh positions from Data Manager to ensure consistency
         await self._refresh_positions_from_data_manager()
 
@@ -998,6 +1049,13 @@ class PositionManager:
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
+        # Refresh portfolio value before checks
+        if not await self._refresh_portfolio_value():
+            logger.error(
+                "⛔ RISK REJECTION: Failed to refresh portfolio value - aborting check"
+            )
+            return False
+
         # Refresh daily P&L from Data Manager
         await self._refresh_daily_pnl_from_data_manager()
 
@@ -1023,6 +1081,11 @@ class PositionManager:
 
     def _calculate_portfolio_exposure(self) -> float:
         """Calculate current portfolio exposure"""
+        if self.total_portfolio_value <= 0:
+            return (
+                1.0  # Maximum exposure if no portfolio value (safest for risk checks)
+            )
+
         total_exposure = 0.0
 
         for position in self.positions.values():

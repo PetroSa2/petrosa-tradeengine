@@ -958,6 +958,8 @@ class BinanceFuturesExchange:
                 "can_trade": account_info.get("canTrade"),
                 "can_withdraw": account_info.get("canWithdraw"),
                 "can_deposit": account_info.get("canDeposit"),
+                "total_wallet_balance": account_info.get("totalWalletBalance"),
+                "available_balance": account_info.get("availableBalance"),
                 "assets": account_info.get("assets", []),
             }
         except Exception as e:

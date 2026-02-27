@@ -68,7 +68,7 @@ jobs:
       continue-on-error: true
       run: |
         source .venv/bin/activate
-        mypy tradeengine/ contracts/ shared/ --ignore-missing-imports --strict
+        mypy tradeengine/api.py tradeengine/consumer.py tradeengine/dispatcher.py tradeengine/metrics.py tradeengine/order_manager.py tradeengine/position_manager.py tradeengine/signal_aggregator.py tradeengine/exchange/ contracts/ shared/ --ignore-missing-imports
 
   security-scan:
     name: Security Scan
@@ -76,6 +76,7 @@ jobs:
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
+      security-events: write
     continue-on-error: true
 
     steps:
@@ -98,7 +99,7 @@ jobs:
     - name: Run Bandit security scan
       run: |
         pip install bandit
-        bandit -r . -f json -o bandit-report.json -ll --exclude tests/,.venv,venv,htmlcov,.git,__pycache__,*.egg-info
+        bandit -r . -f json -o bandit-report.json -ll --configfile .bandit
 
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master

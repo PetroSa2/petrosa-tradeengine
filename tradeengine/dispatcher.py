@@ -1566,14 +1566,68 @@ class Dispatcher:
                         self.logger.info(
                             f"✅ Risk management orders placed for {order.symbol}"
                         )
-                    except TimeoutError:
-                        self.logger.error(
-                            f"⏱️ Risk management orders timed out for {order.symbol} - continuing anyway"
-                        )
                     except Exception as e:
                         self.logger.error(
-                            f"❌ Risk management orders failed for {order.symbol}: {e} - continuing anyway"
+                            f"[CRITICAL] OCO placement failed. Initiating atomic rollback for symbol {order.symbol}: {e}"
                         )
+                        # Atomic Rollback: Close the position immediately using a MARKET order
+                        try:
+                            # Use filled amount from result if available, otherwise order amount
+                            filled_qty = result.get("amount", order.amount)
+                            # Ensure filled_qty is a float
+                            if isinstance(filled_qty, str):
+                                try:
+                                    filled_qty = float(filled_qty)
+                                except (ValueError, TypeError):
+                                    filled_qty = order.amount
+
+                            rollback_position_id = getattr(order, "position_id", None)
+                            if rollback_position_id:
+                                rollback_result = (
+                                    await self.close_position_with_cleanup(
+                                        position_id=rollback_position_id,
+                                        symbol=order.symbol,
+                                        position_side=order.position_side,
+                                        quantity=filled_qty,
+                                        reason="atomic_rollback_oco_failure",
+                                    )
+                                )
+                                self.logger.info(
+                                    f"✅ Atomic rollback successful for {order.symbol}"
+                                )
+
+                                # Log critical event to audit trail
+                                if audit_logger.enabled and audit_logger.connected:
+                                    audit_logger.log_trade(
+                                        {
+                                            "event": "atomic_rollback",
+                                            "symbol": order.symbol,
+                                            "position_id": rollback_position_id,
+                                            "reason": "risk_management_failure",
+                                            "error": str(e),
+                                            "rollback_result": rollback_result,
+                                        }
+                                    )
+
+                                # Return result with rolled_back status
+                                result["status"] = "rolled_back"
+                            else:
+                                self.logger.warning(
+                                    f"⚠️ Skipping position-based atomic rollback for {order.symbol}: "
+                                    "no position_id set on order"
+                                )
+                                result["status"] = "rolled_back_partial"
+
+                        except Exception as rollback_error:
+                            self.logger.error(
+                                f"❌ CRITICAL: Atomic rollback FAILED for {order.symbol}: {rollback_error}"
+                            )
+                            result["status"] = "rollback_failed"
+                            result["rollback_error"] = str(rollback_error)
+
+                        # Return result with appropriate error status
+                        result["error"] = f"Risk management failure: {e}"
+                        return result
 
             return result
 
@@ -2074,7 +2128,7 @@ class Dispatcher:
                         )
                 else:
                     self.logger.error(
-                        f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result}"
+                        f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result} - falling back to individual orders"
                     )
                     # Fallback to individual order placement
                     await self._place_individual_risk_orders(order, result)
@@ -2090,6 +2144,8 @@ class Dispatcher:
             self.logger.error(
                 f"Failed to place risk management orders: {e}", exc_info=True
             )
+            # Re-raise to trigger atomic rollback in caller
+            raise
 
     async def _place_individual_risk_orders(
         self, order: TradeOrder, result: dict[str, Any]
@@ -2107,6 +2163,7 @@ class Dispatcher:
             self.logger.error(
                 f"Failed to place individual risk orders: {e}", exc_info=True
             )
+            raise
 
     async def _place_stop_loss_order(
         self, order: TradeOrder, result: dict[str, Any]
@@ -2235,14 +2292,13 @@ class Dispatcher:
                         order.position_id, stop_loss_order_id=sl_result.get("order_id")
                     )
             else:
-                self.logger.error(
-                    f"❌ STOP LOSS FAILED AFTER ALL RETRIES: {order.symbol} | "
-                    f"Status: {sl_result.get('status', 'N/A')} | "
-                    f"Error: {sl_result.get('error', 'Unknown error')}"
-                )
+                error_msg = f"STOP LOSS FAILED AFTER ALL RETRIES: {order.symbol} | Status: {sl_result.get('status', 'N/A')} | Error: {sl_result.get('error', 'Unknown error')}"
+                self.logger.error(f"❌ {error_msg}")
+                raise Exception(error_msg)
 
         except Exception as e:
             self.logger.error(f"Failed to place stop loss order: {e}", exc_info=True)
+            raise
 
     async def _place_take_profit_order(
         self, order: TradeOrder, result: dict[str, Any]
@@ -2370,14 +2426,13 @@ class Dispatcher:
                         take_profit_order_id=tp_result.get("order_id"),
                     )
             else:
-                self.logger.error(
-                    f"❌ TAKE PROFIT FAILED: {order.symbol} | "
-                    f"Status: {tp_result.get('status', 'N/A')} | "
-                    f"Error: {tp_result.get('error', 'Unknown error')}"
-                )
+                error_msg = f"TAKE PROFIT FAILED: {order.symbol} | Status: {tp_result.get('status', 'N/A')} | Error: {tp_result.get('error', 'Unknown error')}"
+                self.logger.error(f"❌ {error_msg}")
+                raise Exception(error_msg)
 
         except Exception as e:
             self.logger.error(f"Failed to place take profit order: {e}", exc_info=True)
+            raise
 
     async def close_position_with_cleanup(
         self,

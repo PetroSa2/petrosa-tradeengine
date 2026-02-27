@@ -1317,7 +1317,7 @@ class TestRiskManagementOrders:
 
         dispatcher._place_stop_loss_with_fallback = AsyncMock(
             return_value={
-                "status": "success",
+                "status": "NEW",
                 "order_id": "sl_123",
             }
         )
@@ -1339,8 +1339,8 @@ class TestRiskManagementOrders:
         )
         result = {"status": "filled", "order_id": "test_order_123", "amount": 0.001}
 
-        await dispatcher._place_stop_loss_order(order, result)
-        # Should handle gracefully
+        with pytest.raises(Exception, match="No exchange configured"):
+            await dispatcher._place_stop_loss_order(order, result)
 
     @pytest.mark.asyncio
     async def test_place_take_profit_order(self, dispatcher, sample_signal):
@@ -1397,8 +1397,8 @@ class TestRiskManagementOrders:
         )
         result = {"status": "filled", "order_id": "test_order_123", "amount": 0.001}
 
-        await dispatcher._place_take_profit_order(order, result)
-        # Should handle gracefully
+        with pytest.raises(Exception, match="No exchange configured"):
+            await dispatcher._place_take_profit_order(order, result)
 
     @pytest.mark.asyncio
     async def test_place_risk_management_orders_exception(
@@ -1419,8 +1419,9 @@ class TestRiskManagementOrders:
             side_effect=Exception("Test error")
         )
 
-        # Should not raise, should log error
-        await dispatcher._place_risk_management_orders(order, result)
+        # Should now raise exception (new behavior for atomic rollback)
+        with pytest.raises(Exception, match="Test error"):
+            await dispatcher._place_risk_management_orders(order, result)
 
 
 class TestPositionClosing:

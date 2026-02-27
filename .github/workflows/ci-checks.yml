@@ -358,16 +358,15 @@ jobs:
           BUILD_DATE=${{ steps.meta.outputs.date }}
 
   notify:
-    needs: [build-and-push, create-release]
+    needs: [build-and-push, prepare-release]
     runs-on: ubuntu-latest
     if: always()
 
     steps:
     - name: Notify build status
       run: |
-        VERSION="${{ needs.create-release.outputs.version }}"
-        TAG_CREATED="${{ needs.create-release.outputs.tag-created }}"
-        IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
+        VERSION="${{ needs.prepare-release.outputs.version }}"
+        TAG_CREATED="true" # Simplification for now, as prepare-release always creates tag on push
 
         echo "✅ Build and Push successful!"
         echo "📦 Version: ${VERSION}"

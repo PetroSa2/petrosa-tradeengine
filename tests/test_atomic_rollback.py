@@ -108,3 +108,44 @@ async def test_oco_timeout_causes_rollback(dispatcher):
         # Verify rollback was called
         dispatcher.close_position_with_cleanup.assert_called_once()
         assert result["status"] == "rolled_back"
+
+
+@pytest.mark.asyncio
+async def test_rollback_failure_is_handled(dispatcher):
+    """
+    Test that if close_position_with_cleanup itself fails during rollback,
+    the failure path is handled and surfaced correctly.
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        order_id="test_order_125",
+        position_id="pos_125",
+        position_side="LONG",
+        simulate=False,
+    )
+
+    # Force risk management order placement to fail, triggering rollback.
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+
+    # Now simulate a failure in the rollback itself.
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        side_effect=Exception("Rollback Failed")
+    )
+
+    # Mock strategy_position_manager
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.create_strategy_position = AsyncMock(return_value="strat_pos_125")
+
+        # Execute order with consensus
+        result = await dispatcher._execute_order_with_consensus(order)
+
+        # Verify that rollback was attempted despite ultimately failing.
+        dispatcher.close_position_with_cleanup.assert_called_once()
+        # The dispatcher should surface a rollback failure status when rollback cannot complete.
+        assert result["status"] == "rollback_failed"
+        assert "Rollback Failed" in result["rollback_error"]

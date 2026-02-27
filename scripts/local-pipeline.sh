@@ -293,63 +293,9 @@ test_docker_container() {
 
 # Function to deploy to Kubernetes
 deploy_to_kubernetes() {
-    print_status "Deploying to Kubernetes..."
-
-    # Check if kubectl is available
-    if ! command_exists kubectl; then
-        print_error "kubectl not found - skipping deployment"
-        return 1
-    fi
-
-    # Check if namespace exists, create if not
-    if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-        print_status "Creating namespace $NAMESPACE..."
-        kubectl create namespace "$NAMESPACE"
-    fi
-
-    # Create temporary manifests with version substitution for local deployment
-    print_status "Creating temporary manifests with version $DOCKER_TAG..."
-    mkdir -p k8s/temp
-
-    # Copy and substitute version in all manifests
-    for manifest in k8s/*.yaml; do
-        if [ -f "$manifest" ]; then
-            local temp_file="k8s/temp/$(basename "$manifest")"
-            sed "s|VERSION_PLACEHOLDER|${DOCKER_TAG}|g" "$manifest" > "$temp_file"
-        fi
-    done
-
-    # Apply Kubernetes manifests from temp directory
-    print_status "Applying Kubernetes manifests..."
-
-    # Apply deployment
-    kubectl apply -f k8s/temp/deployment.yaml -n "$NAMESPACE"
-
-    # Apply service
-    kubectl apply -f k8s/temp/service.yaml -n "$NAMESPACE"
-
-    # Apply ingress
-    kubectl apply -f k8s/temp/ingress.yaml -n "$NAMESPACE"
-
-    # Apply HPA
-    kubectl apply -f k8s/temp/hpa.yaml -n "$NAMESPACE"
-
-    # Apply network policy
-    kubectl apply -f k8s/temp/networkpolicy-allow-egress.yaml -n "$NAMESPACE"
-
-    # Clean up temporary files
-    print_status "Cleaning up temporary manifests..."
-    rm -rf k8s/temp
-
-    # Wait for deployment to be ready
-    print_status "Waiting for deployment to be ready..."
-    kubectl rollout status deployment/petrosa-tradeengine -n "$NAMESPACE" --timeout=300s
-
-    # Get deployment status
-    print_status "Deployment status:"
-    kubectl get pods -n "$NAMESPACE" -l app=petrosa-tradeengine
-
-    print_success "Deployment completed successfully"
+    print_warning "⚠️  Local Kubernetes deployment from this repo is deprecated."
+    print_info "💡 Please use the centralized petrosa_k8s hub for deployment."
+    return 0
 }
 
 # Function to cleanup

@@ -321,7 +321,7 @@ async def root() -> dict[str, Any]:
     """Health check endpoint"""
     return {
         "service": "Petrosa Trading Engine",
-        "version": "0.1.0",
+        "version": os.getenv("SERVICE_VERSION", "1.2.13"),
         "status": "running",
         "environment": settings.environment,
         "features": [
@@ -1269,7 +1269,7 @@ async def get_version() -> dict[str, Any]:
     """Get service version information"""
     return {
         "service": "Petrosa Trading Engine",
-        "version": "1.1.0",
+        "version": os.getenv("SERVICE_VERSION", "1.2.13"),
         "build_date": "2024-01-15",
         "environment": settings.environment,
         "features": [
@@ -1304,7 +1304,7 @@ async def get_documentation() -> dict[str, Any]:
     """Get API documentation information"""
     return {
         "title": "Petrosa Trading Engine API",
-        "version": "1.1.0",
+        "version": os.getenv("SERVICE_VERSION", "1.2.13"),
         "description": (
             "Signal-driven cryptocurrency trading engine with distributed state "
             "management"

@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI Checks
 
 on:
   push:
@@ -117,8 +117,7 @@ jobs:
       continue-on-error: true  # Temporary: allow mypy errors while improving type annotations
       run: |
         source .venv/bin/activate
-        # Run mypy on core modules only, skip new config system modules temporarily
-        mypy tradeengine/api.py tradeengine/consumer.py tradeengine/dispatcher.py tradeengine/metrics.py tradeengine/order_manager.py tradeengine/position_manager.py tradeengine/signal_aggregator.py tradeengine/exchange/ contracts/ shared/
+        make type-check
 
     - name: Run pytest with coverage
       continue-on-error: true  # Temporary: allow test failures in pre-existing OCO tests
@@ -185,8 +184,34 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for secret detection
 
-    - name: Run Trivy vulnerability scanner
+    - name: 🔐 Run Gitleaks (Secret Detection)
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: 🐍 Run Bandit (Python Security)
+      run: |
+        pip install bandit[toml]
+        bandit -r . \
+          --severity-level medium \
+          --confidence-level medium \
+          --format json \
+          --output bandit-report.json \
+          --exclude tests/ \
+          || true
+        echo "📊 Bandit Results:"
+        python -m json.tool bandit-report.json | head -30 || echo "No issues found"
+
+    - name: 🗂️ Run Trivy (Vulnerability Scanner)
       uses: aquasecurity/trivy-action@master
       continue-on-error: true
       with:
@@ -207,6 +232,7 @@ jobs:
       if: success() || failure()
       with:
         sarif_file: 'trivy-results.sarif'
+
 
   # Pipeline status check - aggregates all PR checks
   pipeline:

@@ -252,7 +252,7 @@ app = FastAPI(
     description=(
         "Advanced cryptocurrency trading engine with multi-strategy signal aggregation"
     ),
-    version="1.1.178",
+    version=os.getenv("SERVICE_VERSION", "1.2.13"),
     lifespan=lifespan,
 )
 
@@ -369,7 +369,7 @@ async def health_check() -> HealthResponse:
 
         return HealthResponse(
             status="healthy" if all_healthy else "degraded",
-            version="1.1.0",
+            version=os.getenv("SERVICE_VERSION", "1.2.13"),
             timestamp=datetime.utcnow().isoformat(),
             components=components,
         )

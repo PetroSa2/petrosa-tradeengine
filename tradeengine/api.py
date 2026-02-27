@@ -47,6 +47,7 @@ from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
 
 # OpenTelemetry tracer for business context spans
+# Trigger CI run
 tracer = trace.get_tracer(__name__)
 
 logger = logging.getLogger(__name__)

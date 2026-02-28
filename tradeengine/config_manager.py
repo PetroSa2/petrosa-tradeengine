@@ -234,6 +234,7 @@ class TradingConfigManager:
         changed_by: str,
         symbol: str | None = None,
         side: str | None = None,
+        strategy_id: str | None = None,
         reason: str | None = None,
         validate_only: bool = False,
     ) -> tuple[bool, TradingConfig | None, list[str]]:
@@ -245,6 +246,7 @@ class TradingConfigManager:
             changed_by: Who is making the change
             symbol: Trading symbol (None for global)
             side: Position side (None for symbol-level)
+            strategy_id: Strategy identifier (None for global/symbol/symbol_side)
             reason: Reason for the change
             validate_only: If True, only validate without saving
 
@@ -260,8 +262,10 @@ class TradingConfigManager:
             return True, None, []
 
         try:
-            # Determine config type
-            if symbol and side:
+            # Determine config type (strategy scope takes precedence when set)
+            if strategy_id is not None:
+                config_type = "strategy"
+            elif symbol and side:
                 config_type = "symbol_side"
             elif symbol:
                 config_type = "symbol"
@@ -284,14 +288,20 @@ class TradingConfigManager:
                         symbol,  # type: ignore
                         side,  # type: ignore
                     )
+            elif config_type == "strategy" and strategy_id:
+                if self.mongodb_client and self.mongodb_client.connected:
+                    existing_config = await self.mongodb_client.get_strategy_config(
+                        strategy_id
+                    )
 
             # Create new config
             version = (existing_config.version + 1) if existing_config else 1
             now = datetime.utcnow()
 
             new_config = TradingConfig(
-                symbol=symbol,
-                side=side,  # type: ignore
+                symbol=symbol if config_type != "strategy" else None,
+                side=side if config_type != "strategy" else None,  # type: ignore
+                strategy_id=strategy_id if config_type == "strategy" else None,
                 parameters=parameters,
                 version=version,
                 created_at=existing_config.created_at if existing_config else now,
@@ -313,6 +323,11 @@ class TradingConfigManager:
                     success = await self.mongodb_client.set_symbol_side_config(
                         new_config
                     )
+            elif config_type == "strategy" and strategy_id:
+                if self.mongodb_client and self.mongodb_client.connected:
+                    success = await self.mongodb_client.upsert_strategy_config(
+                        new_config
+                    )
 
             if not success:
                 return False, None, ["Failed to save configuration"]
@@ -320,8 +335,9 @@ class TradingConfigManager:
             # Create audit record
             audit = TradingConfigAudit(
                 config_type=config_type,  # type: ignore
-                symbol=symbol,
-                side=side,  # type: ignore
+                symbol=symbol if config_type != "strategy" else None,
+                side=side if config_type != "strategy" else None,  # type: ignore
+                strategy_id=strategy_id if config_type == "strategy" else None,
                 action="update" if existing_config else "create",
                 parameters_before=(
                     existing_config.parameters if existing_config else None
@@ -337,14 +353,18 @@ class TradingConfigManager:
             if self.mongodb_client and self.mongodb_client.connected:
                 await self.mongodb_client.add_audit_record(audit)
 
-            # Invalidate cache for all strategies under this scope.
-            self.invalidate_cache(symbol=symbol, side=side)
+            # Invalidate cache for this scope
+            if config_type == "strategy":
+                self.invalidate_cache(strategy_id=strategy_id)
+            else:
+                self.invalidate_cache(symbol=symbol, side=side)
 
-            logger.info(
-                f"Config updated: {config_type} "
-                f"{'(' + symbol + ')' if symbol else ''}"
-                f"{'-' + side if side else ''} by {changed_by}"
+            scope = (
+                f"({strategy_id})" if strategy_id else f"({symbol})" if symbol else ""
             )
+            if side and not strategy_id:
+                scope += f"-{side}"
+            logger.info(f"Config updated: {config_type} {scope} by {changed_by}")
 
             return True, new_config, []
 

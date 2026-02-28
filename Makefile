@@ -193,9 +193,7 @@ docker-clean:
 # Deployment
 deploy:
 	@echo "☸️  Deploying to Kubernetes..."
-	@echo "Setting kubeconfig..."
-	export KUBECONFIG=${KUBECONFIG:-../petrosa_k8s/k8s/kubeconfig.yaml}
-	kubectl apply -f k8s/ --recursive
+	kubectl --kubeconfig=$(KUBECONFIG) apply -f ../petrosa_k8s/k8s/tradeengine/ --recursive
 	@echo "✅ Deployment completed!"
 
 pipeline:

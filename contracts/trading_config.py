@@ -30,16 +30,13 @@ class TradingConfig(BaseModel):
 
     # Scope identifiers
     strategy_id: str | None = Field(
-        None, description="Strategy identifier for strategy-scoped configurations"
+        None, description="Strategy identifier (None for global/symbol configs)"
     )
     symbol: str | None = Field(
         None, description="Trading symbol (None for global configs, e.g., 'BTCUSDT')"
     )
     side: Literal["LONG", "SHORT"] | None = Field(
         None, description="Position side (None for global/symbol configs)"
-    )
-    strategy_id: str | None = Field(
-        None, description="Strategy identifier (None for global/symbol configs)"
     )
 
     # Configuration data

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from contracts.trading_config import TradingConfig
 from tradeengine.api import app
 from tradeengine.api_filter_routes import get_config_manager, set_config_manager
 from tradeengine.config_manager import TradingConfigManager
@@ -108,10 +107,17 @@ class TestStrategyFilterRoutes:
 
     def test_update_strategy_filters_success(self, client, mock_config_manager):
         """Test successful update of strategy filters."""
-        # Setup mock
-        mock_config_manager.mongodb_client.upsert_strategy_config = AsyncMock(
-            return_value=True
-        )
+        # Setup mock: set_config returns (success, config, errors)
+        mock_config = MagicMock()
+        mock_config.model_dump.return_value = {
+            "strategy_id": "momentum_strategy",
+            "parameters": {
+                "tp_distance_min_pct": 2.0,
+                "tp_distance_max_pct": 15.0,
+                "enabled_sides": ["LONG"],
+            },
+        }
+        mock_config_manager.set_config = AsyncMock(return_value=(True, mock_config, []))
 
         # Make request
         response = client.put(
@@ -135,11 +141,11 @@ class TestStrategyFilterRoutes:
         assert "metadata" in data
         assert "updated successfully" in data["metadata"]["message"]
 
-        # Verify config manager methods were called
-        mock_config_manager.mongodb_client.upsert_strategy_config.assert_called_once()
-        mock_config_manager.invalidate_cache.assert_called_once_with(
-            strategy_id="momentum_strategy"
-        )
+        # Verify set_config was called with strategy_id for validation/audit
+        mock_config_manager.set_config.assert_called_once()
+        call_kwargs = mock_config_manager.set_config.call_args[1]
+        assert call_kwargs["strategy_id"] == "momentum_strategy"
+        assert call_kwargs["parameters"]["tp_distance_min_pct"] == 2.0
 
     def test_update_strategy_filters_no_db_client(self, client, mock_config_manager):
         """Test error handling when no database client is configured."""
@@ -163,13 +169,11 @@ class TestStrategyFilterRoutes:
         assert data["error"]["code"] == "NO_DB"
 
     def test_update_strategy_filters_upsert_failure(self, client, mock_config_manager):
-        """Test error handling when upsert fails."""
-        # Setup mock
-        mock_config_manager.mongodb_client.upsert_strategy_config = AsyncMock(
-            return_value=False
+        """Test error handling when set_config returns failure."""
+        mock_config_manager.set_config = AsyncMock(
+            return_value=(False, None, ["Failed to save configuration"])
         )
 
-        # Make request
         response = client.put(
             "/api/v1/config/filters/strategy/momentum_strategy",
             json={
@@ -179,7 +183,6 @@ class TestStrategyFilterRoutes:
             },
         )
 
-        # Assert response
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -189,8 +192,7 @@ class TestStrategyFilterRoutes:
         self, client, mock_config_manager
     ):
         """Test error handling when exception occurs during update."""
-        # Setup mock to raise exception
-        mock_config_manager.mongodb_client.upsert_strategy_config = AsyncMock(
+        mock_config_manager.set_config = AsyncMock(
             side_effect=Exception("Database error")
         )
 

@@ -551,6 +551,21 @@ def test_trading_config_audit_get_change_summary() -> None:
     assert "global" in summary
     assert "admin" in summary
 
+    # Strategy-scoped config (strategy_id path)
+    audit = TradingConfigAudit(
+        config_type="strategy",
+        symbol=None,
+        side=None,
+        strategy_id="orderbook_skew",
+        action="update",
+        changed_by="tester",
+    )
+    summary = audit.get_change_summary()
+    assert "UPDATE" in summary
+    assert "strategy" in summary
+    assert "orderbook_skew" in summary
+    assert "tester" in summary
+
 
 def test_leverage_status_is_synced() -> None:
     """Test LeverageStatus is_synced method"""

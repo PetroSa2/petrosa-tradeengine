@@ -1,12 +1,18 @@
-[bandit]
-exclude_dirs = tests/, .venv/, venv/, htmlcov/, .git/, __pycache__/, *.egg-info/
+# Bandit security scan configuration
+# Format: YAML
 
-# Suppress false positives
-skips = B104
+# Exclude directories
+exclude_dirs:
+  - 'tests'
+  - '.venv'
+  - 'venv'
+  - 'htmlcov'
+  - '.git'
+  - '__pycache__'
+  - '*.egg-info'
+  - 'scripts'
 
-# Suppress specific lines
-[B104:hardcoded_bind_all_interfaces]
-# These are intentional for containerized applications
-exclude_lines =
-    host: str = "0.0.0.0"
-    API_HOST = os.getenv("API_HOST", "0.0.0.0")
+# Skip tests
+# B104: hardcoded_bind_all_interfaces (intentional for containers)
+skips:
+  - 'B104'

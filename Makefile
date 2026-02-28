@@ -193,9 +193,7 @@ docker-clean:
 # Deployment
 deploy:
 	@echo "☸️  Deploying to Kubernetes..."
-	@echo "Setting kubeconfig..."
-	export KUBECONFIG=k8s/kubeconfig.yaml
-	kubectl apply -f k8s/ --recursive
+	kubectl --kubeconfig=$(KUBECONFIG) apply -f ../petrosa_k8s/k8s/tradeengine/ --recursive
 	@echo "✅ Deployment completed!"
 
 pipeline:
@@ -242,19 +240,21 @@ mongodb-check:
 	@python scripts/check-mongodb.py detailed
 
 # Kubernetes utilities
+KUBECONFIG ?= ../petrosa_k8s/k8s/kubeconfig.yaml
+
 k8s-status:
 	@echo "📊 Kubernetes deployment status:"
-	kubectl --kubeconfig=k8s/kubeconfig.yaml get pods -n petrosa-apps -l app=petrosa-tradeengine
-	kubectl --kubeconfig=k8s/kubeconfig.yaml get svc -n petrosa-apps -l app=petrosa-tradeengine
-	kubectl --kubeconfig=k8s/kubeconfig.yaml get ingress -n petrosa-apps -l app=petrosa-tradeengine
+	kubectl --kubeconfig=$(KUBECONFIG) get pods -n petrosa-apps -l app=petrosa-tradeengine
+	kubectl --kubeconfig=$(KUBECONFIG) get svc -n petrosa-apps -l app=petrosa-tradeengine
+	kubectl --kubeconfig=$(KUBECONFIG) get ingress -n petrosa-apps -l app=petrosa-tradeengine
 
 k8s-logs:
 	@echo "📋 Kubernetes logs:"
-	kubectl --kubeconfig=k8s/kubeconfig.yaml logs -n petrosa-apps -l app=petrosa-tradeengine --tail=50
+	kubectl --kubeconfig=$(KUBECONFIG) logs -n petrosa-apps -l app=petrosa-tradeengine --tail=50
 
 k8s-clean:
 	@echo "🧹 Cleaning up Kubernetes resources..."
-	kubectl --kubeconfig=k8s/kubeconfig.yaml delete namespace petrosa-apps 2>/dev/null || true
+	kubectl --kubeconfig=$(KUBECONFIG) delete namespace petrosa-apps 2>/dev/null || true
 
 # Quick development workflow
 dev: setup format lint type-check test

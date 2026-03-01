@@ -380,10 +380,10 @@ jobs:
           VERSION="${{ needs.build-and-push.outputs.version }}"
           # Update the image tag in manifests
           find petrosa_k8s/k8s/tradeengine -name "*.yaml" -o -name "*.yml" | xargs sed -i "s/VERSION_PLACEHOLDER/$VERSION/g"
-          
+
           # Also update the version label if needed
           find petrosa_k8s/k8s/tradeengine -name "*.yaml" -o -name "*.yml" | xargs sed -i "s/version: VERSION_PLACEHOLDER/version: $VERSION/g"
-          
+
           echo "Updated tradeengine image tag to $VERSION in petrosa_k8s/k8s/tradeengine/"
 
       - name: Commit and push to petrosa_k8s

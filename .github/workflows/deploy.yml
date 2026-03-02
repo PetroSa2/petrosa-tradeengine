@@ -97,8 +97,8 @@ jobs:
         context: .
         push: true
         tags: |
-          ghcr.io/petrosa2/tradeengine:${{ steps.version.outputs.version }}
-          ghcr.io/petrosa2/tradeengine:latest
+          yurisa2/petrosa-tradeengine:${{ steps.version.outputs.version }}
+          yurisa2/petrosa-tradeengine:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
         build-args: |

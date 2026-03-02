@@ -3,8 +3,22 @@ name: Deploy
 on:
   push:
     branches: [ 'main' ]
-  pull_request:
-    branches: [ 'main' ]
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      reason:
+        description: 'Reason for deployment'
+        required: true
+        type: string
+        default: 'Manual deployment'
 
 env:
   NAMESPACE: petrosa-apps

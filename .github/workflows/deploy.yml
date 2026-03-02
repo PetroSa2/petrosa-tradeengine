@@ -3,22 +3,11 @@ name: Deploy
 on:
   push:
     branches: [ 'main' ]
-  workflow_dispatch:
-    inputs:
-      version_bump:
-        description: 'Version bump type'
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-        default: patch
-      reason:
-        description: 'Reason for deployment (audit trail)'
-        required: true
-        type: string
-        default: 'Automatic deployment on push'
+  pull_request:
+    branches: [ 'main' ]
+
+env:
+  NAMESPACE: petrosa-apps
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -156,10 +145,32 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
+    - name: Create deployment record
+      run: |
+        mkdir -p deployments
+        VERSION="${{ needs.create-release.outputs.version }}"
+        TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        cat >> deployments/history.log << EOF
+        ========================================
+        Deployment Record
+        ========================================
+        Service: tradeengine
+        Version: $VERSION
+        Triggered by: ${{ github.actor }}
+        Timestamp: $TIMESTAMP
+        Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        ========================================
+        EOF
+
+    - name: Upload deployment history artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tradeengine-deployment-history
+        path: deployments/history.log
+
     - name: Notify Deployment Status
       run: |
         VERSION="${{ needs.create-release.outputs.version }}"
-        IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
         
         if [ "${{ needs.gitops-update.result }}" == "success" ]; then
           echo "✅ Build, Push, and GitOps Update successful!"

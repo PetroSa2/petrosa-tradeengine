@@ -1,11 +1,24 @@
 name: Deploy
 
 on:
-  workflow_dispatch:
   push:
     branches: [ 'main' ]
-  pull_request:
-    branches: [ 'main' ]
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      reason:
+        description: 'Reason for deployment'
+        required: true
+        type: string
+        default: 'Manual deployment'
 
 env:
   NAMESPACE: petrosa-apps
@@ -17,13 +30,11 @@ concurrency:
 jobs:
   create-release:
     name: Create Release
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version:
-  workflow_dispatch: ${{ steps.version.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -39,8 +50,7 @@ jobs:
         SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
         VERSION="${BASE_VERSION}-r${{ github.run_number }}-${SHORT_SHA}"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Release version:
-  workflow_dispatch: $VERSION"
+        echo "Release version: $VERSION"
 
     - name: Create tag
       run: |
@@ -53,14 +63,12 @@ jobs:
   build-and-push:
     name: Build & Push
     needs: create-release
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     outputs:
-      version:
-  workflow_dispatch: ${{ steps.version.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -71,8 +79,7 @@ jobs:
       run: |
         VERSION="${{ needs.create-release.outputs.version }}"
         echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "Using version:
-  workflow_dispatch: ${VERSION}"
+        echo "Using version: ${VERSION}"
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
     - name: Set up Docker Buildx
@@ -101,8 +108,7 @@ jobs:
   gitops-update:
     name: GitOps Update
     needs: [build-and-push, create-release]
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+    runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Generate GitOps Bot Token
@@ -150,8 +156,7 @@ jobs:
   notify:
     name: notify
     needs: [build-and-push, gitops-update, create-release]
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+    runs-on: ubuntu-latest
     if: always()
     steps:
     - name: Create deployment record
@@ -164,8 +169,7 @@ jobs:
         Deployment Record
         ========================================
         Service: tradeengine
-        Version:
-  workflow_dispatch: $VERSION
+        Version: $VERSION
         Triggered by: ${{ github.actor }}
         Timestamp: $TIMESTAMP
         Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -184,25 +188,21 @@ jobs:
 
         if [ "${{ needs.gitops-update.result }}" == "success" ]; then
           echo "✅ Build, Push, and GitOps Update successful!"
-          echo "📦 Version:
-  workflow_dispatch: ${VERSION}"
+          echo "📦 Version: ${VERSION}"
           echo "🚀 Deployed via petrosa_k8s hub"
         elif [ "${{ needs.gitops-update.result }}" == "skipped" ] && [ "${{ github.event_name }}" == "pull_request" ]; then
           echo "ℹ️ Pull Request: Build and Push successful (GitOps update skipped for PR)"
-          echo "📦 Version:
-  workflow_dispatch: ${VERSION}"
+          echo "📦 Version: ${VERSION}"
         else
           echo "❌ GitOps Update failed (or was unsuccessful)!"
-          echo "📦 Version:
-  workflow_dispatch: ${VERSION}"
+          echo "📦 Version: ${VERSION}"
           echo "🐳 Image pushed, but manifest update in petrosa_k8s failed."
         fi
 
   cleanup:
     name: cleanup
     needs: [build-and-push]
-    runs-on:
-  workflow_dispatch: ubuntu-latest
+    runs-on: ubuntu-latest
     if: always()
     steps:
     - name: Clean Up Old Images

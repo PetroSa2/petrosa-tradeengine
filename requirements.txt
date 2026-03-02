@@ -70,3 +70,4 @@ sqlalchemy[asyncio]==2.0.36
 starlette>=0.37.0
 structlog==25.5.0
 uvicorn[standard]==0.38.0
+python-json-logger==2.0.7

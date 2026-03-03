@@ -1,73 +1,73 @@
-
-# Database and persistence
 aiomysql==0.3.2
-
 asyncio-mqtt==0.16.2
-
-# Development and linting
 black==24.3.0
-
-# Trading and exchange
 ccxt==4.5.19
-# Core dependencies
 fastapi>=0.110.0
 flake8==7.0.0
 httpx==0.28.1
-
-# Documentation
 mkdocs==1.5.3
 mkdocs-material==9.4.8
 motor==3.7.1
 mypy==1.8.0
-
-# Messaging and async
 nats-py==2.12.0
-
-# OpenTelemetry Core
 opentelemetry-api>=1.20.0
-
-# OpenTelemetry Auto-Instrumentation
 opentelemetry-distro>=0.41b0
 opentelemetry-exporter-otlp-proto-grpc>=1.20.0
 opentelemetry-exporter-otlp-proto-http>=1.20.0
 opentelemetry-instrumentation>=0.41b0
 opentelemetry-instrumentation-fastapi>=0.41b0
 opentelemetry-instrumentation-logging>=0.41b0
-
-# OpenTelemetry Manual Instrumentations
 opentelemetry-instrumentation-requests>=0.41b0
 opentelemetry-instrumentation-urllib3>=0.41b0
 opentelemetry-sdk>=1.20.0
-
-# OpenTelemetry Semantic Conventions
 opentelemetry-semantic-conventions>=0.41b0
 passlib[bcrypt]==1.7.4
-# Data Manager Client (temporarily disabled - using local import)
-# petrosa-data-manager-client>=1.0.0
-
-# Monitoring and observability
 petrosa-otel>=0.1.0
 prometheus-client==0.23.1
 pydantic==2.12.4
 pydantic-settings==2.12.0
 pymongo==4.15.4
-PyMySQL==1.1.2
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Core dependencies
+# Data Manager Client (temporarily disabled - using local import)
+# Database and persistence
+# Development and linting
+# Documentation
+# Messaging and async
+# Monitoring and observability
+# OpenTelemetry Auto-Instrumentation
+# OpenTelemetry Core
+# OpenTelemetry Manual Instrumentations
+# OpenTelemetry Semantic Conventions
+# Security and authentication
 # Testing
+# Trading and exchange
+# Utilities
+# petrosa-data-manager-client>=1.0.0
+PyMySQL==1.1.2
 pytest==7.4.4
 pytest-asyncio==0.23.5
 pytest-cov==4.1.0
 python-binance==1.0.32
-
-# Utilities
 python-dotenv==1.2.1
-
-# Security and authentication
 python-jose[cryptography]==3.5.0
+python-json-logger==2.0.7
 python-multipart==0.0.20
 ruff==0.1.15
 sqlalchemy[asyncio]==2.0.36
 starlette>=0.37.0
 structlog==25.5.0
 uvicorn[standard]==0.38.0
-python-json-logger==2.0.7

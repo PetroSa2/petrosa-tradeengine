@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Any
 
@@ -18,9 +19,10 @@ from shared.config import settings
 log_level = getattr(logging, settings.log_level.upper())
 if os.getenv("LOG_FORMAT", "text").lower() == "json":
     from pythonjsonlogger import jsonlogger
+
     handler = logging.StreamHandler()
     formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(name)s %(levelname)s %(message)s'
+        "%(asctime)s %(name)s %(levelname)s %(message)s"
     )
     handler.setFormatter(formatter)
     logging.basicConfig(level=log_level, handlers=[handler])

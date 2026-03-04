@@ -75,7 +75,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        sudo apt-get install -y --no-install-recommends make
+        sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends make
         python -m pip install --upgrade pip
         python -m venv .venv || echo "Virtual environment already exists"
         source .venv/bin/activate

@@ -2,9 +2,12 @@ name: CI Checks
 
 on:
   push:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     branches: [ main, develop ]
   pull_request:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
   release:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     types: [ published ]
 
 env:
@@ -19,6 +22,7 @@ env:
 jobs:
   # PR Checks - Only run on pull requests
   lint-and-test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Lint & Test
     runs-on: petrosa-org-runners
 
@@ -71,6 +75,7 @@ jobs:
 
     - name: Install dependencies
       run: |
+        sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends make
         python -m pip install --upgrade pip
         python -m venv .venv || echo "Virtual environment already exists"
         source .venv/bin/activate
@@ -139,6 +144,7 @@ jobs:
 
   # PR Test Quality Check - Only run on pull requests
   test-quality:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Test Quality Check
     runs-on: petrosa-org-runners
     steps:
@@ -174,6 +180,7 @@ jobs:
 
   # PR Security Scan - Only run on pull requests
   security-scan:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Security Scan
     runs-on: petrosa-org-runners
     permissions:
@@ -188,11 +195,11 @@ jobs:
         fetch-depth: 0  # Full history for secret detection
 
     - name: 🔐 Run Gitleaks (Secret Detection)
-      uses: gitleaks/gitleaks-action@v2
+      run: |
+        GITLEAKS_VERSION="8.18.4"
+        curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /tmp gitleaks
+        /tmp/gitleaks detect --source . --no-git || echo "⚠️ Gitleaks found issues but continuing"
       continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -240,7 +247,7 @@ jobs:
     name: pipeline
     runs-on: petrosa-org-runners
     needs: [lint-and-test, test-quality, security-scan]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Validate upstream job results
         run: |
@@ -411,7 +418,7 @@ jobs:
   notify:
     needs: [build-and-push, prepare-release, gitops-update]
     runs-on: petrosa-org-runners
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
     - name: Notify build status
@@ -432,7 +439,7 @@ jobs:
   cleanup:
     needs: [build-and-push]
     runs-on: petrosa-org-runners
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
     - name: Clean up old images

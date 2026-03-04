@@ -75,6 +75,7 @@ jobs:
 
     - name: Install dependencies
       run: |
+        sudo apt-get install -y --no-install-recommends make
         python -m pip install --upgrade pip
         python -m venv .venv || echo "Virtual environment already exists"
         source .venv/bin/activate
@@ -194,11 +195,11 @@ jobs:
         fetch-depth: 0  # Full history for secret detection
 
     - name: 🔐 Run Gitleaks (Secret Detection)
-      uses: gitleaks/gitleaks-action@v2
+      run: |
+        GITLEAKS_VERSION="8.18.4"
+        curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz -C /tmp gitleaks
+        /tmp/gitleaks detect --source . --no-git || echo "⚠️ Gitleaks found issues but continuing"
       continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5

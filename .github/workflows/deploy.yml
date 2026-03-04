@@ -30,7 +30,7 @@ concurrency:
 jobs:
   create-release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: petrosa-org-runners
     permissions:
       contents: write
     outputs:
@@ -63,7 +63,7 @@ jobs:
   build-and-push:
     name: Build & Push
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: petrosa-org-runners
     permissions:
       contents: read
       packages: write
@@ -108,7 +108,7 @@ jobs:
   gitops-update:
     name: GitOps Update
     needs: [build-and-push, create-release]
-    runs-on: ubuntu-latest
+    runs-on: petrosa-org-runners
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Generate GitOps Bot Token
@@ -159,7 +159,7 @@ jobs:
   notify:
     name: notify
     needs: [build-and-push, gitops-update, create-release]
-    runs-on: ubuntu-latest
+    runs-on: petrosa-org-runners
     if: always()
     steps:
     - name: Create deployment record
@@ -205,7 +205,7 @@ jobs:
   cleanup:
     name: cleanup
     needs: [build-and-push]
-    runs-on: ubuntu-latest
+    runs-on: petrosa-org-runners
     if: always()
     steps:
     - name: Clean Up Old Images

@@ -1450,7 +1450,7 @@ class Dispatcher:
                                 "event": "position_updated",
                                 "symbol": order.symbol,
                                 "order_id": order.order_id,
-                                "position_id": getattr(result, "position_id", None),
+                                "position_id": result.get("position_id"),
                             },
                         )
                         position_updated = True

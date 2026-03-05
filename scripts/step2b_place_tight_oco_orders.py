@@ -196,7 +196,9 @@ try:
             if order["type"] == "STOP_MARKET":
                 print(f"   📉 STOP LOSS - Will trigger if price drops ${distance:.2f}")
             elif order["type"] == "TAKE_PROFIT_MARKET":
-                print(f"   📈 TAKE PROFIT - Will trigger if price rises ${distance:.2f}")
+                print(
+                    f"   📈 TAKE PROFIT - Will trigger if price rises ${distance:.2f}"
+                )
             print()
 
     print("=" * 60)

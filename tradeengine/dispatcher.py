@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[
-            str, list[dict[str, Any]]
-        ] = {}  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
+            {}
+        )  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -1301,9 +1301,9 @@ class Dispatcher:
                             raise
 
                     result["execution_result"] = execution_result
-                    result[
-                        "status"
-                    ] = "executed"  # Change status to executed for consistency
+                    result["status"] = (
+                        "executed"  # Change status to executed for consistency
+                    )
 
                     # NEW: Update last accumulation time if order was executed successfully
                     if execution_result.get("status") in (
@@ -1528,9 +1528,9 @@ class Dispatcher:
                             )
 
                             # NEW: Map order to strategy position for OCO attribution
-                            self.order_to_strategy_position[
-                                order.order_id
-                            ] = strategy_position_id
+                            self.order_to_strategy_position[order.order_id] = (
+                                strategy_position_id
+                            )
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )

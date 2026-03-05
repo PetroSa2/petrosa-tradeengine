@@ -43,22 +43,22 @@ Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:45.0695485Z [INFO] This m
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6786613Z black....................................................................Failed
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6792743Z - hook id: black
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6797279Z - files were modified by this hook
-Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6800620Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6800620Z
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6802419Z reformatted tests/test_dispatcher_logging_regression.py
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6804483Z reformatted contracts/order.py
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6806354Z reformatted contracts/signal.py
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6813828Z reformatted shared/constants.py
-Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6814189Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6814189Z
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6818357Z All done! ✨ 🍰 ✨
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6819117Z 4 files reformatted, 3 files left unchanged.
-Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6819480Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6819480Z
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8157556Z ruff.....................................................................Failed
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8158555Z - hook id: ruff
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8158929Z - exit code: 1
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8159295Z - files were modified by this hook
-Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8159614Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8159614Z
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8160518Z Found 6 errors (6 fixed, 0 remaining).
-Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8160952Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8160952Z
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.9628583Z trim trailing whitespace.................................................Passed
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.0928976Z fix end of files.........................................................Passed
 Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.0930099Z check yaml...........................................(no files to check)Skipped

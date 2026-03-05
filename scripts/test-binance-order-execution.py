@@ -226,7 +226,9 @@ class BinanceFuturesValidator:
         try:
             # Get ticker price
             ticker = self.client.futures_symbol_ticker(symbol=self.test_symbol)
-            print(f"✅ Current {self.test_symbol} price: ${float(ticker['price']):,.2f}")
+            print(
+                f"✅ Current {self.test_symbol} price: ${float(ticker['price']):,.2f}"
+            )
 
             # Get 24hr ticker
             ticker_24hr = self.client.futures_ticker(symbol=self.test_symbol)

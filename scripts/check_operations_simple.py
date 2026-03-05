@@ -156,7 +156,9 @@ def check_mongodb_operations():
             count = db[collection_name].count_documents({})
 
             if "operation" in collection_name.lower():
-                print(f"🎯 OPERATIONS COLLECTION: {collection_name} - {count} documents")
+                print(
+                    f"🎯 OPERATIONS COLLECTION: {collection_name} - {count} documents"
+                )
                 operations_found = True
 
                 if count > 0:

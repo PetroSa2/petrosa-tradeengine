@@ -194,9 +194,7 @@ class SignalConsumer:
     async def _message_handler(self, msg: Any) -> None:
         """Handle incoming NATS messages with trace context extraction"""
         # CRITICAL: Log at the very start to see if handler is called at all
-        print(
-            f"🔥 HANDLER CALLED! Subject: {msg.subject if msg else 'None'}", flush=True
-        )
+        logger.debug("HANDLER CALLED | Subject: %s", msg.subject if msg else "None")
         try:
             logger.info(
                 "📨 NATS MESSAGE RECEIVED | Subject: %s | Size: %d bytes",
@@ -289,15 +287,11 @@ class SignalConsumer:
 
                     # Dispatch signal within trace context
                     logger.info("🔄 DISPATCHING SIGNAL: %s", signal.strategy_id)
-                    print(
-                        f"🔥 About to dispatch signal: {signal.strategy_id}", flush=True
-                    )
+                    logger.debug("About to dispatch signal: %s", signal.strategy_id)
                     if not self.dispatcher:
                         raise RuntimeError("Dispatcher not initialized")
                     result = await self.dispatcher.dispatch(signal)
-                    print(
-                        f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True
-                    )
+                    logger.debug("Dispatch completed for: %s", signal.strategy_id)
 
                     messages_processed.labels(status="success").inc()
                     logger.info(
@@ -306,9 +300,8 @@ class SignalConsumer:
                         result.get("status"),
                         result,
                     )
-                    print(
-                        f"🔥 Handler completing successfully for: {signal.strategy_id}",
-                        flush=True,
+                    logger.debug(
+                        "Handler completing successfully for: %s", signal.strategy_id
                     )
 
                     # Send acknowledgment with timeout to prevent blocking handler
@@ -364,7 +357,7 @@ class SignalConsumer:
             nats_errors.labels(type="processing").inc()
 
         except Exception as e:
-            print(f"🔥 HANDLER EXCEPTION: {e}", flush=True)
+            logger.debug("HANDLER EXCEPTION: %s", e)
             logger.error(
                 "❌ NATS MESSAGE PROCESSING FAILED | Subject: %s | Error: %s",
                 msg.subject,

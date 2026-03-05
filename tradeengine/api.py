@@ -856,22 +856,19 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]
 
 @app.get("/signals/active")
 async def get_active_signals(
-    symbol: str | None = Query(
-        None, description="Filter by trading symbol (e.g., BTCUSDT)"
-    ),
+    symbol: str
+    | None = Query(None, description="Filter by trading symbol (e.g., BTCUSDT)"),
     strategy_id: str | None = Query(None, description="Filter by strategy identifier"),
-    timeframe: str | None = Query(
-        None, description="Filter by timeframe (1m, 5m, 15m, 1h, 4h, 1d)"
-    ),
-    min_confidence: float | None = Query(
+    timeframe: str
+    | None = Query(None, description="Filter by timeframe (1m, 5m, 15m, 1h, 4h, 1d)"),
+    min_confidence: float
+    | None = Query(
         None, ge=0.0, le=1.0, description="Minimum confidence threshold (0.0-1.0)"
     ),
-    from_time: datetime | None = Query(
-        None, alias="from", description="Start time for filtering"
-    ),
-    to_time: datetime | None = Query(
-        None, alias="to", description="End time for filtering"
-    ),
+    from_time: datetime
+    | None = Query(None, alias="from", description="Start time for filtering"),
+    to_time: datetime
+    | None = Query(None, alias="to", description="End time for filtering"),
     limit: int = Query(
         50,
         ge=1,
@@ -984,13 +981,11 @@ async def get_active_signals(
 
 @app.get("/positions")
 async def get_positions(
-    symbol: str | None = Query(
-        None, description="Filter by trading symbol (e.g., BTCUSDT)"
-    ),
+    symbol: str
+    | None = Query(None, description="Filter by trading symbol (e.g., BTCUSDT)"),
     side: str | None = Query(None, description="Filter by position side (LONG, SHORT)"),
-    status: str | None = Query(
-        None, description="Filter by position status (open, closed)"
-    ),
+    status: str
+    | None = Query(None, description="Filter by position status (open, closed)"),
     min_size: float | None = Query(None, description="Minimum position size filter"),
     max_size: float | None = Query(None, description="Maximum position size filter"),
     min_pnl: float | None = Query(None, description="Minimum P&L filter"),
@@ -1127,22 +1122,19 @@ async def get_position(symbol: str) -> dict[str, Any]:
 
 @app.get("/orders")
 async def get_orders(
-    symbol: str | None = Query(
-        None, description="Filter by trading symbol (e.g., BTCUSDT)"
-    ),
-    status: str | None = Query(
+    symbol: str
+    | None = Query(None, description="Filter by trading symbol (e.g., BTCUSDT)"),
+    status: str
+    | None = Query(
         None, description="Filter by order status (pending, filled, cancelled, failed)"
     ),
     side: str | None = Query(None, description="Filter by order side (buy, sell)"),
-    type: str | None = Query(
-        None, description="Filter by order type (market, limit, stop)"
-    ),
-    from_time: datetime | None = Query(
-        None, alias="from", description="Start time for filtering"
-    ),
-    to_time: datetime | None = Query(
-        None, alias="to", description="End time for filtering"
-    ),
+    type: str
+    | None = Query(None, description="Filter by order type (market, limit, stop)"),
+    from_time: datetime
+    | None = Query(None, alias="from", description="Start time for filtering"),
+    to_time: datetime
+    | None = Query(None, alias="to", description="End time for filtering"),
     limit: int = Query(
         50,
         ge=1,

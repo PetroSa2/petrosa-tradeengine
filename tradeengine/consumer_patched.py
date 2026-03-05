@@ -130,9 +130,7 @@ class SignalConsumer:
 
         if not self.nc:
             if not await self.initialize():
-                logger.error(
-                    "❌ Cannot start consuming - NATS consumer not initialized"
-                )
+                logger.error("❌ Cannot start consuming - NATS consumer not initialized")
                 return
         if self.nc is None:
             raise RuntimeError(
@@ -295,9 +293,7 @@ class SignalConsumer:
                     if not self.dispatcher:
                         raise RuntimeError("Dispatcher not initialized")
                     result = await self.dispatcher.dispatch(signal)
-                    print(
-                        f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True
-                    )
+                    print(f"🔥 Dispatch completed for: {signal.strategy_id}", flush=True)
 
                     messages_processed.labels(status="success").inc()
                     logger.info(

@@ -1,0 +1,93 @@
+Lint & Test	Run pre-commit on PR diff	﻿2026-03-05T02:29:32.1949962Z ##[group]Run source .venv/bin/activate
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1950495Z [36;1msource .venv/bin/activate[0m
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1951042Z [36;1mBASE_REF="main"[0m
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1951490Z [36;1mif [ -z "$BASE_REF" ]; then BASE_REF="main"; fi[0m
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1952130Z [36;1mpre-commit run --from-ref origin/$BASE_REF --to-ref HEAD[0m
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1971640Z shell: /usr/bin/bash -e {0}
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1972057Z env:
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1972383Z   REGISTRY: docker.io
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1972963Z   IMAGE_NAME: ***/petrosa-tradeengine
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1973405Z   NAMESPACE: petrosa-apps
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1974017Z   MONGODB_URL: ***localhost:27017/testdb
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1974622Z   MONGODB_URI: ***localhost:27017/testdb
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1975525Z   MONGODB_DATABASE: testdb
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1975947Z   NATS_SERVERS: nats://localhost:4222
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1976377Z   NATS_ENABLED: false
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1976926Z   MYSQL_URI: ***localhost:3306/testdb
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1977428Z   JWT_SECRET_KEY: test-jwt-secret-key-for-testing-only
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1978316Z   BINANCE_API_KEY: test-api-key
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1978732Z   BINANCE_API_SECRET: test-api-secret
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1979151Z   BINANCE_TESTNET: true
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1979494Z   ENVIRONMENT: test
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1979818Z   LOG_LEVEL: DEBUG
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1980149Z   SIMULATION_ENABLED: true
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1980638Z   pythonLocation: /home/runner/_work/_tool/Python/3.11.15/x64
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1981457Z   PKG_CONFIG_PATH: /home/runner/_work/_tool/Python/3.11.15/x64/lib/pkgconfig
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1982171Z   Python_ROOT_DIR: /home/runner/_work/_tool/Python/3.11.15/x64
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1982811Z   Python2_ROOT_DIR: /home/runner/_work/_tool/Python/3.11.15/x64
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1983463Z   Python3_ROOT_DIR: /home/runner/_work/_tool/Python/3.11.15/x64
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1984122Z   LD_LIBRARY_PATH: /home/runner/_work/_tool/Python/3.11.15/x64/lib
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.1984655Z ##[endgroup]
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:32.8715691Z [INFO] Initializing environment for https://github.com/psf/black.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:33.4418623Z [INFO] Initializing environment for https://github.com/astral-sh/ruff-pre-commit.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:33.7466641Z [INFO] Initializing environment for https://github.com/pre-commit/pre-commit-hooks.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:34.1076955Z [INFO] Installing environment for https://github.com/psf/black.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:34.1077751Z [INFO] Once installed this environment will be reused.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:34.1079049Z [INFO] This may take a few minutes...
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:40.1051017Z [INFO] Installing environment for https://github.com/astral-sh/ruff-pre-commit.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:40.1051842Z [INFO] Once installed this environment will be reused.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:40.1052425Z [INFO] This may take a few minutes...
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:45.0693996Z [INFO] Installing environment for https://github.com/pre-commit/pre-commit-hooks.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:45.0694871Z [INFO] Once installed this environment will be reused.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:45.0695485Z [INFO] This may take a few minutes...
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6786613Z black....................................................................Failed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6792743Z - hook id: black
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6797279Z - files were modified by this hook
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6800620Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6802419Z reformatted tests/test_dispatcher_logging_regression.py
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6804483Z reformatted contracts/order.py
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6806354Z reformatted contracts/signal.py
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6813828Z reformatted shared/constants.py
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6814189Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6818357Z All done! ✨ 🍰 ✨
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6819117Z 4 files reformatted, 3 files left unchanged.
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.6819480Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8157556Z ruff.....................................................................Failed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8158555Z - hook id: ruff
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8158929Z - exit code: 1
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8159295Z - files were modified by this hook
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8159614Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8160518Z Found 6 errors (6 fixed, 0 remaining).
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.8160952Z 
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:52.9628583Z trim trailing whitespace.................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.0928976Z fix end of files.........................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.0930099Z check yaml...........................................(no files to check)Skipped
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.2445337Z check for added large files..............................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.3988338Z check for merge conflicts................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.5361151Z check for case conflicts.................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.7606330Z check docstring is first.................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.7682560Z check json...........................................(no files to check)Skipped
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.7754489Z check toml...........................................(no files to check)Skipped
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:53.9043181Z check python ast.........................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:54.1258338Z debug statements (python)................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:54.1269269Z fix requirements.txt.................................(no files to check)Skipped
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:54.3869969Z detect private key.......................................................Passed
+Lint & Test	Run pre-commit on PR diff	2026-03-05T02:29:54.4450449Z ##[error]Process completed with exit code 1.
+pipeline	Validate upstream job results	﻿2026-03-05T02:30:17.0585515Z ##[group]Run echo "lint-and-test=failure"
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0586840Z [36;1mecho "lint-and-test=failure"[0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0587725Z [36;1mecho "test-quality=success"[0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0588828Z [36;1mecho "security-scan=success"[0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0589805Z [36;1m[0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0590498Z [36;1m[[ "failure" == "success" ]][0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0591469Z [36;1m[[ "success" == "success" ]][0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0592285Z [36;1m[[ "success" == "success" ]][0m
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0636814Z shell: /usr/bin/bash -e {0}
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0638238Z env:
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0638846Z   REGISTRY: docker.io
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0639686Z   IMAGE_NAME: ***/petrosa-tradeengine
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0640391Z   NAMESPACE: petrosa-apps
+pipeline	Validate upstream job results	2026-03-05T02:30:17.0641131Z ##[endgroup]
+pipeline	Validate upstream job results	2026-03-05T02:30:17.1649341Z lint-and-test=failure
+pipeline	Validate upstream job results	2026-03-05T02:30:17.1650269Z test-quality=success
+pipeline	Validate upstream job results	2026-03-05T02:30:17.1651293Z security-scan=success
+pipeline	Validate upstream job results	2026-03-05T02:30:17.1691587Z ##[error]Process completed with exit code 1.

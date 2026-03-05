@@ -6,7 +6,7 @@ petrosa-data-manager service, replacing all direct database access.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient
@@ -339,7 +339,7 @@ class DataManagerPositionClient:
                 record={
                     "date": date,
                     "daily_pnl": daily_pnl,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 },
             )
 

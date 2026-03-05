@@ -90,7 +90,7 @@ async def test_oco_timeout_causes_rollback(dispatcher):
 
     # Mock _place_risk_management_orders to timeout
     dispatcher._place_risk_management_orders = AsyncMock(
-        side_effect=asyncio.TimeoutError()
+        side_effect=TimeoutError()
     )
 
     # Mock close_position_with_cleanup

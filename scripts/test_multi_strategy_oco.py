@@ -233,9 +233,7 @@ async def test_multi_strategy_oco():
             print(f"📊 Strategy B Positions: {len(strategy_b_positions)}")
 
             if len(strategy_a_positions) == 1 and len(strategy_b_positions) == 1:
-                print(
-                    "✅ TEST 4 PASSED: Both strategies have separate position records"
-                )
+                print("✅ TEST 4 PASSED: Both strategies have separate position records")
 
                 pos_a = strategy_a_positions[0]
                 pos_b = strategy_b_positions[0]

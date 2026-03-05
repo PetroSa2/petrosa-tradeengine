@@ -391,9 +391,9 @@ class TestAccumulationCooldown:
         }
         import time
 
-        dispatcher.last_accumulation_time[("BTCUSDT", "LONG")] = (
-            time.time()
-        )  # Very recent
+        dispatcher.last_accumulation_time[
+            ("BTCUSDT", "LONG")
+        ] = time.time()  # Very recent
 
         # Mock process_signal to return success so we get to the cooldown check
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})

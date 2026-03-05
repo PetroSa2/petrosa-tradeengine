@@ -1,7 +1,10 @@
 import logging
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from tradeengine.dispatcher import Dispatcher
+
 
 @pytest.mark.asyncio
 async def test_dispatcher_logging_no_typeerror():
@@ -16,32 +19,34 @@ async def test_dispatcher_logging_no_typeerror():
     mock_risk_manager = MagicMock()
     mock_order_manager = MagicMock()
     mock_audit_logger = MagicMock()
-    
+
     # Initialize Dispatcher
     dispatcher = Dispatcher(exchange=MagicMock())
-    
+
     # Set logger to INFO to ensure _log() is called
     dispatcher.logger.setLevel(logging.INFO)
-    
+
     # Mock order and result
     mock_order = MagicMock()
     mock_order.symbol = "BTCUSDT"
     mock_order.order_id = "test_order_123"
-    
+
     mock_result = {
         "status": "filled",
         "position_id": "pos_456",
-        "order_id": "test_order_123"
+        "order_id": "test_order_123",
     }
-    
+
     # Mock position_manager.update_position to succeed
-    with patch.object(dispatcher.position_manager, 'update_position', return_value=None):
+    with patch.object(
+        dispatcher.position_manager, "update_position", return_value=None
+    ):
         # We need to mock asyncio.wait_for or the whole update_position call
         # In the actual code, it's inside a loop and has other dependencies.
-        # This is a bit complex to unit test deeply without more setup, 
+        # This is a bit complex to unit test deeply without more setup,
         # but we can verify the logging call specifically.
-        
-        with patch.object(dispatcher.logger, 'info') as mock_info:
+
+        with patch.object(dispatcher.logger, "info") as mock_info:
             # Manually trigger the part of the code that was failing
             # self.logger.info("Position updated", extra={...})
             dispatcher.logger.info(
@@ -53,7 +58,7 @@ async def test_dispatcher_logging_no_typeerror():
                     "position_id": mock_result.get("position_id"),
                 },
             )
-            
+
             # Verify no TypeError was raised and extra was used correctly
             mock_info.assert_called_once()
             args, kwargs = mock_info.call_args
@@ -62,6 +67,7 @@ async def test_dispatcher_logging_no_typeerror():
             assert kwargs["extra"]["event"] == "position_updated"
             assert kwargs["extra"]["symbol"] == "BTCUSDT"
             assert kwargs["extra"]["position_id"] == "pos_456"
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -1,5 +1,17 @@
 from datetime import datetime
-from enum import Enum, StrEnum
+
+try:
+    from enum import StrEnum
+except ImportError:
+    from enum import Enum
+
+    class StrEnum(str, Enum):  # noqa: UP042
+        """Shim for StrEnum in Python < 3.11"""
+
+        def __str__(self) -> str:
+            return str(self.value)
+
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator

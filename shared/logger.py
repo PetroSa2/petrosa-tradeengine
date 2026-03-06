@@ -2,9 +2,11 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,27 +14,52 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from structlog.stdlib import LoggerFactory
 
 from shared.config import settings
 
-# Setup logging
-log_level = getattr(logging, settings.log_level.upper())
-if os.getenv("LOG_FORMAT", "text").lower() == "json":
-    from pythonjsonlogger import jsonlogger
 
-    handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
-        "%(asctime)s %(name)s %(levelname)s %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logging.basicConfig(level=log_level, handlers=[handler])
-else:
+def configure_structlog():
+    """Configure structlog for structured logging."""
+    # Configure standard library logging
+    log_level = getattr(logging, settings.log_level.upper())
+    log_format = os.getenv("LOG_FORMAT", "text").lower()
+
     logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
         level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-logger = logging.getLogger(__name__)
+    processors = [
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+    ]
+
+    if log_format == "json":
+        processors.append(structlog.processors.JSONRenderer())
+    else:
+        processors.append(structlog.dev.ConsoleRenderer())
+
+    structlog.configure(
+        processors=processors,
+        context_class=dict,
+        logger_factory=LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+
+# Initialize structlog on import
+configure_structlog()
+
+logger = structlog.get_logger(__name__)
 
 
 class AuditLogger:
@@ -157,4 +184,4 @@ audit_logger = AuditLogger()
 
 def get_logger(name: str = __name__):
     """Get a logger instance."""
-    return logging.getLogger(name)
+    return structlog.get_logger(name)

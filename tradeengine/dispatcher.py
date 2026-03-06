@@ -1445,13 +1445,8 @@ class Dispatcher:
                             timeout=10.0,  # Increased from 5s to 10s
                         )
                         self.logger.info(
-                            "Position updated",
-                            extra={
-                                "event": "position_updated",
-                                "symbol": order.symbol,
-                                "order_id": order.order_id,
-                                "position_id": result.get("position_id"),
-                            },
+                            f"✅ Position updated | event=position_updated | symbol={order.symbol} | "
+                            f"order_id={order.order_id} | position_id={result.get('position_id')}"
                         )
                         position_updated = True
                         self.logger.info(

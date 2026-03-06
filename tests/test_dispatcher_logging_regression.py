@@ -36,17 +36,11 @@ async def test_dispatcher_logging_no_typeerror_issue_266():
         result = {"position_id": "pos_456"}
 
         # 3. Patch the underlying _log method to verify the arguments passed to it
-        # This is where the TypeError actually happens if keyword arguments are passed directly
         with patch.object(dispatcher.logger, "_log") as mock_log:
-            # This is the EXACT line from tradeengine/dispatcher.py that was failing
+            # This matches the new line in tradeengine/dispatcher.py
             dispatcher.logger.info(
-                "Position updated",
-                extra={
-                    "event": "position_updated",
-                    "symbol": order.symbol,
-                    "order_id": order.order_id,
-                    "position_id": result.get("position_id"),
-                },
+                f"✅ Position updated | event=position_updated | symbol={order.symbol} | "
+                f"order_id={order.order_id} | position_id={result.get('position_id')}"
             )
 
             # 4. Verify the call
@@ -54,15 +48,15 @@ async def test_dispatcher_logging_no_typeerror_issue_266():
         args, kwargs = mock_log.call_args
 
         # args[0] is level (INFO=20), args[1] is message
-        assert args[1] == "Position updated"
+        message = args[1]
+        assert "Position updated" in message
+        assert "event=position_updated" in message
+        assert "symbol=BTCUSDT" in message
+        assert "order_id=test_order_123" in message
+        assert "position_id=pos_456" in message
 
-        # The fix is that metadata MUST be in 'extra', not as direct kwargs
-        assert "extra" in kwargs
-        assert kwargs["extra"]["event"] == "position_updated"
-        assert kwargs["extra"]["symbol"] == "BTCUSDT"
-        assert kwargs["extra"]["position_id"] == "pos_456"
-
-        # Crucially, 'event' should NOT be a direct keyword argument
+        # Crucially, 'extra' should not be needed for this simple pattern
+        # and 'event' should NOT be a direct keyword argument
         assert "event" not in kwargs
 
 

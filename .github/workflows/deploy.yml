@@ -134,9 +134,12 @@ jobs:
       - name: Update tradeengine image tag in GitOps manifests
         run: |
           VERSION="${{ needs.build-and-push.outputs.version }}"
-          # Update the image tag and version labels in manifests using VERSION_PLACEHOLDER, aligned with ci-checks workflow
-          find petrosa_k8s/k8s/tradeengine -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i "s|image: .*/petrosa-tradeengine:VERSION_PLACEHOLDER|image: yurisa2/petrosa-tradeengine:$VERSION|g"
-          find petrosa_k8s/k8s/tradeengine -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i "s/version: VERSION_PLACEHOLDER/version: $VERSION/g"
+          # Update the image tag in manifests robustly (preserves registry/repo, only updates tag)
+          find petrosa_k8s/k8s/tradeengine -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -E -i "s|(image:[[:space:]]*[^[:space:]]*/petrosa-tradeengine):[^[:space:]]*|\1:$VERSION|g"
+
+          # Update version labels specifically (targets common label patterns)
+          find petrosa_k8s/k8s/tradeengine -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -E -i "s/(version|app.kubernetes.io\/version):.*/\1: $VERSION/g"
+
           # Also handle any lingering placeholders for backward compatibility
           find petrosa_k8s/k8s/tradeengine -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r sed -i "s/VERSION_PLACEHOLDER/$VERSION/g"
 

@@ -26,7 +26,7 @@ def configure_structlog():
     log_format = os.getenv("LOG_FORMAT", "text").lower()
 
     logging.basicConfig(
-        format="%(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         stream=sys.stdout,
         level=log_level,
     )
@@ -182,6 +182,13 @@ class AuditLogger:
 audit_logger = AuditLogger()
 
 
-def get_logger(name: str = __name__):
-    """Get a logger instance."""
+def get_logger(name: str = __name__, *, stdlib: bool = False):
+    """Get a logger instance.
+
+    Args:
+        name: The name of the logger.
+        stdlib: If True, returns a standard logging.Logger instead of a structlog logger.
+    """
+    if stdlib:
+        return logging.getLogger(name)
     return structlog.get_logger(name)

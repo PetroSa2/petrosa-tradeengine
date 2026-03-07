@@ -35,6 +35,7 @@ import pytest  # noqa: E402
 
 
 @pytest.mark.asyncio
+@patch.dict("os.environ", {"OTEL_NO_AUTO_INIT": ""}, clear=False)
 async def test_lifespan_startup_calls_setup_telemetry():
     """
     Test that lifespan startup actually calls setup_telemetry().
@@ -136,6 +137,7 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
 
 
 @pytest.mark.asyncio
+@patch.dict("os.environ", {"OTEL_NO_AUTO_INIT": ""}, clear=False)
 async def test_lifespan_logs_configured_message():
     """
     Test that lifespan logs the success message.
@@ -163,7 +165,7 @@ async def test_lifespan_logs_configured_message():
 
     try:
         with (
-            patch("otel_init.configure_logging", return_value=True),
+            patch("tradeengine.api.setup_telemetry", return_value=True),
             patch("shared.constants.validate_mongodb_config"),
             patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
             patch.object(api_module, "binance_exchange") as mock_binance,
@@ -190,9 +192,7 @@ async def test_lifespan_logs_configured_message():
 
         # Verify the new log message was emitted
         success_logs = [
-            msg
-            for msg in log_messages
-            if "Logging configured" in msg and "no monitoring" in msg
+            msg for msg in log_messages if "Telemetry initialized successfully" in msg
         ]
         assert len(success_logs) > 0
     finally:

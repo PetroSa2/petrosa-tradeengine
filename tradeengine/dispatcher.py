@@ -1587,6 +1587,12 @@ class Dispatcher:
                                     f"calculated filled_qty is {filled_qty}"
                                 )
                                 result["status"] = "rolled_back_skipped"
+                                # Maintain consistent error enrichment so callers see the OCO failure reason
+                                result["error"] = f"Risk management failure: {e}"
+                                # Provide a more specific reason for why rollback was skipped
+                                result["rollback_skipped_reason"] = (
+                                    f"non_positive_filled_qty: {filled_qty}"
+                                )
                                 return result
 
                             rollback_position_id = getattr(order, "position_id", None)

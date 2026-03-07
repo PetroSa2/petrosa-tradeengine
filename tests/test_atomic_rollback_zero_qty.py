@@ -80,6 +80,7 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
             dispatcher.position_manager, "create_position_record", AsyncMock()
         ),
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
+        patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
     ):
 
         final_result = await dispatcher._execute_order_with_consensus(order)
@@ -138,6 +139,7 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
             dispatcher.position_manager, "create_position_record", AsyncMock()
         ),
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
+        patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
     ):
 
         final_result = await dispatcher._execute_order_with_consensus(order)
@@ -145,6 +147,8 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
     # 5. Verify rollback was skipped
     dispatcher.close_position_with_cleanup.assert_not_called()
     assert final_result["status"] == "rolled_back_skipped"
+    assert "Risk management failure" in final_result["error"]
+    assert final_result["rollback_skipped_reason"] == "non_positive_filled_qty: 0.0"
     dispatcher.logger.warning.assert_any_call(
         "⚠️ Skipping atomic rollback for BTCUSDT: calculated filled_qty is 0.0"
     )

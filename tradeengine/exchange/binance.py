@@ -360,7 +360,7 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,         # Enable price protection for stop orders
+            "priceProtect": True,  # Enable price protection for stop orders
         }
 
         # Add positionSide for hedge mode
@@ -407,7 +407,7 @@ class BinanceFuturesExchange:
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.stop_loss),
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,         # Enable price protection for stop orders
+            "priceProtect": True,  # Enable price protection for stop orders
         }
 
         # Add positionSide for hedge mode
@@ -442,7 +442,7 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,         # Enable price protection for take profit orders
+            "priceProtect": True,  # Enable price protection for take profit orders
         }
 
         # Add positionSide for hedge mode
@@ -491,7 +491,7 @@ class BinanceFuturesExchange:
             "price": self._format_price(order.symbol, order.target_price),
             "stopPrice": self._format_price(order.symbol, order.take_profit),
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,         # Enable price protection for take profit orders
+            "priceProtect": True,  # Enable price protection for take profit orders
         }
 
         # Add positionSide for hedge mode

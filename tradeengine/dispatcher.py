@@ -1570,13 +1570,24 @@ class Dispatcher:
                         # Atomic Rollback: Close the position immediately using a MARKET order
                         try:
                             # Use filled amount from result if available, otherwise order amount
-                            filled_qty = result.get("amount", order.amount)
-                            # Ensure filled_qty is a float
-                            if isinstance(filled_qty, str):
+                            # CRITICAL FIX: Prioritize non-zero order.amount if result.amount is zero
+                            result_qty = result.get("amount", 0.0)
+                            if isinstance(result_qty, str):
                                 try:
-                                    filled_qty = float(filled_qty)
+                                    result_qty = float(result_qty)
                                 except (ValueError, TypeError):
-                                    filled_qty = order.amount
+                                    result_qty = 0.0
+
+                            filled_qty = result_qty if result_qty > 0 else order.amount
+
+                            # Guard: Ensure filled_qty > 0 before initiating rollback
+                            if not filled_qty or filled_qty <= 0:
+                                self.logger.warning(
+                                    f"⚠️ Skipping atomic rollback for {order.symbol}: "
+                                    f"calculated filled_qty is {filled_qty}"
+                                )
+                                result["status"] = "rolled_back_skipped"
+                                return result
 
                             rollback_position_id = getattr(order, "position_id", None)
                             if rollback_position_id:

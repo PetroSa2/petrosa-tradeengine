@@ -64,7 +64,9 @@ def mock_binance_client():
         }
     )
     client.futures_create_order = Mock(return_value={"orderId": 12345, "status": "NEW"})
-    client._request_futures_api = Mock(return_value={"algoId": 12345, "status": "NEW", "algoStatus": "NEW"})
+    client._request_futures_api = Mock(
+        return_value={"algoId": 12345, "status": "NEW", "algoStatus": "NEW"}
+    )
     client.futures_get_open_orders = Mock(return_value=[])
     client.futures_position_information = Mock(return_value=[])
     client.futures_get_position_mode = Mock(return_value={"dualSidePosition": False})
@@ -900,9 +902,13 @@ class TestFallbackLogic:
     async def test_cancel_order_fallback_logic(self, binance_exchange):
         """Test cancellation fallback logic for -2011 error"""
         # Mock to simulate the -2011 error
-        binance_exchange.client.futures_cancel_order = Mock(side_effect=BinanceAPIException({"code": -2011}, "Unknown order"))
-        binance_exchange.client._request_futures_api = Mock(return_value={"algoId": 12345, "status": "CANCELED"})
-        
+        binance_exchange.client.futures_cancel_order = Mock(
+            side_effect=BinanceAPIException({"code": -2011}, "Unknown order")
+        )
+        binance_exchange.client._request_futures_api = Mock(
+            return_value={"algoId": 12345, "status": "CANCELED"}
+        )
+
         result = await binance_exchange.cancel_order("BTCUSDT", 12345)
         assert result is not None
         # Should have called _request_futures_api for algo order cancellation
@@ -912,9 +918,13 @@ class TestFallbackLogic:
     async def test_get_order_status_fallback_logic(self, binance_exchange):
         """Test order status fallback logic for -2011 error"""
         # Mock to simulate the -2011 error
-        binance_exchange.client.futures_get_order = Mock(side_effect=BinanceAPIException({"code": -2011}, "Unknown order"))
-        binance_exchange.client._request_futures_api = Mock(return_value={"algoId": 12345, "status": "FILLED", "algoStatus": "FILLED"})
-        
+        binance_exchange.client.futures_get_order = Mock(
+            side_effect=BinanceAPIException({"code": -2011}, "Unknown order")
+        )
+        binance_exchange.client._request_futures_api = Mock(
+            return_value={"algoId": 12345, "status": "FILLED", "algoStatus": "FILLED"}
+        )
+
         result = await binance_exchange.get_order_status("BTCUSDT", 12345)
         assert result is not None
         # Should have called _request_futures_api for algo order status

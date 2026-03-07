@@ -8,6 +8,7 @@ all types of trading orders including market, limit, stop, and take-profit order
 import asyncio
 import logging
 import math
+import os
 import time
 from typing import Any
 
@@ -62,8 +63,6 @@ class BinanceFuturesExchange:
 
             # Create Binance Futures client
             if BINANCE_API_KEY and BINANCE_API_SECRET:
-                import os
-
                 logger.info("Creating Binance Futures UMFutures client...")
                 self.client = Client(
                     api_key=BINANCE_API_KEY,

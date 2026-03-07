@@ -78,7 +78,9 @@ class BinanceFuturesExchange:
                     # Ensure we have the correct suffix (/fapi) if not already present
                     if "binancefuture.com" in base_url or "testnet" in base_url:
                         fapi_url = (
-                            base_url if base_url.endswith("/fapi") else f"{base_url}/fapi"
+                            base_url
+                            if base_url.endswith("/fapi")
+                            else f"{base_url}/fapi"
                         )
                         logger.info(f"Overriding Binance Futures URL to: {fapi_url}")
                         self.client.FUTURES_URL = fapi_url

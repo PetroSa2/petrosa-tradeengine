@@ -537,7 +537,9 @@ class BinanceFuturesExchange:
         """
         if self.client is None:
             raise RuntimeError("Client not initialized")
-        return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)
+        return self.client._request_futures_api(
+            "post", "algoOrder", signed=True, data=p
+        )
 
     async def _execute_with_retry(self, func: Any, **kwargs: Any) -> Any:
         """Execute function with retry logic"""

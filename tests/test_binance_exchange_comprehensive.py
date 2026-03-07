@@ -140,6 +140,11 @@ class TestOrderExecution:
         result = await binance_exchange.execute(order)
         assert result is not None
         assert "status" in result
+        # Verify params
+        binance_exchange.client.futures_create_order.assert_called()
+        args, kwargs = binance_exchange.client.futures_create_order.call_args
+        assert kwargs.get("workingType") == "MARK_PRICE"
+        assert kwargs.get("priceProtect") is True
 
     @pytest.mark.asyncio
     async def test_execute_take_profit_order(self, binance_exchange):
@@ -155,6 +160,11 @@ class TestOrderExecution:
         result = await binance_exchange.execute(order)
         assert result is not None
         assert "status" in result
+        # Verify params
+        binance_exchange.client.futures_create_order.assert_called()
+        args, kwargs = binance_exchange.client.futures_create_order.call_args
+        assert kwargs.get("workingType") == "MARK_PRICE"
+        assert kwargs.get("priceProtect") is True
 
     @pytest.mark.asyncio
     async def test_execute_stop_limit_order(self, binance_exchange):

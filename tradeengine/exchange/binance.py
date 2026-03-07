@@ -48,8 +48,8 @@ class BinanceFuturesExchange:
             from shared.constants import (
                 BINANCE_API_KEY,
                 BINANCE_API_SECRET,
-                BINANCE_TESTNET,
                 BINANCE_FUTURES_BASE_URL,
+                BINANCE_TESTNET,
             )
 
             # Debug logging

@@ -1,6 +1,8 @@
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
+
 from contracts.order import OrderSide, OrderType, TradeOrder
 from tradeengine.dispatcher import Dispatcher
 

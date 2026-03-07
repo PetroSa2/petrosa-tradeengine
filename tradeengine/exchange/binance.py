@@ -391,9 +391,7 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        result = await self._execute_with_retry(
-            self.client.futures_create_order, **params
-        )
+        result = await self._execute_with_retry(self._place_algo_order, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for stop order"
@@ -438,9 +436,12 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        result = await self._execute_with_retry(
-            self.client.futures_create_order, **params
-        )
+        def _place_algo_order(**p: Any) -> dict[str, Any]:
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
+            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
+
+        result = await self._execute_with_retry(_place_algo_order, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for stop limit order"
@@ -473,9 +474,12 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        result = await self._execute_with_retry(
-            self.client.futures_create_order, **params
-        )
+        def _place_algo_order(**p: Any) -> dict[str, Any]:
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
+            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
+
+        result = await self._execute_with_retry(_place_algo_order, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for take profit order"
@@ -522,9 +526,12 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        result = await self._execute_with_retry(
-            self.client.futures_create_order, **params
-        )
+        def _place_algo_order(**p: Any) -> dict[str, Any]:
+            if self.client is None:
+                raise RuntimeError("Client not initialized")
+            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
+
+        result = await self._execute_with_retry(_place_algo_order, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for take profit limit order"
@@ -933,13 +940,17 @@ class BinanceFuturesExchange:
         total_quote_qty = sum(float(fill["quoteQty"]) for fill in fills)
         total_qty = sum(float(fill["qty"]) for fill in fills)
 
+        order_id = result.get("orderId") or result.get("algoId")
+        status = result.get("status") or result.get("algoStatus", "NEW")
+        order_type = result.get("type") or result.get("orderType")
+
         return {
-            "order_id": result.get("orderId"),
-            "status": result.get("status"),
+            "order_id": str(order_id) if order_id else None,
+            "status": status,
             "side": result.get("side"),
-            "type": result.get("type"),
-            "amount": total_qty,
-            "fill_price": result.get("price"),
+            "type": order_type,
+            "amount": total_qty or order.amount,
+            "fill_price": result.get("price") or result.get("triggerPrice"),
             "total_value": total_quote_qty,
             "fees": self._calculate_fees(fills),
             "timestamp": result.get("transactTime"),
@@ -1011,18 +1022,45 @@ class BinanceFuturesExchange:
         return await self.get_symbol_price(symbol)
 
     async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
-        """Cancel an existing order"""
+        """Cancel an existing order
+
+        Falls back to Algo Order API for cancellation when standard order endpoint
+        returns -2011 or -4132 errors (indicating the order is an Algo Order).
+        """
         if not self.initialized:
             await self.initialize()
 
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            result = self.client.futures_cancel_order(symbol=symbol, orderId=order_id)
+
+            try:
+                result = self.client.futures_cancel_order(
+                    symbol=symbol, orderId=order_id
+                )
+                canceled_order_id = result.get("orderId")
+                status = result.get("status")
+            except BinanceAPIException as e:
+                # -2011: Unknown order sent (happens if we try to cancel an algo order via normal endpoint)
+                if e.code in [-2011, -4132]:
+                    logger.info(
+                        f"Order {order_id} not found as standard order, attempting algo order cancellation"
+                    )
+                    result = self.client._request_futures_api(  # type: ignore
+                        "delete",
+                        "algoOrder",
+                        signed=True,
+                        data={"symbol": symbol, "algoId": order_id},
+                    )
+                    canceled_order_id = result.get("algoId")
+                    status = "CANCELED"
+                else:
+                    raise
+
             return {
-                "order_id": result.get("orderId"),
-                "status": result.get("status"),
-                "symbol": result.get("symbol"),
+                "order_id": canceled_order_id,
+                "status": status,
+                "symbol": result.get("symbol", symbol),
                 "timestamp": int(time.time() * 1000),
             }
         except Exception as e:
@@ -1037,17 +1075,35 @@ class BinanceFuturesExchange:
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            order = self.client.futures_get_order(symbol=symbol, orderId=order_id)
+
+            try:
+                order = self.client.futures_get_order(symbol=symbol, orderId=order_id)
+                order_id_resp = order.get("orderId")
+            except BinanceAPIException as e:
+                if e.code in [-2011, -4132]:
+                    logger.info(
+                        f"Order {order_id} not found as standard order, polling algo order endpoint"
+                    )
+                    order = self.client._request_futures_api(  # type: ignore
+                        "get",
+                        "algoOrder",
+                        signed=True,
+                        data={"symbol": symbol, "algoId": order_id},
+                    )
+                    order_id_resp = order.get("algoId")
+                else:
+                    raise
+
             return {
-                "order_id": order.get("orderId"),
-                "status": order.get("status"),
+                "order_id": order_id_resp,
+                "status": order.get("status") or order.get("algoStatus"),
                 "side": order.get("side"),
-                "type": order.get("type"),
-                "quantity": order.get("origQty"),
+                "type": order.get("type") or order.get("orderType"),
+                "quantity": order.get("origQty") or order.get("quantity"),
                 "price": order.get("price"),
-                "executed_qty": order.get("executedQty"),
-                "cummulative_quote_qty": order.get("cummulativeQuoteQty"),
-                "time": order.get("time"),
+                "executed_qty": order.get("executedQty", 0),
+                "cummulative_quote_qty": order.get("cummulativeQuoteQty", 0),
+                "time": order.get("time") or order.get("createTime"),
                 "update_time": order.get("updateTime"),
             }
         except Exception as e:
@@ -1109,3 +1165,4 @@ class BinanceFuturesExchange:
 
 # Global Binance Futures exchange instance
 binance_futures_exchange = BinanceFuturesExchange()
+# Minor comment update to trigger pipeline

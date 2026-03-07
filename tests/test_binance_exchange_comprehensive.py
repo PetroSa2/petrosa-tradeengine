@@ -64,6 +64,9 @@ def mock_binance_client():
         }
     )
     client.futures_create_order = Mock(return_value={"orderId": 12345, "status": "NEW"})
+    client._request_futures_api = Mock(
+        return_value={"algoId": 12345, "status": "NEW", "algoStatus": "NEW"}
+    )
     client.futures_get_open_orders = Mock(return_value=[])
     client.futures_position_information = Mock(return_value=[])
     client.futures_get_position_mode = Mock(return_value={"dualSidePosition": False})
@@ -141,10 +144,11 @@ class TestOrderExecution:
         assert result is not None
         assert "status" in result
         # Verify params
-        binance_exchange.client.futures_create_order.assert_called()
-        args, kwargs = binance_exchange.client.futures_create_order.call_args
-        assert kwargs.get("workingType") == "MARK_PRICE"
-        assert kwargs.get("priceProtect") is True
+        binance_exchange.client._request_futures_api.assert_called()
+        args, kwargs = binance_exchange.client._request_futures_api.call_args
+        data = kwargs.get("data", {})
+        assert data.get("workingType") == "MARK_PRICE"
+        assert data.get("priceProtect") is True
 
     @pytest.mark.asyncio
     async def test_execute_take_profit_order(self, binance_exchange):
@@ -161,10 +165,11 @@ class TestOrderExecution:
         assert result is not None
         assert "status" in result
         # Verify params
-        binance_exchange.client.futures_create_order.assert_called()
-        args, kwargs = binance_exchange.client.futures_create_order.call_args
-        assert kwargs.get("workingType") == "MARK_PRICE"
-        assert kwargs.get("priceProtect") is True
+        binance_exchange.client._request_futures_api.assert_called()
+        args, kwargs = binance_exchange.client._request_futures_api.call_args
+        data = kwargs.get("data", {})
+        assert data.get("workingType") == "MARK_PRICE"
+        assert data.get("priceProtect") is True
 
     @pytest.mark.asyncio
     async def test_execute_stop_limit_order(self, binance_exchange):
@@ -184,6 +189,11 @@ class TestOrderExecution:
         result = await binance_exchange.execute(order)
         assert result is not None
         assert "status" in result
+        # Verify that _request_futures_api is called instead of futures_create_order
+        binance_exchange.client._request_futures_api.assert_called()
+        # Verify specific parameters used for algo order
+        args, kwargs = binance_exchange.client._request_futures_api.call_args
+        assert kwargs.get("data", {}).get("type") == "STOP"
 
     @pytest.mark.asyncio
     async def test_execute_take_profit_limit_order(self, binance_exchange):
@@ -203,6 +213,11 @@ class TestOrderExecution:
         result = await binance_exchange.execute(order)
         assert result is not None
         assert "status" in result
+        # Verify that _request_futures_api is called instead of futures_create_order
+        binance_exchange.client._request_futures_api.assert_called()
+        # Verify specific parameters used for algo order
+        args, kwargs = binance_exchange.client._request_futures_api.call_args
+        assert kwargs.get("data", {}).get("type") == "TAKE_PROFIT"
 
     @pytest.mark.asyncio
     async def test_execute_stop_limit_order_with_validation_error(
@@ -881,6 +896,42 @@ class TestRetryLogic:
 
         # Should not retry - should fail immediately
         assert mock_func.call_count == 1
+
+
+class TestFallbackLogic:
+    """Test fallback logic for cancellation and status checks"""
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_fallback_logic(self, binance_exchange):
+        """Test cancellation fallback logic for -2011 error"""
+        # Mock to simulate the -2011 error
+        binance_exchange.client.futures_cancel_order = Mock(
+            side_effect=BinanceAPIException({"code": -2011}, "Unknown order")
+        )
+        binance_exchange.client._request_futures_api = Mock(
+            return_value={"algoId": 12345, "status": "CANCELED"}
+        )
+
+        result = await binance_exchange.cancel_order("BTCUSDT", 12345)
+        assert result is not None
+        # Should have called _request_futures_api for algo order cancellation
+        binance_exchange.client._request_futures_api.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_order_status_fallback_logic(self, binance_exchange):
+        """Test order status fallback logic for -2011 error"""
+        # Mock to simulate the -2011 error
+        binance_exchange.client.futures_get_order = Mock(
+            side_effect=BinanceAPIException({"code": -2011}, "Unknown order")
+        )
+        binance_exchange.client._request_futures_api = Mock(
+            return_value={"algoId": 12345, "status": "FILLED", "algoStatus": "FILLED"}
+        )
+
+        result = await binance_exchange.get_order_status("BTCUSDT", 12345)
+        assert result is not None
+        # Should have called _request_futures_api for algo order status
+        binance_exchange.client._request_futures_api.assert_called_once()
 
 
 class TestAdditionalMethods:

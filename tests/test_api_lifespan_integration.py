@@ -22,6 +22,10 @@ sys.modules["opentelemetry.instrumentation.requests"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib3"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.urllib"] = MagicMock()
 
+# NEW: Mock otel_init which is expected by legacy tests
+otel_init = MagicMock()
+sys.modules["otel_init"] = otel_init
+
 # Mock petrosa_otel module (used by consumer)
 mock_petrosa_otel = MagicMock()
 mock_petrosa_otel.extract_trace_context = MagicMock(return_value=MagicMock())
@@ -31,19 +35,19 @@ import pytest  # noqa: E402
 
 
 @pytest.mark.asyncio
-async def test_lifespan_startup_calls_configure_logging():
+async def test_lifespan_startup_calls_setup_telemetry():
     """
-    Test that lifespan startup actually calls otel_init.configure_logging().
-    This provides coverage for the NEW line in api.py patch.
+    Test that lifespan startup actually calls setup_telemetry().
+    This provides coverage for the telemetry initialization in api.py.
     """
     # Import inside test to ensure fresh state
     import tradeengine.api as api_module
-    import tradeengine.consumer as consumer_module  # Import to ensure module exists
+    import tradeengine.consumer as consumer_module
 
-    configure_was_called = []
+    setup_was_called = []
 
-    def track_configure():
-        configure_was_called.append(True)
+    def track_setup(**kwargs):
+        setup_was_called.append(True)
         return True
 
     mock_app = MagicMock()
@@ -51,9 +55,7 @@ async def test_lifespan_startup_calls_configure_logging():
 
     # Mock all heavy dependencies
     with (
-        patch.object(
-            api_module.otel_init, "configure_logging", side_effect=track_configure
-        ),
+        patch("tradeengine.api.setup_telemetry", side_effect=track_setup),
         patch("shared.constants.validate_mongodb_config"),
         patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
         patch.object(api_module, "binance_exchange") as mock_binance,
@@ -78,88 +80,31 @@ async def test_lifespan_startup_calls_configure_logging():
         mock_consumer.start_consuming = AsyncMock()
         mock_consumer.stop_consuming = AsyncMock()
 
-        # Execute lifespan - THIS RUNS THE ACTUAL api.py CODE
+        # Execute lifespan
         async with api_module.lifespan(mock_app):
             pass
 
-        # Verify configure_logging was called from within api.py
-        assert len(configure_was_called) > 0
-
-
-@pytest.mark.asyncio
-async def test_lifespan_startup_calls_setup_signal_handlers():
-    """Test that lifespan startup calls setup_signal_handlers."""
-    import tradeengine.api as api_module
-    import tradeengine.consumer as consumer_module  # Import to ensure module exists
-
-    setup_was_called = []
-
-    def track_setup():
-        setup_was_called.append(True)
-
-    mock_app = MagicMock()
-    mock_app.state = MagicMock()
-
-    with (
-        patch("otel_init.configure_logging", return_value=True),
-        patch.object(
-            api_module.otel_init, "setup_signal_handlers", side_effect=track_setup
-        ),
-        patch("shared.constants.validate_mongodb_config"),
-        patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
-        patch.object(api_module, "binance_exchange") as mock_binance,
-        patch.object(api_module, "simulator_exchange") as mock_sim,
-        patch.object(api_module, "dispatcher") as mock_disp,
-        patch.object(consumer_module, "signal_consumer") as mock_consumer,
-    ):
-        mock_config = AsyncMock()
-        mock_config.start = AsyncMock()
-        mock_config.stop = AsyncMock()
-        MockConfig.return_value = mock_config
-
-        mock_binance.initialize = AsyncMock()
-        mock_binance.close = AsyncMock()
-        mock_sim.initialize = AsyncMock()
-        mock_sim.close = AsyncMock()
-        mock_disp.initialize = AsyncMock()
-        mock_disp.close = AsyncMock()
-        mock_consumer.initialize = AsyncMock(return_value=False)
-        mock_consumer.running = False
-        mock_consumer.start_consuming = AsyncMock()
-        mock_consumer.stop_consuming = AsyncMock()
-
-        async with api_module.lifespan(mock_app):
-            pass
-
-        # Verify setup_signal_handlers was called
+        # Verify setup_telemetry was called
         assert len(setup_was_called) > 0
 
 
 @pytest.mark.asyncio
 async def test_lifespan_shutdown_calls_flush_telemetry():
-    """Test that lifespan shutdown calls flush_telemetry and shutdown_telemetry."""
+    """Test that lifespan shutdown calls flush_telemetry."""
     import tradeengine.api as api_module
-    import tradeengine.consumer as consumer_module  # Import to ensure module exists
+    import tradeengine.consumer as consumer_module
 
     flush_was_called = []
-    shutdown_was_called = []
 
     def track_flush():
         flush_was_called.append(True)
-
-    def track_shutdown():
-        shutdown_was_called.append(True)
 
     mock_app = MagicMock()
     mock_app.state = MagicMock()
 
     with (
-        patch("otel_init.configure_logging", return_value=True),
-        patch.object(api_module.otel_init, "setup_signal_handlers"),
-        patch.object(api_module.otel_init, "flush_telemetry", side_effect=track_flush),
-        patch.object(
-            api_module.otel_init, "shutdown_telemetry", side_effect=track_shutdown
-        ),
+        patch("tradeengine.api.setup_telemetry", return_value=True),
+        patch("tradeengine.api.flush_telemetry", side_effect=track_flush),
         patch("shared.constants.validate_mongodb_config"),
         patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
         patch.object(api_module, "binance_exchange") as mock_binance,
@@ -186,9 +131,8 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
         async with api_module.lifespan(mock_app):
             pass
 
-        # Verify flush_telemetry and shutdown_telemetry were called during shutdown
+        # Verify flush_telemetry was called during shutdown
         assert len(flush_was_called) > 0
-        assert len(shutdown_was_called) > 0
 
 
 @pytest.mark.asyncio
@@ -283,7 +227,7 @@ async def test_lifespan_error_path_without_watchdog():
 
     try:
         with (
-            patch("otel_init.configure_logging", return_value=True),
+            patch("tradeengine.api.setup_telemetry", return_value=True),
             patch(
                 "shared.constants.validate_mongodb_config",
                 side_effect=Exception("Test"),

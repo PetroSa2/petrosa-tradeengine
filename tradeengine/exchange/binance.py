@@ -49,6 +49,7 @@ class BinanceFuturesExchange:
                 BINANCE_API_KEY,
                 BINANCE_API_SECRET,
                 BINANCE_TESTNET,
+                BINANCE_FUTURES_BASE_URL,
             )
 
             # Debug logging
@@ -70,23 +71,23 @@ class BinanceFuturesExchange:
                     testnet=BINANCE_TESTNET,
                 )
 
-                # Explicitly override Futures URL if BINANCE_BASE_URL is provided
+                # Explicitly override Futures URL using BINANCE_FUTURES_BASE_URL
                 # This fixes the issue where testnet=True only affects Spot API in some versions
-                base_url = os.getenv("BINANCE_BASE_URL")
-                if base_url:
+                if BINANCE_FUTURES_BASE_URL:
                     # python-binance uses FUTURES_URL for futures endpoints
                     # Ensure we have the correct suffix (/fapi) if not already present
-                    if "binancefuture.com" in base_url or "testnet" in base_url:
-                        fapi_url = (
-                            base_url
-                            if base_url.endswith("/fapi")
-                            else f"{base_url}/fapi"
-                        )
-                        logger.info(f"Overriding Binance Futures URL to: {fapi_url}")
-                        self.client.FUTURES_URL = fapi_url
+                    fapi_url = (
+                        BINANCE_FUTURES_BASE_URL
+                        if BINANCE_FUTURES_BASE_URL.endswith("/fapi")
+                        else f"{BINANCE_FUTURES_BASE_URL}/fapi"
+                    )
+                    logger.info(f"Overriding Binance Futures URL to: {fapi_url}")
+                    self.client.FUTURES_URL = fapi_url
 
+                # Use getattr to prevent AttributeError in tests with mock clients
+                effective_url = getattr(self.client, "FUTURES_URL", "unknown")
                 logger.info(
-                    f"Binance Futures client created (testnet: {BINANCE_TESTNET}, url: {self.client.FUTURES_URL})"
+                    f"Binance Futures client created (testnet: {BINANCE_TESTNET}, url: {effective_url})"
                 )
 
                 # Test connection

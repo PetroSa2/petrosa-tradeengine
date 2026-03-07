@@ -241,6 +241,16 @@ class BinanceFuturesExchange:
 
     async def _validate_order(self, order: TradeOrder) -> None:
         """Validate order parameters"""
+        # Validate symbol parameter exists and is a string
+        if (
+            not order.symbol
+            or not isinstance(order.symbol, str)
+            or len(order.symbol.strip()) == 0
+        ):
+            raise ValueError(
+                "Symbol parameter is required and must be a non-empty string"
+            )
+
         # Check if symbol is supported
         if order.symbol not in self.symbol_info:
             raise ValueError(f"Symbol {order.symbol} not supported")
@@ -294,16 +304,6 @@ class BinanceFuturesExchange:
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
 
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
-
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
@@ -319,7 +319,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         # Note: quote_quantity is not supported in the current TradeOrder model
         # This feature can be added if needed in the future
@@ -337,16 +337,6 @@ class BinanceFuturesExchange:
         """Execute a limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
 
         if order.target_price is None:
             raise ValueError("Target price required for limit orders")
@@ -375,7 +365,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -390,16 +380,6 @@ class BinanceFuturesExchange:
         """Execute a stop market order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
 
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop orders")
@@ -424,7 +404,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -437,16 +417,6 @@ class BinanceFuturesExchange:
         """Execute a stop limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
 
         if order.target_price is None:
             raise ValueError("Target price required for stop limit orders")
@@ -483,7 +453,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -496,16 +466,6 @@ class BinanceFuturesExchange:
         """Execute a take profit market order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
 
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
@@ -530,7 +490,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -545,16 +505,6 @@ class BinanceFuturesExchange:
         """Execute a take profit limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-
-        # Validate symbol
-        if (
-            not order.symbol
-            or not isinstance(order.symbol, str)
-            or len(order.symbol.strip()) == 0
-        ):
-            raise ValueError(
-                "Symbol parameter is required and must be a non-empty string"
-            )
 
         if order.target_price is None:
             raise ValueError("Target price required for take profit limit orders")
@@ -591,7 +541,7 @@ class BinanceFuturesExchange:
         else:
             # Only include reduceOnly when True and NOT in hedge mode
             if order.reduce_only:
-                params["reduceOnly"] = "true"
+                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):

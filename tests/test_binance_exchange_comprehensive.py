@@ -40,7 +40,7 @@ class MockBinanceAPIException(Exception):
 
 mock_binance.exceptions.BinanceAPIException = MockBinanceAPIException
 
-from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder  # noqa: E402
+from contracts.order import OrderSide, OrderType, TradeOrder  # noqa: E402
 from tradeengine.exchange.binance import BinanceFuturesExchange  # noqa: E402
 
 # Alias for tests

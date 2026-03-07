@@ -22,7 +22,8 @@ def test_algo_order_api():
 
     api_key = os.getenv("BINANCE_API_KEY")
     api_secret = os.getenv("BINANCE_API_SECRET")
-    testnet = os.getenv("BINANCE_TESTNET", "false").lower() == "true"
+    allow_prod = os.getenv("BINANCE_ALLOW_PROD", "false").lower() == "true"
+    testnet = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
 
     if not api_key or not api_secret:
         print("❌ BINANCE_API_KEY and BINANCE_API_SECRET must be set")
@@ -35,8 +36,12 @@ def test_algo_order_api():
         client = Client(api_key=api_key, api_secret=api_secret, testnet=True)
         print("🔧 Using Binance TESTNET")
     else:
+        if not allow_prod:
+            print("❌ Cannot run on PRODUCTION without BINANCE_ALLOW_PROD=true")
+            print("   Set BINANCE_TESTNET=true to run on testnet.")
+            return False
         client = Client(api_key=api_key, api_secret=api_secret)
-        print("⚠️  Using Binance PRODUCTION - set BINANCE_TESTNET=true to use testnet")
+        print("⚠️  Using Binance PRODUCTION")
 
     symbol = "BTCUSDT"
 

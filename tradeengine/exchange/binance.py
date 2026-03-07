@@ -391,7 +391,7 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        result = await self._execute_with_retry(self._place_algo_order, **params)
+        result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for stop order"
@@ -436,12 +436,7 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        def _place_algo_order(**p: Any) -> dict[str, Any]:
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
-
-        result = await self._execute_with_retry(_place_algo_order, **params)
+        result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for stop limit order"
@@ -474,12 +469,7 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        def _place_algo_order(**p: Any) -> dict[str, Any]:
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
-
-        result = await self._execute_with_retry(_place_algo_order, **params)
+        result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for take profit order"
@@ -526,17 +516,30 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        def _place_algo_order(**p: Any) -> dict[str, Any]:
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
-
-        result = await self._execute_with_retry(_place_algo_order, **params)
+        result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for take profit limit order"
             )
         return result
+
+    def _call_algo_order_api(self, **p: Any) -> dict[str, Any]:
+        """Call the Binance Algo Order API endpoint.
+
+        This is a shared method used by all conditional order types
+        (stop, stop limit, take profit, take profit limit).
+
+        Args:
+            **p: Parameters to pass to the Algo Order API
+
+        Returns:
+            Response from the Binance Algo Order API
+        """
+        if self.client is None:
+            raise RuntimeError("Client not initialized")
+        return self.client._request_futures_api(
+            "post", "algoOrder", signed=True, data=p
+        )
 
     async def _execute_with_retry(self, func: Any, **kwargs: Any) -> Any:
         """Execute function with retry logic"""
@@ -1165,4 +1168,3 @@ class BinanceFuturesExchange:
 
 # Global Binance Futures exchange instance
 binance_futures_exchange = BinanceFuturesExchange()
-# Minor comment update to trigger pipeline

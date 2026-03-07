@@ -27,7 +27,11 @@ class MockBinanceAPIException(Exception):
     def __init__(self, response, message):
         self.response = response
         self.message = message
-        self.code = getattr(response, "code", -1000)
+        # Handle both dict responses and object responses
+        if isinstance(response, dict):
+            self.code = response.get("code", -1000)
+        else:
+            self.code = getattr(response, "code", -1000)
 
 
 mock_binance.exceptions.BinanceAPIException = MockBinanceAPIException

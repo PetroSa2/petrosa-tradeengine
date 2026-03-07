@@ -8,6 +8,7 @@ all types of trading orders including market, limit, stop, and take-profit order
 import asyncio
 import logging
 import math
+import os
 import time
 from typing import Any
 
@@ -47,6 +48,7 @@ class BinanceFuturesExchange:
             from shared.constants import (
                 BINANCE_API_KEY,
                 BINANCE_API_SECRET,
+                BINANCE_FUTURES_BASE_URL,
                 BINANCE_TESTNET,
             )
 
@@ -68,8 +70,24 @@ class BinanceFuturesExchange:
                     api_secret=BINANCE_API_SECRET,
                     testnet=BINANCE_TESTNET,
                 )
+
+                # Explicitly override Futures URL using BINANCE_FUTURES_BASE_URL
+                # This fixes the issue where testnet=True only affects Spot API in some versions
+                if BINANCE_FUTURES_BASE_URL:
+                    # python-binance uses FUTURES_URL for futures endpoints
+                    # Ensure we have the correct suffix (/fapi) if not already present
+                    fapi_url = (
+                        BINANCE_FUTURES_BASE_URL
+                        if BINANCE_FUTURES_BASE_URL.endswith("/fapi")
+                        else f"{BINANCE_FUTURES_BASE_URL}/fapi"
+                    )
+                    logger.info(f"Overriding Binance Futures URL to: {fapi_url}")
+                    self.client.FUTURES_URL = fapi_url
+
+                # Use getattr to prevent AttributeError in tests with mock clients
+                effective_url = getattr(self.client, "FUTURES_URL", "unknown")
                 logger.info(
-                    f"Binance Futures client created (testnet: {BINANCE_TESTNET})"
+                    f"Binance Futures client created (testnet: {BINANCE_TESTNET}, url: {effective_url})"
                 )
 
                 # Test connection

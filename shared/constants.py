@@ -349,6 +349,14 @@ BINANCE_BASE_URL = os.getenv(
     "BINANCE_BASE_URL",
     "https://testnet.binance.vision" if BINANCE_TESTNET else "https://api.binance.com",
 )
+BINANCE_FUTURES_BASE_URL = os.getenv(
+    "BINANCE_FUTURES_BASE_URL",
+    (
+        "https://testnet.binancefuture.com"
+        if BINANCE_TESTNET
+        else "https://fapi.binance.com"
+    ),
+)
 BINANCE_WS_URL = os.getenv(
     "BINANCE_WS_URL",
     (

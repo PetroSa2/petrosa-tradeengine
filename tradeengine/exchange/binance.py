@@ -1024,31 +1024,28 @@ class BinanceFuturesExchange:
         return await self.get_symbol_price(symbol)
 
     async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
-        """Cancel an existing order"""
+        """Cancel an existing order
+        
+        Falls back to Algo Order API for cancellation when standard order endpoint
+        returns -2011 or -4132 errors (indicating the order is an Algo Order).
+        """
         if not self.initialized:
             await self.initialize()
 
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-
+            
             try:
-                result = self.client.futures_cancel_order(
-                    symbol=symbol, orderId=order_id
-                )
+                result = self.client.futures_cancel_order(symbol=symbol, orderId=order_id)
                 canceled_order_id = result.get("orderId")
                 status = result.get("status")
             except BinanceAPIException as e:
                 # -2011: Unknown order sent (happens if we try to cancel an algo order via normal endpoint)
                 if e.code in [-2011, -4132]:
-                    logger.info(
-                        f"Order {order_id} not found as standard order, attempting algo order cancellation"
-                    )
+                    logger.info(f"Order {order_id} not found as standard order, attempting algo order cancellation")
                     result = self.client._request_futures_api(  # type: ignore
-                        "delete",
-                        "algoOrder",
-                        signed=True,
-                        data={"symbol": symbol, "algoId": order_id},
+                        "delete", "algoOrder", signed=True, data={"symbol": symbol, "algoId": order_id}
                     )
                     canceled_order_id = result.get("algoId")
                     status = "CANCELED"

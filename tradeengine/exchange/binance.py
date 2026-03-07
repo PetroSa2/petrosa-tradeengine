@@ -241,6 +241,16 @@ class BinanceFuturesExchange:
 
     async def _validate_order(self, order: TradeOrder) -> None:
         """Validate order parameters"""
+        # Validate symbol parameter exists and is a string
+        if (
+            not order.symbol
+            or not isinstance(order.symbol, str)
+            or len(order.symbol.strip()) == 0
+        ):
+            raise ValueError(
+                "Symbol parameter is required and must be a non-empty string"
+            )
+
         # Check if symbol is supported
         if order.symbol not in self.symbol_info:
             raise ValueError(f"Symbol {order.symbol} not supported")
@@ -293,6 +303,7 @@ class BinanceFuturesExchange:
         """Execute a market order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
@@ -310,9 +321,8 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        # Add quote order quantity for market orders if specified
-        if hasattr(order, "quote_quantity") and order.quote_quantity:
-            params["quoteOrderQty"] = order.quote_quantity
+        # Note: quote_quantity is not supported in the current TradeOrder model
+        # This feature can be added if needed in the future
 
         result = await self._execute_with_retry(
             self.client.futures_create_order, **params
@@ -327,6 +337,7 @@ class BinanceFuturesExchange:
         """Execute a limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         if order.target_price is None:
             raise ValueError("Target price required for limit orders")
 
@@ -369,14 +380,18 @@ class BinanceFuturesExchange:
         """Execute a stop market order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop orders")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP_MARKET,
+            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "quantity": self._format_quantity(order.symbol, order.amount),
-            "stopPrice": self._format_price(order.symbol, order.stop_loss),
+            "triggerPrice": self._format_price(
+                order.symbol, order.stop_loss
+            ),  # Note: triggerPrice, not stopPrice
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
             "priceProtect": True,  # Enable price protection for stop orders
         }
@@ -402,6 +417,7 @@ class BinanceFuturesExchange:
         """Execute a stop limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         if order.target_price is None:
             raise ValueError("Target price required for stop limit orders")
         if order.stop_loss is None:
@@ -418,10 +434,13 @@ class BinanceFuturesExchange:
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP,
+            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
-            "stopPrice": self._format_price(order.symbol, order.stop_loss),
+            "triggerPrice": self._format_price(
+                order.symbol, order.stop_loss
+            ),  # Note: triggerPrice, not stopPrice
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
             "priceProtect": True,  # Enable price protection for stop orders
         }
@@ -447,14 +466,18 @@ class BinanceFuturesExchange:
         """Execute a take profit market order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "quantity": self._format_quantity(order.symbol, order.amount),
-            "stopPrice": self._format_price(order.symbol, order.take_profit),
+            "triggerPrice": self._format_price(
+                order.symbol, order.take_profit
+            ),  # Note: triggerPrice, not stopPrice
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
             "priceProtect": True,  # Enable price protection for take profit orders
         }
@@ -482,6 +505,7 @@ class BinanceFuturesExchange:
         """Execute a take profit limit order"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
+
         if order.target_price is None:
             raise ValueError("Target price required for take profit limit orders")
         if order.take_profit is None:
@@ -498,10 +522,13 @@ class BinanceFuturesExchange:
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
+            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
-            "stopPrice": self._format_price(order.symbol, order.take_profit),
+            "triggerPrice": self._format_price(
+                order.symbol, order.take_profit
+            ),  # Note: triggerPrice, not stopPrice
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
             "priceProtect": True,  # Enable price protection for take profit orders
         }
@@ -558,6 +585,7 @@ class BinanceFuturesExchange:
                     -2015,  # Invalid quantity
                     -4131,  # PERCENT_PRICE filter violation - price too far from market
                     -4164,  # MIN_NOTIONAL validation error
+                    -1102,  # Mandatory parameter 'symbol' was not sent, was empty/null, or malformed
                 ]:
                     # Log the non-retryable error with details
                     logger.error(

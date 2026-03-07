@@ -39,7 +39,23 @@ def mock_exchange():
 @pytest.fixture
 def dispatcher(mock_exchange):
     """Create dispatcher instance with mocked exchange"""
-    return Dispatcher(exchange=mock_exchange)
+    with (
+        patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm,
+        patch("tradeengine.dispatcher.distributed_lock_manager") as mock_dlm,
+    ):
+        mock_spm.initialize = AsyncMock()
+        mock_spm.close = AsyncMock()
+        mock_dlm.initialize = AsyncMock()
+        mock_dlm.close = AsyncMock()
+        mock_dlm.health_check = AsyncMock(return_value={"status": "healthy"})
+
+        disp = Dispatcher(exchange=mock_exchange)
+        disp.position_manager.initialize = AsyncMock()
+        disp.position_manager.close = AsyncMock()
+        disp.order_manager.initialize = AsyncMock()
+        disp.order_manager.close = AsyncMock()
+
+        yield disp
 
 
 @pytest.fixture

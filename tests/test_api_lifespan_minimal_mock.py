@@ -42,6 +42,7 @@ async def test_lifespan_configure_logging_line_executes():
 
 
 @pytest.mark.asyncio
+@patch.dict("os.environ", {"OTEL_NO_AUTO_INIT": ""}, clear=False)
 async def test_lifespan_success_log_line_executes():
     """
     Test that logger.info line executes (minimal mocking).
@@ -67,6 +68,7 @@ async def test_lifespan_success_log_line_executes():
 
     try:
         with (
+            patch("tradeengine.api.setup_telemetry", return_value=True),
             patch(
                 "shared.constants.validate_mongodb_config",
                 side_effect=Exception("Skip"),
@@ -83,7 +85,11 @@ async def test_lifespan_success_log_line_executes():
                 pass
 
         # Verify the success log was emitted
-        success_logs = [msg for msg in log_captured if "Logging configured" in msg]
+        success_logs = [
+            msg
+            for msg in log_captured
+            if "✅ Telemetry initialized successfully" in msg
+        ]
         assert len(success_logs) > 0
     finally:
         api_logger.removeHandler(handler)

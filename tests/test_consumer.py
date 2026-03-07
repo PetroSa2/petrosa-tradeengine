@@ -254,16 +254,23 @@ class TestConsumerStartConsuming:
                 mock_nats_client.is_connected = True
                 mock_nats_connect.return_value = mock_nats_client
 
-                with patch.object(consumer, "stop_consuming", new_callable=AsyncMock):
-                    # Start consuming in background and stop quickly
-                    consumer.running = True
-                    task = asyncio.create_task(consumer.start_consuming())
-                    await asyncio.sleep(0.1)
-                    consumer.running = False
-                    await asyncio.sleep(0.1)
-                    await task
+                with patch("tradeengine.consumer.Dispatcher") as mock_dispatcher_class:
+                    mock_dispatcher = AsyncMock()
+                    mock_dispatcher.initialize = AsyncMock()
+                    mock_dispatcher_class.return_value = mock_dispatcher
 
-                assert consumer.nc is not None
+                    with patch.object(
+                        consumer, "stop_consuming", new_callable=AsyncMock
+                    ):
+                        # Start consuming in background and stop quickly
+                        consumer.running = True
+                        task = asyncio.create_task(consumer.start_consuming())
+                        await asyncio.sleep(0.1)
+                        consumer.running = False
+                        await asyncio.sleep(0.1)
+                        await task
+
+                    assert consumer.nc is not None
 
     @pytest.mark.asyncio
     async def test_start_consuming_handles_exception(

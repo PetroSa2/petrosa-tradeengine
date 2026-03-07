@@ -391,12 +391,9 @@ class BinanceFuturesExchange:
             if order.reduce_only:
                 params["reduceOnly"] = True
 
-        def _place_algo_order(**p: Any) -> dict[str, Any]:
-            if self.client is None:
-                raise RuntimeError("Client not initialized")
-            return self.client._request_futures_api("post", "algoOrder", signed=True, data=p)  # type: ignore
-
-        result = await self._execute_with_retry(_place_algo_order, **params)
+        result = await self._execute_with_retry(
+            self._place_algo_order, **params
+        )
         if not isinstance(result, dict):
             raise RuntimeError(
                 "Binance Futures API did not return a dict for stop order"

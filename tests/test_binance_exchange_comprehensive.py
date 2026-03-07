@@ -215,6 +215,9 @@ class TestOrderExecution:
         assert "status" in result
         # Verify that _request_futures_api is called instead of futures_create_order
         binance_exchange.client._request_futures_api.assert_called()
+        # Verify specific parameters used for algo order
+        args, kwargs = binance_exchange.client._request_futures_api.call_args
+        assert kwargs.get("data", {}).get("type") == "TAKE_PROFIT"
 
     @pytest.mark.asyncio
     async def test_execute_stop_limit_order_with_validation_error(

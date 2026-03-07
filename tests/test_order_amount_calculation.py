@@ -170,7 +170,7 @@ class TestFallbackAmountCalculation:
         )
 
     def test_fallback_btc_meets_minimum_notional(self, dispatcher, btc_signal):
-        """Test that BTC fallback amount meets $25 target notional"""
+        """Test that BTC fallback amount meets $110 target notional"""
         # Force an error to trigger fallback
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
@@ -179,16 +179,16 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(btc_signal)
 
-            # Fallback should be $25 / $50000 = 0.0005 (updated to $25 for MIN_NOTIONAL safety)
-            expected_fallback = 25.0 / 50000.0
+            # Fallback should be $110 / $50000 = 0.0022 (updated to $110 for MIN_NOTIONAL safety)
+            expected_fallback = 110.0 / 50000.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
             # Verify notional value
             notional = amount * btc_signal.current_price
-            assert notional == pytest.approx(25.0, rel=1e-2)
+            assert notional == pytest.approx(110.0, rel=1e-2)
 
     def test_fallback_eth_meets_minimum_notional(self, dispatcher, eth_signal):
-        """Test that ETH fallback amount meets $25 target notional"""
+        """Test that ETH fallback amount meets $110 target notional"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -196,16 +196,16 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(eth_signal)
 
-            # Fallback should be $25 / $3000 = 0.00833...
-            expected_fallback = 25.0 / 3000.0
+            # Fallback should be $110 / $3000 = 0.0366...
+            expected_fallback = 110.0 / 3000.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
             # Verify notional value
             notional = amount * eth_signal.current_price
-            assert notional == pytest.approx(25.0, rel=1e-2)
+            assert notional == pytest.approx(110.0, rel=1e-2)
 
     def test_fallback_bnb_meets_minimum_notional(self, dispatcher, bnb_signal):
-        """Test that BNB fallback amount meets $25 target notional (from actual error)"""
+        """Test that BNB fallback amount meets $110 target notional (from actual error)"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -213,17 +213,17 @@ class TestFallbackAmountCalculation:
 
             amount = dispatcher._calculate_order_amount(bnb_signal)
 
-            # Fallback should be $25 / $1134 = 0.02204...
-            expected_fallback = 25.0 / 1134.0
+            # Fallback should be $110 / $1134 = 0.097...
+            expected_fallback = 110.0 / 1134.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
-            # Verify notional value is $25 (above $20 MIN_NOTIONAL default)
+            # Verify notional value is $110 (above $100 MIN_NOTIONAL default)
             notional = amount * bnb_signal.current_price
-            assert notional == pytest.approx(25.0, rel=1e-2)
+            assert notional == pytest.approx(110.0, rel=1e-2)
             assert notional > 20.0  # Must be above $20 MIN_NOTIONAL default
 
     def test_fallback_better_than_old_default(self, dispatcher, bnb_signal):
-        """Test that new fallback ($25 worth) is better than old fallback (0.001)"""
+        """Test that new fallback ($110 worth) is better than old fallback (0.001)"""
         with mock.patch("tradeengine.api.binance_exchange") as mock_binance:
             mock_binance.calculate_min_order_amount.side_effect = Exception(
                 "Test error"
@@ -234,7 +234,7 @@ class TestFallbackAmountCalculation:
             # Old fallback: 0.001 × $1134 = $1.13 (below $20 MIN_NOTIONAL) ❌
             old_notional = 0.001 * bnb_signal.current_price
 
-            # New fallback: amount × $1134 = ~$25 (above $20 MIN_NOTIONAL) ✅
+            # New fallback: amount × $1134 = ~$110 (above $20 MIN_NOTIONAL) ✅
             new_notional = amount * bnb_signal.current_price
 
             assert new_notional > old_notional

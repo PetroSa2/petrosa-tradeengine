@@ -70,6 +70,16 @@ def mock_exchange():
     # Mock get open orders
     exchange.client.futures_get_open_orders = Mock(return_value=[])
 
+    # Mock new consolidated order fetching methods
+    async def mock_get_all_open_orders(symbol=None):
+        orders = exchange.client.futures_get_open_orders(symbol=symbol)
+        if isinstance(orders, list):
+            return {str(o["orderId"]) for o in orders}
+        return set()
+
+    exchange.get_all_open_orders = AsyncMock(side_effect=mock_get_all_open_orders)
+    exchange.get_open_algo_orders = AsyncMock(return_value=[])
+
     return exchange
 
 

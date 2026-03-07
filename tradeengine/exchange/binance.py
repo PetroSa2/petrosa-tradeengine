@@ -10,7 +10,7 @@ import logging
 import math
 import os
 import time
-from typing import Any
+from typing import Any, Optional, Union, cast
 
 from binance import Client
 from binance.enums import (
@@ -564,9 +564,10 @@ class BinanceFuturesExchange:
         """
         if self.client is None:
             raise RuntimeError("Client not initialized")
-        return self.client._request_futures_api(
+        result = self.client._request_futures_api(
             "post", "algoOrder", signed=True, data=p
         )
+        return cast(dict[str, Any], result)
 
     async def _execute_with_retry(self, func: Any, **kwargs: Any) -> Any:
         """Execute function with retry logic"""
@@ -1003,7 +1004,7 @@ class BinanceFuturesExchange:
 
     def _calculate_fees(self, fills: list[dict[str, Any]]) -> float:
         """Calculate total fees from fills"""
-        total_fees = 0.0
+        total_fees: float = 0.0
         for fill in fills:
             if "commission" in fill:
                 total_fees += float(fill["commission"])
@@ -1077,7 +1078,7 @@ class BinanceFuturesExchange:
                     logger.info(
                         f"Order {order_id} not found as standard order, attempting algo order cancellation"
                     )
-                    result = self.client._request_futures_api(  # type: ignore
+                    result = self.client._request_futures_api(
                         "delete",
                         "algoOrder",
                         signed=True,
@@ -1115,13 +1116,13 @@ class BinanceFuturesExchange:
                     logger.info(
                         f"Order {order_id} not found as standard order, polling algo order endpoint"
                     )
-                    order = self.client._request_futures_api(  # type: ignore
+                    order = self.client._request_futures_api(
                         "get",
-                        "algoOrder",
+                        "order",
                         signed=True,
-                        data={"symbol": symbol, "algoId": order_id},
+                        data={"symbol": symbol, "orderId": order_id},
                     )
-                    order_id_resp = order.get("algoId")
+                    order_id_resp = order.get("orderId")
                 else:
                     raise
 
@@ -1155,6 +1156,56 @@ class BinanceFuturesExchange:
         except Exception as e:
             logger.error(f"Failed to get position info: {e}")
             raise
+
+    async def get_open_algo_orders(
+        self, symbol: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get all open algo orders for a symbol or the entire account"""
+        if not self.initialized:
+            await self.initialize()
+
+        try:
+            if self.client is None:
+                raise RuntimeError("Binance Futures client not initialized")
+
+            params = {}
+            if symbol:
+                params["symbol"] = symbol
+
+            orders = self.client._request_futures_api(
+                "get", "openAlgoOrders", signed=True, data=params
+            )
+            return cast(list[dict[str, Any]], orders) if orders else []
+        except Exception as e:
+            logger.error(f"Failed to get open algo orders: {e}")
+            return []
+
+    async def get_all_open_orders(self, symbol: str | None = None) -> set[str]:
+        """Combine standard and algo open orders into a single set of IDs
+
+        This is a helper for OCO monitoring to ensure we see all types of orders.
+        """
+        if not self.initialized:
+            await self.initialize()
+
+        if self.client is None:
+            return set()
+
+        try:
+            # 1. Get standard open orders
+            std_orders = self.client.futures_get_open_orders(symbol=symbol)
+            order_ids = {str(o["orderId"]) for o in std_orders}
+
+            # 2. Get algo open orders
+            algo_orders = await self.get_open_algo_orders(symbol=symbol)
+            for o in algo_orders:
+                if "algoId" in o:
+                    order_ids.add(str(o["algoId"]))
+
+            return order_ids
+        except Exception as e:
+            logger.error(f"Failed to get all open orders: {e}")
+            return set()
 
     async def verify_hedge_mode(self) -> dict[str, Any]:
         """Verify if hedge mode is enabled on Binance Futures account

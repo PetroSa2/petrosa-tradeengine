@@ -62,14 +62,30 @@ class BinanceFuturesExchange:
 
             # Create Binance Futures client
             if BINANCE_API_KEY and BINANCE_API_SECRET:
+                import os
+
                 logger.info("Creating Binance Futures UMFutures client...")
                 self.client = Client(
                     api_key=BINANCE_API_KEY,
                     api_secret=BINANCE_API_SECRET,
                     testnet=BINANCE_TESTNET,
                 )
+
+                # Explicitly override Futures URL if BINANCE_BASE_URL is provided
+                # This fixes the issue where testnet=True only affects Spot API in some versions
+                base_url = os.getenv("BINANCE_BASE_URL")
+                if base_url:
+                    # python-binance uses FUTURES_URL for futures endpoints
+                    # Ensure we have the correct suffix (/fapi) if not already present
+                    if "binancefuture.com" in base_url or "testnet" in base_url:
+                        fapi_url = (
+                            base_url if base_url.endswith("/fapi") else f"{base_url}/fapi"
+                        )
+                        logger.info(f"Overriding Binance Futures URL to: {fapi_url}")
+                        self.client.FUTURES_URL = fapi_url
+
                 logger.info(
-                    f"Binance Futures client created (testnet: {BINANCE_TESTNET})"
+                    f"Binance Futures client created (testnet: {BINANCE_TESTNET}, url: {self.client.FUTURES_URL})"
                 )
 
                 # Test connection

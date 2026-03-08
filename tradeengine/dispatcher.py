@@ -199,8 +199,8 @@ class OCOManager:
                 oco_info = {
                     "position_id": position_id,  # Store position_id for backward compatibility
                     "strategy_position_id": strategy_position_id,
-                    "entry_price": entry_price,
-                    "quantity": quantity,
+                    "entry_price": float(entry_price) if entry_price is not None else 0.0,
+                    "quantity": float(quantity) if quantity is not None else 0.0,
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
                     "symbol": symbol,
@@ -510,6 +510,11 @@ class OCOManager:
                 return False, close_reason
 
         except Exception as e:
+            # Handle cases where order is already cancelled or filled (common in OCO races)
+            if "code=-2011" in str(e) or "Unknown order sent" in str(e):
+                self.logger.warning(f"⚠️ {cancel_type} order already closed or unknown (likely filled/cancelled): {e}")
+                return True, close_reason
+                
             self.logger.error(f"❌ ERROR CANCELLING {cancel_type} ORDER: {e}")
             return False, close_reason
 
@@ -715,8 +720,20 @@ class OCOManager:
             # NEW: Find which strategy's OCO filled
             owning_oco = oco_info  # This is already the owning OCO from _monitor_orders
             strategy_position_id = owning_oco.get("strategy_position_id")
-            entry_price = owning_oco.get("entry_price")
-            exit_quantity = owning_oco.get("quantity")
+            
+            # Use robust float conversion for all numeric fields from stored state
+            try:
+                raw_entry_price = owning_oco.get("entry_price")
+                entry_price = float(raw_entry_price) if raw_entry_price is not None else 0.0
+            except (ValueError, TypeError):
+                self.logger.warning(f"⚠️ Invalid entry_price in OCO info: {owning_oco.get('entry_price')}")
+                entry_price = 0.0
+                
+            try:
+                raw_quantity = owning_oco.get("quantity")
+                exit_quantity = float(raw_quantity) if raw_quantity is not None else 0.0
+            except (ValueError, TypeError):
+                exit_quantity = 0.0
 
             if not strategy_position_id:
                 self.logger.error(
@@ -2110,9 +2127,16 @@ class Dispatcher:
                 strategy_position_id = self.order_to_strategy_position.get(
                     order.order_id
                 )
-                entry_price = result.get(
+                
+                # Ensure entry_price is a float for OCO math and logging
+                entry_price_raw = result.get(
                     "fill_price", result.get("price", order.target_price)
                 )
+                try:
+                    entry_price = float(entry_price_raw) if entry_price_raw is not None else 0.0
+                except (ValueError, TypeError):
+                    self.logger.warning(f"⚠️ Could not cast entry_price '{entry_price_raw}' to float")
+                    entry_price = 0.0
 
                 self.logger.info(
                     f"🎯 Placing OCO with strategy context: "

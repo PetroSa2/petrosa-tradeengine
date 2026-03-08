@@ -951,14 +951,18 @@ class TestFallbackLogic:
         binance_exchange.client.futures_get_order = Mock(
             side_effect=BinanceAPIException({"code": -2011}, "Unknown order")
         )
+        # Mock the internal API call used by get_open_algo_orders
         binance_exchange.client._request_futures_api = Mock(
-            return_value={"algoId": 12345, "status": "FILLED", "algoStatus": "FILLED"}
+            return_value=[{"algoId": 12345, "status": "FILLED", "algoStatus": "FILLED"}]
         )
 
         result = await binance_exchange.get_order_status("BTCUSDT", 12345)
         assert result is not None
-        # Should have called _request_futures_api for algo order status
-        binance_exchange.client._request_futures_api.assert_called_once()
+        assert result["order_id"] == 12345
+        # Should have called _request_futures_api with 'openAlgoOrders' path
+        binance_exchange.client._request_futures_api.assert_called_once_with(
+            "get", "openAlgoOrders", signed=True, data={"symbol": "BTCUSDT"}
+        )
 
 
 class TestAdditionalMethods:

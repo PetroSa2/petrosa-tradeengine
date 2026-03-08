@@ -48,7 +48,7 @@ class PositionManager:
     using Data Manager API for persistence and MongoDB for coordination only."""
 
     def __init__(self, exchange: Any = None) -> None:
-        self.positions: dict[str, dict[str, Any]] = {}
+        self.positions: dict[tuple[str, str], dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
@@ -1003,7 +1003,41 @@ class PositionManager:
             )
             return False
 
+        # Check algo order limits (prevent -4045 error)
+        if not await self.check_algo_order_limits(order):
+            return False
+
         return True
+
+    async def check_algo_order_limits(self, order: TradeOrder) -> bool:
+        """Check if we have enough room for SL/TP orders on Binance"""
+        # If exchange is not initialized or doesn't support the method, skip check
+        if not self.exchange or not hasattr(self.exchange, "get_open_algo_orders"):
+            return True
+
+        try:
+            # 1. Check Symbol-specific limit (max 10)
+            algo_orders = await self.exchange.get_open_algo_orders(symbol=order.symbol)
+            if len(algo_orders) >= 9:  # We need 2 slots for a new OCO (SL + TP)
+                logger.warning(
+                    f"⛔ RISK REJECTION: Algo order limit reached for {order.symbol} "
+                    f"({len(algo_orders)}/10 orders). Cannot place OCO."
+                )
+                return False
+
+            # 2. Check Account-wide limit (max 100)
+            all_algo_orders = await self.exchange.get_open_algo_orders()
+            if len(all_algo_orders) >= 98:  # Leave room for simultaneous orders
+                logger.warning(
+                    f"⛔ RISK REJECTION: Global account algo order limit reached "
+                    f"({len(all_algo_orders)}/100 orders). Cannot place OCO."
+                )
+                return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Error checking algo order limits: {e}")
+            return True  # Fail-safe to allow trades if API check fails
 
     async def _refresh_positions_from_data_manager(self) -> None:
         """Refresh positions from Data Manager to ensure consistency across pods"""
@@ -1123,7 +1157,12 @@ class PositionManager:
             return self.positions.get(position_key)
         else:
             # Get first position for symbol (backward compatibility)
-            for (pos_symbol, pos_side), position in self.positions.items():
+            for key, position in self.positions.items():
+                if isinstance(key, tuple):
+                    pos_symbol, _ = key
+                else:
+                    pos_symbol = str(key)
+
                 if pos_symbol == symbol:
                     return position
             return None
@@ -1137,11 +1176,16 @@ class PositionManager:
         Returns:
             List of position dicts for the symbol (may include both LONG and SHORT)
         """
-        return [
-            position
-            for (pos_symbol, pos_side), position in self.positions.items()
-            if pos_symbol == symbol
-        ]
+        positions = []
+        for key, position in self.positions.items():
+            if isinstance(key, tuple):
+                pos_symbol, _ = key
+            else:
+                pos_symbol = str(key)
+
+            if pos_symbol == symbol:
+                positions.append(position)
+        return positions
 
     def get_daily_pnl(self) -> float:
         """Get current daily P&L"""

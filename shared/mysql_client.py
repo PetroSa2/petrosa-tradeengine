@@ -6,7 +6,12 @@ petrosa-data-manager service, replacing all direct database access.
 """
 
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
+
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = UTC
 from typing import Any, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient

@@ -1,7 +1,12 @@
 import logging
 import random
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
+
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = UTC
 from typing import Any
 
 from contracts.order import TradeOrder

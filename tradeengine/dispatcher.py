@@ -563,9 +563,10 @@ class OCOManager:
                         continue
 
                     # Query all open orders for this symbol once
-                    orders = self.exchange.client.futures_get_open_orders(symbol=symbol)
-                    # Convert to strings to match order_id format from _format_execution_result
-                    open_order_ids = {str(order["orderId"]) for order in orders}
+                    # Use the robust combined list (Standard + Algo) to avoid ghost orders
+                    open_order_ids = await self.exchange.get_all_open_orders(
+                        symbol=symbol
+                    )
 
                     # Check each OCO pair in this position
                     for oco_info in oco_list:

@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -199,7 +199,9 @@ class OCOManager:
                 oco_info = {
                     "position_id": position_id,  # Store position_id for backward compatibility
                     "strategy_position_id": strategy_position_id,
-                    "entry_price": float(entry_price) if entry_price is not None else 0.0,
+                    "entry_price": float(entry_price)
+                    if entry_price is not None
+                    else 0.0,
                     "quantity": float(quantity) if quantity is not None else 0.0,
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
@@ -512,9 +514,11 @@ class OCOManager:
         except Exception as e:
             # Handle cases where order is already cancelled or filled (common in OCO races)
             if "code=-2011" in str(e) or "Unknown order sent" in str(e):
-                self.logger.warning(f"⚠️ {cancel_type} order already closed or unknown (likely filled/cancelled): {e}")
+                self.logger.warning(
+                    f"⚠️ {cancel_type} order already closed or unknown (likely filled/cancelled): {e}"
+                )
                 return True, close_reason
-                
+
             self.logger.error(f"❌ ERROR CANCELLING {cancel_type} ORDER: {e}")
             return False, close_reason
 
@@ -720,15 +724,19 @@ class OCOManager:
             # NEW: Find which strategy's OCO filled
             owning_oco = oco_info  # This is already the owning OCO from _monitor_orders
             strategy_position_id = owning_oco.get("strategy_position_id")
-            
+
             # Use robust float conversion for all numeric fields from stored state
             try:
                 raw_entry_price = owning_oco.get("entry_price")
-                entry_price = float(raw_entry_price) if raw_entry_price is not None else 0.0
+                entry_price = (
+                    float(raw_entry_price) if raw_entry_price is not None else 0.0
+                )
             except (ValueError, TypeError):
-                self.logger.warning(f"⚠️ Invalid entry_price in OCO info: {owning_oco.get('entry_price')}")
+                self.logger.warning(
+                    f"⚠️ Invalid entry_price in OCO info: {owning_oco.get('entry_price')}"
+                )
                 entry_price = 0.0
-                
+
             try:
                 raw_quantity = owning_oco.get("quantity")
                 exit_quantity = float(raw_quantity) if raw_quantity is not None else 0.0
@@ -1320,9 +1328,9 @@ class Dispatcher:
                             raise
 
                     result["execution_result"] = execution_result
-                    result["status"] = (
-                        "executed"  # Change status to executed for consistency
-                    )
+                    result[
+                        "status"
+                    ] = "executed"  # Change status to executed for consistency
 
                     # NEW: Update last accumulation time if order was executed successfully
                     if execution_result.get("status") in (
@@ -1542,9 +1550,9 @@ class Dispatcher:
                             )
 
                             # NEW: Map order to strategy position for OCO attribution
-                            self.order_to_strategy_position[order.order_id] = (
-                                strategy_position_id
-                            )
+                            self.order_to_strategy_position[
+                                order.order_id
+                            ] = strategy_position_id
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
@@ -1609,9 +1617,9 @@ class Dispatcher:
                                 # Maintain consistent error enrichment so callers see the OCO failure reason
                                 result["error"] = f"Risk management failure: {e}"
                                 # Provide a more specific reason for why rollback was skipped
-                                result["rollback_skipped_reason"] = (
-                                    f"non_positive_filled_qty: {filled_qty}"
-                                )
+                                result[
+                                    "rollback_skipped_reason"
+                                ] = f"non_positive_filled_qty: {filled_qty}"
                                 return result
 
                             rollback_position_id = getattr(order, "position_id", None)
@@ -2127,15 +2135,19 @@ class Dispatcher:
                 strategy_position_id = self.order_to_strategy_position.get(
                     order.order_id
                 )
-                
+
                 # Ensure entry_price is a float for OCO math and logging
                 entry_price_raw = result.get(
                     "fill_price", result.get("price", order.target_price)
                 )
                 try:
-                    entry_price = float(entry_price_raw) if entry_price_raw is not None else 0.0
+                    entry_price = (
+                        float(entry_price_raw) if entry_price_raw is not None else 0.0
+                    )
                 except (ValueError, TypeError):
-                    self.logger.warning(f"⚠️ Could not cast entry_price '{entry_price_raw}' to float")
+                    self.logger.warning(
+                        f"⚠️ Could not cast entry_price '{entry_price_raw}' to float"
+                    )
                     entry_price = 0.0
 
                 self.logger.info(

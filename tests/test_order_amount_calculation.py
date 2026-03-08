@@ -217,7 +217,7 @@ class TestFallbackAmountCalculation:
             expected_fallback = 110.0 / 1134.0
             assert amount == pytest.approx(expected_fallback, rel=1e-6)
 
-            # Verify notional value is $110 (above $100 MIN_NOTIONAL default)
+            # Verify notional value is $110 (above a $100 exchange MIN_NOTIONAL threshold)
             notional = amount * bnb_signal.current_price
             assert notional == pytest.approx(110.0, rel=1e-2)
             assert notional > 20.0  # Must be above $20 MIN_NOTIONAL default

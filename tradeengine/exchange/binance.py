@@ -10,7 +10,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Optional, Union, cast
+from typing import Any, cast
 
 from binance import Client
 from binance.enums import (
@@ -1113,16 +1113,15 @@ class BinanceFuturesExchange:
                 order_id_resp = order.get("orderId")
             except BinanceAPIException as e:
                 if e.code in [-2011, -4132]:
-                    logger.info(
-                        f"Order {order_id} not found as standard order, polling algo order endpoint"
-                    )
-                    order = self.client._request_futures_api(
-                        "get",
-                        "order",
-                        signed=True,
-                        data={"symbol": symbol, "orderId": order_id},
-                    )
-                    order_id_resp = order.get("orderId")
+                    # Search in open algo orders
+                    algo_orders = await self.get_open_algo_orders(symbol=symbol)
+                    found_algo = next((o for o in algo_orders if str(o.get("algoId")) == str(order_id)), None)
+                    
+                    if found_algo:
+                        order = found_algo
+                        order_id_resp = order.get("algoId")
+                    else:
+                        raise BinanceAPIException(e.response, e.status_code, e.message)
                 else:
                     raise
 

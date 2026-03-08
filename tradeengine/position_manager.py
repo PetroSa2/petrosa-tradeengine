@@ -48,7 +48,7 @@ class PositionManager:
     using Data Manager API for persistence and MongoDB for coordination only."""
 
     def __init__(self, exchange: Any = None) -> None:
-        self.positions: dict[Any, dict[str, Any]] = {}
+        self.positions: dict[tuple[str, str], dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT

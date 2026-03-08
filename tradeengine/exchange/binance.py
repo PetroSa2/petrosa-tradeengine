@@ -1115,8 +1115,15 @@ class BinanceFuturesExchange:
                 if e.code in [-2011, -4132]:
                     # Search in open algo orders
                     algo_orders = await self.get_open_algo_orders(symbol=symbol)
-                    found_algo = next((o for o in algo_orders if str(o.get("algoId")) == str(order_id)), None)
-                    
+                    found_algo = next(
+                        (
+                            o
+                            for o in algo_orders
+                            if str(o.get("algoId")) == str(order_id)
+                        ),
+                        None,
+                    )
+
                     if found_algo:
                         order = found_algo
                         order_id_resp = order.get("algoId")

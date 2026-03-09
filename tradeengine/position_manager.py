@@ -1139,9 +1139,9 @@ class PositionManager:
         total_value = self.total_portfolio_value
         if total_value <= 0:
             return {
-                "gross_exposure": 0.0,
+                "net_directional_exposure": 0.0,
                 "same_asset_pct": 0.0,
-                "open_positions_count": 0,
+                "open_positions_count": 0
             }
 
         total_exposure = 0.0
@@ -1154,16 +1154,16 @@ class PositionManager:
                 open_count += 1
                 pos_value = abs(qty * pos.get("avg_price", 0.0))
                 total_exposure += pos_value
-
+                
                 # Check if this position is for the requested symbol
                 pos_symbol = key[0] if isinstance(key, tuple) else str(key)
                 if pos_symbol == symbol:
                     same_asset_value += pos_value
 
         return {
-            "gross_exposure": total_exposure / total_value,
+            "net_directional_exposure": total_exposure / total_value,
             "same_asset_pct": same_asset_value / total_value,
-            "open_positions_count": open_count,
+            "open_positions_count": open_count
         }
 
     def get_positions(self) -> dict[tuple[str, str], dict[str, Any]]:

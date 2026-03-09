@@ -1976,43 +1976,28 @@ class Dispatcher:
         Ground-truth only, no fabrication.
         """
         from shared.config import settings
-
+        
         portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
         active_orders = self.order_manager.get_active_orders()
-
+        
         # Calculate symbol-specific order count
         symbol_orders_count = sum(1 for o in active_orders if o.get("symbol") == symbol)
-
-        # Safely resolve risk-limit style settings to avoid AttributeError
-        max_orders_global = getattr(settings, "max_algo_orders", 50)
-        max_orders_per_symbol = getattr(settings, "max_algo_orders_per_symbol", 5)
-
-        # Prefer an explicit USD limit if present; otherwise derive from percentage if available
-        max_position_size_usd = getattr(settings, "max_position_size_usd", None)
-        if max_position_size_usd is None:
-            max_position_size_pct = getattr(settings, "max_position_size_pct", 10.0)
-            max_position_size_usd = (
-                self.position_manager.total_portfolio_value
-                * max_position_size_pct
-                / 100.0
-            )
-
+        
         # Build ground-truth state object
         return {
             "portfolio": portfolio_data,
             "risk_limits": {
-                "max_drawdown_pct": settings.max_daily_loss_pct,
-                "max_orders_global": max_orders_global,
-                "max_orders_per_symbol": max_orders_per_symbol,
-                "max_position_size_usd": max_position_size_usd,
+                "max_drawdown_pct": settings.max_daily_loss_pct, # Closest mapping in shared/config
+                "max_orders_global": settings.max_algo_orders,
+                "max_orders_per_symbol": settings.max_algo_orders_per_symbol,
+                "max_position_size_usd": settings.max_position_size_usd
             },
             "env_stats": {
-                "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)
-                / max(self.position_manager.total_portfolio_value, 1.0),
+                "global_drawdown_pct": self.position_manager.get_daily_pnl() / max(self.position_manager.total_portfolio_value, 1.0),
                 "open_orders_global": len(active_orders),
                 "open_orders_symbol": symbol_orders_count,
-                "available_capital_usd": self.position_manager.total_portfolio_value,
-            },
+                "available_capital_usd": self.position_manager.total_portfolio_value
+            }
         }
 
     def get_signal_summary(self) -> dict[str, Any]:

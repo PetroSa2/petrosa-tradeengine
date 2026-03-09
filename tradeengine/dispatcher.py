@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[
-            str, list[dict[str, Any]]
-        ] = {}  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
+            {}
+        )  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -494,9 +494,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id]["close_reason"] = (
-                            close_reason
-                        )
+                        self.active_oco_pairs[position_id][
+                            "close_reason"
+                        ] = close_reason
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (

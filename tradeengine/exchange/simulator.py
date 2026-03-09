@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 try:
     from datetime import UTC
 except ImportError:
-    import datetime as dt
+    from datetime import timezone
 
-    UTC = dt.UTC
+    UTC = UTC
 from typing import Any
 
 from contracts.order import TradeOrder

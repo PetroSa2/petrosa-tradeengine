@@ -990,12 +990,11 @@ async def get_active_signals(
 
 @app.get("/state")
 async def get_state(
-    symbol: str = Query(..., description="Target symbol for state context"),
+    symbol: str = Query(..., description="Target symbol for state context")
 ):
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.
-    Data is derived from the engine's authoritative in-memory state, which is
-    synchronized with the exchange.
+    Ground-truth data derived from engine authoritative state.
     """
     try:
         return dispatcher.get_cio_state(symbol)

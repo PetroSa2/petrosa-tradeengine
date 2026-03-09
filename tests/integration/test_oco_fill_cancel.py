@@ -109,6 +109,14 @@ class FakeExchange:
         """Get open orders for a symbol (used by monitoring loop)."""
         return self._open_orders.get(symbol, [])
 
+    async def get_all_open_orders(self, symbol: str | None = None) -> set[str]:
+        """Get all open orders for a symbol as a set of IDs (used by OCO monitor)."""
+        orders = self._open_orders.get(symbol, []) if symbol else []
+        if not symbol:
+            for symbol_orders in self._open_orders.values():
+                orders.extend(symbol_orders)
+        return {str(o["orderId"]) for o in orders}
+
     async def cancel_order(self, order_id: str, symbol: str = None) -> dict[str, Any]:
         """
         Cancel an order (used by OCO cancellation logic via exchange.cancel_order).

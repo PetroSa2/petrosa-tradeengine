@@ -11,9 +11,9 @@ from datetime import datetime, timezone
 try:
     from datetime import UTC
 except ImportError:
-    import datetime as dt
+    from datetime import timezone
 
-    UTC = dt.UTC
+    UTC = UTC
 from typing import Any, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient
@@ -336,8 +336,6 @@ class DataManagerPositionClient:
             True if successful, False otherwise
         """
         try:
-            from datetime import datetime, timezone
-
             # Use upsert_one() instead of update_one(upsert=True)
             await self.data_manager_client._client.upsert_one(
                 database="mysql",

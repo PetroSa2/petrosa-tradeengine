@@ -1724,6 +1724,8 @@ class Dispatcher:
             target_price=signal.current_price,
             stop_loss=signal.stop_loss,
             take_profit=signal.take_profit,
+            stop_loss_pct=signal.stop_loss_pct,
+            take_profit_pct=signal.take_profit_pct,
             conditional_price=signal.conditional_price,
             conditional_direction=signal.conditional_direction,
             conditional_timeout=signal.conditional_timeout,
@@ -2126,6 +2128,39 @@ class Dispatcher:
                     "Skipping risk management orders for reduce_only order"
                 )
                 return
+
+            # Ensure entry_price is a float for OCO math and logging
+            entry_price_raw = result.get(
+                "fill_price", result.get("price", order.target_price)
+            )
+            try:
+                entry_price = (
+                    float(entry_price_raw) if entry_price_raw is not None else 0.0
+                )
+            except (ValueError, TypeError):
+                self.logger.warning(
+                    f"⚠️ Could not cast entry_price '{entry_price_raw}' to float"
+                )
+                entry_price = 0.0
+
+            # CRITICAL FIX: Calculate absolute prices from percentages if missing
+            if not order.stop_loss and order.stop_loss_pct and entry_price > 0:
+                if order.side == "buy":  # LONG
+                    order.stop_loss = entry_price * (1 - order.stop_loss_pct)
+                else:  # SHORT
+                    order.stop_loss = entry_price * (1 + order.stop_loss_pct)
+                self.logger.info(
+                    f"Calculated stop_loss price: {order.stop_loss} from {order.stop_loss_pct*100}%"
+                )
+
+            if not order.take_profit and order.take_profit_pct and entry_price > 0:
+                if order.side == "buy":  # LONG
+                    order.take_profit = entry_price * (1 + order.take_profit_pct)
+                else:  # SHORT
+                    order.take_profit = entry_price * (1 - order.take_profit_pct)
+                self.logger.info(
+                    f"Calculated take_profit price: {order.take_profit} from {order.take_profit_pct*100}%"
+                )
 
             # Check if both SL and TP are specified for OCO behavior
             if (

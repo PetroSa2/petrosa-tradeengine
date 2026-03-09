@@ -113,6 +113,14 @@ class TradeOrder(BaseModel):
         None, description="Position size as a percent of portfolio"
     )
 
+    # Risk management percentages
+    stop_loss_pct: float | None = Field(
+        None, description="Stop loss as percentage of entry price"
+    )
+    take_profit_pct: float | None = Field(
+        None, description="Take profit as percentage of entry price"
+    )
+
     # Timestamps
     created_at: datetime = Field(
         default_factory=datetime.utcnow, description="Order creation timestamp"

@@ -7,7 +7,8 @@ try:
     from datetime import UTC
 except ImportError:
     from datetime import timezone
-    UTC = timezone.utc
+
+    UTC = UTC
 from typing import Any
 
 from contracts.order import TradeOrder

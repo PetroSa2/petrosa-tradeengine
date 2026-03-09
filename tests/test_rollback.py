@@ -15,15 +15,22 @@ def mock_mongodb_client():
     client.connected = True
     return client
 
+
 @pytest.mark.asyncio
 async def test_trading_config_rollback(mock_mongodb_client):
     # Setup
     manager = TradingConfigManager(mongodb_client=mock_mongodb_client)
 
     # Mock history
-    mock_mongodb_client.get_config_history = AsyncMock(return_value=[
-        {"action": "update", "parameters_before": {"leverage": 10}, "parameters_after": {"leverage": 20}}
-    ])
+    mock_mongodb_client.get_config_history = AsyncMock(
+        return_value=[
+            {
+                "action": "update",
+                "parameters_before": {"leverage": 10},
+                "parameters_after": {"leverage": 20},
+            }
+        ]
+    )
 
     # Mock set_symbol_config
     mock_mongodb_client.set_symbol_config = AsyncMock(return_value=True)

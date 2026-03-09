@@ -17,9 +17,7 @@ from opentelemetry import (
 from opentelemetry.propagate import extract
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 # Force Enable OTEL for this test file before any imports might check it
 os.environ["OTEL_SDK_DISABLED"] = "false"

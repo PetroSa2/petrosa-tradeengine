@@ -1987,17 +1987,22 @@ class Dispatcher:
         return {
             "portfolio": portfolio_data,
             "risk_limits": {
-                "max_drawdown_pct": settings.max_daily_loss_pct, # Closest mapping in shared/config
+                "max_drawdown_pct": settings.max_daily_loss_pct,  # Closest mapping in shared/config
                 "max_orders_global": getattr(settings, "max_algo_orders", 10),
-                "max_orders_per_symbol": getattr(settings, "max_algo_orders_per_symbol", 2),
-                "max_position_size_usd": getattr(settings, "max_position_size_usd", 1000.0)
+                "max_orders_per_symbol": getattr(
+                    settings, "max_algo_orders_per_symbol", 2
+                ),
+                "max_position_size_usd": getattr(
+                    settings, "max_position_size_usd", 1000.0
+                ),
             },
             "env_stats": {
-                "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0) / max(self.position_manager.total_portfolio_value, 1.0),
+                "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)
+                / max(self.position_manager.total_portfolio_value, 1.0),
                 "open_orders_global": len(active_orders),
                 "open_orders_symbol": symbol_orders_count,
-                "available_capital_usd": self.position_manager.total_portfolio_value
-            }
+                "available_capital_usd": self.position_manager.total_portfolio_value,
+            },
         }
 
     def get_signal_summary(self) -> dict[str, Any]:

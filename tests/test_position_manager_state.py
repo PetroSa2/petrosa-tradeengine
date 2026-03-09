@@ -11,19 +11,20 @@ def manager():
     m.total_portfolio_value = 10000.0
     return m
 
+
 def test_get_cio_portfolio_summary_basic(manager):
     # Mock positions
     manager.positions = {
         ("BTCUSDT", "LONG"): {
             "quantity": 0.1,
             "avg_price": 40000.0,
-            "symbol": "BTCUSDT"
+            "symbol": "BTCUSDT",
         },
         ("ETHUSDT", "SHORT"): {
             "quantity": -1.0,
             "avg_price": 2000.0,
-            "symbol": "ETHUSDT"
-        }
+            "symbol": "ETHUSDT",
+        },
     }
 
     summary = manager.get_cio_portfolio_summary("BTCUSDT")
@@ -36,11 +37,13 @@ def test_get_cio_portfolio_summary_basic(manager):
     assert summary["same_asset_pct"] == 0.4
     assert summary["open_positions_count"] == 2
 
+
 def test_get_cio_portfolio_summary_zero_portfolio(manager):
     manager.total_portfolio_value = 0.0
     summary = manager.get_cio_portfolio_summary("BTCUSDT")
     assert summary["open_positions_count"] == 0
     assert summary["net_directional_exposure"] == 0.0
+
 
 def test_get_cio_portfolio_summary_empty(manager):
     manager.positions = {}

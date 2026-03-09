@@ -514,7 +514,9 @@ async def test_place_take_profit_handles_exception(
 
     # Should raise exception to trigger atomic rollback
     with pytest.raises(Exception, match="Exchange error"):
-        await dispatcher._place_take_profit_order(sample_filled_order, sample_fill_result)
+        await dispatcher._place_take_profit_order(
+            sample_filled_order, sample_fill_result
+        )
 
     # Verify attempt was made
     assert mock_exchange.execute.called

@@ -13,6 +13,7 @@ def mock_managers():
     exchange = MagicMock()
     return position_manager, order_manager, exchange
 
+
 @pytest.fixture
 def dispatcher(mock_managers):
     pm, om, ex = mock_managers
@@ -20,6 +21,7 @@ def dispatcher(mock_managers):
     d.position_manager = pm
     d.order_manager = om
     return d
+
 
 def test_get_cio_state_handles_missing_settings(dispatcher, mock_managers):
     pm, om, _ = mock_managers
@@ -30,7 +32,7 @@ def test_get_cio_state_handles_missing_settings(dispatcher, mock_managers):
     pm.total_portfolio_value = 10000.0
     om.get_active_orders.return_value = [
         {"symbol": "BTCUSDT", "id": "1"},
-        {"symbol": "ETHUSDT", "id": "2"}
+        {"symbol": "ETHUSDT", "id": "2"},
     ]
 
     # Use a settings object that definitely doesn't have the new attributes
@@ -54,9 +56,10 @@ def test_get_cio_state_handles_missing_settings(dispatcher, mock_managers):
         assert state["env_stats"]["open_orders_global"] == 2
         assert state["env_stats"]["open_orders_symbol"] == 1
 
+
 def test_get_cio_state_positive_pnl(dispatcher, mock_managers):
     pm, om, _ = mock_managers
-    pm.get_daily_pnl.return_value = 500.0 # Profit
+    pm.get_daily_pnl.return_value = 500.0  # Profit
     pm.total_portfolio_value = 10000.0
     om.get_active_orders.return_value = []
     pm.get_cio_portfolio_summary.return_value = {}

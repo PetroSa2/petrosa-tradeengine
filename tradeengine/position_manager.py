@@ -1141,7 +1141,7 @@ class PositionManager:
             return {
                 "net_directional_exposure": 0.0,
                 "same_asset_pct": 0.0,
-                "open_positions_count": 0
+                "open_positions_count": 0,
             }
 
         total_exposure = 0.0
@@ -1162,7 +1162,7 @@ class PositionManager:
         return {
             "gross_exposure": total_exposure / total_value,
             "same_asset_pct": same_asset_value / total_value,
-            "open_positions_count": open_count
+            "open_positions_count": open_count,
         }
 
     def get_positions(self) -> dict[tuple[str, str], dict[str, Any]]:

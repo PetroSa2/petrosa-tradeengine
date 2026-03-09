@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 try:
     from datetime import UTC
 except ImportError:
-    UTC = UTC
+    import datetime as dt
+    UTC = dt.timezone.utc
 from typing import Any, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient

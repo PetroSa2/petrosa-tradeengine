@@ -26,6 +26,12 @@ except ImportError:
     ConfigRateLimiter = None
     config_rate_limit_middleware = None
 
+# Internal OTEL logging helpers can vary by version
+try:
+    from opentelemetry._logs import std_to_otel
+except ImportError:
+    std_to_otel = None
+
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
 from contracts.order import TradeOrder

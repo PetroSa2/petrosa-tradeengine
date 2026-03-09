@@ -478,7 +478,7 @@ class LLMProcessor:
     """LLM reasoning signal processor"""
 
     def __init__(self) -> None:
-        self.llm_available = False
+        self.llm_available = True
 
         # Load configuration
         from shared.constants import (

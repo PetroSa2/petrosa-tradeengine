@@ -994,7 +994,7 @@ async def get_state(
 ):
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.
-    Ground-truth data derived from live exchange state.
+    Ground-truth data derived from engine authoritative state.
     """
     try:
         return dispatcher.get_cio_state(symbol)

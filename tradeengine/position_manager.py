@@ -1154,14 +1154,13 @@ class PositionManager:
                 open_count += 1
                 pos_value = abs(qty * pos.get("avg_price", 0.0))
                 total_exposure += pos_value
-                
                 # Check if this position is for the requested symbol
                 pos_symbol = key[0] if isinstance(key, tuple) else str(key)
                 if pos_symbol == symbol:
                     same_asset_value += pos_value
 
         return {
-            "net_directional_exposure": total_exposure / total_value,
+            "gross_exposure": total_exposure / total_value,
             "same_asset_pct": same_asset_value / total_value,
             "open_positions_count": open_count
         }

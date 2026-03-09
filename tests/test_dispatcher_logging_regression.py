@@ -16,48 +16,27 @@ async def test_dispatcher_logging_no_typeerror_issue_266():
     """
     # 1. Setup
     dispatcher = Dispatcher()
-    # Ensure it's using a standard Logger (which the project's get_logger returns)
-    assert isinstance(dispatcher.logger, logging.Logger)
 
-    # Force level to INFO and mock isEnabledFor to ensure _log is reached
-    dispatcher.logger.setLevel(logging.INFO)
-    with patch.object(dispatcher.logger, "isEnabledFor", return_value=True):
-        # 2. Prepare test data matching the context of the fix
-        order = TradeOrder(
-            symbol="BTCUSDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            amount=1.0,
-            exchange="binance",
-            order_id="test_order_123",
-            status=OrderStatus.PENDING,
-        )
+    # 2. Prepare test data matching the context of the fix
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        type=OrderType.MARKET,
+        amount=1.0,
+        exchange="binance",
+        order_id="test_order_123",
+        status=OrderStatus.PENDING,
+    )
 
-        result = {"position_id": "pos_456"}
+    result = {"position_id": "pos_456"}
 
-        # 3. Patch the underlying _log method to verify the arguments passed to it
-        with patch.object(dispatcher.logger, "_log") as mock_log:
-            # This matches the new line in tradeengine/dispatcher.py
-            dispatcher.logger.info(
-                f"✅ Position updated | event=position_updated | symbol={order.symbol} | "
-                f"order_id={order.order_id} | position_id={result.get('position_id')}"
-            )
-
-            # 4. Verify the call
-            mock_log.assert_called_once()
-        args, kwargs = mock_log.call_args
-
-        # args[0] is level (INFO=20), args[1] is message
-        message = args[1]
-        assert "Position updated" in message
-        assert "event=position_updated" in message
-        assert "symbol=BTCUSDT" in message
-        assert "order_id=test_order_123" in message
-        assert "position_id=pos_456" in message
-
-        # Crucially, 'extra' should not be needed for this simple pattern
-        # and 'event' should NOT be a direct keyword argument
-        assert "event" not in kwargs
+    # 3. Simply call the log statement. If it doesn't raise a TypeError, the regression test passes.
+    # We no longer mock _log because we use structlog, which handles kwargs differently and
+    # doesn't use the standard logging._log method directly in the same way.
+    dispatcher.logger.info(
+        f"✅ Position updated | event=position_updated | symbol={order.symbol} | "
+        f"order_id={order.order_id} | position_id={result.get('position_id')}"
+    )
 
 
 if __name__ == "__main__":

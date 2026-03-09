@@ -202,8 +202,9 @@ async def test_place_stop_loss_order_handles_failure(
         "error": "Insufficient balance",
     }
 
-    # Should not raise exception, just log error
-    await dispatcher._place_stop_loss_order(sample_filled_order, sample_fill_result)
+    # Should raise exception to trigger atomic rollback
+    with pytest.raises(Exception, match="STOP LOSS FAILED AFTER ALL RETRIES"):
+        await dispatcher._place_stop_loss_order(sample_filled_order, sample_fill_result)
 
     # Verify order was attempted
     assert mock_exchange.execute.called
@@ -493,8 +494,9 @@ async def test_place_stop_loss_handles_exception(
     # Mock exception during order placement
     mock_exchange.execute.side_effect = Exception("Exchange error")
 
-    # Should not raise exception, just log error
-    await dispatcher._place_stop_loss_order(sample_filled_order, sample_fill_result)
+    # Should raise exception to trigger atomic rollback
+    with pytest.raises(Exception, match="STOP LOSS FAILED AFTER ALL RETRIES"):
+        await dispatcher._place_stop_loss_order(sample_filled_order, sample_fill_result)
 
     # Verify attempt was made
     assert mock_exchange.execute.called
@@ -510,8 +512,9 @@ async def test_place_take_profit_handles_exception(
     # Mock exception during order placement
     mock_exchange.execute.side_effect = Exception("Exchange error")
 
-    # Should not raise exception, just log error
-    await dispatcher._place_take_profit_order(sample_filled_order, sample_fill_result)
+    # Should raise exception to trigger atomic rollback
+    with pytest.raises(Exception, match="Exchange error"):
+        await dispatcher._place_take_profit_order(sample_filled_order, sample_fill_result)
 
     # Verify attempt was made
     assert mock_exchange.execute.called

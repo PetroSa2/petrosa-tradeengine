@@ -65,6 +65,7 @@ def sample_order():
         position_size_pct=0.1,
         target_price=45000.0,
         position_side="LONG",
+        simulate=False,
     )
 
 
@@ -144,10 +145,12 @@ class TestDispatcherSpanAttributes:
                         "fill_price": 45000.0,
                     }
                 )
-                with patch.object(dispatcher, "order_manager") as mock_om:
-                    mock_om.track_order = AsyncMock()
+                with patch("tradeengine.dispatcher.audit_logger") as mock_al:
+                    with patch.object(dispatcher, "order_manager") as mock_om:
+                        mock_om.track_order = AsyncMock()
 
-                    result = await dispatcher.execute_order(sample_order)
+                        result = await dispatcher.execute_order(sample_order)
+                        print("==== RESULT ====", result)
 
         # Verify span was created
         mock_tracer_obj.start_as_current_span.assert_called_once_with(
@@ -294,7 +297,7 @@ class TestAPISpanAttributes:
                 )
 
                 client = TestClient(app)
-                order_dict = sample_order.model_dump()
+                order_dict = sample_order.model_dump(mode="json")
                 if "timestamp" in order_dict and hasattr(
                     order_dict["timestamp"], "isoformat"
                 ):

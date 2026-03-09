@@ -98,7 +98,7 @@ def check_mysql_operations():
                 related_tables = cursor.fetchall()
 
                 if related_tables:
-                    print(f'\n📋 {pattern.replace("%", "").upper()} TABLES:')
+                    print(f"\n📋 {pattern.replace('%', '').upper()} TABLES:")
                     for table in related_tables:
                         table_name = table[0]
                         cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")

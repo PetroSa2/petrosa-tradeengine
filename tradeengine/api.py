@@ -26,6 +26,12 @@ except ImportError:
     ConfigRateLimiter = None
     config_rate_limit_middleware = None
 
+# Internal OTEL logging helpers can vary by version
+try:
+    from opentelemetry._logs import std_to_otel
+except ImportError:
+    std_to_otel = None
+
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
 from contracts.order import TradeOrder
@@ -979,6 +985,24 @@ async def get_active_signals(
         logger.error(f"Active signals error: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to get active signals: {e}"
+        )
+
+
+@app.get("/state")
+async def get_state(
+    symbol: str = Query(..., description="Target symbol for state context"),
+):
+    """
+    Returns real-time portfolio, risk, and environment stats for the CIO.
+    Data is derived from the engine's authoritative in-memory state, which is
+    synchronized with the exchange.
+    """
+    try:
+        return dispatcher.get_cio_state(symbol)
+    except Exception as e:
+        logger.error(f"Error getting state for {symbol}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve engine state: {e}"
         )
 
 

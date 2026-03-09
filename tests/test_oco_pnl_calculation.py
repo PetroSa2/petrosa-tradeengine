@@ -209,9 +209,9 @@ class TestOCOPNLCalculation:
         exit_commission = exit_quantity * exit_price * commission_rate
 
         # Then
-        assert (
-            abs(exit_commission - 0.0208) < 0.0001
-        ), "Commission should be calculated correctly"
+        assert abs(exit_commission - 0.0208) < 0.0001, (
+            "Commission should be calculated correctly"
+        )
 
     def test_multiple_strategy_positions_pnl(self):
         """Test PNL calculation for multiple strategy positions"""

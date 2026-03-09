@@ -73,9 +73,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -494,9 +494,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        self.active_oco_pairs[position_id]["close_reason"] = (
+                            close_reason
+                        )
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (
@@ -1976,13 +1976,13 @@ class Dispatcher:
         Ground-truth only, no fabrication.
         """
         from shared.config import settings
-        
+
         portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
         active_orders = self.order_manager.get_active_orders()
-        
+
         # Calculate symbol-specific order count
         symbol_orders_count = sum(1 for o in active_orders if o.get("symbol") == symbol)
-        
+
         # Safely resolve risk-limit style settings to avoid AttributeError
         max_orders_global = getattr(settings, "max_algo_orders", 50)
         max_orders_per_symbol = getattr(settings, "max_algo_orders_per_symbol", 5)
@@ -1992,7 +1992,9 @@ class Dispatcher:
         if max_position_size_usd is None:
             max_position_size_pct = getattr(settings, "max_position_size_pct", 10.0)
             max_position_size_usd = (
-                self.position_manager.total_portfolio_value * max_position_size_pct / 100.0
+                self.position_manager.total_portfolio_value
+                * max_position_size_pct
+                / 100.0
             )
 
         # Build ground-truth state object
@@ -2005,11 +2007,12 @@ class Dispatcher:
                 "max_position_size_usd": max_position_size_usd,
             },
             "env_stats": {
-                "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0) / max(self.position_manager.total_portfolio_value, 1.0),
+                "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)
+                / max(self.position_manager.total_portfolio_value, 1.0),
                 "open_orders_global": len(active_orders),
                 "open_orders_symbol": symbol_orders_count,
                 "available_capital_usd": self.position_manager.total_portfolio_value,
-            }
+            },
         }
 
     def get_signal_summary(self) -> dict[str, Any]:

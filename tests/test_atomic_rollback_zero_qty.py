@@ -82,7 +82,6 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
         patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
     ):
-
         final_result = await dispatcher._execute_order_with_consensus(order)
 
     # 6. Verify that close_position_with_cleanup was called with order.amount (1.5) instead of 0.0
@@ -141,7 +140,6 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
         patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
     ):
-
         final_result = await dispatcher._execute_order_with_consensus(order)
 
     # 5. Verify rollback was skipped

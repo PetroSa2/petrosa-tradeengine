@@ -54,9 +54,9 @@ def test_algo_order_api():
     stop_price = round(current_price * 0.98, 2)
     quantity = "0.001"
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("TEST 1: WITHOUT algoType parameter (should FAIL)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     params_without_algo_type = {
         "symbol": symbol,
@@ -86,9 +86,9 @@ def test_algo_order_api():
         else:
             print(f"   Different error: code={e.code}")
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("TEST 2: WITH algoType='CONDITIONAL' (should SUCCEED)")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     params_with_algo_type = {
         "symbol": symbol,

@@ -194,22 +194,22 @@ async def test_lock_prevents_concurrent_processing(
                 if isinstance(r, dict) and r.get("status") == "skipped_duplicate"
             )
 
-            assert (
-                executed_count == 1
-            ), f"Expected 1 executed result, got {executed_count}. Results: {results}"
-            assert (
-                skipped_count == 1
-            ), f"Expected 1 skipped result, got {skipped_count}. Results: {results}"
+            assert executed_count == 1, (
+                f"Expected 1 executed result, got {executed_count}. Results: {results}"
+            )
+            assert skipped_count == 1, (
+                f"Expected 1 skipped result, got {skipped_count}. Results: {results}"
+            )
 
             # Verify: Lock was attempted twice
-            assert (
-                len(lock_attempts) == 2
-            ), f"Expected 2 lock attempts, got {len(lock_attempts)}"
+            assert len(lock_attempts) == 2, (
+                f"Expected 2 lock attempts, got {len(lock_attempts)}"
+            )
 
             # Verify: Lock was released after first execution
-            assert (
-                len(lock_releases) == 1
-            ), f"Expected 1 lock release, got {len(lock_releases)}"
+            assert len(lock_releases) == 1, (
+                f"Expected 1 lock release, got {len(lock_releases)}"
+            )
 
 
 @pytest.mark.integration
@@ -245,9 +245,9 @@ async def test_lock_acquisition_failure_skips_gracefully(
         result = await dispatcher.dispatch(sample_signal)
 
         # Verify: Processing was skipped
-        assert (
-            result["status"] == "skipped_duplicate"
-        ), f"Expected 'skipped_duplicate' status, got '{result.get('status')}'"
+        assert result["status"] == "skipped_duplicate", (
+            f"Expected 'skipped_duplicate' status, got '{result.get('status')}'"
+        )
         assert (
             "lock" in result.get("reason", "").lower()
             or "pod" in result.get("reason", "").lower()
@@ -298,9 +298,9 @@ async def test_lock_released_after_success(
         await dispatcher.dispatch(sample_signal)
 
         # Verify: Function was executed (order was placed)
-        assert (
-            len(fake_exchange.executed_orders) == 1
-        ), f"Expected 1 order, got {len(fake_exchange.executed_orders)}"
+        assert len(fake_exchange.executed_orders) == 1, (
+            f"Expected 1 order, got {len(fake_exchange.executed_orders)}"
+        )
 
         # Verify: Lock was released
         assert lock_released, "Lock should be released after successful processing"
@@ -400,9 +400,9 @@ async def test_lock_key_includes_signal_fingerprint(
 
         # Verify: lock_key includes signal components
         assert captured_lock_key is not None, "Lock key should be captured"
-        assert (
-            "signal_" in captured_lock_key
-        ), f"Lock key should start with 'signal_', got: {captured_lock_key}"
+        assert "signal_" in captured_lock_key, (
+            f"Lock key should start with 'signal_', got: {captured_lock_key}"
+        )
 
         # Verify: Lock key includes signal identifier (strategy_id or symbol)
         # The fingerprint is generated from signal fields, so it should include
@@ -506,9 +506,9 @@ async def test_second_pod_waits_for_first_pod_lock_release(
             )
 
             # Verify: Only first pod executed order
-            assert (
-                len(fake_exchange.executed_orders) == 1
-            ), f"Expected 1 order (from first pod), got {len(fake_exchange.executed_orders)}"
+            assert len(fake_exchange.executed_orders) == 1, (
+                f"Expected 1 order (from first pod), got {len(fake_exchange.executed_orders)}"
+            )
 
             # Verify: First result is executed, second is skipped
             first_result = results[0]
@@ -524,6 +524,6 @@ async def test_second_pod_waits_for_first_pod_lock_release(
             ), f"Second pod should skip: {second_result}"
 
             # Verify: Lock was released by first pod
-            assert (
-                lock_released_by_first
-            ), "First pod should release lock after processing"
+            assert lock_released_by_first, (
+                "First pod should release lock after processing"
+            )

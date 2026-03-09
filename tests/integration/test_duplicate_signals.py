@@ -100,17 +100,17 @@ async def test_duplicate_signal_rejected(dispatcher_with_fakes):
 
     # Assertions
     # First signal should be processed successfully
-    assert (
-        result1["status"] != "duplicate"
-    ), f"First signal should not be rejected as duplicate, got: {result1}"
-    assert (
-        result1["status"] != "rejected"
-    ), f"First signal should not be rejected, got: {result1}"
+    assert result1["status"] != "duplicate", (
+        f"First signal should not be rejected as duplicate, got: {result1}"
+    )
+    assert result1["status"] != "rejected", (
+        f"First signal should not be rejected, got: {result1}"
+    )
 
     # Second signal should be rejected as duplicate
-    assert (
-        result2["status"] == "duplicate"
-    ), f"Second signal should be rejected as duplicate, got: {result2}"
+    assert result2["status"] == "duplicate", (
+        f"Second signal should be rejected as duplicate, got: {result2}"
+    )
     assert "duplicate" in result2.get("reason", "").lower()
     assert "duplicate_age_seconds" in result2
 
@@ -175,9 +175,9 @@ async def test_duplicate_signal_metric_increments(dispatcher_with_fakes):
         or 0
     )
 
-    assert (
-        final_count > initial_count
-    ), f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
+    assert final_count > initial_count, (
+        f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
+    )
 
 
 @pytest.mark.integration
@@ -250,15 +250,15 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
     result3 = await dispatcher.dispatch(signal3)
 
     # All should be processed (not rejected as duplicates)
-    assert (
-        result1["status"] != "duplicate"
-    ), f"Signal1 should not be rejected, got: {result1}"
-    assert (
-        result2["status"] != "duplicate"
-    ), f"Signal2 should not be rejected, got: {result2}"
-    assert (
-        result3["status"] != "duplicate"
-    ), f"Signal3 should not be rejected, got: {result3}"
+    assert result1["status"] != "duplicate", (
+        f"Signal1 should not be rejected, got: {result1}"
+    )
+    assert result2["status"] != "duplicate", (
+        f"Signal2 should not be rejected, got: {result2}"
+    )
+    assert result3["status"] != "duplicate", (
+        f"Signal3 should not be rejected, got: {result3}"
+    )
 
     # Check that none were rejected for other reasons
     if result1.get("status") == "rejected":
@@ -308,9 +308,9 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
 
     # First processing
     result1 = await dispatcher.dispatch(signal1)
-    assert (
-        result1["status"] != "duplicate"
-    ), f"First signal should not be rejected, got: {result1}"
+    assert result1["status"] != "duplicate", (
+        f"First signal should not be rejected, got: {result1}"
+    )
 
     # Wait for TTL to expire (2 seconds + small buffer)
     time.sleep(3)
@@ -325,9 +325,9 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
         del dispatcher.signal_cache[signal_id]
 
     # Verify cache entry was removed
-    assert (
-        signal_id not in dispatcher.signal_cache
-    ), "Cache entry should be removed after TTL"
+    assert signal_id not in dispatcher.signal_cache, (
+        "Cache entry should be removed after TTL"
+    )
 
     # Clear position manager to avoid accumulation cooldown interfering with duplicate detection test
     # This test is about duplicate detection, not accumulation cooldown
@@ -358,19 +358,19 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
 
     # Both should have been processed (not rejected as duplicates)
     assert result1["status"] != "duplicate"
-    assert (
-        result2["status"] != "duplicate"
-    ), f"Signal after TTL should not be rejected, got: {result2}"
+    assert result2["status"] != "duplicate", (
+        f"Signal after TTL should not be rejected, got: {result2}"
+    )
     # Also ensure it wasn't rejected for other reasons (like accumulation cooldown)
-    assert (
-        result2["status"] != "rejected"
-    ), f"Signal after TTL should not be rejected for any reason, got: {result2}"
+    assert result2["status"] != "rejected", (
+        f"Signal after TTL should not be rejected for any reason, got: {result2}"
+    )
 
     # Both should have been executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert (
-        len(executed_orders) == 2
-    ), f"Expected 2 orders after TTL, got {len(executed_orders)}"
+    assert len(executed_orders) == 2, (
+        f"Expected 2 orders after TTL, got {len(executed_orders)}"
+    )
 
 
 @pytest.mark.integration
@@ -402,9 +402,9 @@ async def test_signals_within_cache_ttl_rejected(dispatcher_with_fakes):
 
     # First processing
     result1 = await dispatcher.dispatch(signal)
-    assert (
-        result1["status"] != "duplicate"
-    ), f"First signal should not be rejected, got: {result1}"
+    assert result1["status"] != "duplicate", (
+        f"First signal should not be rejected, got: {result1}"
+    )
 
     # Wait less than TTL (1 second < 5 seconds TTL)
     time.sleep(1)
@@ -413,16 +413,16 @@ async def test_signals_within_cache_ttl_rejected(dispatcher_with_fakes):
     result2 = await dispatcher.dispatch(signal)
 
     # Second should be rejected as duplicate
-    assert (
-        result2["status"] == "duplicate"
-    ), f"Signal within TTL should be rejected, got: {result2}"
+    assert result2["status"] == "duplicate", (
+        f"Signal within TTL should be rejected, got: {result2}"
+    )
     assert "duplicate" in result2.get("reason", "").lower()
 
     # Only one order should be executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert (
-        len(executed_orders) == 1
-    ), f"Expected 1 order within TTL, got {len(executed_orders)}"
+    assert len(executed_orders) == 1, (
+        f"Expected 1 order within TTL, got {len(executed_orders)}"
+    )
 
 
 @pytest.mark.integration
@@ -477,9 +477,9 @@ async def test_signal_cache_cleanup(dispatcher_with_fakes):
     await dispatcher.dispatch(signal2)
 
     # Verify cache has entries
-    assert (
-        len(dispatcher.signal_cache) == 2
-    ), f"Expected 2 cache entries, got {len(dispatcher.signal_cache)}"
+    assert len(dispatcher.signal_cache) == 2, (
+        f"Expected 2 cache entries, got {len(dispatcher.signal_cache)}"
+    )
 
     # Wait for TTL to expire and trigger cleanup
     time.sleep(3)
@@ -490,6 +490,6 @@ async def test_signal_cache_cleanup(dispatcher_with_fakes):
     # Cache should be cleaned up (entries older than TTL removed)
     # Note: Cleanup may not remove all entries if they're still within TTL
     # This test verifies cleanup logic is called without errors
-    assert hasattr(
-        dispatcher, "signal_cache"
-    ), "Dispatcher should have signal_cache attribute"
+    assert hasattr(dispatcher, "signal_cache"), (
+        "Dispatcher should have signal_cache attribute"
+    )

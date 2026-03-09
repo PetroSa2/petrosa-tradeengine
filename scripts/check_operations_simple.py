@@ -90,7 +90,7 @@ def check_mysql_operations():
                 if count > 0:
                     cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 3;")
                     samples = cursor.fetchall()
-                    print(f'    📋 Sample data: {samples[0] if samples else "No data"}')
+                    print(f"    📋 Sample data: {samples[0] if samples else 'No data'}")
             else:
                 print(f"  - {table_name}: {count} rows")
 
@@ -164,7 +164,7 @@ def check_mongodb_operations():
                 if count > 0:
                     sample = db[collection_name].find_one()
                     print(
-                        f'    📋 Sample keys: {list(sample.keys()) if sample else "No data"}'
+                        f"    📋 Sample keys: {list(sample.keys()) if sample else 'No data'}"
                     )
             else:
                 print(f"  - {collection_name}: {count} documents")

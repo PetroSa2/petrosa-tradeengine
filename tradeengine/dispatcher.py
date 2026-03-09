@@ -1970,6 +1970,36 @@ class Dispatcher:
                 span.record_exception(e)
                 return {"status": "error", "error": str(e)}
 
+    def get_cio_state(self, symbol: str) -> dict[str, Any]:
+        """
+        Aggregates real-time state data for the CIO TriggerContext.
+        Ground-truth only, no fabrication.
+        """
+        from shared.config import settings
+        
+        portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
+        active_orders = self.order_manager.get_active_orders()
+        
+        # Calculate symbol-specific order count
+        symbol_orders_count = sum(1 for o in active_orders if o.get("symbol") == symbol)
+        
+        # Build ground-truth state object
+        return {
+            "portfolio": portfolio_data,
+            "risk_limits": {
+                "max_drawdown_pct": settings.max_daily_loss_pct, # Closest mapping in shared/config
+                "max_orders_global": settings.max_algo_orders,
+                "max_orders_per_symbol": settings.max_algo_orders_per_symbol,
+                "max_position_size_usd": settings.max_position_size_usd
+            },
+            "env_stats": {
+                "global_drawdown_pct": self.position_manager.get_daily_pnl() / max(self.position_manager.total_portfolio_value, 1.0),
+                "open_orders_global": len(active_orders),
+                "open_orders_symbol": symbol_orders_count,
+                "available_capital_usd": self.position_manager.total_portfolio_value
+            }
+        }
+
     def get_signal_summary(self) -> dict[str, Any]:
         """Get signal processing summary"""
         return self.signal_aggregator.get_signal_summary()

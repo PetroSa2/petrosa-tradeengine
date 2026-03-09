@@ -982,6 +982,23 @@ async def get_active_signals(
         )
 
 
+@app.get("/state")
+async def get_state(
+    symbol: str = Query(..., description="Target symbol for state context")
+):
+    """
+    Returns real-time portfolio, risk, and environment stats for the CIO.
+    Ground-truth data derived from live exchange state.
+    """
+    try:
+        return dispatcher.get_cio_state(symbol)
+    except Exception as e:
+        logger.error(f"Error getting state for {symbol}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve engine state: {e}"
+        )
+
+
 @app.get("/positions")
 async def get_positions(
     symbol: str | None = Query(

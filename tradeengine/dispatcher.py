@@ -2130,9 +2130,13 @@ class Dispatcher:
                 return
 
             # Ensure entry_price is a float for OCO math and logging
-            entry_price_raw = result.get(
-                "fill_price", result.get("price", order.target_price)
-            )
+            # Fallback to order.target_price if fill_price is missing or zero
+            entry_price_raw = result.get("fill_price")
+            if not entry_price_raw or str(entry_price_raw) in ("0.0", "0", "0.00"):
+                entry_price_raw = result.get("price")
+            if not entry_price_raw or str(entry_price_raw) in ("0.0", "0", "0.00"):
+                entry_price_raw = order.target_price
+
             try:
                 entry_price = (
                     float(entry_price_raw) if entry_price_raw is not None else 0.0
@@ -2207,9 +2211,13 @@ class Dispatcher:
                 )
 
                 # Ensure entry_price is a float for OCO math and logging
-                entry_price_raw = result.get(
-                    "fill_price", result.get("price", order.target_price)
-                )
+                # Fallback to order.target_price if fill_price is missing or zero
+                entry_price_raw = result.get("fill_price")
+                if not entry_price_raw or str(entry_price_raw) in ("0.0", "0", "0.00"):
+                    entry_price_raw = result.get("price")
+                if not entry_price_raw or str(entry_price_raw) in ("0.0", "0", "0.00"):
+                    entry_price_raw = order.target_price
+
                 try:
                     entry_price = (
                         float(entry_price_raw) if entry_price_raw is not None else 0.0

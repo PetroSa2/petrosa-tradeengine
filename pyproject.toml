@@ -6,7 +6,7 @@ include = ["tradeengine*", "contracts*", "shared*", "otel_init*"]
 
 [project]
 name = "petrosa-tradeengine"
-version = "1.2.15"
+version = "1.2.16"
 description = "Petrosa Trading Engine - Signal-driven trading execution"
 readme = "README.md"
 requires-python = ">=3.11"

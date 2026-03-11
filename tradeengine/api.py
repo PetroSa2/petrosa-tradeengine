@@ -66,7 +66,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Petrosa Trading Engine...")
 
     # Initialize telemetry
-    if setup_telemetry and not os.getenv("OTEL_NO_AUTO_INIT"):
+    if setup_telemetry and os.getenv("OTEL_NO_AUTO_INIT", "").lower() not in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
         try:
             setup_telemetry(
                 service_name="tradeengine",

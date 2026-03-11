@@ -22,7 +22,7 @@ opentelemetry-instrumentation-urllib3>=0.41b0
 opentelemetry-sdk>=1.20.0
 opentelemetry-semantic-conventions>=0.41b0
 passlib[bcrypt]==1.7.4
-petrosa-otel>=0.1.0
+petrosa-otel[all]>=1.0.0
 prometheus-client==0.23.1
 pydantic==2.12.4
 pydantic-settings==2.12.0

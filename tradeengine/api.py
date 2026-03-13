@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ):
         try:
             setup_telemetry(
-                service_name="tradeengine",
+                service_name=os.getenv("OTEL_SERVICE_NAME", "petrosa-tradeengine"),
                 service_type="fastapi",
                 enable_fastapi=True,
                 enable_mongodb=True,

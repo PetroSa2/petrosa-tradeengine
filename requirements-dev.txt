@@ -6,7 +6,7 @@
 bandit==1.7.5
 
 # Code Quality & Formatting
-black==24.3.0
+black==26.3.1
 codecov==2.1.13
 
 # Coverage & Reporting

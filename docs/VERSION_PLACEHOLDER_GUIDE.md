@@ -38,14 +38,47 @@ The version comes from:
 ## Critical Rules
 
 ### ✅ DO
-- Use `VERSION_PLACEHOLDER` in all Kubernetes manifests
+- Use `VERSION_PLACEHOLDER` in all Kubernetes manifests in the `k8s/` directory
 - Let the CI/CD pipeline handle version replacement
 - Use semantic versioning for releases (e.g., `v1.0.1`)
+- Always keep `VERSION_PLACEHOLDER` in your source k8s/ manifests - even after deployment
 
 ### ❌ DON'T
 - **NEVER manually replace VERSION_PLACEHOLDER** in manifests
-- **NEVER hardcode versions** in Kubernetes files
+- **NEVER hardcode versions** (e.g., `v1.2.15`) in Kubernetes files
 - **NEVER commit manifests with actual versions** instead of placeholders
+- **DO NOT remove VERSION_PLACEHOLDER** after deployment - it must remain for the next release
+
+## CI/CD Enforcement (CRITICAL)
+
+### Automatic Validation
+All CI/CD pipelines now include a **mandatory validation step** that checks for `VERSION_PLACEHOLDER` before attempting GitOps updates:
+
+```yaml
+- name: Validate VERSION_PLACEHOLDER in source k8s manifests
+  run: |
+    if grep -rq "VERSION_PLACEHOLDER" k8s/ 2>/dev/null; then
+      echo "✅ VERSION_PLACEHOLDER found in source k8s manifests"
+    else
+      echo "❌ ERROR: VERSION_PLACEHOLDER not found!"
+      exit 1
+    fi
+```
+
+### What Happens If You Break This Rule
+1. **Hardcoded version in source k8s/** → CI fails with error BEFORE gitops-update
+2. **GitOps silently skips** → Old version stays deployed (this was the old bug)
+3. **Version drift** → Cluster runs outdated code without anyone noticing
+
+### The Fix Applied
+If you accidentally commit a hardcoded version:
+```bash
+# Fix: Replace hardcoded version with VERSION_PLACEHOLDER
+sed -i 's|yurisa2/petrosa-YOUR-SERVICE:v[0-9.]*|yurisa2/petrosa-YOUR-SERVICE:VERSION_PLACEHOLDER|g' k8s/*.yaml
+
+# Verify
+grep -r "VERSION_PLACEHOLDER" k8s/
+```
 
 ## Files That Use VERSION_PLACEHOLDER
 

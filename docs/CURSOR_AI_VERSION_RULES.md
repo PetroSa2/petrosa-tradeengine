@@ -3,10 +3,13 @@
 ## 🚨 CRITICAL: NEVER MODIFY VERSION_PLACEHOLDER
 
 ### What VERSION_PLACEHOLDER Is
-- **Intentional placeholder** in Kubernetes manifests
+- **Intentional placeholder** in Kubernetes manifests in the `k8s/` directory
 - **Automatically replaced** by CI/CD pipeline during deployment
 - **Part of the deployment system** - NOT a bug to fix
 - **Ensures consistent versioning** across all Petrosa systems
+
+### CI/CD ENFORCEMENT - NEW!
+The CI now **automatically validates** that VERSION_PLACEHOLDER exists in your k8s/ manifests before deployment. **If you replace it with a hardcoded version, the CI will FAIL with an error.**
 
 ### What Cursor AI Should NEVER Do
 ❌ Replace VERSION_PLACEHOLDER with specific versions (v1.0.1, latest, etc.)
@@ -94,6 +97,16 @@ make version-debug
 1. **VERSION_PLACEHOLDER not replaced**: Check CI/CD pipeline
 2. **Version mismatch**: Verify git tags and deployment
 3. **Manual version committed**: Revert to VERSION_PLACEHOLDER
+4. **CI fails with "VERSION_PLACEHOLDER not found"**: You accidentally replaced it with a hardcoded version - revert immediately!
+
+### The Silent Failure Problem (NOW FIXED!)
+Previously, if an agent replaced VERSION_PLACEHOLDER with a hardcoded version (e.g., `v1.2.15`):
+1. The gitops-update sed command would find nothing to replace
+2. No changes would be committed to petrosa_k8s
+3. The cluster would keep running the OLD version
+4. Nobody would notice until someone checked manually
+
+**Now the CI catches this before deployment!**
 
 ### Debugging Commands
 ```bash

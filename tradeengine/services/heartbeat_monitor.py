@@ -18,33 +18,40 @@ logger = logging.getLogger(__name__)
 
 class HeartbeatMessage(BaseModel):
     """Standardized heartbeat message model."""
+
     service: str
     timestamp: float = Field(default_factory=time.time)
     version: str = "1.0.0"
     status: str = "healthy"
+
+    def to_json(self) -> str:
+        """Compatibility helper for Pydantic v1/v2."""
+        if hasattr(self, "model_dump_json"):
+            return self.model_dump_json()
+        return self.json()
 
 
 class HeartbeatMonitor:
     """Monitors ecosystem heartbeats and manages fail-safe modes."""
 
     def __init__(
-        self, 
-        nats_url: str, 
+        self,
+        nats_url: str,
         subject: str = "cio.nurse.heartbeat",
         timeout: float = 60.0,
-        recovery_threshold: int = 3
+        recovery_threshold: int = 3,
     ):
         self.nats_url = nats_url
         self.subject = subject
         self.timeout = timeout
         self.recovery_threshold = recovery_threshold
-        
-        self.nats_client: Optional[nats.aio.client.Client] = None
+
+        self.nats_client: nats.aio.client.Client | None = None
         self.last_heartbeat_time: float = 0
         self.consecutive_heartbeats: int = 0
         self.restricted_mode: bool = False
         self.is_running: bool = False
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
 
     async def start(self):
         """Start the monitor and subscribe to heartbeats."""
@@ -74,14 +81,14 @@ class HeartbeatMonitor:
             # but we do it for validation.
             data = json.loads(msg.data.decode())
             self.last_heartbeat_time = time.time()
-            
+
             if self.restricted_mode:
                 self.consecutive_heartbeats += 1
                 if self.consecutive_heartbeats >= self.recovery_threshold:
                     await self._exit_restricted_mode()
             else:
                 self.consecutive_heartbeats = 0
-                
+
         except Exception as e:
             logger.error(f"HeartbeatMonitor failed to parse message: {e}")
 
@@ -103,8 +110,6 @@ class HeartbeatMonitor:
         self.restricted_mode = True
         self.consecutive_heartbeats = 0
         logger.critical("🚨 ENTERING RESTRICTED_MODE: CIO heartbeat lost!")
-        # TODO: Trigger P1 alert via RedundantAlertDispatcher
-        # For now, we log it heavily.
 
     async def _exit_restricted_mode(self):
         """Exit RESTRICTED_MODE and return to NORMAL_MODE."""
@@ -114,6 +119,4 @@ class HeartbeatMonitor:
 
     def is_restricted(self) -> bool:
         """Check if TradeEngine is in RESTRICTED_MODE."""
-        # If we haven't started or had a first heartbeat yet, we might want to start restricted
-        # but the AC says "If no heartbeat is received for > 60s", implying we need to miss it first.
         return self.restricted_mode

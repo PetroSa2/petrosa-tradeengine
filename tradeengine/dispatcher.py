@@ -21,6 +21,7 @@ from tradeengine.metrics import (
 )
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
+from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
 from tradeengine.strategy_position_manager import strategy_position_manager
 
@@ -60,8 +61,6 @@ signals_duplicate = Counter(
     "Total duplicate signals detected and rejected",
     ["strategy", "symbol", "action"],
 )
-
-from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 
 # OpenTelemetry tracer for business context spans
 tracer = trace.get_tracer(__name__)
@@ -918,6 +917,7 @@ class Dispatcher:
 
         # Initialize Heartbeat Monitor for ecosystem fail-safe
         from shared.constants import NATS_URL
+
         self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
 
     async def initialize(self) -> None:
@@ -1185,10 +1185,12 @@ class Dispatcher:
                         f"🛑 FAIL-SAFE ACTIVE: Throttling signal for {signal.symbol} "
                         f"due to RESTRICTED_MODE (CIO heartbeat lost)"
                     )
-                    
+
                     # Override signal properties with conservative fail-safe limits
                     if signal.action == "close":
-                        self.logger.warning(f"Fail-safe: Allowing CLOSE action for {signal.symbol}")
+                        self.logger.warning(
+                            f"Fail-safe: Allowing CLOSE action for {signal.symbol}"
+                        )
                     else:
                         # For buy/sell, we apply strict USD limit
                         max_usd = 5000.0
@@ -1201,10 +1203,12 @@ class Dispatcher:
                                     f"from {signal.quantity} to {restricted_qty:.6f} ($5000 limit)"
                                 )
                                 signal.quantity = restricted_qty
-                        
+
                         # Force conservative leverage if signal has it in metadata
                         if signal.metadata and "leverage" in signal.metadata:
-                            signal.metadata["leverage"] = min(int(signal.metadata["leverage"]), 10)
+                            signal.metadata["leverage"] = min(
+                                int(signal.metadata["leverage"]), 10
+                            )
 
                 # Track signal reception in metrics
                 signals_received.labels(

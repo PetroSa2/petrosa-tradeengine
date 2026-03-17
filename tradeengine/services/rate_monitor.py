@@ -6,7 +6,7 @@ Captures used weight from API headers and broadcasts via NATS.
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import nats
 import nats.aio.client
@@ -27,7 +27,7 @@ class RateLimitMonitor:
     def __init__(self, nats_url: str, subject: str = "exchange.binance.rate_limits"):
         self.nats_url = nats_url
         self.subject = subject
-        self.nats_client: Optional[nats.aio.client.Client] = None
+        self.nats_client: nats.aio.client.Client | None = None
         self.last_weight: int = 0
         self.last_update_time: float = 0
         self.update_interval: float = 5.0  # seconds
@@ -47,17 +47,17 @@ class RateLimitMonitor:
             await self.nats_client.close()
             self.nats_client = None
 
-    async def update_from_headers(self, headers: Dict[str, str]):
+    async def update_from_headers(self, headers: dict[str, str]):
         """Update used weight from response headers and broadcast if changed."""
         weight_str = headers.get("x-mbx-used-weight-1m") or headers.get("X-MBX-USED-WEIGHT-1M")
-        
+
         if not weight_str:
             return
 
         try:
             weight = int(weight_str)
             now = time.time()
-            
+
             # Broadcast if weight changed or interval elapsed
             if weight != self.last_weight or (now - self.last_update_time) >= self.update_interval:
                 self.last_weight = weight
@@ -76,7 +76,7 @@ class RateLimitMonitor:
 
         status = RateLimitStatus(weight_1m=weight)
         message = status.model_dump_json()
-        
+
         try:
             await self.nats_client.publish(self.subject, message.encode())
             logger.debug(f"Broadcasted rate limit: {weight} to {self.subject}")

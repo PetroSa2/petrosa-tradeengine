@@ -28,7 +28,6 @@ from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
 from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
-
 from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
@@ -104,6 +103,7 @@ class BinanceFuturesExchange:
 
                 # Initialize and start rate limit monitor
                 from shared.constants import NATS_URL
+
                 self.rate_monitor = RateLimitMonitor(nats_url=NATS_URL)
                 await self.rate_monitor.start()
 
@@ -584,12 +584,16 @@ class BinanceFuturesExchange:
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
                 result = func(**kwargs)  # Futures client is synchronous
-                
+
                 # Capture and broadcast rate limit info
-                if self.rate_monitor and self.client and hasattr(self.client, "response"):
+                if (
+                    self.rate_monitor
+                    and self.client
+                    and hasattr(self.client, "response")
+                ):
                     headers = getattr(self.client.response, "headers", {})
                     await self.rate_monitor.update_from_headers(headers)
-                
+
                 return result
             except BinanceAPIException as e:
                 # Don't retry on certain errors that won't be fixed by retrying

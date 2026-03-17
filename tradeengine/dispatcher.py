@@ -61,6 +61,8 @@ signals_duplicate = Counter(
     ["strategy", "symbol", "action"],
 )
 
+from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
+
 # OpenTelemetry tracer for business context spans
 tracer = trace.get_tracer(__name__)
 
@@ -914,6 +916,10 @@ class Dispatcher:
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
 
+        # Initialize Heartbeat Monitor for ecosystem fail-safe
+        from shared.constants import NATS_URL
+        self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
+
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
         try:
@@ -923,6 +929,9 @@ class Dispatcher:
             # Initialize components
             await self.order_manager.initialize()
             await self.position_manager.initialize()
+
+            # Start heartbeat monitor
+            await self.heartbeat_monitor.start()
 
             # CRITICAL FIX: Initialize strategy position manager in background
             # MySQL connection attempts can take 3+ minutes and will block startup
@@ -984,6 +993,7 @@ class Dispatcher:
     async def close(self) -> None:
         """Close dispatcher components"""
         try:
+            await self.heartbeat_monitor.stop()
             await self.order_manager.close()
             await self.position_manager.close()
             await distributed_lock_manager.close()
@@ -1168,6 +1178,33 @@ class Dispatcher:
             try:
                 # Track signal reception time for latency measurement
                 signal_received_at = time.time()
+
+                # FAIL-SAFE: Check if Heartbeat Monitor is in restricted mode
+                if self.heartbeat_monitor.is_restricted():
+                    self.logger.critical(
+                        f"🛑 FAIL-SAFE ACTIVE: Throttling signal for {signal.symbol} "
+                        f"due to RESTRICTED_MODE (CIO heartbeat lost)"
+                    )
+                    
+                    # Override signal properties with conservative fail-safe limits
+                    if signal.action == "close":
+                        self.logger.warning(f"Fail-safe: Allowing CLOSE action for {signal.symbol}")
+                    else:
+                        # For buy/sell, we apply strict USD limit
+                        max_usd = 5000.0
+                        current_price = signal.current_price or signal.price
+                        if current_price > 0:
+                            restricted_qty = max_usd / current_price
+                            if signal.quantity > restricted_qty:
+                                self.logger.warning(
+                                    f"Fail-safe: Capping quantity for {signal.symbol} "
+                                    f"from {signal.quantity} to {restricted_qty:.6f} ($5000 limit)"
+                                )
+                                signal.quantity = restricted_qty
+                        
+                        # Force conservative leverage if signal has it in metadata
+                        if signal.metadata and "leverage" in signal.metadata:
+                            signal.metadata["leverage"] = min(int(signal.metadata["leverage"]), 10)
 
                 # Track signal reception in metrics
                 signals_received.labels(

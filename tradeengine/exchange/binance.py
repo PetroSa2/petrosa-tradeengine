@@ -28,6 +28,7 @@ from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
 from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
+from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class BinanceFuturesExchange:
         self.exchange_info: dict[str, Any] = {}
         self.symbol_info: dict[str, Any] = {}
         self.initialized = False
+        self.rate_monitor: RateLimitMonitor | None = None
 
     async def initialize(self) -> None:
         """Initialize Binance Futures exchange connection"""
@@ -98,6 +100,12 @@ class BinanceFuturesExchange:
                 # Load exchange info
                 logger.info("Loading futures exchange info...")
                 await self._load_exchange_info()
+
+                # Initialize and start rate limit monitor
+                from shared.constants import NATS_URL
+
+                self.rate_monitor = RateLimitMonitor(nats_url=NATS_URL)
+                await self.rate_monitor.start()
 
                 self.initialized = True
                 logger.info("Binance Futures exchange initialized successfully")
@@ -575,7 +583,18 @@ class BinanceFuturesExchange:
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                return func(**kwargs)  # Futures client is synchronous
+                result = func(**kwargs)  # Futures client is synchronous
+
+                # Capture and broadcast rate limit info
+                if (
+                    self.rate_monitor
+                    and self.client
+                    and hasattr(self.client, "response")
+                ):
+                    headers = getattr(self.client.response, "headers", {})
+                    await self.rate_monitor.update_from_headers(headers)
+
+                return result
             except BinanceAPIException as e:
                 # Don't retry on certain errors that won't be fixed by retrying
                 if e.code in [
@@ -1248,6 +1267,8 @@ class BinanceFuturesExchange:
     async def close(self) -> None:
         """Close the Binance Futures client"""
         # UMFutures client doesn't have a close method like AsyncClient
+        if self.rate_monitor:
+            await self.rate_monitor.stop()
         logger.info("Binance Futures client connection closed")
 
 

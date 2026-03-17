@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class RateLimitStatus(BaseModel):
     """Rate limit status model."""
+
     weight_1m: int = Field(..., description="Used weight in the last 1 minute")
     timestamp: float = Field(default_factory=time.time, description="Unix timestamp")
 
@@ -49,7 +50,9 @@ class RateLimitMonitor:
 
     async def update_from_headers(self, headers: dict[str, str]):
         """Update used weight from response headers and broadcast if changed."""
-        weight_str = headers.get("x-mbx-used-weight-1m") or headers.get("X-MBX-USED-WEIGHT-1M")
+        weight_str = headers.get("x-mbx-used-weight-1m") or headers.get(
+            "X-MBX-USED-WEIGHT-1M"
+        )
 
         if not weight_str:
             return
@@ -59,7 +62,10 @@ class RateLimitMonitor:
             now = time.time()
 
             # Broadcast if weight changed or interval elapsed
-            if weight != self.last_weight or (now - self.last_update_time) >= self.update_interval:
+            if (
+                weight != self.last_weight
+                or (now - self.last_update_time) >= self.update_interval
+            ):
                 self.last_weight = weight
                 self.last_update_time = now
                 await self._broadcast(weight)

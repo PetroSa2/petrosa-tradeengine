@@ -1,6 +1,6 @@
 aiomysql==0.3.2
 asyncio-mqtt==0.16.2
-black==24.3.0
+black==26.3.1
 ccxt==4.5.19
 fastapi>=0.110.0
 flake8==7.0.0

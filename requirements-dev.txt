@@ -1,25 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-# Code Quality & Formatting
-# Coverage & Reporting
-# Debugging
-# Development Tools
-# Documentation
-# Include production requirements
-# Performance Testing
-# Pre-commit & Git Hooks
-# Security Scanning
-# Standardized development dependencies for Petrosa Systems
-# Testing Framework
-# Type Checking Stubs
 -r requirements.txt
 bandit==1.7.5
 black==24.3.0

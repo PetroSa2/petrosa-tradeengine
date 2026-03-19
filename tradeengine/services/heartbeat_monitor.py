@@ -38,7 +38,7 @@ class HeartbeatMonitor:
     def __init__(
         self,
         nats_url: str,
-        subject: str = "cio.nurse.heartbeat",
+        subject: str = "cio.heartbeat",
         timeout: float | None = None,
         recovery_threshold: int | None = None,
     ):

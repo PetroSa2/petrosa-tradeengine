@@ -129,28 +129,42 @@ class SignalConsumer:
             )
 
         self.running = True
+
+        # Ensure we use a wildcard to capture strategy-specific signals (e.g., signals.trading.rsi_reversal)
+        # AC: Contract requires signals.trading.* or signals.trading.>
+        subject = settings.nats_signal_subject
+        if not subject.endswith(("*", ">")):
+            subscribe_subject = f"{subject}.*"
+            logger.info(
+                "Auto-appending wildcard to NATS subject: %s -> %s",
+                subject,
+                subscribe_subject,
+            )
+        else:
+            subscribe_subject = subject
+
         logger.info(
             "🚀 STARTING NATS CONSUMER | Subject: %s | No queue group (duplicate detection in dispatcher)",
-            settings.nats_signal_subject,
+            subscribe_subject,
         )
 
         try:
             # Subscribe to the signal subject
             logger.info(
                 "Subscribing to subject: %s with callback: %s",
-                settings.nats_signal_subject,
+                subscribe_subject,
                 self._message_handler,
             )
             # Remove queue group - it's preventing message delivery
             # Each pod will receive all messages, but dispatcher has duplicate detection
             self.subscription = await self.nc.subscribe(
-                settings.nats_signal_subject,
+                subscribe_subject,
                 cb=self._message_handler,
             )
 
             logger.info(
                 "✅ NATS SUBSCRIPTION ACTIVE | Subject: %s | Waiting for signals...",
-                settings.nats_signal_subject,
+                subscribe_subject,
             )
             logger.info("Subscription details: %s", self.subscription)
 

@@ -102,6 +102,12 @@ class DistributedLockManager:
             await self.mongodb_client.admin.command("ping")
             logger.info(f"MongoDB connected for distributed locks: {mongodb_url}")
 
+            # Ensure unique index on lock_name for atomic upserts
+            await self.mongodb_db.distributed_locks.create_index(
+                "lock_name", unique=True
+            )
+            logger.info("Unique index on distributed_locks.lock_name confirmed")
+
         except Exception as e:
             logger.error(f"Failed to initialize MongoDB for distributed locks: {e}")
             self.mongodb_client = None
@@ -122,37 +128,45 @@ class DistributedLockManager:
         try:
             distributed_locks = self.mongodb_db.distributed_locks
 
-            # Try to acquire lock using MongoDB's atomic operations
-            result = await distributed_locks.update_one(
-                {"lock_name": lock_name},
-                {
-                    "$set": {
-                        "pod_id": self.pod_id,
-                        "acquired_at": datetime.utcnow(),
-                        "expires_at": expires_at,
-                        "updated_at": datetime.utcnow(),
-                    }
-                },
-                upsert=True,
-            )
-
-            # Check if we got the lock (either inserted new or updated existing expired lock)
-            if result.modified_count > 0 or result.upserted_id:
-                logger.debug(f"Lock '{lock_name}' acquired by pod {self.pod_id}")
-                return True
-            else:
-                # Check if the lock is still held by us
-                lock_doc = await distributed_locks.find_one({"lock_name": lock_name})
-                if lock_doc and lock_doc["pod_id"] == self.pod_id:
-                    logger.debug(
-                        f"Lock '{lock_name}' already held by pod {self.pod_id}"
-                    )
+            # Use a more atomic filter to ensure we only acquire if it's expired OR owned by us
+            # This prevents race conditions where multiple pods think they have the lock
+            filter_query = {
+                "lock_name": lock_name,
+                "$or": [
+                    {"expires_at": {"$lt": datetime.utcnow()}},
+                    {"pod_id": self.pod_id}
+                ]
+            }
+            
+            # Use find_one_and_update for atomic read-and-write with upsert fallback logic
+            # Note: upsert in find_one_and_update can create duplicates if no match found,
+            # so we use a unique index on lock_name (must be created in initialize)
+            try:
+                result = await distributed_locks.find_one_and_update(
+                    filter_query,
+                    {
+                        "$set": {
+                            "pod_id": self.pod_id,
+                            "acquired_at": datetime.utcnow(),
+                            "expires_at": expires_at,
+                            "updated_at": datetime.utcnow(),
+                        }
+                    },
+                    upsert=True,
+                    return_document=True
+                )
+                
+                if result:
+                    logger.debug(f"Lock '{lock_name}' acquired by pod {self.pod_id}")
                     return True
-                else:
-                    logger.debug(
-                        f"Failed to acquire lock '{lock_name}' for pod {self.pod_id}"
-                    )
+            except Exception as e:
+                # If upsert fails due to DuplicateKeyError, it means another pod just got it
+                if "duplicate key error" in str(e).lower():
+                    logger.debug(f"Race condition: Pod {self.pod_id} lost lock '{lock_name}' to another pod")
                     return False
+                raise
+
+            return False
 
         except Exception as e:
             logger.error(f"Error acquiring lock '{lock_name}': {e}")

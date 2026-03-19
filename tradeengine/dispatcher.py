@@ -915,10 +915,11 @@ class Dispatcher:
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
 
-        # Initialize Heartbeat Monitor for ecosystem fail-safe
-        from shared.constants import NATS_URL
-
-        self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
+        # Initialize Heartbeat Monitor for ecosystem fail-safe (AC: Gate behind nats_enabled)
+        self.heartbeat_monitor = None
+        if self.settings.nats_enabled:
+            from shared.constants import NATS_URL
+            self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
 
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
@@ -930,8 +931,9 @@ class Dispatcher:
             await self.order_manager.initialize()
             await self.position_manager.initialize()
 
-            # Start heartbeat monitor
-            await self.heartbeat_monitor.start()
+            # Start heartbeat monitor (AC: Check if initialized)
+            if self.heartbeat_monitor:
+                await self.heartbeat_monitor.start()
 
             # CRITICAL FIX: Initialize strategy position manager in background
             # MySQL connection attempts can take 3+ minutes and will block startup
@@ -1192,23 +1194,23 @@ class Dispatcher:
                             f"Fail-safe: Allowing CLOSE action for {signal.symbol}"
                         )
                     else:
-                        # For buy/sell, we apply strict USD limit
-                        max_usd = 5000.0
+                        # For buy/sell, we apply strict USD limit (AC: Use constant from defaults)
+                        from tradeengine.defaults import FAIL_SAFE_PARAMETERS
+                        max_usd = FAIL_SAFE_PARAMETERS["max_position_size_usd"]
                         current_price = signal.current_price or signal.price
                         if current_price > 0:
                             restricted_qty = max_usd / current_price
                             if signal.quantity > restricted_qty:
                                 self.logger.warning(
                                     f"Fail-safe: Capping quantity for {signal.symbol} "
-                                    f"from {signal.quantity} to {restricted_qty:.6f} ($5000 limit)"
+                                    f"from {signal.quantity} to {restricted_qty:.6f} (${max_usd} limit)"
                                 )
                                 signal.quantity = restricted_qty
 
-                        # Force conservative leverage if signal has it in metadata
+                        # Force conservative leverage (AC: Use constant from defaults)
+                        max_leverage = FAIL_SAFE_PARAMETERS["max_leverage"]
                         if signal.metadata and "leverage" in signal.metadata:
-                            signal.metadata["leverage"] = min(
-                                int(signal.metadata["leverage"]), 10
-                            )
+                            signal.metadata["leverage"] = min(int(signal.metadata["leverage"]), max_leverage)
 
                 # Track signal reception in metrics
                 signals_received.labels(

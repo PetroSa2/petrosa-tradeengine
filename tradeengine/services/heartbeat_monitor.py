@@ -13,6 +13,8 @@ import nats
 import nats.aio.client
 from pydantic import BaseModel, Field
 
+from tradeengine.defaults import FAIL_SAFE_PARAMETERS
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,13 +40,15 @@ class HeartbeatMonitor:
         self,
         nats_url: str,
         subject: str = "cio.nurse.heartbeat",
-        timeout: float = 60.0,
-        recovery_threshold: int = 3,
+        timeout: Optional[float] = None,
+        recovery_threshold: Optional[int] = None,
     ):
         self.nats_url = nats_url
         self.subject = subject
-        self.timeout = timeout
-        self.recovery_threshold = recovery_threshold
+        self.timeout = timeout or FAIL_SAFE_PARAMETERS["heartbeat_timeout_seconds"]
+        self.recovery_threshold = (
+            recovery_threshold or FAIL_SAFE_PARAMETERS["recovery_threshold"]
+        )
 
         self.nats_client: nats.aio.client.Client | None = None
         self.last_heartbeat_time: float = 0
@@ -56,14 +60,28 @@ class HeartbeatMonitor:
     async def start(self):
         """Start the monitor and subscribe to heartbeats."""
         try:
-            self.nats_client = await nats.connect(self.nats_url)
+            # AC: Use robust NATS connection parameters for parity with consumer
+            self.nats_client = await nats.connect(
+                self.nats_url,
+                connect_timeout=10,
+                max_reconnect_attempts=10,
+                reconnect_time_wait=2,
+                ping_interval=20,
+                allow_reconnect=True,
+                name="tradeengine-heartbeat-monitor",
+            )
             await self.nats_client.subscribe(self.subject, cb=self._message_handler)
+
+            # AC: Set initial heartbeat time to start time to detect initial timeout
+            self.last_heartbeat_time = time.time()
             self.is_running = True
             self._monitor_task = asyncio.create_task(self._check_timeout_loop())
             logger.info(f"HeartbeatMonitor started, monitoring {self.subject}")
         except Exception as e:
             logger.error(f"HeartbeatMonitor failed to start: {e}")
             self.is_running = False
+            # AC: Enter restricted mode if monitor fails to start
+            await self._enter_restricted_mode()
 
     async def stop(self):
         """Stop the monitor and cleanup."""
@@ -77,9 +95,10 @@ class HeartbeatMonitor:
     async def _message_handler(self, msg):
         """Handle incoming heartbeat messages."""
         try:
-            # We don't necessarily need to parse the content to know it is alive,
-            # but we do it for validation.
+            # AC: Use model validation for heartbeats
             data = json.loads(msg.data.decode())
+            HeartbeatMessage.model_validate(data)
+
             self.last_heartbeat_time = time.time()
 
             if self.restricted_mode:
@@ -90,7 +109,9 @@ class HeartbeatMonitor:
                 self.consecutive_heartbeats = 0
 
         except Exception as e:
-            logger.error(f"HeartbeatMonitor failed to parse message: {e}")
+            logger.error(f"HeartbeatMonitor failed to parse/validate message: {e}")
+            # Reset consecutive heartbeats on invalid message
+            self.consecutive_heartbeats = 0
 
     async def _check_timeout_loop(self):
         """Background task to check for heartbeat timeouts."""
@@ -107,15 +128,17 @@ class HeartbeatMonitor:
 
     async def _enter_restricted_mode(self):
         """Enter RESTRICTED_MODE fail-safe."""
-        self.restricted_mode = True
-        self.consecutive_heartbeats = 0
-        logger.critical("🚨 ENTERING RESTRICTED_MODE: CIO heartbeat lost!")
+        if not self.restricted_mode:
+            self.restricted_mode = True
+            self.consecutive_heartbeats = 0
+            logger.critical("🚨 ENTERING RESTRICTED_MODE: CIO heartbeat lost!")
 
     async def _exit_restricted_mode(self):
         """Exit RESTRICTED_MODE and return to NORMAL_MODE."""
-        self.restricted_mode = False
-        self.consecutive_heartbeats = 0
-        logger.info("✅ EXITING RESTRICTED_MODE: CIO heartbeat recovered.")
+        if self.restricted_mode:
+            self.restricted_mode = False
+            self.consecutive_heartbeats = 0
+            logger.info("✅ EXITING RESTRICTED_MODE: CIO heartbeat recovered.")
 
     def is_restricted(self) -> bool:
         """Check if TradeEngine is in RESTRICTED_MODE."""

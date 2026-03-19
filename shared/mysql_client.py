@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 try:
     from datetime import UTC
 except ImportError:
-    UTC = UTC
+    UTC = timezone.utc
 
 from typing import Any, Optional
 

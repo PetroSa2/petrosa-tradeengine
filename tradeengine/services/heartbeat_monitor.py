@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import time
-from typing import Optional
 
 import nats
 import nats.aio.client
@@ -40,8 +39,8 @@ class HeartbeatMonitor:
         self,
         nats_url: str,
         subject: str = "cio.nurse.heartbeat",
-        timeout: Optional[float] = None,
-        recovery_threshold: Optional[int] = None,
+        timeout: float | None = None,
+        recovery_threshold: int | None = None,
     ):
         self.nats_url = nats_url
         self.subject = subject
@@ -50,12 +49,12 @@ class HeartbeatMonitor:
             recovery_threshold or FAIL_SAFE_PARAMETERS["recovery_threshold"]
         )
 
-        self.nats_client: Optional[nats.aio.client.Client] = None
+        self.nats_client: nats.aio.client.Client | None = None
         self.last_heartbeat_time: float = 0
         self.consecutive_heartbeats: int = 0
         self.restricted_mode: bool = False
         self.is_running: bool = False
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
 
     async def start(self):
         """Start the monitor and subscribe to heartbeats."""

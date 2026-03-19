@@ -996,7 +996,8 @@ class Dispatcher:
     async def close(self) -> None:
         """Close dispatcher components"""
         try:
-            await self.heartbeat_monitor.stop()
+            if self.heartbeat_monitor is not None:
+                await self.heartbeat_monitor.stop()
             await self.order_manager.close()
             await self.position_manager.close()
             await distributed_lock_manager.close()
@@ -1183,7 +1184,7 @@ class Dispatcher:
                 signal_received_at = time.time()
 
                 # FAIL-SAFE: Check if Heartbeat Monitor is in restricted mode
-                if self.heartbeat_monitor.is_restricted():
+                if self.heartbeat_monitor is not None and self.heartbeat_monitor.is_restricted():
                     self.logger.critical(
                         f"🛑 FAIL-SAFE ACTIVE: Throttling signal for {signal.symbol} "
                         f"due to RESTRICTED_MODE (CIO heartbeat lost)"

@@ -84,6 +84,7 @@ class DistributedLockManager:
         """Initialize MongoDB connection"""
         try:
             import motor.motor_asyncio
+            import pymongo.errors
 
             # Get MongoDB connection string from constants with validation
             from shared.constants import MONGODB_DATABASE, get_mongodb_connection_string
@@ -159,11 +160,13 @@ class DistributedLockManager:
                 if result:
                     logger.debug(f"Lock '{lock_name}' acquired by pod {self.pod_id}")
                     return True
-            except Exception as e:
+            except pymongo.errors.DuplicateKeyError:
                 # If upsert fails due to DuplicateKeyError, it means another pod just got it
-                if "duplicate key error" in str(e).lower():
-                    logger.debug(f"Race condition: Pod {self.pod_id} lost lock '{lock_name}' to another pod")
-                    return False
+                logger.debug(f"Race condition: Pod {self.pod_id} lost lock '{lock_name}' to another pod")
+                return False
+            except Exception as e:
+                # Log other errors but don't crash
+                logger.error(f"Unexpected error in find_one_and_update for lock '{lock_name}': {e}")
                 raise
 
             return False

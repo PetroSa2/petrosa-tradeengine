@@ -97,6 +97,17 @@ DEFAULT_TRADING_PARAMETERS = {
     "max_retries": 3,
 }
 
+# =============================================================================
+# FAIL-SAFE PARAMETERS (RESTRICTED MODE)
+# =============================================================================
+
+FAIL_SAFE_PARAMETERS = {
+    "max_position_size_usd": 5000.0,
+    "max_leverage": 10,
+    "recovery_threshold": 3,  # Consecutive heartbeats required to exit restricted mode
+    "heartbeat_timeout_seconds": 60.0,
+}
+
 
 # =============================================================================
 # PARAMETER SCHEMA (LLM-Friendly Documentation)

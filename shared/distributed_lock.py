@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
+import pymongo.errors
+
 from shared.config import Settings
 from shared.constants import get_mongodb_connection_string
 
@@ -84,7 +86,6 @@ class DistributedLockManager:
         """Initialize MongoDB connection"""
         try:
             import motor.motor_asyncio
-            import pymongo.errors
 
             # Get MongoDB connection string from constants with validation
             from shared.constants import MONGODB_DATABASE, get_mongodb_connection_string
@@ -135,10 +136,10 @@ class DistributedLockManager:
                 "lock_name": lock_name,
                 "$or": [
                     {"expires_at": {"$lt": datetime.utcnow()}},
-                    {"pod_id": self.pod_id}
-                ]
+                    {"pod_id": self.pod_id},
+                ],
             }
-            
+
             # Use find_one_and_update for atomic read-and-write with upsert fallback logic
             # Note: upsert in find_one_and_update can create duplicates if no match found,
             # so we use a unique index on lock_name (must be created in initialize)
@@ -154,19 +155,23 @@ class DistributedLockManager:
                         }
                     },
                     upsert=True,
-                    return_document=True
+                    return_document=True,
                 )
-                
+
                 if result:
                     logger.debug(f"Lock '{lock_name}' acquired by pod {self.pod_id}")
                     return True
             except pymongo.errors.DuplicateKeyError:
                 # If upsert fails due to DuplicateKeyError, it means another pod just got it
-                logger.debug(f"Race condition: Pod {self.pod_id} lost lock '{lock_name}' to another pod")
+                logger.debug(
+                    f"Race condition: Pod {self.pod_id} lost lock '{lock_name}' to another pod"
+                )
                 return False
             except Exception as e:
                 # Log other errors but don't crash
-                logger.error(f"Unexpected error in find_one_and_update for lock '{lock_name}': {e}")
+                logger.error(
+                    f"Unexpected error in find_one_and_update for lock '{lock_name}': {e}"
+                )
                 raise
 
             return False

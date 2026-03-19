@@ -1184,7 +1184,10 @@ class Dispatcher:
                 signal_received_at = time.time()
 
                 # FAIL-SAFE: Check if Heartbeat Monitor is in restricted mode
-                if self.heartbeat_monitor is not None and self.heartbeat_monitor.is_restricted():
+                if (
+                    self.heartbeat_monitor is not None
+                    and self.heartbeat_monitor.is_restricted()
+                ):
                     self.logger.critical(
                         f"🛑 FAIL-SAFE ACTIVE: Throttling signal for {signal.symbol} "
                         f"due to RESTRICTED_MODE (CIO heartbeat lost)"

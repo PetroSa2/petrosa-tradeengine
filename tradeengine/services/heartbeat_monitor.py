@@ -50,12 +50,12 @@ class HeartbeatMonitor:
             recovery_threshold or FAIL_SAFE_PARAMETERS["recovery_threshold"]
         )
 
-        self.nats_client: nats.aio.client.Client | None = None
+        self.nats_client: Optional[nats.aio.client.Client] = None
         self.last_heartbeat_time: float = 0
         self.consecutive_heartbeats: int = 0
         self.restricted_mode: bool = False
         self.is_running: bool = False
-        self._monitor_task: asyncio.Task | None = None
+        self._monitor_task: Optional[asyncio.Task] = None
 
     async def start(self):
         """Start the monitor and subscribe to heartbeats."""

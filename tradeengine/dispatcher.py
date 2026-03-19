@@ -919,6 +919,7 @@ class Dispatcher:
         self.heartbeat_monitor = None
         if self.settings.nats_enabled:
             from shared.constants import NATS_URL
+
             self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
 
     async def initialize(self) -> None:
@@ -1196,6 +1197,7 @@ class Dispatcher:
                     else:
                         # For buy/sell, we apply strict USD limit (AC: Use constant from defaults)
                         from tradeengine.defaults import FAIL_SAFE_PARAMETERS
+
                         max_usd = FAIL_SAFE_PARAMETERS["max_position_size_usd"]
                         current_price = signal.current_price or signal.price
                         if current_price > 0:
@@ -1210,7 +1212,9 @@ class Dispatcher:
                         # Force conservative leverage (AC: Use constant from defaults)
                         max_leverage = FAIL_SAFE_PARAMETERS["max_leverage"]
                         if signal.metadata and "leverage" in signal.metadata:
-                            signal.metadata["leverage"] = min(int(signal.metadata["leverage"]), max_leverage)
+                            signal.metadata["leverage"] = min(
+                                int(signal.metadata["leverage"]), max_leverage
+                            )
 
                 # Track signal reception in metrics
                 signals_received.labels(

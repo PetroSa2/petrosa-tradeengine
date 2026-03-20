@@ -7,15 +7,13 @@ petrosa-data-manager service, replacing all direct database access.
 
 import logging
 from datetime import datetime, timezone
-
-try:
-    from datetime import UTC
-except ImportError:
-    UTC = UTC
-
 from typing import Any, Optional
 
 from tradeengine.services.data_manager_client import DataManagerClient
+
+# Use timezone.utc as a reliable UTC constant for Python 3.10-3.11 compatibility
+# Ruff (UP017) wants datetime.UTC but we are on Python 3.10
+UTC = timezone.utc  # noqa: UP017
 
 logger = logging.getLogger(__name__)
 

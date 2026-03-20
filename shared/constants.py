@@ -170,6 +170,7 @@ NATS_URL = os.getenv(
     "NATS_URL", "nats://nats-server:4222"
 )  # From configmap: petrosa-common-config
 NATS_SIGNAL_SUBJECT = os.getenv("NATS_SIGNAL_SUBJECT", "signals.trading")
+NATS_TOPIC_HEARTBEAT = os.getenv("NATS_TOPIC_HEARTBEAT", "cio.heartbeat")
 NATS_QUEUE_GROUP = os.getenv("NATS_QUEUE_GROUP", "petrosa-tradeengine")
 NATS_CONNECT_TIMEOUT = int(os.getenv("NATS_CONNECT_TIMEOUT", "5"))
 NATS_RECONNECT_TIME_WAIT = int(os.getenv("NATS_RECONNECT_TIME_WAIT", "1"))

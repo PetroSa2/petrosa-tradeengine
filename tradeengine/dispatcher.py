@@ -920,7 +920,9 @@ class Dispatcher:
         if self.settings.nats_enabled:
             from shared.constants import NATS_URL
 
-            self.heartbeat_monitor = HeartbeatMonitor(nats_url=NATS_URL)
+            self.heartbeat_monitor = HeartbeatMonitor(
+                nats_url=NATS_URL, subject=self.settings.nats_topic_heartbeat
+            )
 
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""

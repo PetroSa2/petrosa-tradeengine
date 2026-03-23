@@ -2,11 +2,12 @@
 Comprehensive tests for tradeengine/db/mysql_config_repository.py to increase coverage
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 
 

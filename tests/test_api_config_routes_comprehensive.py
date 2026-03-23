@@ -18,7 +18,7 @@ Tests all endpoints in api_config_routes.py to achieve high coverage:
 - DELETE /config/limits/symbol/{symbol}
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +26,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from contracts.trading_config import TradingConfig
+from shared.constants import UTC
 from tradeengine.api import app
 from tradeengine.api_config_routes import get_config_manager, set_config_manager
 from tradeengine.config_manager import TradingConfigManager

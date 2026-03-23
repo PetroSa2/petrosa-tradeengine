@@ -8,10 +8,11 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from contracts.signal import SignalStrength, SignalType
+from shared.constants import UTC
 
 # Configure logging
 logging.basicConfig(

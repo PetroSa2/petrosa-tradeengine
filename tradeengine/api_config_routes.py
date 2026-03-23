@@ -7,13 +7,14 @@ at global, symbol, and symbol-side levels.
 
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
+from shared.constants import UTC
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.defaults import get_default_parameters, get_parameter_schema
 

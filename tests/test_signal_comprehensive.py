@@ -2,7 +2,7 @@
 Comprehensive tests for contracts/signal.py to increase coverage
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from contracts.signal import (
     TimeFrame,
     TimeInForce,
 )
+from shared.constants import UTC
 
 
 class TestEnums:

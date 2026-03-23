@@ -9,7 +9,9 @@ changes from the very beginning of the application lifecycle.
 
 import sys
 import traceback
-from datetime import UTC, datetime
+from datetime import datetime
+
+from shared.constants import UTC
 
 # Add current directory to Python path
 sys.path.insert(0, "/app")

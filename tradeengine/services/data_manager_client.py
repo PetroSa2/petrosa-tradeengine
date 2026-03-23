@@ -6,10 +6,11 @@ for audit logging and configuration management.
 """
 
 import os
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Optional
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 
 # Local Data Manager Client implementation
 # from data_manager_client import DataManagerClient as BaseDataManagerClient

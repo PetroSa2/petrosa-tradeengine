@@ -11,12 +11,13 @@ Related:
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from contracts.signal import Signal, StrategyMode
+from shared.constants import UTC
 from tests.integration.fakes import FakeExchange, FakePositionManager
 
 

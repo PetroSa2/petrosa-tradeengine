@@ -1,10 +1,12 @@
 """Tests for leverage_manager module"""
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+
+from shared.constants import UTC
 
 # Mock binance module before importing LeverageManager
 mock_binance = MagicMock()

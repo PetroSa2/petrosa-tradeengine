@@ -9,13 +9,13 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pymongo.errors
 
 from shared.config import Settings
-from shared.constants import get_mongodb_connection_string
+from shared.constants import UTC, get_mongodb_connection_string
 
 logger = logging.getLogger(__name__)
 

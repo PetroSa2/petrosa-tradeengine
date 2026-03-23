@@ -5,7 +5,7 @@ Unit tests for NATS trace context propagation in Trade Engine consumer.
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +18,8 @@ from opentelemetry.propagate import extract
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from shared.constants import UTC
 
 # Force Enable OTEL for this test file before any imports might check it
 os.environ["OTEL_SDK_DISABLED"] = "false"

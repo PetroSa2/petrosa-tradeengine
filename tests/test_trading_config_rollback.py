@@ -2,7 +2,7 @@
 Unit and integration tests for trading configuration rollback in Trade Engine.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 from tradeengine.api_config_routes import router, set_config_manager
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import DataManagerConfigClient

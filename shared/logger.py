@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from structlog.stdlib import LoggerFactory
 
 from shared.config import settings
+from shared.constants import UTC
 
 
 def configure_structlog():

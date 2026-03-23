@@ -12,7 +12,7 @@ This script tests:
 import asyncio
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 
 from contracts.signal import (
     OrderType,
@@ -21,6 +21,7 @@ from contracts.signal import (
     StrategyMode,
     TimeInForce,
 )
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 

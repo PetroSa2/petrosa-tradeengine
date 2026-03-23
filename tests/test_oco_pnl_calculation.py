@@ -4,10 +4,12 @@ Unit tests for OCO PNL calculation logic
 Tests the automatic PNL calculation when OCO orders (SL/TP) close positions.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from shared.constants import UTC
 
 
 class TestOCOPNLCalculation:

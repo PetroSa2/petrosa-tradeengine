@@ -629,7 +629,7 @@ async def get_metrics():
 | `MONGODB_URL` | `mongodb://localhost:27017` | MongoDB connection |
 | `MONGODB_DATABASE` | `petrosa` | MongoDB database name |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
-| `NATS_SIGNAL_SUBJECT` | `signals.trading` | NATS topic to consume |
+| `NATS_TOPIC_SIGNALS` | `signals.trading.*` | NATS topic to consume |
 | `STOP_LOSS_DEFAULT` | `2.0` | Default stop loss percentage |
 | `TAKE_PROFIT_DEFAULT` | `5.0` | Default take profit percentage |
 

@@ -1,7 +1,7 @@
 import logging
 import random
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -9,6 +9,7 @@ from shared.constants import (
     SIMULATION_DELAY_MS,
     SIMULATION_SLIPPAGE,
     SIMULATION_SUCCESS_RATE,
+    UTC,
 )
 
 logger = logging.getLogger(__name__)

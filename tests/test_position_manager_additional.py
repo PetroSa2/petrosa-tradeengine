@@ -16,11 +16,12 @@ Focus on uncovered methods:
 - reset_daily_pnl
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.position_manager import PositionManager
 
 

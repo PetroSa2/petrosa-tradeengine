@@ -7,9 +7,10 @@ to prevent query overload.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from shared.constants import UTC
 from tradeengine.models.metrics import (
     ErrorMetrics,
     LatencyMetrics,

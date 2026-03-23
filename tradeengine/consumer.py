@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import nats
@@ -9,6 +9,8 @@ import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import context, trace
 from opentelemetry.propagate import extract
+
+from shared.constants import UTC
 
 # Conditional import for compatibility
 try:
@@ -132,7 +134,7 @@ class SignalConsumer:
 
         # Ensure we use a wildcard to capture strategy-specific signals (e.g., signals.trading.rsi_reversal)
         # AC: Contract requires signals.trading.* or signals.trading.>
-        subject = settings.nats_signal_subject
+        subject = settings.nats_topic_signals
         if not subject.endswith(("*", ">")):
             subscribe_subject = f"{subject}.*"
             logger.info(
@@ -249,7 +251,9 @@ class SignalConsumer:
                 try:
                     # Set messaging attributes for observability
                     span.set_attribute("messaging.system", "nats")
-                    span.set_attribute("messaging.destination", "signals.trading")
+                    span.set_attribute(
+                        "messaging.destination", settings.nats_topic_signals
+                    )
                     span.set_attribute("messaging.operation", "receive")
 
                     # Add business context attributes to span

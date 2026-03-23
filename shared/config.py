@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     nats_url: str | None = None
     nats_servers: str | None = None
     # Align default with shared.constants default and TA bot publisher
-    nats_signal_subject: str = "signals.trading"
+    nats_topic_signals: str = "signals.trading.*"
     nats_topic_heartbeat: str = "cio.heartbeat"
 
     # API Configuration (for uvicorn)
@@ -88,8 +88,8 @@ class Settings(BaseSettings):
         # Set NATS configuration from constants
         from shared.constants import (
             NATS_ENABLED,
-            NATS_SIGNAL_SUBJECT,
             NATS_TOPIC_HEARTBEAT,
+            NATS_TOPIC_SIGNALS,
             get_nats_connection_string,
         )
 
@@ -101,8 +101,8 @@ class Settings(BaseSettings):
             self.nats_servers = None
 
         # Ensure subjects align with shared.constants if env not set
-        if not kwargs.get("nats_signal_subject"):
-            self.nats_signal_subject = NATS_SIGNAL_SUBJECT
+        if not kwargs.get("nats_topic_signals"):
+            self.nats_topic_signals = NATS_TOPIC_SIGNALS
 
         if not kwargs.get("nats_topic_heartbeat"):
             self.nats_topic_heartbeat = NATS_TOPIC_HEARTBEAT

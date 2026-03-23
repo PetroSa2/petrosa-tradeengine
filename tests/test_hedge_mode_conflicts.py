@@ -8,12 +8,13 @@ This module tests the critical fixes for hedge mode support:
 4. Proper position separation for LONG and SHORT
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 import pytest
 
 from contracts.order import TradeOrder
 from contracts.signal import OrderType, Signal, SignalStrength, TimeInForce
+from shared.constants import UTC
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import (
     DeterministicProcessor,

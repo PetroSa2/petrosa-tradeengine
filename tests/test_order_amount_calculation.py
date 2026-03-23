@@ -8,12 +8,13 @@ This test suite verifies that:
 4. Symbol-specific fallbacks are calculated correctly
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest import mock
 
 import pytest
 
 from contracts.signal import OrderType, Signal, TimeInForce
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

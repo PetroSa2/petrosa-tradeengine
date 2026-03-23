@@ -2,12 +2,13 @@
 Comprehensive tests for tradeengine/services/data_manager_client.py to increase coverage
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 
 

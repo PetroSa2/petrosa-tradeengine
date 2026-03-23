@@ -9,9 +9,23 @@ All modules should import constants from this file rather than defining their ow
 
 import os
 import warnings
-from datetime import UTC
-from enum import StrEnum
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
+
+# Compatibility shims for Python < 3.11
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc  # noqa: UP017
+
+try:
+    from enum import StrEnum
+except ImportError:
+
+    class StrEnum(str, Enum):  # type: ignore
+        pass
+
 
 # =============================================================================
 # ENVIRONMENT CONFIGURATION
@@ -158,7 +172,7 @@ NATS_ENABLED = os.getenv("NATS_ENABLED", "false").lower() == "true"
 NATS_URL = os.getenv(
     "NATS_URL", "nats://nats-server:4222"
 )  # From configmap: petrosa-common-config
-NATS_SIGNAL_SUBJECT = os.getenv("NATS_SIGNAL_SUBJECT", "signals.trading")
+NATS_TOPIC_SIGNALS = os.getenv("NATS_TOPIC_SIGNALS", "signals.trading.*")
 NATS_TOPIC_HEARTBEAT = os.getenv("NATS_TOPIC_HEARTBEAT", "cio.heartbeat")
 NATS_QUEUE_GROUP = os.getenv("NATS_QUEUE_GROUP", "petrosa-tradeengine")
 NATS_CONNECT_TIMEOUT = int(os.getenv("NATS_CONNECT_TIMEOUT", "5"))
@@ -587,7 +601,7 @@ def get_config_summary() -> dict[str, Any]:
             "nats_enabled": NATS_ENABLED,
             "nats_url": NATS_URL,
             "nats_servers": NATS_SERVERS,
-            "nats_signal_subject": NATS_SIGNAL_SUBJECT,
+            "nats_topic_signals": NATS_TOPIC_SIGNALS,
         },
         "trading": {
             "simulation_enabled": SIMULATION_ENABLED,

@@ -5,7 +5,7 @@ management using Data Manager API and MongoDB for coordination only.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -16,6 +16,7 @@ from shared.constants import (
     MAX_PORTFOLIO_EXPOSURE_PCT,
     MAX_POSITION_SIZE_PCT,
     RISK_MANAGEMENT_ENABLED,
+    UTC,
     get_mongodb_connection_string,
 )
 

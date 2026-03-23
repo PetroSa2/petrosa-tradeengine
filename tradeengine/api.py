@@ -2,13 +2,15 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
 from pydantic import BaseModel
+
+from shared.constants import UTC
 
 # Optional OpenTelemetry imports
 try:

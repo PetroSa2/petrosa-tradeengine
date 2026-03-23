@@ -10,12 +10,13 @@ This test suite covers:
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from contracts.order import OrderType, TradeOrder
+from shared.constants import UTC
 from tradeengine.order_manager import OrderManager
 
 

@@ -5,7 +5,7 @@ management using Data Manager API and MongoDB for coordination only.
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.order import TradeOrder

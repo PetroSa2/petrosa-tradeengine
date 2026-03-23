@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from opentelemetry import trace

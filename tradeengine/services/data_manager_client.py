@@ -6,7 +6,7 @@ for audit logging and configuration management.
 """
 
 import os
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
@@ -36,13 +36,6 @@ class BaseDataManagerClient:
     # NEW METHODS - Implement missing Data Manager methods
     async def query(self, database: str, collection: str, **kwargs):
         """Query records."""
-        # Extract parameters
-        params = kwargs.get("params", {})
-        filter_dict = params.get("filter", {})
-        limit = params.get("limit", 100)
-        sort_by = params.get("sort_by", "_id")
-        sort_order = params.get("sort_order", "asc")
-
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return empty to avoid errors
         return {"data": []}

@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -138,13 +138,11 @@ class AuditLogger:
             try:
                 async with self.async_session() as session:
                     await session.execute(
-                        text(
-                            """
+                        text("""
                             INSERT INTO trade_audit_log
                             (timestamp, order_data, result_data, signal_meta)
                             VALUES (:timestamp, :order_data, :result_data, :signal_meta)
-                            """
-                        ),
+                            """),
                         {
                             "timestamp": audit_record["timestamp"],
                             "order_data": json.dumps(audit_record["order_data"]),

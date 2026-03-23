@@ -2,7 +2,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query

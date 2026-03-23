@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pymongo.errors

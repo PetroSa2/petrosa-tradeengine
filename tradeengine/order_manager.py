@@ -4,8 +4,8 @@ Order Manager - Tracks orders and manages conditional execution
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 import time
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -45,7 +45,9 @@ class OrderManager:
 
     async def track_order(self, order: TradeOrder, result: dict[str, Any]) -> None:
         """Track an executed order"""
-        order_id = result.get("order_id", f"order_{int(datetime.now(timezone.utc).timestamp())}")
+        order_id = result.get(
+            "order_id", f"order_{int(datetime.now(UTC).timestamp())}"
+        )
 
         order_info = {
             "order_id": order_id,
@@ -55,7 +57,7 @@ class OrderManager:
             "quantity": order.amount,
             "price": order.target_price,
             "status": result.get("status", "unknown"),
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
             "result": result,
             "original_order": order.model_dump(),
         }
@@ -89,7 +91,7 @@ class OrderManager:
             "conditional_price": order.meta.get("conditional_price"),
             "conditional_direction": order.meta.get("conditional_direction"),
             "timeout": order.meta.get("conditional_timeout", CONDITIONAL_ORDER_TIMEOUT),
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
             "status": "waiting_for_condition",
             "original_order": order.model_dump(),
         }
@@ -114,9 +116,9 @@ class OrderManager:
         order_info = self.conditional_orders[order_id]
         timeout = order_info.get("timeout", CONDITIONAL_ORDER_TIMEOUT)
 
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
-        while datetime.now(timezone.utc) - start_time < timedelta(seconds=timeout):
+        while datetime.now(UTC) - start_time < timedelta(seconds=timeout):
             try:
                 # Check current price
                 current_price = await self._get_current_price(order_info["symbol"])
@@ -141,7 +143,7 @@ class OrderManager:
         if order_id in self.conditional_orders:
             order_info = self.conditional_orders[order_id]
             order_info["status"] = "timeout"
-            order_info["timeout_at"] = datetime.now(timezone.utc)
+            order_info["timeout_at"] = datetime.now(UTC)
             self.order_history.append(order_info)
             del self.conditional_orders[order_id]
             audit_logger.log_event("conditional_order_timeout", order_info)
@@ -169,7 +171,7 @@ class OrderManager:
         # Check cache first
         if symbol in self.price_cache:
             last_update = self.last_price_update.get(symbol, datetime.min)
-            if datetime.now(timezone.utc) - last_update < timedelta(seconds=30):
+            if datetime.now(UTC) - last_update < timedelta(seconds=30):
                 return self.price_cache[symbol]
 
         # This would integrate with price feed
@@ -181,7 +183,7 @@ class OrderManager:
 
         # Update cache
         self.price_cache[symbol] = current_price
-        self.last_price_update[symbol] = datetime.now(timezone.utc)
+        self.last_price_update[symbol] = datetime.now(UTC)
 
         return current_price
 
@@ -196,7 +198,7 @@ class OrderManager:
         # This would integrate with the exchange to place the actual order
         # For now, just mark as executed
         order_info["status"] = "executed"
-        order_info["executed_at"] = datetime.now(timezone.utc)
+        order_info["executed_at"] = datetime.now(UTC)
         order_info["execution_price"] = await self._get_current_price(
             order_info["symbol"]
         )
@@ -243,7 +245,7 @@ class OrderManager:
         if order_id in self.active_orders:
             order_info = self.active_orders[order_id]
             order_info["status"] = "cancelled"
-            order_info["cancelled_at"] = datetime.now(timezone.utc)
+            order_info["cancelled_at"] = datetime.now(UTC)
             self.order_history.append(order_info)
             del self.active_orders[order_id]
             logger.info(f"Order {order_id} cancelled")
@@ -253,7 +255,7 @@ class OrderManager:
         if order_id in self.conditional_orders:
             order_info = self.conditional_orders[order_id]
             order_info["status"] = "cancelled"
-            order_info["cancelled_at"] = datetime.now(timezone.utc)
+            order_info["cancelled_at"] = datetime.now(UTC)
             self.order_history.append(order_info)
             del self.conditional_orders[order_id]
             logger.info(f"Conditional order {order_id} cancelled")

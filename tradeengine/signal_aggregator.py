@@ -9,7 +9,7 @@ and risk management rules. Supports three modes: deterministic, ML light, "
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from contracts.signal import Signal, TimeFrame
@@ -40,7 +40,7 @@ class SignalAggregator:
 
     def _cleanup_old_signals(self) -> None:
         """Remove old signals from active signals"""
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=1)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=1)
         expired_keys = [
             key
             for key, signal in self.active_signals.items()

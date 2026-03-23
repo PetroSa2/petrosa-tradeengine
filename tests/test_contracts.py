@@ -1,3 +1,5 @@
+from datetime import UTC
+
 import pytest
 from pydantic import ValidationError
 
@@ -420,7 +422,7 @@ def test_signal_timestamp_validator() -> None:
     assert isinstance(signal.timestamp, datetime)
 
     # Test with datetime object
-    dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     signal = Signal(
         strategy_id="test",
         symbol="BTCUSDT",

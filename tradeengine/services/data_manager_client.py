@@ -6,7 +6,7 @@ for audit logging and configuration management.
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any, Optional
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
@@ -183,7 +183,7 @@ class DataManagerClient:
         """Set global trading configuration."""
         try:
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(timezone.utc)
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -249,7 +249,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(timezone.utc)
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -319,7 +319,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(timezone.utc)
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -441,7 +441,7 @@ class DataManagerClient:
         """Set leverage status for symbol."""
         try:
             status_dict = status.model_dump(exclude={"id"})
-            status_dict["updated_at"] = datetime.now(timezone.utc)
+            status_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",

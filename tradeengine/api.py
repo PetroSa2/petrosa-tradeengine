@@ -2,7 +2,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -382,7 +382,7 @@ async def health_check() -> HealthResponse:
         return HealthResponse(
             status="healthy" if all_healthy else "degraded",
             version=os.getenv("SERVICE_VERSION", "1.2.13"),
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             components=components,
         )
     except Exception as e:
@@ -410,7 +410,7 @@ async def get_distributed_state() -> dict[str, Any]:
                     "database_connected", False
                 ),
             },
-            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat() + "Z",
         }
     except Exception as err:
         logger.error(f"Error getting distributed state: {err}")
@@ -449,7 +449,7 @@ async def liveness_check() -> dict[str, Any]:
     """Liveness probe for Kubernetes"""
     try:
         # Simple liveness check
-        return {"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()}
+        return {"status": "alive", "timestamp": datetime.now(UTC).isoformat()}
     except Exception as e:
         logger.error(f"Liveness check error: {e}")
         raise HTTPException(status_code=500, detail=f"Not alive: {e}")
@@ -544,7 +544,7 @@ async def process_trade(
                                 {
                                     "signal": signal.model_dump(),
                                     "result": result,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "timestamp": datetime.now(UTC).isoformat(),
                                 }
                             )
 
@@ -614,7 +614,7 @@ async def process_single_signal(signal: Signal) -> dict[str, Any]:
                 "status": "success",
                 "signal": signal.model_dump(),
                 "result": result,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
         except Exception as e:
             logger.error(f"Single signal processing error: {e}")
@@ -651,7 +651,7 @@ async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
                 "status": "success",
                 "order": order.model_dump(),
                 "result": result,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
         except Exception as e:
             logger.error(f"Advanced order placement error: {e}")
@@ -765,7 +765,7 @@ async def get_price(symbol: str) -> dict[str, Any]:
             "symbol": symbol,
             "price": price,
             "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Price fetch error for {symbol}: {e}")
@@ -793,7 +793,7 @@ async def cancel_order(symbol: str, order_id: str) -> dict[str, Any]:
             "order_id": order_id,
             "result": result,
             "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Order cancellation error: {e}")
@@ -821,7 +821,7 @@ async def get_order_status(symbol: str, order_id: str) -> dict[str, Any]:
             "order_id": order_id,
             "result": result,
             "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Order status error: {e}")
@@ -837,7 +837,7 @@ async def get_signal_summary() -> dict[str, Any]:
         return {
             "status": "success",
             "summary": summary,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Signal summary error: {e}")
@@ -856,7 +856,7 @@ async def set_strategy_weight(strategy_id: str, weight: float) -> dict[str, Any]
             "status": "success",
             "strategy_id": strategy_id,
             "weight": weight,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Strategy weight error: {e}")
@@ -940,8 +940,7 @@ async def get_active_signals(
                     isinstance(s["timestamp"], datetime)
                     and s["timestamp"] >= from_time
                     or isinstance(s["timestamp"], str)
-                    and datetime.fromisoformat(s["timestamp"])
-                    >= from_time
+                    and datetime.fromisoformat(s["timestamp"]) >= from_time
                 )
             ]
 
@@ -954,8 +953,7 @@ async def get_active_signals(
                     isinstance(s["timestamp"], datetime)
                     and s["timestamp"] <= to_time
                     or isinstance(s["timestamp"], str)
-                    and datetime.fromisoformat(s["timestamp"])
-                    <= to_time
+                    and datetime.fromisoformat(s["timestamp"]) <= to_time
                 )
             ]
 
@@ -984,7 +982,7 @@ async def get_active_signals(
                 "from": from_time.isoformat() if from_time else None,
                 "to": to_time.isoformat() if to_time else None,
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Active signals error: {e}")
@@ -1129,7 +1127,7 @@ async def get_positions(
                 "by": sort_by,
                 "order": sort_order,
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Positions error: {e}")
@@ -1146,7 +1144,7 @@ async def get_position(symbol: str) -> dict[str, Any]:
             "status": "success",
             "symbol": symbol,
             "position": position,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Position error for {symbol}: {e}")
@@ -1232,7 +1230,7 @@ async def get_orders(
                 "by": sort_by,
                 "order": sort_order,
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Orders error: {e}")
@@ -1259,7 +1257,7 @@ async def get_order(order_id: str) -> dict[str, Any]:
             "order_id": order_id,
             "result": result,
             "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Order error: {e}")
@@ -1286,7 +1284,7 @@ async def cancel_order_by_id(order_id: str) -> dict[str, Any]:
             "order_id": order_id,
             "result": result,
             "source": source,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     except Exception as e:
         logger.error(f"Order cancellation error: {e}")

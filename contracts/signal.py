@@ -1,17 +1,5 @@
 from datetime import UTC, datetime
-
-try:
-    from enum import StrEnum
-except ImportError:
-    from enum import Enum
-
-    class StrEnum(str, Enum):  # noqa: UP042
-        """Shim for StrEnum in Python < 3.11"""
-
-        def __str__(self) -> str:
-            return str(self.value)
-
-
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -211,7 +199,7 @@ class Signal(BaseModel):
                     timestamp_float = float(v)
                     # Validate it's a reasonable Unix timestamp (after year 2000, before year 2100)
                     if 946684800 <= timestamp_float <= 4102444800:
-                        return datetime.fromtimestamp(timestamp_float)
+                        return datetime.fromtimestamp(timestamp_float, tz=UTC)
                     else:
                         # Invalid timestamp, log warning and use current time
                         import logging

@@ -5,7 +5,7 @@ Order Manager - Tracks orders and manages conditional execution
 import asyncio
 import logging
 import time
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from contracts.order import TradeOrder

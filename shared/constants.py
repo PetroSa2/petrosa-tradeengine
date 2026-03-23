@@ -9,7 +9,7 @@ All modules should import constants from this file rather than defining their ow
 
 import os
 import warnings
-from datetime import UTC, timezone
+from datetime import UTC
 from enum import StrEnum
 from typing import Any
 

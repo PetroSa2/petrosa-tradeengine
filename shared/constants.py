@@ -9,17 +9,8 @@ All modules should import constants from this file rather than defining their ow
 
 import os
 import warnings
-
-try:
-    from enum import StrEnum
-except ImportError:
-    from enum import Enum
-
-    class StrEnum(str, Enum):  # noqa: UP042
-        """Shim for StrEnum in Python < 3.11"""
-
-        def __str__(self) -> str:
-            return str(self.value)
+from datetime import timezone, UTC
+from enum import StrEnum
 
 
 from typing import Any

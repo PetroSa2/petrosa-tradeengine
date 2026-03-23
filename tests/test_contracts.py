@@ -164,7 +164,7 @@ def test_signal_serialization(sample_signal: Signal) -> None:
 
 def test_signal_model_config_json_encoders() -> None:
     """Test Signal model_config json_encoders (Pydantic v2)"""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     signal = Signal(
         strategy_id="test",
@@ -210,7 +210,7 @@ def test_order_serialization(sample_order: TradeOrder) -> None:
 
 def test_order_model_config_json_encoders() -> None:
     """Test TradeOrder model_config json_encoders (Pydantic v2)"""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     order = TradeOrder(
         symbol="BTCUSDT",
@@ -387,7 +387,7 @@ def test_signal_field_validators() -> None:
 
 def test_signal_timestamp_validator() -> None:
     """Test Signal timestamp field validator (Pydantic v2)"""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Test with ISO format string
     signal = Signal(
@@ -420,7 +420,7 @@ def test_signal_timestamp_validator() -> None:
     assert isinstance(signal.timestamp, datetime)
 
     # Test with datetime object
-    dt = datetime(2024, 1, 1, 12, 0, 0)
+    dt = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     signal = Signal(
         strategy_id="test",
         symbol="BTCUSDT",

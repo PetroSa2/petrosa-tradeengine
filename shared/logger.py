@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -128,7 +128,7 @@ class AuditLogger:
 
         # Create audit record
         audit_record: dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "order_data": order,
             "result_data": result,
             "signal_meta": signal_meta or {},

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from enum import StrEnum
@@ -192,7 +192,7 @@ class Signal(BaseModel):
 
     # Timestamp
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Signal timestamp"
+        default_factory=lambda: datetime.now(timezone.utc), description="Signal timestamp"
     )
 
     @field_validator("timestamp", mode="before")
@@ -202,7 +202,7 @@ class Signal(BaseModel):
         if isinstance(v, str):
             # Parse ISO format string
             try:
-                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(v)
                 return dt
             except ValueError:
                 # Try parsing as Unix timestamp
@@ -220,7 +220,7 @@ class Signal(BaseModel):
                             f"Invalid timestamp value '{v}' - using current time. "
                             f"Timestamp should be ISO format string or Unix timestamp."
                         )
-                        return datetime.utcnow()
+                        return datetime.now(timezone.utc)
                 except (ValueError, TypeError):
                     # Can't parse as float either, log warning and use current time
                     import logging
@@ -230,11 +230,11 @@ class Signal(BaseModel):
                         f"Invalid timestamp format '{v}' - using current time. "
                         f"Timestamp should be ISO format string or Unix timestamp."
                     )
-                    return datetime.utcnow()
+                    return datetime.now(timezone.utc)
         elif isinstance(v, int | float):
             # Unix timestamp - validate range
             if 946684800 <= v <= 4102444800:
-                return datetime.fromtimestamp(v)
+                return datetime.fromtimestamp(v, tz=timezone.utc)
             else:
                 import logging
 
@@ -242,15 +242,17 @@ class Signal(BaseModel):
                 logger.warning(
                     f"Unix timestamp {v} out of valid range - using current time"
                 )
-                return datetime.utcnow()
+                return datetime.now(timezone.utc)
         elif isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=timezone.utc)
             return v
         else:
             import logging
 
             logger = logging.getLogger(__name__)
             logger.warning(f"Invalid timestamp type {type(v)} - using current time")
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
 
     @field_validator("confidence", "model_confidence")
     @classmethod

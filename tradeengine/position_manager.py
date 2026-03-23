@@ -5,7 +5,7 @@ management using Data Manager API and MongoDB for coordination only.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -113,7 +113,7 @@ class PositionManager:
             return False
 
         async with self.portfolio_value_lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             # Check cache (5s duration as per ticket AC)
             if (
                 self.portfolio_value_last_update
@@ -202,13 +202,13 @@ class PositionManager:
                     "realized_pnl": float(doc.get("realized_pnl", 0.0)),
                     "total_cost": float(doc.get("total_cost", 0.0)),
                     "total_value": float(doc.get("total_value", 0.0)),
-                    "entry_time": doc.get("entry_time", datetime.utcnow()),
-                    "last_update": doc.get("last_update", datetime.utcnow()),
+                    "entry_time": doc.get("entry_time", datetime.now(timezone.utc)),
+                    "last_update": doc.get("last_update", datetime.now(timezone.utc)),
                     "status": doc.get("status", "open"),
                 }
 
             self.positions = positions
-            self.last_sync_time = datetime.utcnow()
+            self.last_sync_time = datetime.now(timezone.utc)
             logger.info(f"Loaded {len(positions)} positions from Data Manager")
 
         except Exception as e:
@@ -218,7 +218,7 @@ class PositionManager:
     async def _load_daily_pnl_from_data_manager(self) -> None:
         """Load daily P&L from Data Manager"""
         try:
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).date()
             daily_pnl = await position_client.get_daily_pnl(today.isoformat())
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
@@ -258,15 +258,15 @@ class PositionManager:
                         "entry_time": position["entry_time"],
                         "last_update": position["last_update"],
                         "status": "open",
-                        "updated_at": datetime.utcnow(),
+                        "updated_at": datetime.now(timezone.utc),
                     }
                     await position_client.upsert_position(position_data)
 
                 # Update daily P&L in Data Manager
-                today = datetime.utcnow().date().isoformat()
+                today = datetime.now(timezone.utc).date().isoformat()
                 await position_client.update_daily_pnl(today, self.daily_pnl)
 
-                self.last_sync_time = datetime.utcnow()
+                self.last_sync_time = datetime.now(timezone.utc)
                 logger.debug("Positions synced to Data Manager")
 
             except Exception as e:
@@ -307,8 +307,8 @@ class PositionManager:
                     "avg_price": 0.0,
                     "unrealized_pnl": 0.0,
                     "realized_pnl": 0.0,
-                    "last_update": datetime.utcnow(),
-                    "entry_time": datetime.utcnow(),
+                    "last_update": datetime.now(timezone.utc),
+                    "entry_time": datetime.now(timezone.utc),
                     "total_cost": 0.0,
                     "total_value": 0.0,
                     "accumulation_count": 0,  # NEW: Track accumulations
@@ -438,7 +438,7 @@ class PositionManager:
                         del self.positions[position_key]
                         return
 
-            position["last_update"] = datetime.utcnow()
+            position["last_update"] = datetime.now(timezone.utc)
 
             # Calculate unrealized PnL (hedge mode aware)
             # For LONG: profit when current price > avg price
@@ -525,8 +525,8 @@ class PositionManager:
                 position_side,
                 {
                     "status": "closed",
-                    "last_update": datetime.utcnow(),
-                    "closed_at": datetime.utcnow(),
+                    "last_update": datetime.now(timezone.utc),
+                    "closed_at": datetime.now(timezone.utc),
                     "final_realized_pnl": position["realized_pnl"],
                 },
             )
@@ -610,7 +610,7 @@ class PositionManager:
                 "position_side": order.position_side or "LONG",
                 "entry_price": fill_price,
                 "quantity": fill_amount,
-                "entry_time": datetime.utcnow(),
+                "entry_time": datetime.now(timezone.utc),
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
                 "status": "open",
@@ -731,7 +731,7 @@ class PositionManager:
         try:
             # Calculate closure data
             exit_price = exit_result.get("exit_price", 0.0)
-            exit_time = exit_result.get("exit_time", datetime.utcnow())
+            exit_time = exit_result.get("exit_time", datetime.now(timezone.utc))
             entry_price = exit_result.get("entry_price", 0.0)
             quantity = exit_result.get("quantity", 0.0)
             entry_time = exit_result.get("entry_time", exit_time)
@@ -1065,8 +1065,8 @@ class PositionManager:
                     "realized_pnl": float(doc.get("realized_pnl", 0.0)),
                     "total_cost": float(doc.get("total_cost", 0.0)),
                     "total_value": float(doc.get("total_value", 0.0)),
-                    "entry_time": doc.get("entry_time", datetime.utcnow()),
-                    "last_update": doc.get("last_update", datetime.utcnow()),
+                    "entry_time": doc.get("entry_time", datetime.now(timezone.utc)),
+                    "last_update": doc.get("last_update", datetime.now(timezone.utc)),
                     "status": doc.get("status", "open"),
                 }
 
@@ -1106,7 +1106,7 @@ class PositionManager:
     async def _refresh_daily_pnl_from_data_manager(self) -> None:
         """Refresh daily P&L from Data Manager"""
         try:
-            today = datetime.utcnow().date().isoformat()
+            today = datetime.now(timezone.utc).date().isoformat()
             daily_pnl = await position_client.get_daily_pnl(today)
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
@@ -1260,7 +1260,7 @@ class PositionManager:
 
         # Sync to Data Manager
         try:
-            today = datetime.utcnow().date().isoformat()
+            today = datetime.now(timezone.utc).date().isoformat()
             await position_client.update_daily_pnl(today, 0.0)
         except Exception as e:
             logger.error(f"Failed to reset daily P&L in Data Manager: {e}")

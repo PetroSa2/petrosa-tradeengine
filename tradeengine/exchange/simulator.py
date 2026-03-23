@@ -1,11 +1,6 @@
 import logging
 import random
-from datetime import datetime, timezone
-
-try:
-    from datetime import UTC
-except ImportError:
-    UTC = UTC
+from datetime import datetime, UTC
 
 from typing import Any
 

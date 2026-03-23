@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pymongo.errors
@@ -125,7 +125,7 @@ class DistributedLockManager:
             return False
 
         timeout = timeout_seconds or self.lock_timeout
-        expires_at = datetime.utcnow() + timedelta(seconds=timeout)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=timeout)
 
         try:
             distributed_locks = self.mongodb_db.distributed_locks
@@ -135,7 +135,7 @@ class DistributedLockManager:
             filter_query = {
                 "lock_name": lock_name,
                 "$or": [
-                    {"expires_at": {"$lt": datetime.utcnow()}},
+                    {"expires_at": {"$lt": datetime.now(timezone.utc)}},
                     {"pod_id": self.pod_id},
                 ],
             }
@@ -149,9 +149,9 @@ class DistributedLockManager:
                     {
                         "$set": {
                             "pod_id": self.pod_id,
-                            "acquired_at": datetime.utcnow(),
+                            "acquired_at": datetime.now(timezone.utc),
                             "expires_at": expires_at,
-                            "updated_at": datetime.utcnow(),
+                            "updated_at": datetime.now(timezone.utc),
                         }
                     },
                     upsert=True,
@@ -222,7 +222,7 @@ class DistributedLockManager:
                 # Check if current leader is stale (no heartbeat for 30 seconds)
                 if (
                     last_heartbeat
-                    and (datetime.utcnow() - last_heartbeat).total_seconds() < 30
+                    and (datetime.now(timezone.utc) - last_heartbeat).total_seconds() < 30
                 ):
                     # Current leader is still active
                     self.is_leader = False
@@ -238,9 +238,9 @@ class DistributedLockManager:
                 {
                     "$set": {
                         "pod_id": self.pod_id,
-                        "elected_at": datetime.utcnow(),
-                        "last_heartbeat": datetime.utcnow(),
-                        "updated_at": datetime.utcnow(),
+                        "elected_at": datetime.now(timezone.utc),
+                        "last_heartbeat": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
                     }
                 },
                 upsert=True,
@@ -300,8 +300,8 @@ class DistributedLockManager:
                         {"pod_id": self.pod_id, "status": "leader"},
                         {
                             "$set": {
-                                "last_heartbeat": datetime.utcnow(),
-                                "updated_at": datetime.utcnow(),
+                                "last_heartbeat": datetime.now(timezone.utc),
+                                "updated_at": datetime.now(timezone.utc),
                             }
                         },
                     )
@@ -321,7 +321,7 @@ class DistributedLockManager:
                 if self.mongodb_db is not None:
                     distributed_locks = self.mongodb_db.distributed_locks
                     result = await distributed_locks.delete_many(
-                        {"expires_at": {"$lt": datetime.utcnow()}}
+                        {"expires_at": {"$lt": datetime.now(timezone.utc)}}
                     )
 
                     if result.deleted_count > 0:

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from opentelemetry import trace
@@ -1732,7 +1733,6 @@ class Dispatcher:
     def _signal_to_order(self, signal: Signal) -> TradeOrder:
         """Convert a signal to a trade order with dynamic minimum amounts"""
         import uuid
-        from datetime import datetime
 
         # Calculate order amount based on signal quantity or dynamic minimum
         amount = self._calculate_order_amount(signal)
@@ -1769,7 +1769,7 @@ class Dispatcher:
 
         # Create the order
         order = TradeOrder(
-            order_id=f"order_{signal.strategy_id}_{datetime.utcnow().timestamp()}",
+            order_id=f"order_{signal.strategy_id}_{datetime.now(timezone.utc).timestamp()}",
             symbol=signal.symbol,
             side=signal.action,
             type=signal.order_type.value,
@@ -2371,8 +2371,7 @@ class Dispatcher:
     ) -> None:
         """Place stop loss order"""
         try:
-            from datetime import datetime
-
+    
             from contracts.order import OrderStatus, TradeOrder
 
             # Get the filled quantity with robust extraction
@@ -2425,7 +2424,7 @@ class Dispatcher:
 
             # Create stop loss order
             stop_loss_order = TradeOrder(
-                order_id=f"sl_{order.order_id}_{datetime.utcnow().timestamp()}",
+                order_id=f"sl_{order.order_id}_{datetime.now(timezone.utc).timestamp()}",
                 symbol=order.symbol,
                 side=(
                     "sell" if order.side == "buy" else "buy"
@@ -2441,8 +2440,8 @@ class Dispatcher:
                 strategy_metadata=order.strategy_metadata,
                 reduce_only=True,  # This is a position-closing order
                 status=OrderStatus.PENDING,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 # Optional fields with defaults
                 conditional_price=None,
                 conditional_direction=None,
@@ -2506,8 +2505,7 @@ class Dispatcher:
     ) -> None:
         """Place take profit order"""
         try:
-            from datetime import datetime
-
+    
             from contracts.order import OrderStatus, TradeOrder
 
             # Get the filled quantity with robust extraction
@@ -2560,7 +2558,7 @@ class Dispatcher:
 
             # Create take profit order
             take_profit_order = TradeOrder(
-                order_id=f"tp_{order.order_id}_{datetime.utcnow().timestamp()}",
+                order_id=f"tp_{order.order_id}_{datetime.now(timezone.utc).timestamp()}",
                 symbol=order.symbol,
                 side=(
                     "sell" if order.side == "buy" else "buy"
@@ -2575,8 +2573,8 @@ class Dispatcher:
                 strategy_metadata=order.strategy_metadata,
                 reduce_only=True,  # This is a position-closing order
                 status=OrderStatus.PENDING,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
                 # Optional fields with defaults
                 stop_loss=None,
                 conditional_price=None,

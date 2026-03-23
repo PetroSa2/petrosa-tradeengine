@@ -11,7 +11,7 @@ Related:
 """
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -46,7 +46,7 @@ def sample_signal():
         price=50000.0,
         quantity=0.001,
         current_price=50000.0,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         source="test",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -154,7 +154,7 @@ async def test_lock_prevents_concurrent_processing(
         # duplicate cache IDs due to mocking
         import time
 
-        base_timestamp = datetime.utcnow()
+        base_timestamp = datetime.now(UTC)
         shared_signal_id = f"test-lock-signal-{int(time.time())}"
 
         signal1 = create_signal_with_fingerprint(
@@ -164,10 +164,10 @@ async def test_lock_prevents_concurrent_processing(
             sample_signal, shared_signal_id, base_timestamp
         )
 
-        # Patch _generate_signal_id to bypass duplicate cache
+        # Patch _generate_signal_id to bypass duplicate cache and disable accumulation cooldown
         with patch.object(
             dispatcher, "_generate_signal_id", side_effect=mock_generate_signal_id
-        ):
+        ), patch("shared.constants.ACCUMULATION_COOLDOWN_SECONDS", 0):
             # Process signals concurrently (simulating two pods)
             # Both signals will have the same fingerprint, so they'll use the same lock key
             results = await asyncio.gather(
@@ -483,7 +483,7 @@ async def test_second_pod_waits_for_first_pod_lock_release(
         # duplicate cache IDs due to mocking
         import time
 
-        base_timestamp = datetime.utcnow()
+        base_timestamp = datetime.now(UTC)
         shared_signal_id = f"test-sequential-lock-signal-{int(time.time())}"
 
         signal1 = create_signal_with_fingerprint(

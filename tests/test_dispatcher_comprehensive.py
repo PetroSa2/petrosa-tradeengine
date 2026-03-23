@@ -11,7 +11,7 @@ This test suite covers:
 """
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -75,7 +75,7 @@ def sample_signal():
         source="test",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         order_type=OrderType.MARKET,
         time_in_force=TimeInForce.GTC,
     )

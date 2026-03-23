@@ -4,7 +4,7 @@ Comprehensive tests for tradeengine/config_manager.py to increase coverage
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -206,8 +206,8 @@ class TestTradingConfigManagerGetConfig:
         global_config = TradingConfig(
             parameters={"leverage": 20},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=global_config)
 
@@ -223,8 +223,8 @@ class TestTradingConfigManagerGetConfig:
             symbol="BTCUSDT",
             parameters={"leverage": 25},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_symbol_config = AsyncMock(return_value=symbol_config)
 
@@ -241,8 +241,8 @@ class TestTradingConfigManagerGetConfig:
             side="LONG",
             parameters={"leverage": 30},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_symbol_side_config = AsyncMock(
             return_value=symbol_side_config
@@ -257,23 +257,23 @@ class TestTradingConfigManagerGetConfig:
         global_config = TradingConfig(
             parameters={"leverage": 10, "stop_loss_pct": 2.0},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         symbol_config = TradingConfig(
             symbol="BTCUSDT",
             parameters={"leverage": 20},  # Override leverage
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         symbol_side_config = TradingConfig(
             symbol="BTCUSDT",
             side="LONG",
             parameters={"stop_loss_pct": 1.5},  # Override stop_loss_pct
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=global_config)
         mock_mongodb_client.get_symbol_config = AsyncMock(return_value=symbol_config)
@@ -293,30 +293,30 @@ class TestTradingConfigManagerGetConfig:
         global_config = TradingConfig(
             parameters={"leverage": 10},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         symbol_config = TradingConfig(
             symbol="BTCUSDT",
             parameters={"leverage": 20},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         strategy_config = TradingConfig(
             strategy_id="momentum",
             parameters={"leverage": 30},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         symbol_side_config = TradingConfig(
             symbol="BTCUSDT",
             side="LONG",
             parameters={"leverage": 40},
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=global_config)
         mock_mongodb_client.get_symbol_config = AsyncMock(return_value=symbol_config)
@@ -346,15 +346,15 @@ class TestTradingConfigManagerGetConfig:
                     strategy_id="strategy_a",
                     parameters={"leverage": 21},
                     created_by="test",
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 ),
                 TradingConfig(
                     strategy_id="strategy_b",
                     parameters={"leverage": 22},
                     created_by="test",
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 ),
             ]
         )
@@ -482,8 +482,8 @@ class TestTradingConfigManagerSetConfig:
             parameters={"leverage": 10},
             version=2,
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=existing_config)
 
@@ -588,8 +588,8 @@ class TestTradingConfigManagerDeleteConfig:
             parameters={"leverage": 10},
             version=1,
             created_by="test",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_mongodb_client.get_global_config = AsyncMock(return_value=existing_config)
 

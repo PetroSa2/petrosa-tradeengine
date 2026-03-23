@@ -12,7 +12,7 @@ This script will:
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce
@@ -59,7 +59,7 @@ async def test_position_close_cancels_orders():
             amount=0.002,  # Match the position size
             position_side="LONG",  # Hedge mode - close LONG position
             time_in_force=TimeInForce.GTC,
-            order_id=f"close_long_{datetime.now().timestamp()}",
+            order_id=f"close_long_{datetime.now(UTC).timestamp()}",
             reduce_only=True,  # This is important - it's a closing order
             simulate=False,
         )

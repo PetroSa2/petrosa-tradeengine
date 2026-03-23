@@ -9,7 +9,7 @@ to verify that our fix works and show you the orders in Binance UI.
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce
@@ -50,7 +50,7 @@ async def place_manual_sltp_orders():
             stop_loss=sl_price_long,  # Set stop loss price
             position_side="LONG",  # Hedge mode
             time_in_force=TimeInForce.GTC,
-            order_id=f"manual_sl_long_{datetime.now().timestamp()}",
+            order_id=f"manual_sl_long_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )
@@ -74,7 +74,7 @@ async def place_manual_sltp_orders():
             take_profit=tp_price_long,  # Set take profit price
             position_side="LONG",  # Hedge mode
             time_in_force=TimeInForce.GTC,
-            order_id=f"manual_tp_long_{datetime.now().timestamp()}",
+            order_id=f"manual_tp_long_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )
@@ -101,7 +101,7 @@ async def place_manual_sltp_orders():
             stop_loss=sl_price_short,  # Set stop loss price
             position_side="SHORT",  # Hedge mode
             time_in_force=TimeInForce.GTC,
-            order_id=f"manual_sl_short_{datetime.now().timestamp()}",
+            order_id=f"manual_sl_short_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )
@@ -125,7 +125,7 @@ async def place_manual_sltp_orders():
             take_profit=tp_price_short,  # Set take profit price
             position_side="SHORT",  # Hedge mode
             time_in_force=TimeInForce.GTC,
-            order_id=f"manual_tp_short_{datetime.now().timestamp()}",
+            order_id=f"manual_tp_short_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )

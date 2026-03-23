@@ -18,7 +18,7 @@ Tests all endpoints in api_config_routes.py to achieve high coverage:
 - DELETE /config/limits/symbol/{symbol}
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -156,8 +156,8 @@ class TestUpdateGlobalConfigEndpoint:
             parameters={"leverage": 15},
             version=2,
             created_by="test_user",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.set_config = AsyncMock(return_value=(True, config, []))
 
@@ -266,8 +266,8 @@ class TestUpdateSymbolConfigEndpoint:
             parameters={"leverage": 25},
             version=2,
             created_by="test_user",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.set_config = AsyncMock(return_value=(True, config, []))
 
@@ -377,8 +377,8 @@ class TestUpdateSymbolSideConfigEndpoint:
             parameters={"leverage": 35},
             version=2,
             created_by="test_user",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.set_config = AsyncMock(return_value=(True, config, []))
 
@@ -518,8 +518,8 @@ class TestSetGlobalLimitsEndpoint:
             id="global",
             parameters={"leverage": 10, "max_position_size": 100.0},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=existing_config)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
@@ -543,8 +543,8 @@ class TestSetGlobalLimitsEndpoint:
             id="global",
             parameters={"max_position_size": 100.0},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=None)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
@@ -600,8 +600,8 @@ class TestSetSymbolLimitsEndpoint:
             symbol="BTCUSDT",
             parameters={"leverage": 10, "max_position_size": 50.0},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=existing_config)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
@@ -626,8 +626,8 @@ class TestSetSymbolLimitsEndpoint:
             symbol="BTCUSDT",
             parameters={"max_position_size": 50.0},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=None)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
@@ -759,8 +759,8 @@ class TestPositionLimitsEdgeCases:
             id="global",
             parameters={"leverage": 10},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=existing_config)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
@@ -779,8 +779,8 @@ class TestPositionLimitsEdgeCases:
             symbol="BTCUSDT",
             parameters={"leverage": 10},
             created_by="api",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         mock_config_manager.get_config = AsyncMock(return_value=existing_config)
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))

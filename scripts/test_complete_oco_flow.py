@@ -12,7 +12,7 @@ This script tests:
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contracts.signal import (
     OrderType,
@@ -47,7 +47,7 @@ async def test_complete_oco_flow():
         # Test 1: Create a signal with SL/TP values
         logger.info("\n📊 TEST 1: CREATING SIGNAL WITH SL/TP VALUES")
 
-        current_time = datetime.utcnow()
+        current_time = datetime.now(UTC)
         test_signal = Signal(
             id=f"test_oco_{current_time.timestamp()}",
             strategy_id="test_oco_strategy",

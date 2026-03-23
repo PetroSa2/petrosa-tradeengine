@@ -5,7 +5,7 @@ Unit tests for NATS trace context propagation in Trade Engine consumer.
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -103,7 +103,7 @@ def get_complete_signal_data(overrides=None):
         "confidence": 0.85,
         "source": "ta-bot",
         "strategy": "test",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
     if overrides:
         data.update(overrides)

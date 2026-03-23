@@ -14,7 +14,7 @@ import asyncio
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contracts.signal import (
     OrderType,
@@ -283,7 +283,7 @@ async def test_live_oco_implementation():
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
             position_size_pct=0.01,  # Very small position size
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             metadata={"test": True, "purpose": "integration_test"},
         )
 

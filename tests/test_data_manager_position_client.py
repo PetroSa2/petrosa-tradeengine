@@ -5,7 +5,7 @@ Tests the integration between tradeengine and petrosa-data-manager API,
 specifically for position tracking and P&L updates.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

@@ -2,7 +2,7 @@
 Comprehensive tests for tradeengine/db/mysql_config_repository.py to increase coverage
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -34,10 +34,10 @@ def sample_leverage_status():
         symbol="BTCUSDT",
         configured_leverage=10,
         actual_leverage=10,
-        last_sync_at=datetime.utcnow(),
+        last_sync_at=datetime.now(UTC),
         last_sync_success=True,
         last_sync_error=None,
-        updated_at=datetime.utcnow(),
+        updated_at=datetime.now(UTC),
     )
 
 
@@ -53,7 +53,7 @@ def sample_audit():
         old_values={},
         new_values={"leverage": 10},
         changed_by="test",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
     )
 
 

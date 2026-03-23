@@ -2,7 +2,7 @@
 Unit and integration tests for trading configuration rollback in Trade Engine.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,7 +48,7 @@ def sample_audit_history():
             "version_before": 2,
             "version_after": 3,
             "changed_by": "user1",
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(UTC),
         },
         {
             "_id": "audit_2",
@@ -60,7 +60,7 @@ def sample_audit_history():
             "version_before": 1,
             "version_after": 2,
             "changed_by": "user1",
-            "timestamp": datetime.utcnow(),
+            "timestamp": datetime.now(UTC),
         },
     ]
 

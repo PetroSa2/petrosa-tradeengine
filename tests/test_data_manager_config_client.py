@@ -5,7 +5,7 @@ Tests the DataManagerClient methods that were updated to use upsert_one()
 instead of update() with upsert parameter (fixes #165).
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest

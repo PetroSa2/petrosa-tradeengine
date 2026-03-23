@@ -1,7 +1,7 @@
 """Tests for leverage_manager module"""
 
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -62,10 +62,10 @@ class TestLeverageManagerBasic:
             symbol="BTCUSDT",
             configured_leverage=10,
             actual_leverage=10,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         leverage_manager._leverage_cache["BTCUSDT"] = status
 
@@ -86,10 +86,10 @@ class TestLeverageManagerBasic:
             symbol="ETHUSDT",
             configured_leverage=5,
             actual_leverage=5,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         leverage_manager.mongodb_client = mock_mongodb_client
         mock_mongodb_client.get_leverage_status = AsyncMock(return_value=status)
@@ -117,10 +117,10 @@ class TestLeverageManagerBasic:
             symbol="BTCUSDT",
             configured_leverage=10,
             actual_leverage=10,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         leverage_manager._leverage_cache["BTCUSDT"] = status
         leverage_manager.binance_client = mock_binance_client
@@ -184,20 +184,20 @@ class TestLeverageManagerBasic:
             symbol="BTCUSDT",
             configured_leverage=10,
             actual_leverage=10,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         status2 = LeverageStatus(
             id=None,
             symbol="ETHUSDT",
             configured_leverage=5,
             actual_leverage=5,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
 
         leverage_manager.mongodb_client = mock_mongodb_client
@@ -356,20 +356,20 @@ class TestLeverageManagerBasic:
             symbol="BTCUSDT",
             configured_leverage=10,
             actual_leverage=10,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         status2 = LeverageStatus(
             id=None,
             symbol="ETHUSDT",
             configured_leverage=5,
             actual_leverage=5,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
 
         leverage_manager.mongodb_client = mock_mongodb_client
@@ -503,20 +503,20 @@ class TestLeverageManagerBasic:
             symbol="BTCUSDT",
             configured_leverage=10,
             actual_leverage=10,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
         status2 = LeverageStatus(
             id=None,
             symbol="ETHUSDT",
             configured_leverage=5,
             actual_leverage=5,
-            last_sync_at=datetime.utcnow(),
+            last_sync_at=datetime.now(UTC),
             last_sync_success=True,
             last_sync_error=None,
-            updated_at=datetime.utcnow(),
+            updated_at=datetime.now(UTC),
         )
 
         leverage_manager.mongodb_client = mock_mongodb_client

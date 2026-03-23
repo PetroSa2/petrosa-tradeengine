@@ -10,7 +10,7 @@ This test suite covers:
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -119,7 +119,7 @@ class TestConditionalOrders:
         """Test getting current price from cache"""
         # Set up cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow()
+        order_manager.last_price_update["BTCUSDT"] = datetime.now(UTC)
 
         price = await order_manager._get_current_price("BTCUSDT")
         assert price == 50000.0
@@ -722,7 +722,7 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price uses cache when available"""
         # Set cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow()
+        order_manager.last_price_update["BTCUSDT"] = datetime.now(UTC)
 
         price = await order_manager._get_current_price("BTCUSDT")
         assert price == 50000.0
@@ -732,7 +732,7 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price refreshes when cache expired"""
         # Set old cache (more than 30 seconds ago)
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(
+        order_manager.last_price_update["BTCUSDT"] = datetime.now(UTC) - timedelta(
             seconds=31
         )
 
@@ -834,7 +834,7 @@ class TestConditionalOrderMonitoring:
         """Test that _get_current_price refreshes cache when expired"""
         # Set old cache
         order_manager.price_cache["BTCUSDT"] = 50000.0
-        order_manager.last_price_update["BTCUSDT"] = datetime.utcnow() - timedelta(
+        order_manager.last_price_update["BTCUSDT"] = datetime.now(UTC) - timedelta(
             seconds=35
         )
 

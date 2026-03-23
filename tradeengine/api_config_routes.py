@@ -7,7 +7,7 @@ at global, symbol, and symbol-side levels.
 
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
@@ -222,7 +222,7 @@ async def rollback_config(
                 updated_at=(
                     config.updated_at.isoformat()
                     if config and config.updated_at
-                    else datetime.utcnow().isoformat()
+                    else datetime.now(UTC).isoformat()
                 ),
             ),
             metadata={"action": "rollback", "scope": "trading"},

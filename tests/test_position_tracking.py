@@ -2,7 +2,7 @@
 Tests for hedge mode position tracking functionality
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -127,7 +127,7 @@ async def test_close_position_record():
             "entry_price": 45000.0,
             "exit_price": 47000.0,
             "quantity": 0.001,
-            "entry_time": datetime.utcnow(),
+            "entry_time": datetime.now(UTC),
             "entry_commission": 0.045,
             "exit_commission": 0.047,
             "order_id": "exit-order-123",
@@ -193,7 +193,7 @@ async def test_mysql_position_persistence():
     #     "position_side": "SHORT",
     #     "entry_price": 3000.0,
     #     "quantity": 0.1,
-    #     "entry_time": datetime.utcnow(),
+    #     "entry_time": datetime.now(UTC),
     #     "stop_loss": 3100.0,
     #     "take_profit": 2900.0,
     #     "status": "open",

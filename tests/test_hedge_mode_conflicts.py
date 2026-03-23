@@ -8,7 +8,7 @@ This module tests the critical fixes for hedge mode support:
 4. Proper position separation for LONG and SHORT
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -44,7 +44,7 @@ def btc_buy_signal():
         timeframe="1h",
         order_type=OrderType.MARKET,
         time_in_force=TimeInForce.GTC,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -66,7 +66,7 @@ def btc_sell_signal():
         timeframe="1h",
         order_type=OrderType.MARKET,
         time_in_force=TimeInForce.GTC,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -88,7 +88,7 @@ def btc_buy_signal_2():
         timeframe="1h",
         order_type=OrderType.MARKET,
         time_in_force=TimeInForce.GTC,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
     )
 
 

@@ -9,7 +9,7 @@ since Binance Futures doesn't have native OCO support.
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce
@@ -79,7 +79,7 @@ class OCOManager:
             stop_loss=stop_loss_price,
             position_side=position_side,
             time_in_force=TimeInForce.GTC,
-            order_id=f"oco_sl_{position_id}_{datetime.now().timestamp()}",
+            order_id=f"oco_sl_{position_id}_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )
@@ -94,7 +94,7 @@ class OCOManager:
             take_profit=take_profit_price,
             position_side=position_side,
             time_in_force=TimeInForce.GTC,
-            order_id=f"oco_tp_{position_id}_{datetime.now().timestamp()}",
+            order_id=f"oco_tp_{position_id}_{datetime.now(UTC).timestamp()}",
             reduce_only=True,
             simulate=False,
         )

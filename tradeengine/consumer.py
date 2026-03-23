@@ -134,11 +134,12 @@ class SignalConsumer:
 
         # Ensure we use a wildcard to capture strategy-specific signals (e.g., signals.trading.rsi_reversal)
         # AC: Contract requires signals.trading.* or signals.trading.>
+        # Use '>' for broad subtree match (base subject + any number of tokens)
         subject = settings.nats_topic_signals
         if not subject.endswith(("*", ">")):
-            subscribe_subject = f"{subject}.*"
+            subscribe_subject = f"{subject}.>"
             logger.info(
-                "Auto-appending wildcard to NATS subject: %s -> %s",
+                "Auto-appending multi-level wildcard to NATS subject: %s -> %s",
                 subject,
                 subscribe_subject,
             )

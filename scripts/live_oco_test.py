@@ -15,6 +15,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from shared.constants import UTC
 
 from contracts.signal import (
     OrderType,

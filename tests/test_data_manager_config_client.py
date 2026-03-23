@@ -6,6 +6,7 @@ instead of update() with upsert parameter (fixes #165).
 """
 
 from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest

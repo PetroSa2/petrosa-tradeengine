@@ -3,6 +3,7 @@ Comprehensive tests for contracts/signal.py to increase coverage
 """
 
 from datetime import datetime
+from shared.constants import UTC
 
 import pytest
 from pydantic import ValidationError

@@ -8,6 +8,7 @@ to prevent query overload.
 
 import logging
 from datetime import datetime, timedelta
+from shared.constants import UTC
 from typing import Any, Optional
 
 from shared.constants import UTC

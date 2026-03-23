@@ -2,6 +2,7 @@ import logging
 import random
 import uuid
 from datetime import datetime
+from shared.constants import UTC
 from typing import Any
 
 from contracts.order import TradeOrder

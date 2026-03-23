@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+from shared.constants import UTC
+
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram
 

@@ -8,12 +8,11 @@ from pydantic import BaseModel, Field, field_validator
 try:
     from shared.constants import UTC
 except ImportError:
-    UTC = timezone.utc  # noqa: UP017
+    UTC = timezone.utc
 
 try:
     from shared.constants import StrEnum
 except ImportError:
-
     class StrEnum(str, Enum):  # type: ignore
         pass
 

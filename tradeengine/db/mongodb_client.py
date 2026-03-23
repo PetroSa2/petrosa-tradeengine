@@ -7,6 +7,7 @@ through the petrosa-data-manager service, replacing all direct MongoDB access.
 
 import logging
 from datetime import datetime
+from shared.constants import UTC
 from typing import Any, Optional
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit

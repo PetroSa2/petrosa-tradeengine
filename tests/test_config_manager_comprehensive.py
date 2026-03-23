@@ -5,6 +5,7 @@ Comprehensive tests for tradeengine/config_manager.py to increase coverage
 import asyncio
 import time
 from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

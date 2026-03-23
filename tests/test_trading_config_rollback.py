@@ -3,6 +3,7 @@ Unit and integration tests for trading configuration rollback in Trade Engine.
 """
 
 from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

@@ -19,6 +19,7 @@ Tests all endpoints in api_config_routes.py to achieve high coverage:
 """
 
 from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

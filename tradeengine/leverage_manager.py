@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
+from shared.constants import UTC
 from binance import Client
 from binance.exceptions import BinanceAPIException
 

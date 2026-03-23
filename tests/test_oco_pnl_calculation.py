@@ -5,6 +5,7 @@ Tests the automatic PNL calculation when OCO orders (SL/TP) close positions.
 """
 
 from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest

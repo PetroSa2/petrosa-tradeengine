@@ -15,6 +15,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from shared.constants import UTC
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository

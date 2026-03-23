@@ -12,7 +12,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from shared.constants import UTC
 
 import nats
 
@@ -23,6 +22,7 @@ from contracts.signal import (
     StrategyMode,
     TimeInForce,
 )
+from shared.constants import UTC
 
 # Setup logging
 logging.basicConfig(

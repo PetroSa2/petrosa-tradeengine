@@ -12,11 +12,11 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from shared.constants import UTC
 from binance import Client
 from binance.exceptions import BinanceAPIException
 
 from contracts.trading_config import LeverageStatus
+from shared.constants import UTC
 from tradeengine.db.mongodb_client import DataManagerConfigClient
 
 logger = logging.getLogger(__name__)

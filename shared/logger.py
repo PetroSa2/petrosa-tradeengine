@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from shared.constants import UTC
 from typing import Any
 
 import structlog
@@ -18,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from structlog.stdlib import LoggerFactory
 
 from shared.config import settings
+from shared.constants import UTC
 
 
 def configure_structlog():

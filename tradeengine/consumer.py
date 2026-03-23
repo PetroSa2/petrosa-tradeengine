@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 import nats
-
-from shared.constants import UTC
 import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import context, trace
 from opentelemetry.propagate import extract
+
+from shared.constants import UTC
 
 # Conditional import for compatibility
 try:

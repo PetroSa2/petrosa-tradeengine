@@ -4,8 +4,6 @@ import time
 from datetime import datetime
 from typing import Any
 
-from shared.constants import UTC
-
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram
 
@@ -13,6 +11,7 @@ from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
 from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
 from shared.config import Settings
+from shared.constants import UTC
 from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
 from tradeengine.metrics import (

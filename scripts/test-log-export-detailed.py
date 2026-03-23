@@ -6,12 +6,13 @@ Detailed test to see if OTLPLogExporter is actually exporting logs
 import logging
 import time
 from datetime import datetime
-from shared.constants import UTC
 
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
+
+from shared.constants import UTC
 
 print("=" * 80)
 print("Detailed OTLP Log Export Test")

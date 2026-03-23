@@ -7,9 +7,9 @@ petrosa-data-manager service, replacing all direct database access.
 
 import logging
 from datetime import datetime
-from shared.constants import UTC
 from typing import Any, Optional
 
+from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 
 logger = logging.getLogger(__name__)

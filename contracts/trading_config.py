@@ -7,10 +7,11 @@ and per-position-side basis.
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+from shared.constants import UTC
 
 
 class TradingConfig(BaseModel):

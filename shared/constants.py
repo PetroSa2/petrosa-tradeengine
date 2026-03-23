@@ -17,7 +17,7 @@ from typing import Any
 try:
     from datetime import UTC
 except ImportError:
-    UTC = timezone.utc
+    UTC = timezone.utc  # noqa: UP017
 
 try:
     from enum import StrEnum

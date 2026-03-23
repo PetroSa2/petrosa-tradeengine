@@ -13,7 +13,6 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
-from shared.constants import UTC
 
 from contracts.signal import (
     OrderType,
@@ -22,6 +21,7 @@ from contracts.signal import (
     StrategyMode,
     TimeInForce,
 )
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 

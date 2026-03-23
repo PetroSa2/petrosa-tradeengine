@@ -12,9 +12,10 @@ Manages runtime trading configuration with:
 import asyncio
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
+from shared.constants import UTC
 from contracts.trading_config import TradingConfig, TradingConfigAudit
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 from tradeengine.defaults import (

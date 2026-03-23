@@ -13,7 +13,8 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

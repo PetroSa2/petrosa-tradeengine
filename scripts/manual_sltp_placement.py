@@ -9,7 +9,8 @@ to verify that our fix works and show you the orders in Binance UI.
 import asyncio
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce

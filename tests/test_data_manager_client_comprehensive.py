@@ -2,7 +2,8 @@
 Comprehensive tests for tradeengine/services/data_manager_client.py to increase coverage
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest

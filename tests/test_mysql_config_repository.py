@@ -2,7 +2,8 @@
 Comprehensive tests for tradeengine/db/mysql_config_repository.py to increase coverage
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 
 import pytest
 

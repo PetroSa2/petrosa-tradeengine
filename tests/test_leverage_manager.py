@@ -1,7 +1,8 @@
 """Tests for leverage_manager module"""
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest

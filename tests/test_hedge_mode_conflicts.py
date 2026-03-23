@@ -8,7 +8,8 @@ This module tests the critical fixes for hedge mode support:
 4. Proper position separation for LONG and SHORT
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 
 import pytest
 

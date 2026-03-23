@@ -270,7 +270,7 @@ class TestGetConfigSummary:
         assert "nats_enabled" in summary["messaging"]
         assert "nats_url" in summary["messaging"]
         assert "nats_servers" in summary["messaging"]
-        assert "nats_signal_subject" in summary["messaging"]
+        assert "nats_topic_signals" in summary["messaging"]
 
     def test_get_config_summary_trading_section(self):
         """Test trading section of config summary"""

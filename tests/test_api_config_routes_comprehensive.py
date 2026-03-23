@@ -18,7 +18,8 @@ Tests all endpoints in api_config_routes.py to achieve high coverage:
 - DELETE /config/limits/symbol/{symbol}
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

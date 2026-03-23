@@ -5,7 +5,8 @@ Signal Publisher Example - Demonstrates signal publishing to NATS
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from typing import Any
 
 # Configure logging

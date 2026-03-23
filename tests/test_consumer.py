@@ -246,7 +246,7 @@ class TestConsumerStartConsuming:
         with patch("tradeengine.consumer.settings") as mock_settings:
             mock_settings.nats_enabled = True
             mock_settings.nats_servers = "nats://localhost:4222"
-            mock_settings.nats_signal_subject = "signals.trading"
+            mock_settings.nats_topic_signals = "signals.trading.*"
 
             with patch("nats.connect") as mock_nats_connect:
                 mock_nats_client = AsyncMock()
@@ -282,7 +282,7 @@ class TestConsumerStartConsuming:
 
         with patch("tradeengine.consumer.settings") as mock_settings:
             mock_settings.nats_enabled = True
-            mock_settings.nats_signal_subject = "signals.trading"
+            mock_settings.nats_topic_signals = "signals.trading.*"
 
             with patch.object(
                 consumer, "stop_consuming", new_callable=AsyncMock

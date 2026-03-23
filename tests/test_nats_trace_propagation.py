@@ -5,7 +5,8 @@ Unit tests for NATS trace context propagation in Trade Engine consumer.
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

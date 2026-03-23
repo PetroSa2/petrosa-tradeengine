@@ -12,7 +12,8 @@ This script will:
 import asyncio
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import TimeInForce

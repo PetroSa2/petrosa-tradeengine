@@ -8,7 +8,8 @@ This test suite verifies that:
 4. Symbol-specific fallbacks are calculated correctly
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from unittest import mock
 
 import pytest

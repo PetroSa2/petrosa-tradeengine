@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from typing import Any
 
 import structlog

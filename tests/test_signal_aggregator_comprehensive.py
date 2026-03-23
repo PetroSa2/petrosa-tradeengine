@@ -18,7 +18,8 @@ def signal_aggregator():
 @pytest.fixture
 def sample_signal():
     """Create a sample signal for testing"""
-    from datetime import UTC, datetime
+    from datetime import datetime
+from shared.constants import UTC
 
     return Signal(
         strategy_id="test-strategy",
@@ -70,7 +71,8 @@ class TestSignalAggregatorBasic:
 
     def test_cleanup_old_signals(self, signal_aggregator):
         """Test _cleanup_old_signals removes expired signals"""
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta
+from shared.constants import UTC
 
         # Create old signal (2 hours ago)
         old_signal = Signal(
@@ -125,7 +127,8 @@ class TestSignalAggregatorBasic:
 
     def test_cancel_opposing_signals(self, signal_aggregator):
         """Test _cancel_opposing_signals removes signals for symbol"""
-        from datetime import UTC, datetime
+        from datetime import datetime
+from shared.constants import UTC
 
         # Create signals for same symbol
         signal1 = Signal(
@@ -198,7 +201,8 @@ class TestSignalAggregatorBasic:
 
     def test_calculate_timeframe_strength(self, signal_aggregator):
         """Test _calculate_timeframe_strength returns correct weights"""
-        from datetime import UTC, datetime
+        from datetime import datetime
+from shared.constants import UTC
 
         # Test different timeframes (weights are multiplied by confidence 0.8)
         # timeframe_weights: tick=0.1, 1m=0.2, 5m=0.4, 15m=0.5, 1h=0.7, 4h=0.9, 1d=1.3
@@ -266,7 +270,8 @@ class TestSignalAggregatorBasic:
 
     def test_get_signal_summary_with_signals(self, signal_aggregator):
         """Test get_signal_summary includes signal counts"""
-        from datetime import UTC, datetime
+        from datetime import datetime
+from shared.constants import UTC
 
         # Add some signals
         for i in range(3):
@@ -298,7 +303,8 @@ class TestSignalAggregatorBasic:
     @pytest.mark.asyncio
     async def test_process_signal_error_handling(self, signal_aggregator):
         """Test process_signal handles errors gracefully"""
-        from datetime import UTC, datetime
+        from datetime import datetime
+from shared.constants import UTC
         from unittest.mock import patch
 
         # Mock add_signal to raise exception

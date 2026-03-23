@@ -9,9 +9,10 @@ Manages leverage configuration for futures trading with:
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Optional
 
+from shared.constants import UTC
 from binance import Client
 from binance.exceptions import BinanceAPIException
 

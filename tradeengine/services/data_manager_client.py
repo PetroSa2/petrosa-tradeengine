@@ -6,7 +6,8 @@ for audit logging and configuration management.
 """
 
 import os
-from datetime import UTC, datetime
+from datetime import datetime
+from shared.constants import UTC
 from typing import Any, Optional
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit

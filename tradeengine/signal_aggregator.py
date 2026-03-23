@@ -9,9 +9,10 @@ and risk management rules. Supports three modes: deterministic, ML light, "
 
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
+from shared.constants import UTC
 from contracts.signal import Signal, TimeFrame
 
 

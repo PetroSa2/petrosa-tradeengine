@@ -9,7 +9,7 @@ changes from the very beginning of the application lifecycle.
 
 import sys
 import traceback
-from datetime import datetime
+from datetime import UTC, datetime
 
 # Add current directory to Python path
 sys.path.insert(0, "/app")
@@ -17,7 +17,7 @@ sys.path.insert(0, "/app")
 
 def log_event(message: str):
     """Log events to stderr for immediate visibility"""
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     print(f"[{timestamp}] LAUNCHER: {message}", file=sys.stderr)
 
 

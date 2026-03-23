@@ -8,7 +8,7 @@ This test suite verifies that:
 4. Symbol-specific fallbacks are calculated correctly
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest import mock
 
 import pytest
@@ -39,7 +39,7 @@ class TestOrderAmountCalculation:
             quantity=0.001,
             confidence=0.8,
             order_type=OrderType.MARKET,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
             source="test",
@@ -124,7 +124,7 @@ class TestFallbackAmountCalculation:
             quantity=0.001,
             confidence=0.8,
             order_type=OrderType.MARKET,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
             source="test",
@@ -145,7 +145,7 @@ class TestFallbackAmountCalculation:
             quantity=0.001,
             confidence=0.8,
             order_type=OrderType.MARKET,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
         )
@@ -162,7 +162,7 @@ class TestFallbackAmountCalculation:
             quantity=0.001,
             confidence=0.8,
             order_type=OrderType.MARKET,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
             source="test",
@@ -293,7 +293,7 @@ class TestErrorLogging:
             quantity=0.001,
             confidence=0.8,
             order_type=OrderType.MARKET,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
             source="test",

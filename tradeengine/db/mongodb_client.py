@@ -6,7 +6,7 @@ through the petrosa-data-manager service, replacing all direct MongoDB access.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
@@ -229,7 +229,7 @@ class DataManagerConfigClient:
         """
         try:
             audit_dict = audit.model_dump()
-            audit_dict["timestamp"] = datetime.utcnow()
+            audit_dict["timestamp"] = datetime.now(UTC)
 
             response = await self.data_manager_client._client.insert_one(
                 database="mongodb",

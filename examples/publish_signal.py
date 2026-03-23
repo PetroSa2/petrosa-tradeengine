@@ -5,7 +5,7 @@ Signal Publisher Example - Demonstrates signal publishing to NATS
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 # Configure logging
@@ -29,7 +29,7 @@ def create_sample_signals() -> list[dict[str, Any]]:
             "current_price": 45000.0,
             "source": "momentum-strategy",
             "strategy": "momentum",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
         {
             "strategy_id": "mean-reversion-1",
@@ -44,7 +44,7 @@ def create_sample_signals() -> list[dict[str, Any]]:
             "current_price": 2800.0,
             "source": "mean-reversion-strategy",
             "strategy": "mean-reversion",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
         {
             "strategy_id": "arbitrage-1",
@@ -59,7 +59,7 @@ def create_sample_signals() -> list[dict[str, Any]]:
             "current_price": 0.45,
             "source": "arbitrage-strategy",
             "strategy": "arbitrage",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     ]
     return signals
@@ -81,7 +81,7 @@ def create_advanced_signals() -> list[dict[str, Any]]:
             "current_price": 44000.0,
             "source": "risk-management",
             "strategy": "risk-management",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "metadata": {
                 "risk_level": "high",
                 "stop_loss": 43000.0,
@@ -102,7 +102,7 @@ def create_advanced_signals() -> list[dict[str, Any]]:
             "current_price": 2800.0,
             "source": "portfolio-rebalancing",
             "strategy": "rebalancing",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "metadata": {
                 "target_allocation": 0.3,
                 "current_allocation": 0.25,

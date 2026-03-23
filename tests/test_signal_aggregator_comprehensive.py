@@ -18,7 +18,7 @@ def signal_aggregator():
 @pytest.fixture
 def sample_signal():
     """Create a sample signal for testing"""
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     return Signal(
         strategy_id="test-strategy",
@@ -34,7 +34,7 @@ def sample_signal():
         source="test",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
         order_type=OrderType.MARKET,
         time_in_force=TimeInForce.GTC,
     )
@@ -70,7 +70,7 @@ class TestSignalAggregatorBasic:
 
     def test_cleanup_old_signals(self, signal_aggregator):
         """Test _cleanup_old_signals removes expired signals"""
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         # Create old signal (2 hours ago)
         old_signal = Signal(
@@ -87,7 +87,7 @@ class TestSignalAggregatorBasic:
             source="test",
             strategy="old-strategy",
             strategy_mode=StrategyMode.DETERMINISTIC,
-            timestamp=datetime.utcnow() - timedelta(hours=2),
+            timestamp=datetime.now(UTC) - timedelta(hours=2),
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
@@ -107,7 +107,7 @@ class TestSignalAggregatorBasic:
             source="test",
             strategy="recent-strategy",
             strategy_mode=StrategyMode.DETERMINISTIC,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
@@ -125,7 +125,7 @@ class TestSignalAggregatorBasic:
 
     def test_cancel_opposing_signals(self, signal_aggregator):
         """Test _cancel_opposing_signals removes signals for symbol"""
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         # Create signals for same symbol
         signal1 = Signal(
@@ -142,7 +142,7 @@ class TestSignalAggregatorBasic:
             source="test",
             strategy="strategy-1",
             strategy_mode=StrategyMode.DETERMINISTIC,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
@@ -161,7 +161,7 @@ class TestSignalAggregatorBasic:
             source="test",
             strategy="strategy-2",
             strategy_mode=StrategyMode.DETERMINISTIC,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
@@ -183,7 +183,7 @@ class TestSignalAggregatorBasic:
             source="test",
             strategy="strategy-3",
             strategy_mode=StrategyMode.DETERMINISTIC,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC,
         )
@@ -198,7 +198,7 @@ class TestSignalAggregatorBasic:
 
     def test_calculate_timeframe_strength(self, signal_aggregator):
         """Test _calculate_timeframe_strength returns correct weights"""
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         # Test different timeframes (weights are multiplied by confidence 0.8)
         # timeframe_weights: tick=0.1, 1m=0.2, 5m=0.4, 15m=0.5, 1h=0.7, 4h=0.9, 1d=1.3
@@ -231,7 +231,7 @@ class TestSignalAggregatorBasic:
                 source="test",
                 strategy="test",
                 strategy_mode=StrategyMode.DETERMINISTIC,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
             )
@@ -266,7 +266,7 @@ class TestSignalAggregatorBasic:
 
     def test_get_signal_summary_with_signals(self, signal_aggregator):
         """Test get_signal_summary includes signal counts"""
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         # Add some signals
         for i in range(3):
@@ -284,7 +284,7 @@ class TestSignalAggregatorBasic:
                 source="test",
                 strategy=f"strategy-{i}",
                 strategy_mode=StrategyMode.DETERMINISTIC,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
             )
@@ -298,7 +298,7 @@ class TestSignalAggregatorBasic:
     @pytest.mark.asyncio
     async def test_process_signal_error_handling(self, signal_aggregator):
         """Test process_signal handles errors gracefully"""
-        from datetime import datetime
+        from datetime import UTC, datetime
         from unittest.mock import patch
 
         # Mock add_signal to raise exception
@@ -319,7 +319,7 @@ class TestSignalAggregatorBasic:
                 source="test",
                 strategy="test",
                 strategy_mode=StrategyMode.DETERMINISTIC,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.MARKET,
                 time_in_force=TimeInForce.GTC,
             )

@@ -18,7 +18,7 @@ This enables:
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -125,7 +125,7 @@ class StrategyPositionManager:
                 "side": position_side,
                 "entry_quantity": entry_quantity,
                 "entry_price": entry_price,
-                "entry_time": datetime.utcnow(),
+                "entry_time": datetime.now(UTC),
                 "entry_order_id": entry_order_id,
                 "take_profit_price": take_profit_price,
                 "stop_loss_price": stop_loss_price,
@@ -228,7 +228,7 @@ class StrategyPositionManager:
             )
             position["exit_quantity"] = exit_quantity
             position["exit_price"] = exit_price
-            position["exit_time"] = datetime.utcnow()
+            position["exit_time"] = datetime.now(UTC)
             position["exit_order_id"] = exit_order_id
             position["close_reason"] = close_reason
             position["realized_pnl"] = pnl
@@ -347,8 +347,8 @@ class StrategyPositionManager:
                     "weighted_avg_price": price,
                     "contributing_strategies": [strategy_id],
                     "total_contributions": 1,
-                    "first_entry_time": datetime.utcnow(),
-                    "last_update_time": datetime.utcnow(),
+                    "first_entry_time": datetime.now(UTC),
+                    "last_update_time": datetime.now(UTC),
                     "status": "open",
                 }
             else:
@@ -367,7 +367,7 @@ class StrategyPositionManager:
 
                 position["current_quantity"] = new_quantity
                 position["weighted_avg_price"] = new_weighted_price
-                position["last_update_time"] = datetime.utcnow()
+                position["last_update_time"] = datetime.now(UTC)
                 position["total_contributions"] += 1
 
                 if strategy_id not in position["contributing_strategies"]:
@@ -390,7 +390,7 @@ class StrategyPositionManager:
 
             position = self.exchange_positions[exchange_position_key]
             position["current_quantity"] -= quantity
-            position["last_update_time"] = datetime.utcnow()
+            position["last_update_time"] = datetime.now(UTC)
 
             if position["current_quantity"] <= 0:
                 position["status"] = "closed"
@@ -441,7 +441,7 @@ class StrategyPositionManager:
                 "position_side": position_side,
                 "contribution_quantity": quantity,
                 "contribution_entry_price": price,
-                "contribution_time": datetime.utcnow(),
+                "contribution_time": datetime.now(UTC),
                 "position_sequence": sequence,
                 "exchange_quantity_before": qty_before,
                 "exchange_quantity_after": qty_after,
@@ -487,7 +487,7 @@ class StrategyPositionManager:
             # Update contribution status in Data Manager
             update_data = {
                 "status": "closed",
-                "exit_time": datetime.utcnow(),
+                "exit_time": datetime.now(UTC),
                 "exit_price": exit_price,
                 "contribution_pnl": pnl,
                 "contribution_pnl_pct": pnl_pct,

@@ -12,7 +12,7 @@ Manages runtime trading configuration with:
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.trading_config import TradingConfig, TradingConfigAudit
@@ -296,7 +296,7 @@ class TradingConfigManager:
 
             # Create new config
             version = (existing_config.version + 1) if existing_config else 1
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
 
             new_config = TradingConfig(
                 symbol=symbol if config_type != "strategy" else None,
@@ -539,7 +539,7 @@ class TradingConfigManager:
                     version_after=None,
                     changed_by=changed_by,
                     reason=reason,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(UTC),
                 )
 
                 if self.mongodb_client and self.mongodb_client.connected:

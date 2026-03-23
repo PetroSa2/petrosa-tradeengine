@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 import nats
 
@@ -41,7 +41,7 @@ async def send_test_signal():
         nc = await nats.connect(nats_url)
 
         # Create a test signal with SL/TP values
-        current_time = datetime.utcnow()
+        current_time = datetime.now(UTC)
 
         signal = Signal(
             id=f"test_sl_tp_{current_time.timestamp()}",

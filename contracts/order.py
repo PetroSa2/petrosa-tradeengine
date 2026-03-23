@@ -1,17 +1,5 @@
-from datetime import datetime
-
-try:
-    from enum import StrEnum
-except ImportError:
-    from enum import Enum
-
-    class StrEnum(str, Enum):  # noqa: UP042
-        """Shim for StrEnum in Python < 3.11"""
-
-        def __str__(self) -> str:
-            return str(self.value)
-
-
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -123,7 +111,8 @@ class TradeOrder(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Order creation timestamp"
+        default_factory=lambda: datetime.now(UTC),
+        description="Order creation timestamp",
     )
     updated_at: datetime | None = Field(None, description="Last update timestamp")
 

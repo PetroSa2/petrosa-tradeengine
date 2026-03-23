@@ -9,7 +9,7 @@ Tests cover:
 - Position closing and cleanup
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -751,7 +751,7 @@ async def test_close_position_record_long(position_manager):
         "entry_price": 50000.0,
         "exit_price": 52000.0,
         "quantity": 0.001,
-        "entry_time": datetime.utcnow(),
+        "entry_time": datetime.now(UTC),
         "entry_commission": 0.05,
         "exit_commission": 0.052,
         "order_id": "exit-order-123",
@@ -783,7 +783,7 @@ async def test_close_position_record_short(position_manager):
         "entry_price": 50000.0,
         "exit_price": 48000.0,
         "quantity": 0.002,
-        "entry_time": datetime.utcnow(),
+        "entry_time": datetime.now(UTC),
         "entry_commission": 0.1,
         "exit_commission": 0.096,
         "order_id": "exit-order-456",

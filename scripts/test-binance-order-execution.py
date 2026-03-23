@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,7 +51,7 @@ class BinanceFuturesValidator:
         print("=" * 70)
         print(f"Test Symbol: {self.test_symbol}")
         print(f"Testnet Mode: {self.testnet}")
-        print(f"Timestamp: {datetime.utcnow().isoformat()}")
+        print(f"Timestamp: {datetime.now(UTC).isoformat()}")
         print("=" * 70)
 
         # Phase 1: Basic Connectivity
@@ -148,7 +148,7 @@ class BinanceFuturesValidator:
 
         try:
             server_time = self.client.get_server_time()
-            local_time = int(datetime.utcnow().timestamp() * 1000)
+            local_time = int(datetime.now(UTC).timestamp() * 1000)
             time_diff = abs(server_time["serverTime"] - local_time)
 
             print("✅ Server time retrieved")

@@ -13,7 +13,7 @@ without external dependencies.
 """
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -74,7 +74,7 @@ async def test_duplicate_signal_rejected(dispatcher_with_fakes):
     dispatcher, fake_exchange, fake_position_mgr = dispatcher_with_fakes
 
     # Create signal with specific timestamp to ensure duplicate detection
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(UTC)
     signal = Signal(
         strategy_id="test-dup-detection",
         symbol="BTCUSDT",
@@ -127,7 +127,7 @@ async def test_duplicate_signal_metric_increments(dispatcher_with_fakes):
 
     from prometheus_client import REGISTRY
 
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(UTC)
     signal = Signal(
         strategy_id="test-metric",
         symbol="BTCUSDT",
@@ -187,9 +187,9 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
     dispatcher, fake_exchange, fake_position_mgr = dispatcher_with_fakes
 
     # Use different timestamps to ensure different signal IDs
-    timestamp1 = datetime.utcnow()
-    timestamp2 = datetime.utcnow()
-    timestamp3 = datetime.utcnow()
+    timestamp1 = datetime.now(UTC)
+    timestamp2 = datetime.now(UTC)
+    timestamp3 = datetime.now(UTC)
 
     # Different strategy_id and symbol to avoid accumulation cooldown
     signal1 = Signal(
@@ -285,7 +285,7 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
 
     # Use the same timestamp rounded to seconds to generate the same signal_id
     # This tests that the same signal can be processed after TTL expires
-    base_timestamp = datetime.utcnow()
+    base_timestamp = datetime.now(UTC)
     # Round to seconds to ensure same signal_id
     timestamp_rounded = base_timestamp.replace(microsecond=0)
 
@@ -382,7 +382,7 @@ async def test_signals_within_cache_ttl_rejected(dispatcher_with_fakes):
     # Set short TTL for testing
     dispatcher.signal_cache_ttl = 5  # 5 seconds
 
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(UTC)
     signal = Signal(
         strategy_id="test-ttl-reject",
         symbol="BTCUSDT",
@@ -435,7 +435,7 @@ async def test_signal_cache_cleanup(dispatcher_with_fakes):
     dispatcher.signal_cache_ttl = 2  # 2 seconds
     dispatcher.signal_cache_cleanup_interval = 1  # Cleanup every 1 second
 
-    timestamp = datetime.utcnow()
+    timestamp = datetime.now(UTC)
 
     # Create and process multiple signals
     signal1 = Signal(

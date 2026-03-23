@@ -9,7 +9,7 @@ Manages leverage configuration for futures trading with:
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from binance import Client
@@ -258,10 +258,10 @@ class LeverageManager:
                 symbol=symbol,
                 configured_leverage=configured,
                 actual_leverage=actual,
-                last_sync_at=datetime.utcnow(),
+                last_sync_at=datetime.now(UTC),
                 last_sync_success=success,
                 last_sync_error=error,
-                updated_at=datetime.utcnow(),
+                updated_at=datetime.now(UTC),
             )
 
             # Update cache

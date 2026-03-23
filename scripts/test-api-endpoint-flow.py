@@ -8,7 +8,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.signal import SignalStrength, SignalType
@@ -63,7 +63,7 @@ def create_test_signal() -> dict[str, Any]:
         "position_size_pct": 0.1,
         "stop_loss": 117000.0,
         "take_profit": 119000.0,
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.now(UTC),
     }
 
 

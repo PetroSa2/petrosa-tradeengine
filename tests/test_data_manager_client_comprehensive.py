@@ -2,7 +2,7 @@
 Comprehensive tests for tradeengine/services/data_manager_client.py to increase coverage
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -309,8 +309,8 @@ class TestDataManagerClientConfigManagement:
                             "side": "LONG",
                             "parameters": {"leverage": 10},
                             "created_by": "test_user",
-                            "created_at": datetime.utcnow(),
-                            "updated_at": datetime.utcnow(),
+                            "created_at": datetime.now(UTC),
+                            "updated_at": datetime.now(UTC),
                         }
                     ]
                 }
@@ -542,7 +542,7 @@ class TestDataManagerClientAuditTrail:
                             "symbol": "BTCUSDT",
                             "action": "update",
                             "changed_by": "test_user",
-                            "timestamp": datetime.utcnow(),
+                            "timestamp": datetime.now(UTC),
                         }
                     ]
                 }
@@ -587,7 +587,7 @@ class TestDataManagerClientLeverageStatus:
                             "configured_leverage": 10,
                             "actual_leverage": 10,
                             "last_sync_success": True,
-                            "updated_at": datetime.utcnow(),
+                            "updated_at": datetime.now(UTC),
                         }
                     ]
                 }
@@ -684,14 +684,14 @@ class TestDataManagerClientLeverageStatus:
                             "symbol": "BTCUSDT",
                             "configured_leverage": 10,
                             "actual_leverage": 10,
-                            "updated_at": datetime.utcnow(),
+                            "updated_at": datetime.now(UTC),
                         },
                         {
                             "_id": "test_id_2",
                             "symbol": "ETHUSDT",
                             "configured_leverage": 5,
                             "actual_leverage": 5,
-                            "updated_at": datetime.utcnow(),
+                            "updated_at": datetime.now(UTC),
                         },
                     ]
                 }

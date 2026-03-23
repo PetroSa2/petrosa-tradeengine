@@ -1,5 +1,6 @@
 import logging
 import random
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -118,31 +119,74 @@ class TradeSimulator:
         # Determine success based on success rate
         if random.random() > self.success_rate:
             return {
+                "order_id": order.order_id or str(uuid.uuid4()),
                 "status": "failed",
-                "order_id": order.order_id,
-                "error": "Simulated exchange failure",
+                "error": "Simulated execution failure",
+                "simulated": True,
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
-        # Simulate price slippage
-        # In a real system, execution price would be fetched from market
-        # Here we use target price or a mock price
-        execution_price = order.target_price or 45000.0
-        slippage = execution_price * random.uniform(0, self.simulated_slippage)
-
-        if order.side == "buy":
-            execution_price += slippage
-        else:
-            execution_price -= slippage
+        # Calculate simulated fill price with slippage
+        fill_price = self._calculate_fill_price(order)
 
         return {
             "status": "filled",
-            "order_id": order.order_id,
-            "exchange_id": f"sim_{order.order_id}",
+            "order_id": order.order_id or str(uuid.uuid4()),
+            "exchange_id": f"sim_{order.order_id or uuid.uuid4()}",
             "symbol": order.symbol,
             "side": order.side,
-            "price": execution_price,
+            "type": getattr(order, "type", "market"),
             "amount": order.amount,
             "filled_amount": order.amount,
-            "average_price": execution_price,
+            "fill_price": round(fill_price, 2),
+            "average_price": round(fill_price, 2),
+            "total_value": round(order.amount * fill_price, 2),
+            "fees": round(order.amount * fill_price * 0.001, 4),  # 0.1% fees
             "timestamp": datetime.now(UTC).isoformat(),
+            "simulated": True,
+            "fills": self._generate_fills(order, fill_price),
         }
+
+    def _calculate_fill_price(self, order: TradeOrder) -> float:
+        """Calculate fill price based on order type"""
+        base_price = order.target_price or 45000.0  # Default price
+
+        # Apply slippage based on order side
+        if order.side == "buy":
+            fill_price = base_price * (1 + self.simulated_slippage)
+        else:
+            fill_price = base_price * (1 - self.simulated_slippage)
+
+        # For stop orders, use the stop price as base if available
+        if getattr(order, "type", "") in ["stop", "stop_limit"] and getattr(
+            order, "stop_price", None
+        ):
+            fill_price = order.stop_price
+        elif getattr(order, "type", "") in ["stop", "stop_limit"] and getattr(
+            order, "stop_loss", None
+        ):
+            # Compatibility with stop_loss field
+            fill_price = order.stop_loss
+
+        # For take profit orders, use the take profit price as base if available
+        if getattr(order, "type", "") in [
+            "take_profit",
+            "take_profit_limit",
+        ] and getattr(order, "take_profit", None):
+            fill_price = order.take_profit
+
+        return fill_price
+
+    def _generate_fills(
+        self, order: TradeOrder, fill_price: float
+    ) -> list[dict[str, Any]]:
+        """Generate simulated fill data"""
+        return [
+            {
+                "price": str(fill_price),
+                "qty": str(order.amount),
+                "commission": str(order.amount * fill_price * 0.001),
+                "commissionAsset": "USDT",
+                "tradeId": random.randint(1000000, 9999999),
+            }
+        ]

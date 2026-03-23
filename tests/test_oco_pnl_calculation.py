@@ -4,7 +4,7 @@ Unit tests for OCO PNL calculation logic
 Tests the automatic PNL calculation when OCO orders (SL/TP) close positions.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -249,7 +249,7 @@ class TestPositionManagerPNLCalculation:
             "exit_price": 52000.0,
             "entry_price": 50000.0,
             "quantity": 0.001,
-            "entry_time": datetime.utcnow(),
+            "entry_time": datetime.now(UTC),
             "position_side": "LONG",
             "entry_commission": 0.02,
             "exit_commission": 0.02,
@@ -278,7 +278,7 @@ class TestPositionManagerPNLCalculation:
             "exit_price": 48000.0,
             "entry_price": 50000.0,
             "quantity": 0.001,
-            "entry_time": datetime.utcnow(),
+            "entry_time": datetime.now(UTC),
             "position_side": "SHORT",
             "entry_commission": 0.02,
             "exit_commission": 0.02,

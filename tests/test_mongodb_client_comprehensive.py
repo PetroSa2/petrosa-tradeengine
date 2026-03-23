@@ -2,7 +2,7 @@
 Comprehensive tests for tradeengine/db/mongodb_client.py to increase coverage
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -112,8 +112,8 @@ class TestDataManagerConfigClientGlobalConfig:
                         "_id": "global",
                         "parameters": {"leverage": 10},
                         "created_by": "test_user",
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow(),
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
                     }
                 ]
             }
@@ -276,8 +276,8 @@ class TestDataManagerConfigClientSymbolConfig:
                         "symbol": "BTCUSDT",
                         "parameters": {"leverage": 10},
                         "created_by": "test_user",
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow(),
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
                     }
                 ]
             }
@@ -465,8 +465,8 @@ class TestDataManagerConfigClientSymbolSideConfig:
                         "side": "LONG",
                         "parameters": {"leverage": 10},
                         "created_by": "test_user",
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow(),
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
                     }
                 ]
             }
@@ -724,7 +724,7 @@ class TestDataManagerConfigClientAuditTrail:
                         "symbol": "BTCUSDT",
                         "action": "update",
                         "changed_by": "test_user",
-                        "timestamp": datetime.utcnow(),
+                        "timestamp": datetime.now(UTC),
                     }
                 ]
             }
@@ -771,8 +771,8 @@ class TestDataManagerConfigClientStrategyConfig:
                         "strategy_id": "momentum",
                         "parameters": {"leverage": 10},
                         "created_by": "test_user",
-                        "created_at": datetime.utcnow(),
-                        "updated_at": datetime.utcnow(),
+                        "created_at": datetime.now(UTC),
+                        "updated_at": datetime.now(UTC),
                     }
                 ]
             }

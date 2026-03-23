@@ -16,7 +16,7 @@ Focus on uncovered methods:
 - reset_daily_pnl
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +54,7 @@ def sample_position():
         "current_price": 51000.0,
         "unrealized_pnl": 100.0,
         "realized_pnl": 0.0,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(UTC),
     }
 
 
@@ -74,8 +74,8 @@ class TestRefreshPositions:
                 "realized_pnl": 0.0,
                 "total_cost": 5000.0,
                 "total_value": 5000.0,
-                "entry_time": datetime.utcnow(),
-                "last_update": datetime.utcnow(),
+                "entry_time": datetime.now(UTC),
+                "last_update": datetime.now(UTC),
                 "status": "open",
             },
             {
@@ -87,8 +87,8 @@ class TestRefreshPositions:
                 "realized_pnl": 0.0,
                 "total_cost": 3000.0,
                 "total_value": 3000.0,
-                "entry_time": datetime.utcnow(),
-                "last_update": datetime.utcnow(),
+                "entry_time": datetime.now(UTC),
+                "last_update": datetime.now(UTC),
                 "status": "open",
             },
         ]
@@ -270,8 +270,8 @@ class TestSyncPosition:
             "realized_pnl": 0.0,
             "total_cost": 5000.0,
             "total_value": 5000.0,
-            "entry_time": datetime.utcnow(),
-            "last_update": datetime.utcnow(),
+            "entry_time": datetime.now(UTC),
+            "last_update": datetime.now(UTC),
         }
         position_manager.positions[("BTCUSDT", "LONG")] = position
         with patch("tradeengine.position_manager.position_client") as mock_client:
@@ -304,8 +304,8 @@ class TestSyncPosition:
             "realized_pnl": 0.0,
             "total_cost": 5000.0,
             "total_value": 5000.0,
-            "entry_time": datetime.utcnow(),
-            "last_update": datetime.utcnow(),
+            "entry_time": datetime.now(UTC),
+            "last_update": datetime.now(UTC),
         }
         position_manager.positions[("BTCUSDT", "LONG")] = position
         with patch("tradeengine.position_manager.position_client") as mock_client:

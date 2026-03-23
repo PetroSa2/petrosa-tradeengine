@@ -5,7 +5,7 @@ Detailed test to see if OTLPLogExporter is actually exporting logs
 
 import logging
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -30,7 +30,7 @@ except Exception as e:
 
 # Create logger provider
 resource = Resource.create(
-    {"service.name": "detailed-test", "test.timestamp": datetime.utcnow().isoformat()}
+    {"service.name": "detailed-test", "test.timestamp": datetime.now(UTC).isoformat()}
 )
 
 logger_provider = LoggerProvider(resource=resource)

@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,7 +47,7 @@ class DispatcherIntegrationTester:
         """Run all integration tests"""
         print("🚀 Dispatcher Integration Test with Binance Futures")
         print("=" * 70)
-        print(f"Timestamp: {datetime.utcnow().isoformat()}")
+        print(f"Timestamp: {datetime.now(UTC).isoformat()}")
         print("=" * 70)
 
         # Test 1: Initialize exchange
@@ -137,7 +137,7 @@ class DispatcherIntegrationTester:
                 strategy="test_strategy",
                 confidence=0.85,
                 timeframe="1h",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.LIMIT,
                 stop_loss=49000.0,
                 take_profit=51000.0,
@@ -188,7 +188,7 @@ class DispatcherIntegrationTester:
                 strategy="test_strategy",
                 confidence=0.85,
                 timeframe="1h",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.MARKET,
                 strategy_mode=StrategyMode.DETERMINISTIC,
             )
@@ -258,7 +258,7 @@ class DispatcherIntegrationTester:
                 strategy="test_integration",
                 confidence=0.90,
                 timeframe="1h",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 order_type=OrderType.LIMIT,
                 time_in_force=TimeInForce.GTC,
                 strategy_mode=StrategyMode.DETERMINISTIC,

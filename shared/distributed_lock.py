@@ -219,6 +219,10 @@ class DistributedLockManager:
                 current_leader_pod = current_leader["pod_id"]
                 last_heartbeat = current_leader["last_heartbeat"]
 
+                # Ensure last_heartbeat is aware (MongoDB might return naive UTC)
+                if last_heartbeat and last_heartbeat.tzinfo is None:
+                    last_heartbeat = last_heartbeat.replace(tzinfo=UTC)
+
                 # Check if current leader is stale (no heartbeat for 30 seconds)
                 if (
                     last_heartbeat

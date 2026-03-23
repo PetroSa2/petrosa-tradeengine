@@ -1,17 +1,5 @@
-from datetime import datetime
-
-try:
-    from enum import StrEnum
-except ImportError:
-    from enum import Enum
-
-    class StrEnum(str, Enum):  # noqa: UP042
-        """Shim for StrEnum in Python < 3.11"""
-
-        def __str__(self) -> str:
-            return str(self.value)
-
-
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -192,7 +180,8 @@ class Signal(BaseModel):
 
     # Timestamp
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Signal timestamp"
+        default_factory=lambda: datetime.now(UTC),
+        description="Signal timestamp",
     )
 
     @field_validator("timestamp", mode="before")
@@ -202,7 +191,7 @@ class Signal(BaseModel):
         if isinstance(v, str):
             # Parse ISO format string
             try:
-                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(v)
                 return dt
             except ValueError:
                 # Try parsing as Unix timestamp
@@ -210,7 +199,7 @@ class Signal(BaseModel):
                     timestamp_float = float(v)
                     # Validate it's a reasonable Unix timestamp (after year 2000, before year 2100)
                     if 946684800 <= timestamp_float <= 4102444800:
-                        return datetime.fromtimestamp(timestamp_float)
+                        return datetime.fromtimestamp(timestamp_float, tz=UTC)
                     else:
                         # Invalid timestamp, log warning and use current time
                         import logging
@@ -220,7 +209,7 @@ class Signal(BaseModel):
                             f"Invalid timestamp value '{v}' - using current time. "
                             f"Timestamp should be ISO format string or Unix timestamp."
                         )
-                        return datetime.utcnow()
+                        return datetime.now(UTC)
                 except (ValueError, TypeError):
                     # Can't parse as float either, log warning and use current time
                     import logging
@@ -230,11 +219,11 @@ class Signal(BaseModel):
                         f"Invalid timestamp format '{v}' - using current time. "
                         f"Timestamp should be ISO format string or Unix timestamp."
                     )
-                    return datetime.utcnow()
+                    return datetime.now(UTC)
         elif isinstance(v, int | float):
             # Unix timestamp - validate range
             if 946684800 <= v <= 4102444800:
-                return datetime.fromtimestamp(v)
+                return datetime.fromtimestamp(v, tz=UTC)
             else:
                 import logging
 
@@ -242,15 +231,17 @@ class Signal(BaseModel):
                 logger.warning(
                     f"Unix timestamp {v} out of valid range - using current time"
                 )
-                return datetime.utcnow()
+                return datetime.now(UTC)
         elif isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=UTC)
             return v
         else:
             import logging
 
             logger = logging.getLogger(__name__)
             logger.warning(f"Invalid timestamp type {type(v)} - using current time")
-            return datetime.utcnow()
+            return datetime.now(UTC)
 
     @field_validator("confidence", "model_confidence")
     @classmethod

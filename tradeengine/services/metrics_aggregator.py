@@ -7,7 +7,7 @@ to prevent query overload.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from tradeengine.models.metrics import (
@@ -98,13 +98,13 @@ class MetricsAggregator:
             if cache_key in self.cache:
                 cached_data, cached_time = self.cache[cache_key]
                 if (
-                    datetime.utcnow() - cached_time
+                    datetime.now(UTC) - cached_time
                 ).total_seconds() < self.cache_ttl_seconds:
                     logger.debug(f"Returning cached metrics for key: {cache_key}")
                     return cached_data
 
             # Calculate time window
-            end_time = datetime.utcnow()
+            end_time = datetime.now(UTC)
             _ = (
                 end_time - start_time
             ).total_seconds()  # Reserved for future metric calculations
@@ -133,7 +133,7 @@ class MetricsAggregator:
                     logger.warning(f"Requested metric not found: {metric_filter}")
 
             # Cache result
-            self.cache[cache_key] = (metrics_data, datetime.utcnow())
+            self.cache[cache_key] = (metrics_data, datetime.now(UTC))
 
             return metrics_data
 
@@ -357,7 +357,7 @@ class MetricsAggregator:
             )  # Limit to 100 points
 
             # Generate mock data points
-            base_time = datetime.utcnow() - timedelta(seconds=period_seconds)
+            base_time = datetime.now(UTC) - timedelta(seconds=period_seconds)
             data_points = []
             base_value = 120.5
             for i in range(int(num_points)):

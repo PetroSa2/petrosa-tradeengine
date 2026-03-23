@@ -6,7 +6,7 @@ for audit logging and configuration management.
 """
 
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
@@ -36,13 +36,6 @@ class BaseDataManagerClient:
     # NEW METHODS - Implement missing Data Manager methods
     async def query(self, database: str, collection: str, **kwargs):
         """Query records."""
-        # Extract parameters
-        params = kwargs.get("params", {})
-        filter_dict = params.get("filter", {})
-        limit = params.get("limit", 100)
-        sort_by = params.get("sort_by", "_id")
-        sort_order = params.get("sort_order", "asc")
-
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return empty to avoid errors
         return {"data": []}
@@ -183,7 +176,7 @@ class DataManagerClient:
         """Set global trading configuration."""
         try:
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.utcnow()
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -249,7 +242,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.utcnow()
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -319,7 +312,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.utcnow()
+            config_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -441,7 +434,7 @@ class DataManagerClient:
         """Set leverage status for symbol."""
         try:
             status_dict = status.model_dump(exclude={"id"})
-            status_dict["updated_at"] = datetime.utcnow()
+            status_dict["updated_at"] = datetime.now(UTC)
 
             result = await self._client.upsert_one(
                 database="mongodb",

@@ -1,12 +1,6 @@
 import logging
 import random
-from datetime import datetime, timezone
-
-try:
-    from datetime import UTC
-except ImportError:
-    UTC = UTC
-
+from datetime import UTC, datetime
 from typing import Any
 
 from contracts.order import TradeOrder

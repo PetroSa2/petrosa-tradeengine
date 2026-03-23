@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import nats
@@ -292,7 +292,7 @@ class SignalConsumer:
                             "⚠️ MISSING TIMESTAMP | Subject: %s | Using current time as fallback",
                             msg.subject,
                         )
-                        signal_data["timestamp"] = datetime.utcnow()
+                        signal_data["timestamp"] = datetime.now(UTC)
                     else:
                         try:
                             signal_data["timestamp"] = datetime.fromisoformat(
@@ -307,7 +307,7 @@ class SignalConsumer:
                                 str(e),
                             )
                             # Use current time as fallback instead of raising error
-                            signal_data["timestamp"] = datetime.utcnow()
+                            signal_data["timestamp"] = datetime.now(UTC)
 
                     signal = Signal(**signal_data)
 

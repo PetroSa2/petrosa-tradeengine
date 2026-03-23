@@ -6,11 +6,11 @@ specifically for position tracking and P&L updates.
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
 from shared.mysql_client import DataManagerPositionClient
 
 

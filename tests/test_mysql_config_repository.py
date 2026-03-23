@@ -3,11 +3,11 @@ Comprehensive tests for tradeengine/db/mysql_config_repository.py to increase co
 """
 
 from datetime import datetime
-from shared.constants import UTC
 
 import pytest
 
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 
 

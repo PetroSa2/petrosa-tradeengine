@@ -9,12 +9,12 @@ This test suite verifies that:
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest import mock
 
 import pytest
 
 from contracts.signal import OrderType, Signal, TimeInForce
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

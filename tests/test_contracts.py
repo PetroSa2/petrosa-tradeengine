@@ -1,11 +1,10 @@
-from shared.constants import UTC
-
 import pytest
 from pydantic import ValidationError
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
 from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from shared.constants import UTC
 
 
 @pytest.fixture
@@ -167,7 +166,8 @@ def test_signal_serialization(sample_signal: Signal) -> None:
 def test_signal_model_config_json_encoders() -> None:
     """Test Signal model_config json_encoders (Pydantic v2)"""
     from datetime import datetime
-from shared.constants import UTC
+
+    from shared.constants import UTC
 
     signal = Signal(
         strategy_id="test",
@@ -214,7 +214,8 @@ def test_order_serialization(sample_order: TradeOrder) -> None:
 def test_order_model_config_json_encoders() -> None:
     """Test TradeOrder model_config json_encoders (Pydantic v2)"""
     from datetime import datetime
-from shared.constants import UTC
+
+    from shared.constants import UTC
 
     order = TradeOrder(
         symbol="BTCUSDT",
@@ -392,7 +393,8 @@ def test_signal_field_validators() -> None:
 def test_signal_timestamp_validator() -> None:
     """Test Signal timestamp field validator (Pydantic v2)"""
     from datetime import datetime
-from shared.constants import UTC
+
+    from shared.constants import UTC
 
     # Test with ISO format string
     signal = Signal(

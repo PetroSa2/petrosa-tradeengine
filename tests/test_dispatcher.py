@@ -1,11 +1,11 @@
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import patch
 
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import OrderType, Signal, StrategyMode
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

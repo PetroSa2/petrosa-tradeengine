@@ -12,13 +12,13 @@ This test suite covers:
 
 import asyncio
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import Signal, StrategyMode, TimeInForce
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

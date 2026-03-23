@@ -2,10 +2,11 @@
 
 import sys
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+
+from shared.constants import UTC
 
 # Mock binance module before importing LeverageManager
 mock_binance = MagicMock()

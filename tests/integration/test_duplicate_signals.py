@@ -14,12 +14,12 @@ without external dependencies.
 
 import time
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import patch
 
 import pytest
 
 from contracts.signal import Signal, SignalStrength, SignalType, StrategyMode
+from shared.constants import UTC
 from tests.integration.fakes import FakeExchange, FakePositionManager
 from tradeengine.dispatcher import Dispatcher
 

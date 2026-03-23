@@ -6,12 +6,12 @@ instead of update() with upsert parameter (fixes #165).
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from contracts.trading_config import LeverageStatus, TradingConfig
+from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 
 

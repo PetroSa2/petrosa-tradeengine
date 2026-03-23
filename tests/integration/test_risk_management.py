@@ -11,12 +11,12 @@ without external dependencies.
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import patch
 
 import pytest
 
 from contracts.signal import Signal
+from shared.constants import UTC
 from tests.integration.fakes import FakeExchange, FakePositionManager
 from tradeengine.dispatcher import Dispatcher
 

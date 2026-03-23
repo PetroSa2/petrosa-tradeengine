@@ -111,7 +111,8 @@ class TradeOrder(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), description="Order creation timestamp"
+        default_factory=lambda: datetime.now(UTC),
+        description="Order creation timestamp",
     )
     updated_at: datetime | None = Field(None, description="Last update timestamp")
 

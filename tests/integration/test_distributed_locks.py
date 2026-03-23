@@ -165,9 +165,12 @@ async def test_lock_prevents_concurrent_processing(
         )
 
         # Patch _generate_signal_id to bypass duplicate cache and disable accumulation cooldown
-        with patch.object(
-            dispatcher, "_generate_signal_id", side_effect=mock_generate_signal_id
-        ), patch("shared.constants.ACCUMULATION_COOLDOWN_SECONDS", 0):
+        with (
+            patch.object(
+                dispatcher, "_generate_signal_id", side_effect=mock_generate_signal_id
+            ),
+            patch("shared.constants.ACCUMULATION_COOLDOWN_SECONDS", 0),
+        ):
             # Process signals concurrently (simulating two pods)
             # Both signals will have the same fingerprint, so they'll use the same lock key
             results = await asyncio.gather(

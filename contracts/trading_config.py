@@ -51,7 +51,8 @@ class TradingConfig(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), description="When configuration was created"
+        default_factory=lambda: datetime.now(UTC),
+        description="When configuration was created",
     )
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
@@ -153,7 +154,8 @@ class TradingConfigAudit(BaseModel):
     changed_by: str = Field(..., description="Who/what made the change")
     reason: str | None = Field(None, description="Reason for the change")
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), description="When the change occurred"
+        default_factory=lambda: datetime.now(UTC),
+        description="When the change occurred",
     )
 
     # Additional context
@@ -224,7 +226,8 @@ class LeverageStatus(BaseModel):
 
     # Metadata
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC), description="When this record was last updated"
+        default_factory=lambda: datetime.now(UTC),
+        description="When this record was last updated",
     )
 
     def is_synced(self) -> bool:

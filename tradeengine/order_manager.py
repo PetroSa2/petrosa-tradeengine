@@ -45,9 +45,7 @@ class OrderManager:
 
     async def track_order(self, order: TradeOrder, result: dict[str, Any]) -> None:
         """Track an executed order"""
-        order_id = result.get(
-            "order_id", f"order_{int(datetime.now(UTC).timestamp())}"
-        )
+        order_id = result.get("order_id", f"order_{int(datetime.now(UTC).timestamp())}")
 
         order_info = {
             "order_id": order_id,

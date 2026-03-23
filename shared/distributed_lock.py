@@ -222,8 +222,7 @@ class DistributedLockManager:
                 # Check if current leader is stale (no heartbeat for 30 seconds)
                 if (
                     last_heartbeat
-                    and (datetime.now(UTC) - last_heartbeat).total_seconds()
-                    < 30
+                    and (datetime.now(UTC) - last_heartbeat).total_seconds() < 30
                 ):
                     # Current leader is still active
                     self.is_leader = False

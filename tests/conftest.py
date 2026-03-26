@@ -519,9 +519,9 @@ def get_real_configure_logging():
                                     # Update references again
                                     fresh_otel_init = sys.modules["otel_init"]
                                     if "tradeengine.api" in sys.modules:
-                                        sys.modules[
-                                            "tradeengine.api"
-                                        ].otel_init = fresh_otel_init
+                                        sys.modules["tradeengine.api"].otel_init = (
+                                            fresh_otel_init
+                                        )
                                     fresh_func = getattr(
                                         fresh_otel_init, "configure_logging", None
                                     )

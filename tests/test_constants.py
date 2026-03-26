@@ -9,6 +9,7 @@ import pytest
 from shared.constants import (
     APP_NAME,
     APP_VERSION,
+    UTC,
     Environment,
     LogLevel,
     deprecation_warning,

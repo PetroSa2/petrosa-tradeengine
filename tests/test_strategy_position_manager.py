@@ -7,6 +7,7 @@ import pytest
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from contracts.signal import Signal, TimeInForce
+from shared.constants import UTC
 from tradeengine.strategy_position_manager import StrategyPositionManager
 
 

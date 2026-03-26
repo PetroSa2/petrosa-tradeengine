@@ -6,6 +6,8 @@ Actually executes the lifespan to achieve patch coverage for api.py changes.
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from shared.constants import UTC
+
 # Mock OpenTelemetry imports before any imports that might trigger them
 mock_logging_instrumentor = MagicMock()
 mock_logging_module = MagicMock()

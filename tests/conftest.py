@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 # Disable OpenTelemetry auto-initialization during tests
 os.environ["OTEL_NO_AUTO_INIT"] = "1"
 os.environ["OTEL_SDK_DISABLED"] = "true"

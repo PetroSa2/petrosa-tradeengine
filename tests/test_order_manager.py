@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
+from shared.constants import UTC
 from tradeengine.order_manager import OrderManager
 
 

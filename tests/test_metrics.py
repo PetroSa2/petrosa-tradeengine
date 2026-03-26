@@ -2,6 +2,7 @@
 Comprehensive tests for tradeengine/metrics.py to increase coverage
 """
 
+from shared.constants import UTC
 from tradeengine.metrics import (
     active_oco_pairs_per_position,
     current_position_size,

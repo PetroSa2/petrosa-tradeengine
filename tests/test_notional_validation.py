@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
+from shared.constants import UTC
 from tradeengine.exchange.binance import BinanceFuturesExchange
 
 

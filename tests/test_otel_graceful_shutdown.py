@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 # Mock the missing OpenTelemetry modules
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()

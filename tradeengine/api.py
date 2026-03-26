@@ -995,7 +995,7 @@ async def get_active_signals(
 
 @app.get("/state")
 async def get_state(
-    symbol: str = Query(..., description="Target symbol for state context")
+    symbol: str = Query(..., description="Target symbol for state context"),
 ):
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.

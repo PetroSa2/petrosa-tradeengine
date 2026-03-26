@@ -15,6 +15,7 @@ from scripts.validate_business_metrics import (
     validate_metric_values,
     validate_metrics_present,
 )
+from shared.constants import UTC
 
 
 class TestValidateBusinessMetrics:

@@ -6,6 +6,8 @@ This module provides test-specific configurations that bypass Kubernetes depende
 import os
 from unittest.mock import patch
 
+from shared.constants import UTC
+
 
 class TestConfigManager:
     """Manages test-specific configuration overrides."""

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 sys.modules["petrosa_otel"] = MagicMock()
 sys.modules["petrosa_otel"].extract_trace_context = MagicMock(return_value=None)
 

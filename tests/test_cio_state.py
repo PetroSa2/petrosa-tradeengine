@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from shared.constants import UTC
+
 # Mock OpenTelemetry and other non-essential modules
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["otel_init"] = MagicMock()

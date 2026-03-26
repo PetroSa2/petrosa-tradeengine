@@ -16,6 +16,7 @@ import pytest
 
 from contracts.order import TradeOrder
 from contracts.signal import Signal, StrategyMode
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher, OCOManager
 
 

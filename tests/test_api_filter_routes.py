@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from shared.constants import UTC
 from tradeengine.api import app
 from tradeengine.api_filter_routes import get_config_manager, set_config_manager
 from tradeengine.config_manager import TradingConfigManager

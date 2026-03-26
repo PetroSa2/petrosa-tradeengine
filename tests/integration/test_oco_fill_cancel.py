@@ -25,6 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.dispatcher import OCOManager
 
 

@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from shared.constants import UTC
+
 # Mock OpenTelemetry imports before importing api
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["otel_init"] = MagicMock()

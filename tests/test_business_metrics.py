@@ -18,6 +18,7 @@ from contracts.signal import (
     SignalStrength,
     StrategyMode,
 )
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

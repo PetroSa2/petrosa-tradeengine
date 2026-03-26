@@ -7,6 +7,7 @@ ETHUSDT scenario where we were getting $19.59 instead of the required $20.00.
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.exchange.binance import BinanceFuturesExchange
 
 

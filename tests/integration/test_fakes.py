@@ -3,6 +3,7 @@
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
+from shared.constants import UTC
 from tests.integration.fakes import FakeExchange, FakeOrderManager, FakePositionManager
 
 

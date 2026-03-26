@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from contracts.order import OrderSide, OrderType, TradeOrder
+from shared.constants import UTC
 from tradeengine.dispatcher import OCOManager
 
 

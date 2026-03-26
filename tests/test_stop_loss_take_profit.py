@@ -15,6 +15,7 @@ import pytest
 
 from contracts.order import OrderType, TradeOrder
 from contracts.signal import Signal
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

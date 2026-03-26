@@ -1052,7 +1052,9 @@ class TestAdditionalMethods:
         """Test get_account_info when client is not initialized"""
         binance_exchange.client = None
         binance_exchange.initialized = False
-        with pytest.raises(RuntimeError, match="Binance Futures client not initialized"):
+        with pytest.raises(
+            RuntimeError, match="Binance Futures client not initialized"
+        ):
             await binance_exchange.get_account_info()
 
     @pytest.mark.asyncio

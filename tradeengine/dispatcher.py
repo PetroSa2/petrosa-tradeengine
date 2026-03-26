@@ -76,9 +76,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -497,9 +497,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        self.active_oco_pairs[position_id]["close_reason"] = (
+                            close_reason
+                        )
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (
@@ -2217,7 +2217,7 @@ class Dispatcher:
                 else:  # SHORT
                     order.stop_loss = entry_price * (1 + order.stop_loss_pct)
                 self.logger.info(
-                    f"Calculated stop_loss price: {order.stop_loss} from {order.stop_loss_pct*100}%"
+                    f"Calculated stop_loss price: {order.stop_loss} from {order.stop_loss_pct * 100}%"
                 )
 
             if not order.take_profit and order.take_profit_pct and entry_price > 0:
@@ -2226,7 +2226,7 @@ class Dispatcher:
                 else:  # SHORT
                     order.take_profit = entry_price * (1 - order.take_profit_pct)
                 self.logger.info(
-                    f"Calculated take_profit price: {order.take_profit} from {order.take_profit_pct*100}%"
+                    f"Calculated take_profit price: {order.take_profit} from {order.take_profit_pct * 100}%"
                 )
 
             # Check if both SL and TP are specified for OCO behavior
@@ -2372,7 +2372,6 @@ class Dispatcher:
     ) -> None:
         """Place stop loss order"""
         try:
-
             from contracts.order import OrderStatus, TradeOrder
 
             # Get the filled quantity with robust extraction
@@ -2506,7 +2505,6 @@ class Dispatcher:
     ) -> None:
         """Place take profit order"""
         try:
-
             from contracts.order import OrderStatus, TradeOrder
 
             # Get the filled quantity with robust extraction

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 from shared.constants import UTC
 from shared.mysql_client import DataManagerPositionClient
 

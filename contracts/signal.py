@@ -1,20 +1,8 @@
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
-
-# Compatibility shims for Python < 3.11
-try:
-    from shared.constants import UTC
-except ImportError:
-    UTC = timezone.utc
-
-try:
-    from shared.constants import StrEnum
-except ImportError:
-    class StrEnum(str, Enum):  # type: ignore
-        pass
 
 
 class SignalType(StrEnum):

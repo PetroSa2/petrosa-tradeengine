@@ -622,6 +622,8 @@ class TestInitialization:
     """Test exchange initialization"""
 
     @pytest.mark.asyncio
+    @patch("shared.constants.BINANCE_API_KEY", "test_key")
+    @patch("shared.constants.BINANCE_API_SECRET", "test_secret")
     async def test_initialize(self, binance_exchange, mock_binance_client):
         """Test exchange initialization"""
         binance_exchange.initialized = False
@@ -1050,9 +1052,8 @@ class TestAdditionalMethods:
         """Test get_account_info when client is not initialized"""
         binance_exchange.client = None
         binance_exchange.initialized = False
-        result = await binance_exchange.get_account_info()
-        # Should return empty dict or handle gracefully
-        assert isinstance(result, dict)
+        with pytest.raises(RuntimeError, match="Binance Futures client not initialized"):
+            await binance_exchange.get_account_info()
 
     @pytest.mark.asyncio
     async def test_get_symbol_price(self, binance_exchange):

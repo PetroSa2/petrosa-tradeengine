@@ -21,7 +21,6 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from shared.constants import UTC
 from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.constants import UTC

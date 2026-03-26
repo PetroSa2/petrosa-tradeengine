@@ -12,7 +12,6 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from shared.constants import UTC
 from contracts.signal import Signal, TimeFrame
 from shared.constants import UTC
 

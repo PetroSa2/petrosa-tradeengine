@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import nats
-
-from shared.constants import UTC
 import nats.aio.client
 import nats.aio.subscription
 from opentelemetry import context, trace
@@ -253,7 +251,9 @@ class SignalConsumer:
                 try:
                     # Set messaging attributes for observability
                     span.set_attribute("messaging.system", "nats")
-                    span.set_attribute("messaging.destination", settings.nats_topic_signals)
+                    span.set_attribute(
+                        "messaging.destination", settings.nats_topic_signals
+                    )
                     span.set_attribute("messaging.operation", "receive")
 
                     # Add business context attributes to span

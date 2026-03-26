@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from shared.constants import UTC
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from opentelemetry import trace

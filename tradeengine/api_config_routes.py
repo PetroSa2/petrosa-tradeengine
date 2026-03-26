@@ -8,7 +8,6 @@ at global, symbol, and symbol-side levels.
 import logging
 import os
 from datetime import datetime
-from shared.constants import UTC
 from typing import Any, Literal
 
 import httpx

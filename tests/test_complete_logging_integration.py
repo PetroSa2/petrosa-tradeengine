@@ -13,6 +13,8 @@ import pytest
 from opentelemetry.sdk._logs import LoggerProvider  # noqa: E402
 from opentelemetry.sdk.resources import Resource  # noqa: E402
 
+from shared.constants import UTC
+
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.httpx"] = MagicMock()

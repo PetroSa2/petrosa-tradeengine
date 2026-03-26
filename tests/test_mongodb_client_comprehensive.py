@@ -3,7 +3,6 @@ Comprehensive tests for tradeengine/db/mongodb_client.py to increase coverage
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest

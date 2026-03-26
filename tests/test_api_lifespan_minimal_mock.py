@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 
 @pytest.mark.asyncio
 async def test_lifespan_configure_logging_line_executes():

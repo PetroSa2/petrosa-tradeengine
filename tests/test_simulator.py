@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from contracts.order import TradeOrder
+from shared.constants import UTC
 from tradeengine.exchange.simulator import SimulatorExchange, TradeSimulator
 
 

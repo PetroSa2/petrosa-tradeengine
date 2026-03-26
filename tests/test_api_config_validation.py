@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from shared.constants import UTC
 from tradeengine.api import app
 from tradeengine.api_config_routes import (
     CrossServiceConflict,

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.services.heartbeat_monitor import HeartbeatMessage, HeartbeatMonitor
 
 

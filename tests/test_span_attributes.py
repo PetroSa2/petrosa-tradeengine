@@ -13,6 +13,7 @@ from opentelemetry import trace
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import Signal
+from shared.constants import UTC
 from tradeengine.api import app
 from tradeengine.consumer import SignalConsumer
 from tradeengine.dispatcher import Dispatcher

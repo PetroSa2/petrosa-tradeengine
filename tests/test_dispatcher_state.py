@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shared.config import Settings
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

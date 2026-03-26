@@ -11,7 +11,6 @@ This test suite covers:
 
 import asyncio
 from datetime import datetime, timedelta
-from shared.constants import UTC
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest

@@ -3,7 +3,6 @@ Comprehensive tests for tradeengine/db/mysql_config_repository.py to increase co
 """
 
 from datetime import datetime
-from shared.constants import UTC
 
 import pytest
 

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 # Disable OpenTelemetry auto-initialization during tests
 os.environ["OTEL_NO_AUTO_INIT"] = "1"
 os.environ["OTEL_SDK_DISABLED"] = "true"
@@ -517,9 +519,9 @@ def get_real_configure_logging():
                                     # Update references again
                                     fresh_otel_init = sys.modules["otel_init"]
                                     if "tradeengine.api" in sys.modules:
-                                        sys.modules["tradeengine.api"].otel_init = (
-                                            fresh_otel_init
-                                        )
+                                        sys.modules[
+                                            "tradeengine.api"
+                                        ].otel_init = fresh_otel_init
                                     fresh_func = getattr(
                                         fresh_otel_init, "configure_logging", None
                                     )

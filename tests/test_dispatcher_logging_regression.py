@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
+from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 
 

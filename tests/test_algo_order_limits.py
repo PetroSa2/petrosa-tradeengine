@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from contracts.order import TradeOrder
+from shared.constants import UTC
 from tradeengine.position_manager import PositionManager
 
 

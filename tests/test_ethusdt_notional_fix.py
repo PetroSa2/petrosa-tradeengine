@@ -7,6 +7,7 @@ ETHUSDT scenario where we were getting $19.59 instead of the required $20.00.
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.exchange.binance import BinanceFuturesExchange
 
 
@@ -117,9 +118,9 @@ class TestETHUSDTNotionalFix:
                 f"At ${price:.2f}: Quantity {min_amount} is below minimum "
                 f"required {min_required:.6f}"
             )
-            assert (
-                notional_value >= 20.0
-            ), f"At ${price:.2f}: Notional ${notional_value:.2f} is below $20.00"
+            assert notional_value >= 20.0, (
+                f"At ${price:.2f}: Notional ${notional_value:.2f} is below $20.00"
+            )
 
             print(
                 f"✓ ETHUSDT at ${price:.2f}: "

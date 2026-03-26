@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.config_manager import TradingConfigManager
 
 

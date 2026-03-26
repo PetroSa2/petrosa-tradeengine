@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shared.constants import UTC
+
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.httpx"] = MagicMock()

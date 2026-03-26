@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from shared.config import Settings
+from shared.constants import UTC
 
 
 class TestSettings:

@@ -12,6 +12,7 @@ from unittest import mock
 
 import pytest
 
+from shared.constants import UTC
 from shared.logger import get_logger
 
 

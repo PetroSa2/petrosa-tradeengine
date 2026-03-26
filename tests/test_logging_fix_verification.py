@@ -6,6 +6,7 @@ via keyword arguments and remains compatible with legacy f-string patterns.
 
 import pytest
 
+from shared.constants import UTC
 from shared.logger import get_logger
 
 

@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shared.constants import UTC
 from tradeengine.position_manager import PositionManager
 
 

@@ -9,7 +9,6 @@ This module tests the critical fixes for hedge mode support:
 """
 
 from datetime import datetime
-from shared.constants import UTC
 
 import pytest
 

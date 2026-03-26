@@ -9,7 +9,6 @@ This test suite verifies that:
 """
 
 from datetime import datetime
-from shared.constants import UTC
 from unittest import mock
 
 import pytest

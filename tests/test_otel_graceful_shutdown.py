@@ -14,6 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 # Mock the missing OpenTelemetry modules
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()
@@ -127,9 +129,9 @@ class TestFlushTelemetry:
                         # Assert function completes without exception
                         assert True
                     except Exception:
-                        assert (
-                            False
-                        ), "flush_telemetry should handle missing providers gracefully"
+                        assert False, (
+                            "flush_telemetry should handle missing providers gracefully"
+                        )
 
     def test_flush_telemetry_handles_exceptions(self):
         """Test that flush_telemetry handles provider exceptions gracefully."""
@@ -155,9 +157,9 @@ class TestFlushTelemetry:
                         # Assert function completes without propagating exception
                         assert True
                     except Exception as e:
-                        assert (
-                            False
-                        ), f"flush_telemetry should catch exceptions, got: {e}"
+                        assert False, (
+                            f"flush_telemetry should catch exceptions, got: {e}"
+                        )
 
     # TODO: Fix test isolation issue - see GitHub issue #217
     # These tests pass individually but fail in full suite due to module reloading isolation issues.
@@ -280,9 +282,9 @@ class TestShutdownTelemetry:
                         # Assert function completes without exception
                         assert True
                     except Exception:
-                        assert (
-                            False
-                        ), "shutdown_telemetry should handle missing providers gracefully"
+                        assert False, (
+                            "shutdown_telemetry should handle missing providers gracefully"
+                        )
 
     def test_shutdown_telemetry_handles_exceptions(self):
         """Test that shutdown_telemetry handles provider exceptions gracefully."""
@@ -308,9 +310,9 @@ class TestShutdownTelemetry:
                         # Assert function completes without propagating exception
                         assert True
                     except Exception as e:
-                        assert (
-                            False
-                        ), f"shutdown_telemetry should catch exceptions, got: {e}"
+                        assert False, (
+                            f"shutdown_telemetry should catch exceptions, got: {e}"
+                        )
 
 
 class TestSetupSignalHandlers:

@@ -8,6 +8,7 @@ without requiring external dependencies (MongoDB, Data Manager, Exchange APIs).
 from typing import Any
 
 from contracts.order import TradeOrder
+from shared.constants import UTC
 
 
 class FakeExchange:

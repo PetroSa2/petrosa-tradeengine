@@ -22,6 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shared.constants import UTC
+
 # Mock OpenTelemetry imports before importing otel_init
 sys.modules["opentelemetry.instrumentation.logging"] = MagicMock()
 sys.modules["opentelemetry.instrumentation.fastapi"] = MagicMock()
@@ -294,7 +296,9 @@ class TestAttachLoggingHandlerBackwardCompat:
         elif "otel_init" in sys.modules:
             sys.modules["otel_init"]._global_logger_provider = None
 
-        with (patch("otel_init.configure_logging") as mock_configure,):
+        with (
+            patch("otel_init.configure_logging") as mock_configure,
+        ):
             mock_configure.return_value = True
 
             # The deprecation is shown as a DeprecationWarning

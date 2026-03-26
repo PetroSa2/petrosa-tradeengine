@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: E402
 
 import pytest  # noqa: E402
 
+from shared.constants import UTC
+
 # Mock binance module before importing
 mock_binance = MagicMock()
 mock_binance.exceptions = MagicMock()

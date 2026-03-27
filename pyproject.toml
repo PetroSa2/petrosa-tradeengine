@@ -37,6 +37,7 @@ dev = [
     "coverage==7.4.1",
     "codecov==2.1.13",
     "pytest-timeout",
+    "pytest-xdist",
 ]
 
 [tool.black]
@@ -142,6 +143,7 @@ python_functions = ["test_*"]
 # Test execution options
 addopts = [
     "-v",
+    "-n", "auto",
     "--strict-markers",
     "--strict-config",
     "--disable-warnings",

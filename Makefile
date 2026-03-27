@@ -3,7 +3,18 @@
 # Standardized Makefile for Petrosa Systems
 # Provides consistent development and testing procedures across all services
 
-.PHONY: help setup install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline
+# Python enforcement
+PYTHON_VERSION_EXPECTED := 3.11
+PYTHON_VERSION_ACTUAL := $(shell python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+
+# Colors for output
+RED := \033[0;31m
+GREEN := \033[0;32m
+YELLOW := \033[0;33m
+BLUE := \033[0;34m
+NC := \033[0m # No Color
+
+.PHONY: help setup validate-python install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline
 
 # Default target
 help:
@@ -59,7 +70,16 @@ help:
 	@echo "  k8s-clean      - Clean up Kubernetes resources"
 
 # Setup and installation
-setup:
+validate-python:
+	@echo "$(BLUE)Validating Python version...$(NC)"
+	@if [ "$(PYTHON_VERSION_ACTUAL)" != "$(PYTHON_VERSION_EXPECTED)" ]; then \
+		echo "$(RED)❌ ERROR: Python $(PYTHON_VERSION_EXPECTED) required, found $(PYTHON_VERSION_ACTUAL)$(NC)"; \
+		echo "$(YELLOW)💡 Recommended resolution: Use 'pyenv install 3.11.9 && pyenv local 3.11.9'$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Python version $(PYTHON_VERSION_ACTUAL) matches expected $(PYTHON_VERSION_EXPECTED)$(NC)"
+
+setup: validate-python
 	@echo "🚀 Setting up development environment..."
 	python -m pip install --upgrade pip
 	pip install -r requirements.txt
@@ -135,7 +155,7 @@ e2e:
 	@echo "🌐 Running end-to-end tests..."
 	pytest tests/ -m "e2e" -v --tb=short
 
-test:
+test: validate-python
 	@echo "🧪 Running all tests with coverage..."
 	pytest tests/ -v --cov=tradeengine --cov=contracts --cov=shared --cov-report=term-missing --cov-report=html --cov-report=xml --cov-fail-under=40
 

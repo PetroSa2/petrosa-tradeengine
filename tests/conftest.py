@@ -65,8 +65,9 @@ def mock_binance_global():
     mock_client.futures_get_position_mode.return_value = {"dualSidePosition": False}
 
     # Patch in confirmed locations
-    with patch("binance.Client", return_value=mock_client), patch(
-        "tradeengine.exchange.binance.Client", return_value=mock_client
+    with (
+        patch("binance.Client", return_value=mock_client),
+        patch("tradeengine.exchange.binance.Client", return_value=mock_client),
     ):
         yield {"client": mock_client}
 

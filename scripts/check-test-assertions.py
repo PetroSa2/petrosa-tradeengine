@@ -18,7 +18,6 @@ Exit codes:
 import ast
 import os
 import sys
-from typing import Optional
 
 
 class TestAssertionChecker(ast.NodeVisitor):
@@ -26,9 +25,9 @@ class TestAssertionChecker(ast.NodeVisitor):
 
     def __init__(self):
         self.has_assertion = False
-        self.test_functions: list[tuple[str, int, bool]] = (
-            []
-        )  # (name, line, has_assertion)
+        self.test_functions: list[
+            tuple[str, int, bool]
+        ] = []  # (name, line, has_assertion)
         self.current_test: str | None = None
         self.current_line: int = 0
 
@@ -88,7 +87,7 @@ class TestAssertionChecker(ast.NodeVisitor):
                         # Mock patches often used with assertions
                         return True
 
-        # Pattern 3: unittest assertions (assertEqual, assertTrue, etc.)
+        # Pattern 3: unittest assertions or mock assertions (assertEqual, assert_called, etc.)
         if isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Attribute):
@@ -111,11 +110,17 @@ def find_test_files(paths: list[str] = None) -> list[str]:
         # Use provided paths
         test_files = []
         for path in paths:
-            if os.path.isfile(path) and path.endswith(".py"):
-                # Check if it's a test file
-                filename = os.path.basename(path)
-                if filename.startswith("test_") or filename.endswith("_test.py"):
-                    test_files.append(path)
+            if os.path.isfile(path):
+                if path.endswith(".py"):
+                    # Check if it's a test file
+                    filename = os.path.basename(path)
+                    if filename.startswith("test_") or filename.endswith("_test.py"):
+                        test_files.append(path)
+            elif os.path.isdir(path):
+                for root, _, files in os.walk(path):
+                    for file in files:
+                        if (file.startswith("test_") or file.endswith("_test.py")) and file.endswith(".py"):
+                            test_files.append(os.path.join(root, file))
         return test_files
 
     # Get staged files from git
@@ -192,7 +197,7 @@ def main():
     """Main entry point."""
     # Get files to check
     if len(sys.argv) > 1:
-        files = sys.argv[1:]
+        files = find_test_files(sys.argv[1:])
     else:
         files = find_test_files()
 

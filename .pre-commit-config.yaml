@@ -38,8 +38,8 @@ repos:
   # ==================================================================
   # PROTO LINTING - Protolint
   # ==================================================================
-  - repo: https://github.com/bufbuild/protolint-pre-commit
-    rev: v0.47.1
+  - repo: https://github.com/yoheimuta/protolint
+    rev: v0.50.4
     hooks:
       - id: protolint
         name: Protobuf linter

@@ -131,11 +131,12 @@ class DataManagerClient:
         self.max_retries = max_retries
 
         # Initialize the base client
-        self._client = BaseDataManagerClient(base_url=str(self.base_url),
-            base_url=self.base_url,
+        self._client = BaseDataManagerClient(
+            base_url=str(self.base_url),
             timeout=self.timeout,
             max_retries=self.max_retries,
         )
+
 
         self._logger = get_logger()
         self._logger.info(f"Initialized Data Manager client: {self.base_url}")

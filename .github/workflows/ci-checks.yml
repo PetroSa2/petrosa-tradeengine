@@ -26,7 +26,7 @@ jobs:
   lint-and-test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Lint & Test
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
 
     # Test environment variables - ONLY for testing, never for production
     env:
@@ -148,7 +148,7 @@ jobs:
   test-quality:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Test Quality Check
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout service code
         uses: actions/checkout@v4
@@ -184,7 +184,7 @@ jobs:
   security-scan:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Security Scan
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write  # Required for SARIF upload
@@ -247,7 +247,7 @@ jobs:
   # Pipeline status check - aggregates all PR checks
   pipeline:
     name: pipeline
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     needs: [lint-and-test, test-quality, security-scan]
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     steps:
@@ -268,7 +268,7 @@ jobs:
   # Main Branch Deployment - Only run on main branch pushes
   prepare-release:
     name: Prepare Release
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: write
@@ -370,7 +370,7 @@ jobs:
 
   gitops-update:
     name: GitOps Update
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     needs: [build-and-push, prepare-release]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
@@ -428,7 +428,7 @@ jobs:
 
   notify:
     needs: [build-and-push, prepare-release, gitops-update]
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:
@@ -449,7 +449,7 @@ jobs:
 
   cleanup:
     needs: [build-and-push]
-    runs-on: petrosa-org-runners
+    runs-on: ubuntu-latest
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
 
     steps:

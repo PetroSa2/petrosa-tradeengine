@@ -101,11 +101,15 @@ class BinanceFuturesExchange:
                 logger.info("Loading futures exchange info...")
                 await self._load_exchange_info()
 
-                # Initialize and start rate limit monitor
-                from shared.constants import NATS_URL
+                # Initialize and start rate limit monitor if enabled
+                from shared.constants import NATS_ENABLED, NATS_URL
 
-                self.rate_monitor = RateLimitMonitor(nats_url=NATS_URL)
-                await self.rate_monitor.start()
+                if NATS_ENABLED:
+                    logger.info(f"Starting RateLimitMonitor (NATS: {NATS_URL})...")
+                    self.rate_monitor = RateLimitMonitor(nats_url=NATS_URL)
+                    await self.rate_monitor.start()
+                else:
+                    logger.info("RateLimitMonitor disabled (NATS_ENABLED=false)")
 
                 self.initialized = True
                 logger.info("Binance Futures exchange initialized successfully")

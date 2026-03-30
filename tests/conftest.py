@@ -33,10 +33,17 @@ os.environ.update(
 sys.path.append(os.path.dirname(__file__))
 
 from collections.abc import Generator  # noqa: E402
-from unittest.mock import AsyncMock, Mock, patch  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: E402
 
 import pytest  # noqa: E402
-from otel_cleanup import cleanup_logging, restore_all_otel_init_patches  # noqa: E402
+
+# Temporary fix for missing otel_cleanup module
+# from otel_cleanup import cleanup_logging, restore_all_otel_init_patches  # noqa: E402
+def cleanup_logging():
+    pass
+
+def restore_all_otel_init_patches():
+    pass
 
 
 # =============================================================================
@@ -70,6 +77,20 @@ def mock_binance_global():
         patch("tradeengine.exchange.binance.Client", return_value=mock_client),
     ):
         yield {"client": mock_client}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_rate_limit_monitor():
+    """Globally mock RateLimitMonitor to prevent NATS connection hangs."""
+    mock_monitor = MagicMock()
+    mock_monitor.start = AsyncMock()
+    mock_monitor.stop = AsyncMock()
+    mock_monitor.update_from_headers = AsyncMock()
+
+    with patch(
+        "tradeengine.exchange.binance.RateLimitMonitor", return_value=mock_monitor
+    ):
+        yield mock_monitor
 
 
 @pytest.fixture(scope="session", autouse=True)

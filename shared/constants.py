@@ -653,3 +653,4 @@ def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0") ->
         DeprecationWarning,
         stacklevel=2,
     )
+

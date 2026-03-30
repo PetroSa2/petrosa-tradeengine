@@ -33,7 +33,7 @@ class RateLimitMonitor:
         self.last_update_time: float = 0
         self.update_interval: float = 5.0  # seconds
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the monitor and connect to NATS."""
         try:
             self.nats_client = await nats.connect(self.nats_url)
@@ -42,13 +42,13 @@ class RateLimitMonitor:
             logger.error(f"RateLimitMonitor failed to connect to NATS: {e}")
             self.nats_client = None
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the monitor and close NATS connection."""
         if self.nats_client:
             await self.nats_client.close()
             self.nats_client = None
 
-    async def update_from_headers(self, headers: dict[str, str]):
+    async def update_from_headers(self, headers: dict[str, str]) -> None:
         """Update used weight from response headers and broadcast if changed."""
         weight_str = headers.get("x-mbx-used-weight-1m") or headers.get(
             "X-MBX-USED-WEIGHT-1M"
@@ -72,7 +72,7 @@ class RateLimitMonitor:
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to parse rate limit weight: {e}")
 
-    async def _broadcast(self, weight: int):
+    async def _broadcast(self, weight: int) -> None:
         """Broadcast rate limit status to NATS."""
         if not self.nats_client:
             # Try to reconnect if client is missing

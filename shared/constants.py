@@ -10,19 +10,22 @@ All modules should import constants from this file rather than defining their ow
 import os
 import warnings
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 # Timezone
 UTC = timezone.utc
 
-try:
+if TYPE_CHECKING:
     from enum import Enum, StrEnum
-except ImportError:
-    # Fallback for Python < 3.11
-    from enum import Enum
-    class StrEnum(str, Enum):
-        pass
+else:
+    try:
+        from enum import Enum, StrEnum
+    except ImportError:
+        # Fallback for Python < 3.11
+        from enum import Enum
+        class StrEnum(str, Enum):
+            pass
 
-from typing import Any
 
 # =============================================================================
 # ENVIRONMENT CONFIGURATION

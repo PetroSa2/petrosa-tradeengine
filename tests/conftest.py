@@ -36,14 +36,7 @@ from collections.abc import Generator  # noqa: E402
 from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: E402
 
 import pytest  # noqa: E402
-
-# Temporary fix for missing otel_cleanup module
-# from otel_cleanup import cleanup_logging, restore_all_otel_init_patches  # noqa: E402
-def cleanup_logging():
-    pass
-
-def restore_all_otel_init_patches():
-    pass
+from otel_cleanup import cleanup_logging, restore_all_otel_init_patches  # noqa: E402
 
 
 # =============================================================================

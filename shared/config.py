@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # Align default with shared.constants default and TA bot publisher
     nats_topic_signals: str = "signals.trading.*"
     nats_topic_heartbeat: str = "cio.heartbeat"
+    
+    # CIO Enforcement (Ticket #304 / P0 #1)
+    enforce_cio_audit: bool = True  # Default to True for maximum safety
+
 
     # API Configuration (for uvicorn)
 

@@ -13,6 +13,7 @@ import nats.aio.client
 from pydantic import BaseModel, Field
 
 from tradeengine.defaults import FAIL_SAFE_PARAMETERS
+from tradeengine.metrics import last_heartbeat_received_timestamp, restricted_mode_status
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,11 @@ class HeartbeatMonitor:
 
             self.last_heartbeat_time = time.time()
 
+            # Export heartbeat metric
+            last_heartbeat_received_timestamp.labels(
+                service=data.get("service", "unknown"), subject=self.subject
+            ).set(self.last_heartbeat_time)
+
             if self.restricted_mode:
                 self.consecutive_heartbeats += 1
                 if self.consecutive_heartbeats >= self.recovery_threshold:
@@ -117,6 +123,9 @@ class HeartbeatMonitor:
         while self.is_running:
             try:
                 await asyncio.sleep(5.0)
+                # Ensure the metric is initialized/updated
+                restricted_mode_status.set(1 if self.restricted_mode else 0)
+
                 if not self.restricted_mode and self.last_heartbeat_time > 0:
                     if (time.time() - self.last_heartbeat_time) > self.timeout:
                         await self._enter_restricted_mode()
@@ -130,6 +139,7 @@ class HeartbeatMonitor:
         if not self.restricted_mode:
             self.restricted_mode = True
             self.consecutive_heartbeats = 0
+            restricted_mode_status.set(1)
             logger.critical("🚨 ENTERING RESTRICTED_MODE: CIO heartbeat lost!")
 
     async def _exit_restricted_mode(self):
@@ -137,6 +147,7 @@ class HeartbeatMonitor:
         if self.restricted_mode:
             self.restricted_mode = False
             self.consecutive_heartbeats = 0
+            restricted_mode_status.set(0)
             logger.info("✅ EXITING RESTRICTED_MODE: CIO heartbeat recovered.")
 
     def is_restricted(self) -> bool:

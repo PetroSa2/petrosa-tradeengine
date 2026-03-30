@@ -211,3 +211,18 @@ order_failures_total = Counter(
     "Total order execution failures",
     ["symbol", "order_type", "failure_reason", "exchange"],
 )
+
+# ========================================
+# NATS Heartbeat & Fail-Safe Observability
+# ========================================
+
+last_heartbeat_received_timestamp = Gauge(
+    "tradeengine_heartbeat_last_received_timestamp",
+    "Unix timestamp of the last valid heartbeat received from CIO",
+    ["service", "subject"],
+)
+
+restricted_mode_status = Gauge(
+    "tradeengine_restricted_mode_status",
+    "Binary status of RESTRICTED_MODE (1 = Restricted, 0 = Normal)",
+)

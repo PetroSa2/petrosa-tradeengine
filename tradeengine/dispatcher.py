@@ -71,7 +71,7 @@ tracer = trace.get_tracer(__name__)
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
-    def __init__(self, exchange: Any, logger: logging.Logger, dispatcher=None):
+    def __init__(self, exchange: Any, logger: logging.Logger, dispatcher: Any = None):
         self.exchange = exchange
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
@@ -1187,42 +1187,32 @@ class Dispatcher:
                 # Track signal reception time for latency measurement
                 signal_received_at = time.time()
 
-                # FAIL-SAFE: Check if Heartbeat Monitor is in restricted mode
+                # FAIL-SAFE: Check if Heartbeat Monitor is in restricted mode (AC: Follow GEMINI.md mandate)
                 if (
                     self.heartbeat_monitor is not None
                     and self.heartbeat_monitor.is_restricted()
                 ):
-                    self.logger.critical(
-                        f"🛑 FAIL-SAFE ACTIVE: Throttling signal for {signal.symbol} "
-                        f"due to RESTRICTED_MODE (CIO heartbeat lost)"
-                    )
-
-                    # Override signal properties with conservative fail-safe limits
                     if signal.action == "close":
                         self.logger.warning(
-                            f"Fail-safe: Allowing CLOSE action for {signal.symbol}"
+                            f"⚠️  RESTRICTED_MODE: Allowing CLOSE action for {signal.symbol} despite lost CIO heartbeat"
                         )
                     else:
-                        # For buy/sell, we apply strict USD limit (AC: Use constant from defaults)
-                        from tradeengine.defaults import FAIL_SAFE_PARAMETERS
-
-                        max_usd = FAIL_SAFE_PARAMETERS["max_position_size_usd"]
-                        current_price = signal.current_price or signal.price
-                        if current_price > 0:
-                            restricted_qty = max_usd / current_price
-                            if signal.quantity > restricted_qty:
-                                self.logger.warning(
-                                    f"Fail-safe: Capping quantity for {signal.symbol} "
-                                    f"from {signal.quantity} to {restricted_qty:.6f} (${max_usd} limit)"
-                                )
-                                signal.quantity = restricted_qty
-
-                        # Force conservative leverage (AC: Use constant from defaults)
-                        max_leverage = FAIL_SAFE_PARAMETERS["max_leverage"]
-                        if signal.metadata and "leverage" in signal.metadata:
-                            signal.metadata["leverage"] = min(
-                                int(signal.metadata["leverage"]), max_leverage
-                            )
+                        self.logger.critical(
+                            f"🛑 FAIL-SAFE ABORT: Rejecting {signal.action.upper()} for {signal.symbol} "
+                            f"due to RESTRICTED_MODE (CIO heartbeat lost - LLM reasoning unavailable)"
+                        )
+                        signals_processed.labels(
+                            status="aborted_restricted", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.aborted", True)
+                        span.set_attribute("abort.reason", "restricted_mode")
+                        span.set_status(trace.Status(trace.StatusCode.ERROR, "RESTRICTED_MODE: CIO Heartbeat Lost"))
+                        return {
+                            "status": "aborted",
+                            "reason": "RESTRICTED_MODE: CIO heartbeat lost, opening new positions is strictly forbidden.",
+                            "symbol": signal.symbol,
+                            "action": signal.action,
+                        }
 
                 # Track signal reception in metrics
                 signals_received.labels(
@@ -1230,6 +1220,33 @@ class Dispatcher:
                     symbol=signal.symbol,
                     action=signal.action,
                 ).inc()
+
+                # CIO AUDIT ENFORCEMENT (Ticket #304 / P0 #1)
+                # If enforce_cio_audit is True, we only accept BUY/SELL signals from 'petrosa-cio'
+                # This ensures every open signal has passed through the LLM reasoning loop.
+                if self.settings.enforce_cio_audit and signal.action in ("buy", "sell"):
+                    if signal.source != "petrosa-cio":
+                        self.logger.critical(
+                            f"🛑 CIO ENFORCEMENT FAILURE: Rejecting {signal.action.upper()} for {signal.symbol} "
+                            f"from UNAUTHORIZED source '{signal.source}'. Expected 'petrosa-cio'."
+                        )
+                        signals_processed.labels(
+                            status="rejected_unauthorized_source", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.rejected", True)
+                        span.set_attribute("rejection.reason", "unauthorized_source")
+                        span.set_status(trace.Status(trace.StatusCode.ERROR, f"Unauthorized source: {signal.source}"))
+                        return {
+                            "status": "rejected",
+                            "reason": f"CIO Enforcement: All {signal.action.upper()} signals must be audited by petrosa-cio. Source '{signal.source}' is not authorized.",
+                            "symbol": signal.symbol,
+                            "action": signal.action,
+                            "source": signal.source
+                        }
+                    else:
+                        self.logger.info(
+                            f"🔒 CIO AUDIT VERIFIED: Signal from {signal.source} for {signal.symbol} {signal.action.upper()}"
+                        )
 
                 # Enhanced logging for signal reception
                 self.logger.info(

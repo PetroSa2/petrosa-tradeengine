@@ -2,7 +2,7 @@ import logging
 import random
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from contracts.order import TradeOrder
 from shared.constants import (
@@ -162,19 +162,21 @@ class TradeSimulator:
         if getattr(order, "type", "") in ["stop", "stop_limit"] and getattr(
             order, "stop_price", None
         ):
-            fill_price = order.stop_price
+            fill_price = cast(float, order.stop_price)
         elif getattr(order, "type", "") in ["stop", "stop_limit"] and getattr(
             order, "stop_loss", None
         ):
             # Compatibility with stop_loss field
-            fill_price = order.stop_loss
+            fill_price = cast(float, order.stop_loss)
 
         # For take profit orders, use the take profit price as base if available
         if getattr(order, "type", "") in [
             "take_profit",
             "take_profit_limit",
         ] and getattr(order, "take_profit", None):
-            fill_price = order.take_profit
+            fill_price = cast(float, order.take_profit)
+
+
 
         return fill_price
 

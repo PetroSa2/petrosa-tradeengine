@@ -26,51 +26,61 @@ class BaseDataManagerClient:
         self.timeout = timeout
         self.max_retries = max_retries
 
-    async def health(self):
+    async def health(self) -> dict[str, Any]:
         """Health check."""
         return {"status": "healthy"}
 
-    async def close(self):
+    async def close(self) -> None:
         """Close connection."""
         pass
 
     # NEW METHODS - Implement missing Data Manager methods
-    async def query(self, database: str, collection: str, **kwargs):
+    async def query(self, database: str, collection: str, **kwargs: Any) -> dict[str, Any]:
         """Query records."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return empty to avoid errors
         return {"data": []}
 
-    async def insert_one(self, database: str, collection: str, record: dict):
+    async def insert_one(self, database: str, collection: str, record: dict[str, Any]) -> dict[str, Any]:
         """Insert one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return success to avoid errors
         return {"inserted_id": "placeholder"}
 
     async def update_one(
-        self, database: str, collection: str, filter: dict, update: dict
-    ):
+        self, database: str, collection: str, filter: dict[str, Any], update: dict[str, Any]
+    ) -> dict[str, Any]:
         """Update one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"modified_count": 1}
 
     async def upsert_one(
-        self, database: str, collection: str, filter: dict, record: dict
-    ):
+        self, database: str, collection: str, filter: dict[str, Any], record: dict[str, Any]
+    ) -> dict[str, Any]:
         """Upsert one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"upserted_id": "placeholder", "modified_count": 1}
 
-    async def delete_one(self, database: str, collection: str, filter: dict):
+    async def delete_one(self, database: str, collection: str, filter: dict[str, Any]) -> dict[str, Any]:
         """Delete one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"deleted_count": 1}
 
-    async def request(self, method: str, url: str, **kwargs):
+    async def delete(self, database: str, collection: str, filter: dict[str, Any]) -> dict[str, Any]:
+        """Delete records."""
+        return {"deleted_count": 1}
+
+    async def insert(self, database: str, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Insert records."""
+        return {"inserted_count": 1}
+
+    async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+
         """Make HTTP request."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return success to avoid errors
         return {"status": "success"}
+
 
 
 class ConnectionError(Exception):
@@ -82,7 +92,7 @@ class ConnectionError(Exception):
 logger = None
 
 
-def get_logger():
+def get_logger() -> Any:
     """Get logger instance."""
     global logger
     if logger is None:
@@ -122,15 +132,16 @@ class DataManagerClient:
 
         # Initialize the base client
         self._client = BaseDataManagerClient(
-            base_url=self.base_url,
+            base_url=str(self.base_url),
             timeout=self.timeout,
             max_retries=self.max_retries,
         )
 
+
         self._logger = get_logger()
         self._logger.info(f"Initialized Data Manager client: {self.base_url}")
 
-    async def connect(self):
+    async def connect(self) -> None:
         """Connect to the Data Manager service."""
         try:
             # Test connection with health check
@@ -144,13 +155,14 @@ class DataManagerClient:
             self._logger.error(f"Failed to connect to Data Manager: {e}")
             raise
 
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         """Disconnect from the Data Manager service."""
         try:
             await self._client.close()
             self._logger.info("Disconnected from Data Manager service")
         except Exception as e:
             self._logger.warning(f"Error disconnecting from Data Manager: {e}")
+
 
     # Configuration Management Methods
 
@@ -498,11 +510,12 @@ class DataManagerClient:
             self._logger.error(f"Data Manager health check failed: {e}")
             return {"status": "unhealthy", "error": str(e)}
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "DataManagerClient":
         """Async context manager entry."""
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.disconnect()
+

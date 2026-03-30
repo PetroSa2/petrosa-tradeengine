@@ -13,7 +13,7 @@ All parameters are documented with:
 - Impact description
 """
 
-from typing import Any
+from typing import Any, cast
 
 # =============================================================================
 # DEFAULT TRADING PARAMETERS
@@ -874,8 +874,9 @@ def validate_parameters(parameters: dict[str, Any]) -> tuple[bool, list[str]]:
             errors.append(f"Unknown parameter: {param_name}")
             continue
 
-        schema: dict[str, Any] = PARAMETER_SCHEMA[param_name]
+        schema = cast(dict[str, Any], PARAMETER_SCHEMA[param_name])
         param_type: str = schema["type"]
+
 
         # Type validation
         if param_type == "integer" and not isinstance(param_value, int):

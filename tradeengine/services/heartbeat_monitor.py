@@ -7,12 +7,14 @@ import asyncio
 import json
 import logging
 import time
+from typing import Any
 
 import nats
 import nats.aio.client
 from pydantic import BaseModel, Field
 
 from tradeengine.defaults import FAIL_SAFE_PARAMETERS
+from tradeengine.metrics import last_heartbeat_received_timestamp, restricted_mode_status
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +58,7 @@ class HeartbeatMonitor:
         self.is_running: bool = False
         self._monitor_task: asyncio.Task | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the monitor and subscribe to heartbeats."""
         try:
             # AC: Use robust NATS connection parameters for parity with consumer
@@ -82,7 +84,7 @@ class HeartbeatMonitor:
             # AC: Enter restricted mode if monitor fails to start
             await self._enter_restricted_mode()
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the monitor and cleanup."""
         self.is_running = False
         if self._monitor_task:
@@ -91,7 +93,7 @@ class HeartbeatMonitor:
             await self.nats_client.close()
             self.nats_client = None
 
-    async def _message_handler(self, msg):
+    async def _message_handler(self, msg: Any) -> None:
         """Handle incoming heartbeat messages."""
         try:
             # AC: Use model validation for heartbeats
@@ -99,6 +101,11 @@ class HeartbeatMonitor:
             HeartbeatMessage.model_validate(data)
 
             self.last_heartbeat_time = time.time()
+
+            # Export heartbeat metric
+            last_heartbeat_received_timestamp.labels(
+                service=data.get("service", "unknown"), subject=self.subject
+            ).set(self.last_heartbeat_time)
 
             if self.restricted_mode:
                 self.consecutive_heartbeats += 1
@@ -112,11 +119,14 @@ class HeartbeatMonitor:
             # Reset consecutive heartbeats on invalid message
             self.consecutive_heartbeats = 0
 
-    async def _check_timeout_loop(self):
+    async def _check_timeout_loop(self) -> None:
         """Background task to check for heartbeat timeouts."""
         while self.is_running:
             try:
                 await asyncio.sleep(5.0)
+                # Ensure the metric is initialized/updated
+                restricted_mode_status.set(1 if self.restricted_mode else 0)
+
                 if not self.restricted_mode and self.last_heartbeat_time > 0:
                     if (time.time() - self.last_heartbeat_time) > self.timeout:
                         await self._enter_restricted_mode()
@@ -125,19 +135,22 @@ class HeartbeatMonitor:
             except Exception as e:
                 logger.error(f"Error in heartbeat timeout loop: {e}")
 
-    async def _enter_restricted_mode(self):
+    async def _enter_restricted_mode(self) -> None:
         """Enter RESTRICTED_MODE fail-safe."""
         if not self.restricted_mode:
             self.restricted_mode = True
             self.consecutive_heartbeats = 0
+            restricted_mode_status.set(1)
             logger.critical("🚨 ENTERING RESTRICTED_MODE: CIO heartbeat lost!")
 
-    async def _exit_restricted_mode(self):
+    async def _exit_restricted_mode(self) -> None:
         """Exit RESTRICTED_MODE and return to NORMAL_MODE."""
         if self.restricted_mode:
             self.restricted_mode = False
             self.consecutive_heartbeats = 0
+            restricted_mode_status.set(0)
             logger.info("✅ EXITING RESTRICTED_MODE: CIO heartbeat recovered.")
+
 
     def is_restricted(self) -> bool:
         """Check if TradeEngine is in RESTRICTED_MODE."""

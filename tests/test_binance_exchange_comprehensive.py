@@ -340,32 +340,6 @@ class TestOrderExecution:
         status = result.get("status", "").lower()
         assert "error" in status or "failed" in status or status == "error"
 
-    @pytest.mark.skip(reason="Test needs investigation - exception handling format")
-    @pytest.mark.asyncio
-    async def test_execute_with_binance_api_exception(self, binance_exchange):
-        """Test handling BinanceAPIException"""
-        # Mock _validate_order to raise BinanceAPIException
-        binance_exchange._validate_order = AsyncMock(
-            side_effect=BinanceAPIException({"code": -1021}, "API Error")
-        )
-        order = TradeOrder(
-            symbol="BTCUSDT",
-            side=OrderSide.BUY,
-            type=OrderType.MARKET,
-            amount=0.001,
-            target_price=50000.0,
-        )
-        result = await binance_exchange.execute(order)
-        assert result is not None
-        # Verify it's an error result - check for error indication
-        assert isinstance(result, dict)
-        # Result should indicate failure/error
-        assert (
-            result.get("status") in ["failed", "error"]
-            or "error" in result
-            or "failed" in str(result).lower()
-        )
-
     @pytest.mark.asyncio
     async def test_execute_with_general_exception(self, binance_exchange):
         """Test handling general exceptions"""
@@ -907,28 +881,6 @@ class TestRetryLogic:
         assert result == {"success": True}
         assert mock_func.called
 
-    @pytest.mark.skip(
-        reason="Complex to mock BinanceAPIException properly - retry logic tested indirectly"
-    )
-    @pytest.mark.asyncio
-    async def test_execute_with_retry_non_retryable_error(self, binance_exchange):
-        """Test retry logic with non-retryable error"""
-        from binance.exceptions import BinanceAPIException
-
-        # Create error with non-retryable code (-2010: Insufficient balance)
-        # Use Mock to create a BinanceAPIException-like object
-        error = Mock(spec=BinanceAPIException)
-        error.code = -2010
-        error.message = "Insufficient balance"
-        mock_func = Mock(side_effect=error)
-
-        with pytest.raises(Mock):  # Will raise the Mock object
-            await binance_exchange._execute_with_retry(mock_func, param1="value1")
-
-        # Should not retry - should fail immediately
-        assert mock_func.call_count == 1
-
-
 class TestFallbackLogic:
     """Test fallback logic for cancellation and status checks"""
 
@@ -1052,10 +1004,12 @@ class TestAdditionalMethods:
         """Test get_account_info when client is not initialized"""
         binance_exchange.client = None
         binance_exchange.initialized = False
-        with pytest.raises(
-            RuntimeError, match="Binance Futures client not initialized"
-        ):
-            await binance_exchange.get_account_info()
+        # Mock initialize to do nothing (so it stays uninitialized)
+        with patch.object(binance_exchange, "initialize", AsyncMock()):
+            with pytest.raises(
+                RuntimeError, match="Binance Futures client not initialized"
+            ):
+                await binance_exchange.get_account_info()
 
     @pytest.mark.asyncio
     async def test_get_symbol_price(self, binance_exchange):

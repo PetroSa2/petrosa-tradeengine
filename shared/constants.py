@@ -9,9 +9,23 @@ All modules should import constants from this file rather than defining their ow
 
 import os
 import warnings
-from datetime import UTC, datetime, timezone
-from enum import Enum, StrEnum
-from typing import Any
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+# Timezone
+UTC = timezone.utc
+
+if TYPE_CHECKING:
+    from enum import Enum, StrEnum
+else:
+    try:
+        from enum import Enum, StrEnum
+    except ImportError:
+        # Fallback for Python < 3.11
+        from enum import Enum
+        class StrEnum(str, Enum):
+            pass
+
 
 # =============================================================================
 # ENVIRONMENT CONFIGURATION
@@ -642,3 +656,4 @@ def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0") ->
         DeprecationWarning,
         stacklevel=2,
     )
+

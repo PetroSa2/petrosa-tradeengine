@@ -1,6 +1,18 @@
-from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Any, Literal
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from enum import StrEnum
+else:
+    try:
+        from enum import StrEnum
+    except ImportError:
+        from enum import Enum
+        class StrEnum(str, Enum):
+            pass
+
+UTC = timezone.utc
+
 
 from pydantic import BaseModel, Field, field_validator
 

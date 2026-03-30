@@ -66,7 +66,16 @@ class BaseDataManagerClient:
         # TODO: Implement actual HTTP call to Data Manager API
         return {"deleted_count": 1}
 
+    async def delete(self, database: str, collection: str, filter: dict[str, Any]) -> dict[str, Any]:
+        """Delete records."""
+        return {"deleted_count": 1}
+
+    async def insert(self, database: str, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Insert records."""
+        return {"inserted_count": 1}
+
     async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+
         """Make HTTP request."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return success to avoid errors
@@ -83,7 +92,7 @@ class ConnectionError(Exception):
 logger = None
 
 
-def get_logger():
+def get_logger() -> Any:
     """Get logger instance."""
     global logger
     if logger is None:
@@ -122,7 +131,7 @@ class DataManagerClient:
         self.max_retries = max_retries
 
         # Initialize the base client
-        self._client = BaseDataManagerClient(
+        self._client = BaseDataManagerClient(base_url=str(self.base_url),
             base_url=self.base_url,
             timeout=self.timeout,
             max_retries=self.max_retries,

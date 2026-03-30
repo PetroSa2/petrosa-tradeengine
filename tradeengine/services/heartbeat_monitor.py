@@ -57,7 +57,7 @@ class HeartbeatMonitor:
         self.is_running: bool = False
         self._monitor_task: asyncio.Task | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the monitor and subscribe to heartbeats."""
         try:
             # AC: Use robust NATS connection parameters for parity with consumer

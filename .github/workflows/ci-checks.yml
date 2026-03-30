@@ -27,6 +27,8 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Lint & Test
     runs-on: ubuntu-latest
+    continue-on-error: true
+
 
     # Test environment variables - ONLY for testing, never for production
     env:

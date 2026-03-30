@@ -71,7 +71,7 @@ tracer = trace.get_tracer(__name__)
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
-    def __init__(self, exchange: Any, logger: logging.Logger, dispatcher=None):
+    def __init__(self, exchange: Any, logger: logging.Logger, dispatcher: Any = None):
         self.exchange = exchange
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management

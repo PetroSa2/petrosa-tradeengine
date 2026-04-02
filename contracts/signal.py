@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic import BaseModel, Field, field_validator
+
 if TYPE_CHECKING:
     from enum import StrEnum
 else:
@@ -12,9 +14,6 @@ else:
             pass
 
 UTC = timezone.utc
-
-
-from pydantic import BaseModel, Field, field_validator
 
 
 class SignalType(StrEnum):

@@ -35,15 +35,15 @@ class StrategyPositionManager:
     """Manages virtual strategy positions and their contributions to exchange positions"""
 
     def __init__(self) -> None:
-        self.strategy_positions: dict[str, dict[str, Any]] = (
-            {}
-        )  # strategy_position_id -> position
-        self.exchange_positions: dict[str, dict[str, Any]] = (
-            {}
-        )  # exchange_position_key -> position
-        self.contributions: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> contributions
+        self.strategy_positions: dict[
+            str, dict[str, Any]
+        ] = {}  # strategy_position_id -> position
+        self.exchange_positions: dict[
+            str, dict[str, Any]
+        ] = {}  # exchange_position_key -> position
+        self.contributions: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> contributions
 
     async def initialize(self) -> None:
         """Initialize strategy position manager"""

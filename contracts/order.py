@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from enum import StrEnum
@@ -8,13 +10,12 @@ else:
         from enum import StrEnum
     except ImportError:
         from enum import Enum
+
         class StrEnum(str, Enum):
             pass
 
-UTC = timezone.utc
 
-
-from pydantic import BaseModel, Field
+UTC = UTC
 
 
 class OrderSide(StrEnum):

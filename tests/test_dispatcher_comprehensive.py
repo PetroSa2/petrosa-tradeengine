@@ -51,10 +51,11 @@ def dispatcher(mock_exchange):
         mock_dlm.initialize = AsyncMock()
         mock_dlm.close = AsyncMock()
         mock_dlm.health_check = AsyncMock(return_value={"status": "healthy"})
-        
+
         # Mock execute_with_lock to just call the function
         async def mock_execute_with_lock(lock_name, func, *args, **kwargs):
             return await func(*args, **kwargs)
+
         mock_dlm.execute_with_lock = AsyncMock(side_effect=mock_execute_with_lock)
 
         disp = Dispatcher(exchange=mock_exchange)
@@ -146,11 +147,11 @@ class TestCIOEnforcement:
     async def test_restricted_mode_allows_close(self, dispatcher, sample_signal):
         """Test that restricted mode still allows CLOSE signals for safety"""
         sample_signal.action = "close"
-        
+
         # Set restricted mode
         dispatcher.heartbeat_monitor = Mock()
         dispatcher.heartbeat_monitor.is_restricted.return_value = True
-        
+
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
@@ -161,7 +162,9 @@ class TestCIOEnforcement:
         # Verify it didn't abort
 
     @pytest.mark.asyncio
-    async def test_enforce_cio_audit_rejects_unauthorized_source(self, dispatcher, sample_signal):
+    async def test_enforce_cio_audit_rejects_unauthorized_source(
+        self, dispatcher, sample_signal
+    ):
         """Test that non-petrosa-cio sources are rejected when enforcement is on"""
         dispatcher.settings.enforce_cio_audit = True
         sample_signal.source = "unauthorized-bot"
@@ -174,12 +177,14 @@ class TestCIOEnforcement:
         dispatcher.exchange.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enforce_cio_audit_allows_petrosa_cio(self, dispatcher, sample_signal):
+    async def test_enforce_cio_audit_allows_petrosa_cio(
+        self, dispatcher, sample_signal
+    ):
         """Test that petrosa-cio source is allowed when enforcement is on"""
         dispatcher.settings.enforce_cio_audit = True
         sample_signal.source = "petrosa-cio"
         sample_signal.action = "buy"
-        
+
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
@@ -189,12 +194,14 @@ class TestCIOEnforcement:
         assert result["status"] == "executed"
 
     @pytest.mark.asyncio
-    async def test_enforce_cio_audit_disabled_allows_any_source(self, dispatcher, sample_signal):
+    async def test_enforce_cio_audit_disabled_allows_any_source(
+        self, dispatcher, sample_signal
+    ):
         """Test that any source is allowed when enforcement is off"""
         dispatcher.settings.enforce_cio_audit = False
         sample_signal.source = "any-source"
         sample_signal.action = "buy"
-        
+
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
@@ -251,7 +258,7 @@ class TestSignalCache:
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
-        
+
         # Use authorized source
         sample_signal.source = "petrosa-cio"
 

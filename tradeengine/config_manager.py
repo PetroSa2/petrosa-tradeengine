@@ -67,7 +67,6 @@ class TradingConfigManager:
         self._cache_refresh_task: asyncio.Task[Any | None] | None = None
         self._running = False
 
-
     async def start(self) -> None:
         """Start the configuration manager and background tasks."""
         # Initialize database connections

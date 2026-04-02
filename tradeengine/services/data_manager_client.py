@@ -35,52 +35,68 @@ class BaseDataManagerClient:
         pass
 
     # NEW METHODS - Implement missing Data Manager methods
-    async def query(self, database: str, collection: str, **kwargs: Any) -> dict[str, Any]:
+    async def query(
+        self, database: str, collection: str, **kwargs: Any
+    ) -> dict[str, Any]:
         """Query records."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return empty to avoid errors
         return {"data": []}
 
-    async def insert_one(self, database: str, collection: str, record: dict[str, Any]) -> dict[str, Any]:
+    async def insert_one(
+        self, database: str, collection: str, record: dict[str, Any]
+    ) -> dict[str, Any]:
         """Insert one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return success to avoid errors
         return {"inserted_id": "placeholder"}
 
     async def update_one(
-        self, database: str, collection: str, filter: dict[str, Any], update: dict[str, Any]
+        self,
+        database: str,
+        collection: str,
+        filter: dict[str, Any],
+        update: dict[str, Any],
     ) -> dict[str, Any]:
         """Update one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"modified_count": 1}
 
     async def upsert_one(
-        self, database: str, collection: str, filter: dict[str, Any], record: dict[str, Any]
+        self,
+        database: str,
+        collection: str,
+        filter: dict[str, Any],
+        record: dict[str, Any],
     ) -> dict[str, Any]:
         """Upsert one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"upserted_id": "placeholder", "modified_count": 1}
 
-    async def delete_one(self, database: str, collection: str, filter: dict[str, Any]) -> dict[str, Any]:
+    async def delete_one(
+        self, database: str, collection: str, filter: dict[str, Any]
+    ) -> dict[str, Any]:
         """Delete one record."""
         # TODO: Implement actual HTTP call to Data Manager API
         return {"deleted_count": 1}
 
-    async def delete(self, database: str, collection: str, filter: dict[str, Any]) -> dict[str, Any]:
+    async def delete(
+        self, database: str, collection: str, filter: dict[str, Any]
+    ) -> dict[str, Any]:
         """Delete records."""
         return {"deleted_count": 1}
 
-    async def insert(self, database: str, collection: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def insert(
+        self, database: str, collection: str, data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Insert records."""
         return {"inserted_count": 1}
 
     async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-
         """Make HTTP request."""
         # TODO: Implement actual HTTP call to Data Manager API
         # For now, return success to avoid errors
         return {"status": "success"}
-
 
 
 class ConnectionError(Exception):
@@ -137,7 +153,6 @@ class DataManagerClient:
             max_retries=self.max_retries,
         )
 
-
         self._logger = get_logger()
         self._logger.info(f"Initialized Data Manager client: {self.base_url}")
 
@@ -162,7 +177,6 @@ class DataManagerClient:
             self._logger.info("Disconnected from Data Manager service")
         except Exception as e:
             self._logger.warning(f"Error disconnecting from Data Manager: {e}")
-
 
     # Configuration Management Methods
 
@@ -518,4 +532,3 @@ class DataManagerClient:
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.disconnect()
-

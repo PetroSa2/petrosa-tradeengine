@@ -9,7 +9,7 @@ from tradeengine.dispatcher import Dispatcher
 
 @pytest.mark.asyncio
 async def test_dispatcher_restricted_mode_capping():
-    """Test that Dispatcher caps quantity and leverage in restricted mode."""
+    """Test that Dispatcher aborts buy signals in restricted mode."""
     # Setup mocks
     mock_heartbeat = MagicMock()
     mock_heartbeat.is_restricted.return_value = True
@@ -18,8 +18,6 @@ async def test_dispatcher_restricted_mode_capping():
     dispatcher.heartbeat_monitor = mock_heartbeat
     dispatcher.logger = MagicMock()
 
-    # Create a signal that exceeds restricted limits
-    # Max USD is 5000. At 1000 price, limit should be 5.0 qty.
     signal = Signal(
         signal_id="test_id",
         symbol="BTCUSDT",
@@ -34,17 +32,11 @@ async def test_dispatcher_restricted_mode_capping():
         metadata={"leverage": "20"},
     )
 
-    # We only want to test the capping logic at the start of dispatch()
-    # so we mock the rest of the method or handle the exception
-    try:
-        await dispatcher.dispatch(signal)
-    except Exception:
-        pass
+    result = await dispatcher.dispatch(signal)
 
-    # Verify capping (max_position_size_usd=5000 / price=1000 = 5.0)
-    assert signal.quantity == 5.0
-    # Verify leverage clamping (max_leverage=10)
-    assert signal.metadata["leverage"] == 10
+    # In restricted mode, buy signals are aborted (not capped)
+    assert result["status"] == "aborted"
+    assert "RESTRICTED_MODE" in result["reason"]
     mock_heartbeat.is_restricted.assert_called_once()
 
 

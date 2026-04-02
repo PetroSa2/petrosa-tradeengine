@@ -120,7 +120,7 @@ format:
 
 lint:
 	@echo "✨ Running linting checks..."
-	ruff check . --fix
+	ruff check .
 	ruff format --check .
 	@echo "✅ Linting completed!"
 

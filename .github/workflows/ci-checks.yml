@@ -89,7 +89,6 @@ jobs:
 
     - name: Run tests with coverage
       run: make test
-      continue-on-error: true
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
@@ -123,7 +122,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-      actions: read
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -146,7 +144,7 @@ jobs:
       continue-on-error: true
       run: |
         pip install bandit[toml]
-        bandit -r . -f json -o bandit-report.json || true
+        bandit -r . --configfile .bandit -f json -o bandit-report.json || true
         echo "📊 Bandit Results:"
         python -m json.tool bandit-report.json 2>/dev/null | head -30 || echo "No issues found"
 
@@ -163,6 +161,12 @@ jobs:
         ignore-unfixed: true
         vuln-type: 'os,library'
 
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v3
+      if: success() || failure()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
   # Pipeline status check - aggregates all PR checks
   pipeline:
     name: pipeline
@@ -178,7 +182,7 @@ jobs:
           echo "security=${{ needs.security.result }}"
 
           [[ "${{ needs.lint.result }}" == "success" ]]
-          [[ "${{ needs.test.result }}" != "failure" ]]
+          [[ "${{ needs.test.result }}" == "success" ]]
           [[ "${{ needs.test-quality.result }}" == "success" ]]
           [[ "${{ needs.security.result }}" != "failure" ]]
 

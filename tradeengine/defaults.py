@@ -877,7 +877,6 @@ def validate_parameters(parameters: dict[str, Any]) -> tuple[bool, list[str]]:
         schema = cast(dict[str, Any], PARAMETER_SCHEMA[param_name])
         param_type: str = schema["type"]
 
-
         # Type validation
         if param_type == "integer" and not isinstance(param_value, int):
             errors.append(f"{param_name} must be integer, got {type(param_value)}")

@@ -66,9 +66,9 @@ def test_atlas_configuration() -> None:
     """Test with MongoDB Atlas configuration (should pass)"""
     print("\n4️⃣ Testing with MongoDB Atlas configuration (should pass):")
     try:
-        os.environ["MONGODB_URI"] = (
-            "mongodb+srv://username:password@cluster.mongodb.net"
-        )
+        os.environ[
+            "MONGODB_URI"
+        ] = "mongodb+srv://username:password@cluster.mongodb.net"
         os.environ["MONGODB_DATABASE"] = "production"
 
         validate_mongodb_config()

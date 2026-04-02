@@ -601,16 +601,19 @@ class BinanceFuturesExchange:
                 return result
             except BinanceAPIException as e:
                 # Don't retry on certain errors that won't be fixed by retrying
-                if e.code in [
-                    -2010,  # Insufficient balance
-                    -2011,  # Invalid symbol
-                    -2013,  # Invalid order type
-                    -2014,  # Invalid price
-                    -2015,  # Invalid quantity
-                    -4131,  # PERCENT_PRICE filter violation - price too far from market
-                    -4164,  # MIN_NOTIONAL validation error
-                    -1102,  # Mandatory parameter 'symbol' was not sent, was empty/null, or malformed
-                ]:
+                if (
+                    e.code
+                    in [
+                        -2010,  # Insufficient balance
+                        -2011,  # Invalid symbol
+                        -2013,  # Invalid order type
+                        -2014,  # Invalid price
+                        -2015,  # Invalid quantity
+                        -4131,  # PERCENT_PRICE filter violation - price too far from market
+                        -4164,  # MIN_NOTIONAL validation error
+                        -1102,  # Mandatory parameter 'symbol' was not sent, was empty/null, or malformed
+                    ]
+                ):
                     # Log the non-retryable error with details
                     logger.error(
                         f"Non-retryable Binance API error (code {e.code}): {e}. "

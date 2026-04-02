@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -10,10 +10,12 @@ else:
         from enum import StrEnum
     except ImportError:
         from enum import Enum
+
         class StrEnum(str, Enum):
             pass
 
-UTC = timezone.utc
+
+UTC = UTC
 
 
 class SignalType(StrEnum):

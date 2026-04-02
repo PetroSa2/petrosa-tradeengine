@@ -176,8 +176,6 @@ class TradeSimulator:
         ] and getattr(order, "take_profit", None):
             fill_price = cast(float, order.take_profit)
 
-
-
         return fill_price
 
     def _generate_fills(

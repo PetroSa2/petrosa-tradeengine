@@ -76,9 +76,9 @@ class OCOManager:
         self.logger = logger
         self.dispatcher = dispatcher  # Reference to dispatcher for position management
         # CHANGED: Now supports multiple OCO pairs per exchange position (list of dicts)
-        self.active_oco_pairs: dict[str, list[dict[str, Any]]] = (
-            {}
-        )  # exchange_position_key -> [oco_info, ...]
+        self.active_oco_pairs: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # exchange_position_key -> [oco_info, ...]
         self.monitoring_task: asyncio.Task | None = None
         self.monitoring_active = False
 
@@ -1206,7 +1206,12 @@ class Dispatcher:
                         ).inc()
                         span.set_attribute("signal.aborted", True)
                         span.set_attribute("abort.reason", "restricted_mode")
-                        span.set_status(trace.Status(trace.StatusCode.ERROR, "RESTRICTED_MODE: CIO Heartbeat Lost"))
+                        span.set_status(
+                            trace.Status(
+                                trace.StatusCode.ERROR,
+                                "RESTRICTED_MODE: CIO Heartbeat Lost",
+                            )
+                        )
                         return {
                             "status": "aborted",
                             "reason": "RESTRICTED_MODE: CIO heartbeat lost, opening new positions is strictly forbidden.",
@@ -1235,13 +1240,18 @@ class Dispatcher:
                         ).inc()
                         span.set_attribute("signal.rejected", True)
                         span.set_attribute("rejection.reason", "unauthorized_source")
-                        span.set_status(trace.Status(trace.StatusCode.ERROR, f"Unauthorized source: {signal.source}"))
+                        span.set_status(
+                            trace.Status(
+                                trace.StatusCode.ERROR,
+                                f"Unauthorized source: {signal.source}",
+                            )
+                        )
                         return {
                             "status": "rejected",
                             "reason": f"CIO Enforcement: All {signal.action.upper()} signals must be audited by petrosa-cio. Source '{signal.source}' is not authorized.",
                             "symbol": signal.symbol,
                             "action": signal.action,
-                            "source": signal.source
+                            "source": signal.source,
                         }
                     else:
                         self.logger.info(
@@ -1400,9 +1410,9 @@ class Dispatcher:
                             raise
 
                     result["execution_result"] = execution_result
-                    result["status"] = (
-                        "executed"  # Change status to executed for consistency
-                    )
+                    result[
+                        "status"
+                    ] = "executed"  # Change status to executed for consistency
 
                     # NEW: Update last accumulation time if order was executed successfully
                     if execution_result.get("status") in (
@@ -1622,9 +1632,9 @@ class Dispatcher:
                             )
 
                             # NEW: Map order to strategy position for OCO attribution
-                            self.order_to_strategy_position[order.order_id] = (
-                                strategy_position_id
-                            )
+                            self.order_to_strategy_position[
+                                order.order_id
+                            ] = strategy_position_id
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
@@ -1689,9 +1699,9 @@ class Dispatcher:
                                 # Maintain consistent error enrichment so callers see the OCO failure reason
                                 result["error"] = f"Risk management failure: {e}"
                                 # Provide a more specific reason for why rollback was skipped
-                                result["rollback_skipped_reason"] = (
-                                    f"non_positive_filled_qty: {filled_qty}"
-                                )
+                                result[
+                                    "rollback_skipped_reason"
+                                ] = f"non_positive_filled_qty: {filled_qty}"
                                 return result
 
                             rollback_position_id = getattr(order, "position_id", None)

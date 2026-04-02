@@ -881,6 +881,7 @@ class TestRetryLogic:
         assert result == {"success": True}
         assert mock_func.called
 
+
 class TestFallbackLogic:
     """Test fallback logic for cancellation and status checks"""
 

@@ -14,7 +14,10 @@ import nats.aio.client
 from pydantic import BaseModel, Field
 
 from tradeengine.defaults import FAIL_SAFE_PARAMETERS
-from tradeengine.metrics import last_heartbeat_received_timestamp, restricted_mode_status
+from tradeengine.metrics import (
+    last_heartbeat_received_timestamp,
+    restricted_mode_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +153,6 @@ class HeartbeatMonitor:
             self.consecutive_heartbeats = 0
             restricted_mode_status.set(0)
             logger.info("✅ EXITING RESTRICTED_MODE: CIO heartbeat recovered.")
-
 
     def is_restricted(self) -> bool:
         """Check if TradeEngine is in RESTRICTED_MODE."""

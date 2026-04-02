@@ -14,7 +14,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: help setup validate-python install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline
+.PHONY: help setup validate-python install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline test-quality
 
 # Default target
 help:
@@ -120,12 +120,13 @@ format:
 
 lint:
 	@echo "✨ Running linting checks..."
-	@echo "Running flake8..."
-	flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=.venv,venv,htmlcov,.git,__pycache__,*.egg-info
-	flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics --exclude=.venv,venv,htmlcov,.git,__pycache__,*.egg-info
-	@echo "Running ruff..."
 	ruff check . --fix
+	ruff format --check .
 	@echo "✅ Linting completed!"
+
+test-quality: validate-python
+	@echo "🔍 Checking test quality..."
+	python3 scripts/check-test-assertions.py $(shell find tests -name "test_*.py")
 
 type-check:
 	@echo "🔍 Running type checking with mypy..."

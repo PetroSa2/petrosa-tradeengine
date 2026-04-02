@@ -68,6 +68,7 @@ jobs:
       ENVIRONMENT: "test"
       LOG_LEVEL: "DEBUG"
       SIMULATION_ENABLED: "true"
+      ENFORCE_CIO_AUDIT: "false"
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

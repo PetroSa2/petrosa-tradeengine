@@ -21,7 +21,8 @@ def restore_otel_init_function(module):
         or hasattr(func, "return_value")
         or hasattr(func, "side_effect")
         or hasattr(func, "_mock_")
-        or str(type(func).__name__) in ("MagicMock", "Mock", "AsyncMock", "NonCallableMagicMock")
+        or str(type(func).__name__)
+        in ("MagicMock", "Mock", "AsyncMock", "NonCallableMagicMock")
     )
 
     if hasattr(func, "__wrapped__"):
@@ -90,7 +91,8 @@ def restore_all_otel_init_patches():
                     if otel_init_attr and hasattr(otel_init_attr, "configure_logging"):
                         func = getattr(otel_init_attr, "configure_logging", None)
                         if func and (
-                            hasattr(func, "return_value") or hasattr(func, "side_effect")
+                            hasattr(func, "return_value")
+                            or hasattr(func, "side_effect")
                         ):
                             if "otel_init" in sys.modules:
                                 original_func = getattr(

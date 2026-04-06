@@ -2,14 +2,16 @@
 Petrosa Trading Engine - Centralized Constants and Configuration
 """
 
+import logging
 import os
 import warnings
 from datetime import datetime, timezone
+
 try:
     from datetime import UTC
 except ImportError:
     from datetime import timezone
-    UTC = timezone.utc
+    UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -19,6 +21,9 @@ except ImportError:
     class StrEnum(str, Enum):
         def __str__(self):
             return str(self.value)
+
+# Configure local logger for validation warnings
+logger = logging.getLogger(__name__)
 
 # Timezone
 UTC = UTC
@@ -69,8 +74,10 @@ MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
 def validate_mongodb_config() -> None:
     if not MONGODB_URI:
+        logger.warning("MongoDB URI not configured; data persistence may be limited.")
         return
     if not MONGODB_DATABASE:
+        logger.warning("MongoDB database not configured; using default.")
         return
     if MONGODB_URI and not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
         raise ValueError(f"CRITICAL: Invalid MongoDB URI format: {MONGODB_URI}")
@@ -237,7 +244,12 @@ def get_config_summary() -> dict[str, Any]:
         "app": {"name": APP_NAME, "version": APP_VERSION, "environment": ENVIRONMENT, "debug": DEBUG},
         "api": {"host": API_HOST, "port": API_PORT, "reload": API_RELOAD},
         "database": {"mongodb_url": MONGODB_URI, "mongodb_database": MONGODB_DATABASE},
-        "messaging": {"nats_enabled": NATS_ENABLED, "nats_url": NATS_URL, "nats_servers": NATS_SERVERS},
+        "messaging": {
+            "nats_enabled": NATS_ENABLED,
+            "nats_url": NATS_URL,
+            "nats_servers": NATS_SERVERS,
+            "nats_topic_signals": NATS_TOPIC_SIGNALS
+        },
         "trading": {"simulation_enabled": SIMULATION_ENABLED, "default_base_amount": DEFAULT_BASE_AMOUNT, "supported_symbols": SUPPORTED_SYMBOLS},
         "exchange": {"binance_testnet": BINANCE_TESTNET, "binance_api_key_set": bool(BINANCE_API_KEY)},
         "monitoring": {"log_level": LOG_LEVEL, "prometheus_enabled": PROMETHEUS_ENABLED},
@@ -246,11 +258,16 @@ def get_config_summary() -> dict[str, Any]:
 def validate_configuration() -> list[str]:
     issues = []
     if ENVIRONMENT == Environment.PRODUCTION:
-        if not BINANCE_API_KEY: issues.append("BINANCE_API_KEY is required in production")
-        if not BINANCE_API_SECRET: issues.append("BINANCE_API_SECRET is required in production")
-        if JWT_SECRET_KEY == "your-secret-key-change-in-production": issues.append("JWT_SECRET_KEY must be changed in production")
-    if not MONGODB_URI: issues.append("MONGODB_URI is required")
-    if NATS_ENABLED and not NATS_URL: issues.append("NATS_URL is required when NATS_ENABLED is true")
+        if not BINANCE_API_KEY:
+            issues.append("BINANCE_API_KEY is required in production")
+        if not BINANCE_API_SECRET:
+            issues.append("BINANCE_API_SECRET is required in production")
+        if JWT_SECRET_KEY == "your-secret-key-change-in-production":
+            issues.append("JWT_SECRET_KEY must be changed in production")
+    if not MONGODB_URI:
+        issues.append("MONGODB_URI is required")
+    if NATS_ENABLED and not NATS_URL:
+        issues.append("NATS_URL is required when NATS_ENABLED is true")
     return issues
 
 def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0") -> None:

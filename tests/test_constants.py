@@ -62,8 +62,7 @@ class TestMongoDBValidation:
     def test_validate_mongodb_config_missing_uri(self):
         """Test MongoDB validation logs warning when URI is missing (Data Manager mode)"""
         with patch("shared.constants.MONGODB_URI", None):
-            with patch("logging.getLogger") as mock_get_logger:
-                mock_logger = mock_get_logger.return_value
+            with patch("shared.constants.logger") as mock_logger:
                 validate_mongodb_config()
                 mock_logger.warning.assert_called_once()
                 assert "MongoDB URI not configured" in str(
@@ -74,8 +73,7 @@ class TestMongoDBValidation:
         """Test MongoDB validation logs warning when database is missing (Data Manager mode)"""
         with patch("shared.constants.MONGODB_URI", "mongodb://localhost:27017"):
             with patch("shared.constants.MONGODB_DATABASE", None):
-                with patch("logging.getLogger") as mock_get_logger:
-                    mock_logger = mock_get_logger.return_value
+                with patch("shared.constants.logger") as mock_logger:
                     validate_mongodb_config()
                     mock_logger.warning.assert_called_once()
                     assert "MongoDB database not configured" in str(

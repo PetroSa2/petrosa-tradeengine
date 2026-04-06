@@ -846,9 +846,9 @@ async def validate_config(request: ConfigValidationRequest):
             # Type check to avoid comparison errors with invalid types
             if isinstance(leverage, int | float) and leverage > 50:
                 estimated_impact["risk_level"] = "high"
-                estimated_impact[
-                    "warning"
-                ] = "High leverage increases risk significantly"
+                estimated_impact["warning"] = (
+                    "High leverage increases risk significantly"
+                )
 
         # Cross-service conflict detection
         conflicts = await detect_cross_service_conflicts(

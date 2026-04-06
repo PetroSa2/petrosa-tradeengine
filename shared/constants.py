@@ -11,6 +11,7 @@ try:
     from datetime import UTC
 except ImportError:
     from datetime import timezone
+
     UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any
 
@@ -18,9 +19,11 @@ try:
     from enum import StrEnum
 except ImportError:
     from enum import Enum
+
     class StrEnum(str, Enum):
         def __str__(self):
             return str(self.value)
+
 
 # Configure local logger for validation warnings
 logger = logging.getLogger(__name__)
@@ -28,20 +31,25 @@ logger = logging.getLogger(__name__)
 # Timezone
 UTC = UTC
 
+
 class Environment(StrEnum):
     """Application environments"""
+
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
     TESTING = "testing"
 
+
 class LogLevel(StrEnum):
     """Logging levels"""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
+
 
 # ... rest of the constants ...
 APP_NAME = "Petrosa Trading Engine"
@@ -72,6 +80,7 @@ MONGODB_DATABASE = os.getenv("MONGODB_DATABASE")
 MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))
 MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
 
+
 def validate_mongodb_config() -> None:
     if not MONGODB_URI:
         logger.warning("MongoDB URI not configured; data persistence may be limited.")
@@ -82,11 +91,13 @@ def validate_mongodb_config() -> None:
     if MONGODB_URI and not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
         raise ValueError(f"CRITICAL: Invalid MongoDB URI format: {MONGODB_URI}")
 
+
 def get_mongodb_connection_string() -> str:
     validate_mongodb_config()
     if not MONGODB_URI:
         return ""
     return f"{MONGODB_URI}/{MONGODB_DATABASE}"
+
 
 NATS_SERVERS = os.getenv("NATS_SERVERS", "nats://localhost:4222")
 NATS_ENABLED = os.getenv("NATS_ENABLED", "false").lower() == "true"
@@ -98,9 +109,11 @@ NATS_CONNECT_TIMEOUT = int(os.getenv("NATS_CONNECT_TIMEOUT", "5"))
 NATS_RECONNECT_TIME_WAIT = int(os.getenv("NATS_RECONNECT_TIME_WAIT", "1"))
 NATS_MAX_RECONNECT_ATTEMPTS = int(os.getenv("NATS_MAX_RECONNECT_ATTEMPTS", "10"))
 
+
 def validate_nats_config() -> None:
     if NATS_ENABLED and not NATS_URL:
         raise ValueError("CRITICAL: NATS is enabled but NATS_URL is not configured.")
+
 
 def get_nats_connection_string() -> str | None:
     if not NATS_ENABLED:
@@ -108,11 +121,14 @@ def get_nats_connection_string() -> str | None:
     validate_nats_config()
     return NATS_URL
 
+
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 API_WORKERS = int(os.getenv("API_WORKERS", "1"))
 API_RELOAD = os.getenv("API_RELOAD", "true").lower() == "true"
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
+).split(",")
 CORS_ALLOW_CREDENTIALS = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
@@ -133,15 +149,24 @@ SIMULATION_SUCCESS_RATE = float(os.getenv("SIMULATION_SUCCESS_RATE", "0.95"))
 SIMULATION_DELAY_MS = int(os.getenv("SIMULATION_DELAY_MS", "100"))
 HEDGE_MODE_ENABLED = os.getenv("HEDGE_MODE_ENABLED", "true").lower() == "true"
 POSITION_MODE = os.getenv("POSITION_MODE", "hedge")
-POSITION_MODE_AWARE_CONFLICTS = os.getenv("POSITION_MODE_AWARE_CONFLICTS", "true").lower() == "true"
-SAME_DIRECTION_CONFLICT_RESOLUTION = os.getenv("SAME_DIRECTION_CONFLICT_RESOLUTION", "accumulate")
-SUPPORTED_SYMBOLS = os.getenv("SUPPORTED_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,DOTUSDT,LINKUSDT,LTCUSDT,BCHUSDT,XLMUSDT,XRPUSDT").split(",")
+POSITION_MODE_AWARE_CONFLICTS = (
+    os.getenv("POSITION_MODE_AWARE_CONFLICTS", "true").lower() == "true"
+)
+SAME_DIRECTION_CONFLICT_RESOLUTION = os.getenv(
+    "SAME_DIRECTION_CONFLICT_RESOLUTION", "accumulate"
+)
+SUPPORTED_SYMBOLS = os.getenv(
+    "SUPPORTED_SYMBOLS",
+    "BTCUSDT,ETHUSDT,BNBUSDT,ADAUSDT,DOTUSDT,LINKUSDT,LTCUSDT,BCHUSDT,XLMUSDT,XRPUSDT",
+).split(",")
 SUPPORTED_TIMEFRAMES = os.getenv("SUPPORTED_TIMEFRAMES", "5m,15m,30m,1h,1d").split(",")
 SUPPORTED_ORDER_TYPES = ["market", "limit", "stop", "stop_limit"]
 SUPPORTED_SIDES = ["buy", "sell"]
 SUPPORTED_TIME_IN_FORCE = ["GTC", "IOC", "FOK"]
 SIGNAL_CONFLICT_RESOLUTION = os.getenv("SIGNAL_CONFLICT_RESOLUTION", "strongest_wins")
-TIMEFRAME_CONFLICT_RESOLUTION = os.getenv("TIMEFRAME_CONFLICT_RESOLUTION", "higher_timeframe_wins")
+TIMEFRAME_CONFLICT_RESOLUTION = os.getenv(
+    "TIMEFRAME_CONFLICT_RESOLUTION", "higher_timeframe_wins"
+)
 MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 RISK_MANAGEMENT_ENABLED = os.getenv("RISK_MANAGEMENT_ENABLED", "true").lower() == "true"
 MAX_POSITION_SIZE_PCT = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.1"))
@@ -151,15 +176,32 @@ ACCUMULATION_COOLDOWN_SECONDS = int(os.getenv("ACCUMULATION_COOLDOWN_SECONDS", "
 MAX_TOTAL_POSITIONS = int(os.getenv("MAX_TOTAL_POSITIONS", "10"))
 STRATEGY_WEIGHTS = {"default": 1.0}
 TIMEFRAME_WEIGHTS = {"1h": 1.0}
-DETERMINISTIC_MODE_ENABLED = os.getenv("DETERMINISTIC_MODE_ENABLED", "true").lower() == "true"
+DETERMINISTIC_MODE_ENABLED = (
+    os.getenv("DETERMINISTIC_MODE_ENABLED", "true").lower() == "true"
+)
 ML_LIGHT_MODE_ENABLED = os.getenv("ML_LIGHT_MODE_ENABLED", "true").lower() == "true"
-LLM_REASONING_MODE_ENABLED = os.getenv("LLM_REASONING_MODE_ENABLED", "true").lower() == "true"
+LLM_REASONING_MODE_ENABLED = (
+    os.getenv("LLM_REASONING_MODE_ENABLED", "true").lower() == "true"
+)
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
-BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://testnet.binance.vision" if BINANCE_TESTNET else "https://api.binance.com")
-BINANCE_FUTURES_BASE_URL = os.getenv("BINANCE_FUTURES_BASE_URL", "https://testnet.binancefuture.com" if BINANCE_TESTNET else "https://fapi.binance.com")
-BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://testnet.binance.vision/ws" if BINANCE_TESTNET else "wss://stream.binance.com:9443/ws")
+BINANCE_BASE_URL = os.getenv(
+    "BINANCE_BASE_URL",
+    "https://testnet.binance.vision" if BINANCE_TESTNET else "https://api.binance.com",
+)
+BINANCE_FUTURES_BASE_URL = os.getenv(
+    "BINANCE_FUTURES_BASE_URL",
+    "https://testnet.binancefuture.com"
+    if BINANCE_TESTNET
+    else "https://fapi.binance.com",
+)
+BINANCE_WS_URL = os.getenv(
+    "BINANCE_WS_URL",
+    "wss://testnet.binance.vision/ws"
+    if BINANCE_TESTNET
+    else "wss://stream.binance.com:9443/ws",
+)
 BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT", "10"))
 BINANCE_RETRY_ATTEMPTS = int(os.getenv("BINANCE_RETRY_ATTEMPTS", "3"))
 PROMETHEUS_ENABLED = os.getenv("PROMETHEUS_ENABLED", "true").lower() == "true"
@@ -168,7 +210,9 @@ PROMETHEUS_PATH = os.getenv("PROMETHEUS_PATH", "/metrics")
 HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "30"))
 HEALTH_CHECK_TIMEOUT = int(os.getenv("HEALTH_CHECK_TIMEOUT", "5"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_FORMAT = os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+LOG_FORMAT = os.getenv(
+    "LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 LOG_FILE = os.getenv("LOG_FILE", "")
 LOG_MAX_SIZE = int(os.getenv("LOG_MAX_SIZE", "10485760"))
 LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
@@ -177,7 +221,9 @@ JAEGER_HOST = os.getenv("JAEGER_HOST", "localhost")
 JAEGER_PORT = int(os.getenv("JAEGER_PORT", "6831"))
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+)
 JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 API_KEYS = {}
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
@@ -190,7 +236,9 @@ MARKET_DATA_CACHE_TTL = int(os.getenv("MARKET_DATA_CACHE_TTL", "60"))
 ORDER_BOOK_CACHE_TTL = int(os.getenv("ORDER_BOOK_CACHE_TTL", "5"))
 MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 SIGNAL_CONFLICT_RESOLUTION = os.getenv("SIGNAL_CONFLICT_RESOLUTION", "strongest_wins")
-SIGNAL_AGGREGATION_ENABLED = os.getenv("SIGNAL_AGGREGATION_ENABLED", "true").lower() == "true"
+SIGNAL_AGGREGATION_ENABLED = (
+    os.getenv("SIGNAL_AGGREGATION_ENABLED", "true").lower() == "true"
+)
 RISK_MANAGEMENT_ENABLED = os.getenv("RISK_MANAGEMENT_ENABLED", "true").lower() == "true"
 MAX_POSITION_SIZE_PCT = float(os.getenv("MAX_POSITION_SIZE_PCT", "0.1"))
 MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.05"))
@@ -225,7 +273,9 @@ if ENVIRONMENT == Environment.PRODUCTION:
     LOG_LEVEL = "WARNING"
     API_RELOAD = False
     SIMULATION_ENABLED = False
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
+    JWT_SECRET_KEY = (
+        os.getenv("JWT_SECRET_KEY") or "your-secret-key-change-in-production"
+    )
     COINBASE_SANDBOX = False
     KRAKEN_SANDBOX = False
 elif ENVIRONMENT == Environment.STAGING:
@@ -239,21 +289,38 @@ elif ENVIRONMENT == Environment.TESTING:
     MONGODB_DATABASE = "petrosa_test"
     REDIS_DB = 1
 
+
 def get_config_summary() -> dict[str, Any]:
     return {
-        "app": {"name": APP_NAME, "version": APP_VERSION, "environment": ENVIRONMENT, "debug": DEBUG},
+        "app": {
+            "name": APP_NAME,
+            "version": APP_VERSION,
+            "environment": ENVIRONMENT,
+            "debug": DEBUG,
+        },
         "api": {"host": API_HOST, "port": API_PORT, "reload": API_RELOAD},
         "database": {"mongodb_url": MONGODB_URI, "mongodb_database": MONGODB_DATABASE},
         "messaging": {
             "nats_enabled": NATS_ENABLED,
             "nats_url": NATS_URL,
             "nats_servers": NATS_SERVERS,
-            "nats_topic_signals": NATS_TOPIC_SIGNALS
+            "nats_topic_signals": NATS_TOPIC_SIGNALS,
         },
-        "trading": {"simulation_enabled": SIMULATION_ENABLED, "default_base_amount": DEFAULT_BASE_AMOUNT, "supported_symbols": SUPPORTED_SYMBOLS},
-        "exchange": {"binance_testnet": BINANCE_TESTNET, "binance_api_key_set": bool(BINANCE_API_KEY)},
-        "monitoring": {"log_level": LOG_LEVEL, "prometheus_enabled": PROMETHEUS_ENABLED},
+        "trading": {
+            "simulation_enabled": SIMULATION_ENABLED,
+            "default_base_amount": DEFAULT_BASE_AMOUNT,
+            "supported_symbols": SUPPORTED_SYMBOLS,
+        },
+        "exchange": {
+            "binance_testnet": BINANCE_TESTNET,
+            "binance_api_key_set": bool(BINANCE_API_KEY),
+        },
+        "monitoring": {
+            "log_level": LOG_LEVEL,
+            "prometheus_enabled": PROMETHEUS_ENABLED,
+        },
     }
+
 
 def validate_configuration() -> list[str]:
     issues = []
@@ -270,5 +337,10 @@ def validate_configuration() -> list[str]:
         issues.append("NATS_URL is required when NATS_ENABLED is true")
     return issues
 
+
 def deprecation_warning(old_name: str, new_name: str, version: str = "0.2.0") -> None:
-    warnings.warn(f"{old_name} is deprecated and will be removed in version {version}. Use {new_name} instead.", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        f"{old_name} is deprecated and will be removed in version {version}. Use {new_name} instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )

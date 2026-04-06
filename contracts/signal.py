@@ -4,6 +4,7 @@ try:
     from datetime import UTC
 except ImportError:
     from datetime import timezone
+
     UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -13,26 +14,33 @@ try:
     from enum import StrEnum
 except ImportError:
     from enum import Enum
+
     class StrEnum(str, Enum):
         def __str__(self):
             return str(self.value)
 
+
 class SignalType(StrEnum):
     """Signal types for trading actions"""
+
     BUY = "buy"
     SELL = "sell"
     HOLD = "hold"
     CLOSE = "close"
 
+
 class SignalStrength(StrEnum):
     """Signal strength levels"""
+
     WEAK = "weak"
     MEDIUM = "medium"
     STRONG = "strong"
     EXTREME = "extreme"
 
+
 class TimeFrame(StrEnum):
     """Trading timeframes for signal analysis"""
+
     TICK = "tick"
     MINUTE_1 = "1m"
     MINUTE_3 = "3m"
@@ -50,8 +58,10 @@ class TimeFrame(StrEnum):
     WEEK_1 = "1w"
     MONTH_1 = "1M"
 
+
 class OrderType(StrEnum):
     """Supported order types"""
+
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
@@ -61,59 +71,107 @@ class OrderType(StrEnum):
     CONDITIONAL_LIMIT = "conditional_limit"
     CONDITIONAL_STOP = "conditional_stop"
 
+
 class TimeInForce(StrEnum):
     """Order time in force options"""
+
     GTC = "GTC"
     IOC = "IOC"
     FOK = "FOK"
     GTX = "GTX"
 
+
 class StrategyMode(StrEnum):
     """Strategy processing modes"""
+
     DETERMINISTIC = "deterministic"
     ML_LIGHT = "ml_light"
     LLM_REASONING = "llm_reasoning"
 
+
 class Signal(BaseModel):
     """Enhanced trading signal with advanced features"""
+
     id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_id: str = Field(..., description="Unique identifier for the strategy")
     signal_id: str | None = Field(None, description="Unique identifier for this signal")
-    strategy_mode: StrategyMode = Field(StrategyMode.DETERMINISTIC, description="Processing mode for this signal")
+    strategy_mode: StrategyMode = Field(
+        StrategyMode.DETERMINISTIC, description="Processing mode for this signal"
+    )
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
-    signal_type: SignalType | None = Field(None, description="Signal type (buy/sell/hold/close) - deprecated, use action")
-    action: Literal["buy", "sell", "hold", "close"] = Field(..., description="Trading action")
+    signal_type: SignalType | None = Field(
+        None, description="Signal type (buy/sell/hold/close) - deprecated, use action"
+    )
+    action: Literal["buy", "sell", "hold", "close"] = Field(
+        ..., description="Trading action"
+    )
     confidence: float = Field(..., ge=0, le=1, description="Signal confidence (0-1)")
-    strength: SignalStrength = Field(SignalStrength.MEDIUM, description="Signal strength level")
+    strength: SignalStrength = Field(
+        SignalStrength.MEDIUM, description="Signal strength level"
+    )
     price: float = Field(..., description="Signal price")
     quantity: float = Field(..., description="Signal quantity")
     current_price: float = Field(..., description="Current market price")
     target_price: float | None = Field(None, description="Target execution price")
     source: str = Field(..., description="Signal source")
     strategy: str = Field(..., description="Strategy name")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
     timeframe: str = Field("1h", description="Timeframe used for signal analysis")
     order_type: OrderType = Field(OrderType.MARKET, description="Order type to execute")
-    time_in_force: TimeInForce = Field(TimeInForce.GTC, description="Order time in force")
-    position_size_pct: float | None = Field(None, ge=0, le=1, description="Position size as percentage of portfolio")
-    quote_quantity: float | None = Field(None, description="Quote quantity for quote-based orders")
+    time_in_force: TimeInForce = Field(
+        TimeInForce.GTC, description="Order time in force"
+    )
+    position_size_pct: float | None = Field(
+        None, ge=0, le=1, description="Position size as percentage of portfolio"
+    )
+    quote_quantity: float | None = Field(
+        None, description="Quote quantity for quote-based orders"
+    )
     stop_loss: float | None = Field(None, description="Stop loss price")
-    stop_loss_pct: float | None = Field(None, ge=0, le=1, description="Stop loss as percentage")
+    stop_loss_pct: float | None = Field(
+        None, ge=0, le=1, description="Stop loss as percentage"
+    )
     take_profit: float | None = Field(None, description="Take profit price")
-    take_profit_pct: float | None = Field(None, ge=0, le=1, description="Take profit as percentage")
-    conditional_price: float | None = Field(None, description="Price level for conditional execution")
-    conditional_direction: Literal["above", "below"] | None = Field(None, description="Direction for conditional execution")
-    conditional_timeout: int | None = Field(None, description="Timeout in seconds for conditional orders")
-    iceberg_quantity: float | None = Field(None, description="Iceberg quantity for iceberg orders")
+    take_profit_pct: float | None = Field(
+        None, ge=0, le=1, description="Take profit as percentage"
+    )
+    conditional_price: float | None = Field(
+        None, description="Price level for conditional execution"
+    )
+    conditional_direction: Literal["above", "below"] | None = Field(
+        None, description="Direction for conditional execution"
+    )
+    conditional_timeout: int | None = Field(
+        None, description="Timeout in seconds for conditional orders"
+    )
+    iceberg_quantity: float | None = Field(
+        None, description="Iceberg quantity for iceberg orders"
+    )
     client_order_id: str | None = Field(None, description="Client-provided order ID")
-    model_confidence: float | None = Field(None, ge=0, le=1, description="ML model confidence score")
-    model_features: dict[str, Any] | None = Field(None, description="Features used by ML model")
+    model_confidence: float | None = Field(
+        None, ge=0, le=1, description="ML model confidence score"
+    )
+    model_features: dict[str, Any] | None = Field(
+        None, description="Features used by ML model"
+    )
     llm_reasoning: str | None = Field(None, description="LLM reasoning for the signal")
-    llm_alternatives: list[dict[str, Any]] | None = Field(None, description="Alternative actions considered by LLM")
-    indicators: dict[str, Any] | None = Field(None, description="Technical indicators and market data")
-    rationale: str | None = Field(None, description="Human-readable rationale for the signal")
-    meta: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Signal timestamp")
+    llm_alternatives: list[dict[str, Any]] | None = Field(
+        None, description="Alternative actions considered by LLM"
+    )
+    indicators: dict[str, Any] | None = Field(
+        None, description="Technical indicators and market data"
+    )
+    rationale: str | None = Field(
+        None, description="Human-readable rationale for the signal"
+    )
+    meta: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="Signal timestamp"
+    )
 
     @field_validator("timestamp", mode="before")
     @classmethod

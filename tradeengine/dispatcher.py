@@ -497,9 +497,9 @@ class OCOManager:
                     # Backward compatibility
                     if isinstance(self.active_oco_pairs[position_id], dict):
                         self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id][
-                            "close_reason"
-                        ] = close_reason
+                        self.active_oco_pairs[position_id]["close_reason"] = (
+                            close_reason
+                        )
                     elif isinstance(self.active_oco_pairs[position_id], list):
                         for oco in self.active_oco_pairs[position_id]:
                             if (
@@ -1410,9 +1410,9 @@ class Dispatcher:
                             raise
 
                     result["execution_result"] = execution_result
-                    result[
-                        "status"
-                    ] = "executed"  # Change status to executed for consistency
+                    result["status"] = (
+                        "executed"  # Change status to executed for consistency
+                    )
 
                     # NEW: Update last accumulation time if order was executed successfully
                     if execution_result.get("status") in (
@@ -1632,9 +1632,9 @@ class Dispatcher:
                             )
 
                             # NEW: Map order to strategy position for OCO attribution
-                            self.order_to_strategy_position[
-                                order.order_id
-                            ] = strategy_position_id
+                            self.order_to_strategy_position[order.order_id] = (
+                                strategy_position_id
+                            )
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
@@ -1699,9 +1699,9 @@ class Dispatcher:
                                 # Maintain consistent error enrichment so callers see the OCO failure reason
                                 result["error"] = f"Risk management failure: {e}"
                                 # Provide a more specific reason for why rollback was skipped
-                                result[
-                                    "rollback_skipped_reason"
-                                ] = f"non_positive_filled_qty: {filled_qty}"
+                                result["rollback_skipped_reason"] = (
+                                    f"non_positive_filled_qty: {filled_qty}"
+                                )
                                 return result
 
                             rollback_position_id = getattr(order, "position_id", None)

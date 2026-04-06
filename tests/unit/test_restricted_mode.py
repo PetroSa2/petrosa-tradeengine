@@ -26,7 +26,7 @@ async def test_dispatcher_restricted_mode_capping():
         price=1000.0,
         current_price=1000.0,
         confidence=0.9,
-        source="test",
+        source="petrosa-cio",
         strategy="test_strat",
         strategy_id="test_strat",
         metadata={"leverage": "20"},
@@ -58,7 +58,7 @@ async def test_dispatcher_restricted_mode_allows_close():
         price=1000.0,
         current_price=1000.0,
         confidence=0.9,
-        source="test",
+        source="petrosa-cio",
         strategy="test_strat",
         strategy_id="test_strat",
     )

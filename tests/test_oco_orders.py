@@ -123,7 +123,7 @@ def sample_long_signal() -> Signal:
         current_price=50000.0,
         stop_loss=48000.0,  # 2% below entry
         take_profit=52000.0,  # 4% above entry
-        source="test",
+        source="petrosa-cio",
         strategy="test-oco-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,  # Add strategy_mode
     )
@@ -145,7 +145,7 @@ def sample_short_signal() -> Signal:
         current_price=3000.0,
         stop_loss=3060.0,  # 2% above entry for SHORT
         take_profit=2940.0,  # 2% below entry for SHORT
-        source="test",
+        source="petrosa-cio",
         strategy="test-oco-strategy-short",
     )
 
@@ -297,12 +297,12 @@ async def test_cancel_other_order_when_sl_fills(oco_manager: OCOManager, mock_ex
     )
 
     # Verify TP order was cancelled
-    assert (
-        cancel_result[0] is True
-    ), f"Expected cancel_result[0] to be True, got {cancel_result}"
-    assert (
-        cancel_result[1] == "stop_loss"
-    ), f"Expected close_reason to be 'stop_loss', got {cancel_result[1]}"
+    assert cancel_result[0] is True, (
+        f"Expected cancel_result[0] to be True, got {cancel_result}"
+    )
+    assert cancel_result[1] == "stop_loss", (
+        f"Expected close_reason to be 'stop_loss', got {cancel_result[1]}"
+    )
 
     # Clean up
     await oco_manager.stop_monitoring()
@@ -482,17 +482,17 @@ async def test_dispatcher_places_oco_orders_on_position_open(
 
             # Verify OCO manager has active pairs
             # Check if exchange.execute was called (should be called for main order + 2 OCO orders = 3 times)
-            assert (
-                mock_exchange.execute.called
-            ), "Exchange execute should have been called"
+            assert mock_exchange.execute.called, (
+                "Exchange execute should have been called"
+            )
 
             # Verify OCO manager has active pairs (may not be placed if dispatch didn't create position)
             # The test verifies that OCO placement is attempted, not necessarily successful
             if len(dispatcher.oco_manager.active_oco_pairs) == 0:
                 # If no OCO pairs, verify that at least the main order was executed
-                assert (
-                    mock_exchange.execute.call_count >= 1
-                ), "At least main order should be executed"
+                assert mock_exchange.execute.call_count >= 1, (
+                    "At least main order should be executed"
+                )
 
             # Clean up
             await dispatcher.oco_manager.stop_monitoring()
@@ -549,7 +549,7 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
                 current_price=50000.0,
                 stop_loss=48000.0,
                 take_profit=52000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="test-lifecycle",
                 strategy_mode=StrategyMode.DETERMINISTIC,
             )
@@ -648,7 +648,7 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
                 current_price=3000.0,
                 stop_loss=3060.0,  # 2% above for SHORT
                 take_profit=2940.0,  # 2% below for SHORT
-                source="test",
+                source="petrosa-cio",
                 strategy="test-lifecycle-short",
                 strategy_mode=StrategyMode.DETERMINISTIC,
             )
@@ -741,7 +741,7 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
                     current_price=50000.0 + (i * 100),
                     stop_loss=48000.0 + (i * 100),
                     take_profit=52000.0 + (i * 100),
-                    source="test",
+                    source="petrosa-cio",
                     strategy=f"test-multi-strategy-{i}",
                     strategy_mode=StrategyMode.DETERMINISTIC,
                 )
@@ -770,9 +770,9 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
                     exchange_position_key
                 ]
                 # May have fewer pairs if some didn't get created
-                assert (
-                    len(oco_list) >= 1
-                ), f"Expected at least 1 OCO pair, got {len(oco_list)}"
+                assert len(oco_list) >= 1, (
+                    f"Expected at least 1 OCO pair, got {len(oco_list)}"
+                )
             else:
                 pytest.skip("OCO pairs not created - may be due to test environment")
 
@@ -834,7 +834,7 @@ async def test_oco_order_placement_without_sl_or_tp():
             price=50000.0,
             quantity=0.001,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-no-sltp",
             strategy_mode=StrategyMode.DETERMINISTIC,
         )

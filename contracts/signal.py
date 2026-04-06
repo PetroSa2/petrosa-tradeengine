@@ -1,21 +1,23 @@
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
+
+try:
+    from datetime import UTC
+except ImportError:
+    from datetime import timezone
+
+    UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-if TYPE_CHECKING:
+try:
     from enum import StrEnum
-else:
-    try:
-        from enum import StrEnum
-    except ImportError:
-        from enum import Enum
+except ImportError:
+    from enum import Enum
 
-        class StrEnum(str, Enum):
-            pass
-
-
-UTC = UTC
+    class StrEnum(str, Enum):
+        def __str__(self):
+            return str(self.value)
 
 
 class SignalType(StrEnum):
@@ -39,22 +41,22 @@ class SignalStrength(StrEnum):
 class TimeFrame(StrEnum):
     """Trading timeframes for signal analysis"""
 
-    TICK = "tick"  # Real-time tick data
-    MINUTE_1 = "1m"  # 1 minute
-    MINUTE_3 = "3m"  # 3 minutes
-    MINUTE_5 = "5m"  # 5 minutes
-    MINUTE_15 = "15m"  # 15 minutes
-    MINUTE_30 = "30m"  # 30 minutes
-    HOUR_1 = "1h"  # 1 hour
-    HOUR_2 = "2h"  # 2 hours
-    HOUR_4 = "4h"  # 4 hours
-    HOUR_6 = "6h"  # 6 hours
-    HOUR_8 = "8h"  # 8 hours
-    HOUR_12 = "12h"  # 12 hours
-    DAY_1 = "1d"  # 1 day
-    DAY_3 = "3d"  # 3 days
-    WEEK_1 = "1w"  # 1 week
-    MONTH_1 = "1M"  # 1 month
+    TICK = "tick"
+    MINUTE_1 = "1m"
+    MINUTE_3 = "3m"
+    MINUTE_5 = "5m"
+    MINUTE_15 = "15m"
+    MINUTE_30 = "30m"
+    HOUR_1 = "1h"
+    HOUR_2 = "2h"
+    HOUR_4 = "4h"
+    HOUR_6 = "6h"
+    HOUR_8 = "8h"
+    HOUR_12 = "12h"
+    DAY_1 = "1d"
+    DAY_3 = "3d"
+    WEEK_1 = "1w"
+    MONTH_1 = "1M"
 
 
 class OrderType(StrEnum):
@@ -66,39 +68,36 @@ class OrderType(StrEnum):
     STOP_LIMIT = "stop_limit"
     TAKE_PROFIT = "take_profit"
     TAKE_PROFIT_LIMIT = "take_profit_limit"
-    CONDITIONAL_LIMIT = "conditional_limit"  # Execute if price crosses level
-    CONDITIONAL_STOP = "conditional_stop"  # Execute if price crosses stop level
+    CONDITIONAL_LIMIT = "conditional_limit"
+    CONDITIONAL_STOP = "conditional_stop"
 
 
 class TimeInForce(StrEnum):
     """Order time in force options"""
 
-    GTC = "GTC"  # Good Till Canceled
-    IOC = "IOC"  # Immediate or Cancel
-    FOK = "FOK"  # Fill or Kill
-    GTX = "GTX"  # Good Till Crossing
+    GTC = "GTC"
+    IOC = "IOC"
+    FOK = "FOK"
+    GTX = "GTX"
 
 
 class StrategyMode(StrEnum):
     """Strategy processing modes"""
 
-    DETERMINISTIC = "deterministic"  # Rule-based processing
-    ML_LIGHT = "ml_light"  # Light ML models
-    LLM_REASONING = "llm_reasoning"  # Full LLM reasoning
+    DETERMINISTIC = "deterministic"
+    ML_LIGHT = "ml_light"
+    LLM_REASONING = "llm_reasoning"
 
 
 class Signal(BaseModel):
     """Enhanced trading signal with advanced features"""
 
-    # Core signal information
     id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_id: str = Field(..., description="Unique identifier for the strategy")
     signal_id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_mode: StrategyMode = Field(
         StrategyMode.DETERMINISTIC, description="Processing mode for this signal"
     )
-
-    # Trading parameters
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
     signal_type: SignalType | None = Field(
         None, description="Signal type (buy/sell/hold/close) - deprecated, use action"
@@ -110,24 +109,16 @@ class Signal(BaseModel):
     strength: SignalStrength = Field(
         SignalStrength.MEDIUM, description="Signal strength level"
     )
-
-    # Price and quantity information
     price: float = Field(..., description="Signal price")
     quantity: float = Field(..., description="Signal quantity")
     current_price: float = Field(..., description="Current market price")
     target_price: float | None = Field(None, description="Target execution price")
-
-    # Source and metadata
     source: str = Field(..., description="Signal source")
     strategy: str = Field(..., description="Strategy name")
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
-
-    # Timeframe information
     timeframe: str = Field("1h", description="Timeframe used for signal analysis")
-
-    # Order configuration
     order_type: OrderType = Field(OrderType.MARKET, description="Order type to execute")
     time_in_force: TimeInForce = Field(
         TimeInForce.GTC, description="Order time in force"
@@ -138,8 +129,6 @@ class Signal(BaseModel):
     quote_quantity: float | None = Field(
         None, description="Quote quantity for quote-based orders"
     )
-
-    # Risk management
     stop_loss: float | None = Field(None, description="Stop loss price")
     stop_loss_pct: float | None = Field(
         None, ge=0, le=1, description="Stop loss as percentage"
@@ -148,8 +137,6 @@ class Signal(BaseModel):
     take_profit_pct: float | None = Field(
         None, ge=0, le=1, description="Take profit as percentage"
     )
-
-    # Conditional orders
     conditional_price: float | None = Field(
         None, description="Price level for conditional execution"
     )
@@ -159,14 +146,10 @@ class Signal(BaseModel):
     conditional_timeout: int | None = Field(
         None, description="Timeout in seconds for conditional orders"
     )
-
-    # Advanced order features
     iceberg_quantity: float | None = Field(
         None, description="Iceberg quantity for iceberg orders"
     )
     client_order_id: str | None = Field(None, description="Client-provided order ID")
-
-    # ML/LLM specific fields
     model_confidence: float | None = Field(
         None, ge=0, le=1, description="ML model confidence score"
     )
@@ -177,89 +160,49 @@ class Signal(BaseModel):
     llm_alternatives: list[dict[str, Any]] | None = Field(
         None, description="Alternative actions considered by LLM"
     )
-
-    # Market indicators
     indicators: dict[str, Any] | None = Field(
         None, description="Technical indicators and market data"
     )
-
-    # Metadata
     rationale: str | None = Field(
         None, description="Human-readable rationale for the signal"
     )
     meta: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
-
-    # Timestamp
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(UTC),
-        description="Signal timestamp",
+        default_factory=lambda: datetime.now(UTC), description="Signal timestamp"
     )
 
     @field_validator("timestamp", mode="before")
     @classmethod
     def validate_timestamp(cls, v: Any) -> datetime:
-        """Ensure timestamp is timezone-aware"""
         if isinstance(v, str):
-            # Parse ISO format string
             try:
-                dt = datetime.fromisoformat(v)
-                return dt
+                return datetime.fromisoformat(v)
             except ValueError:
-                # Try parsing as Unix timestamp
                 try:
                     timestamp_float = float(v)
-                    # Validate it's a reasonable Unix timestamp (after year 2000, before year 2100)
                     if 946684800 <= timestamp_float <= 4102444800:
                         return datetime.fromtimestamp(timestamp_float, tz=UTC)
                     else:
-                        # Invalid timestamp, log warning and use current time
-                        import logging
-
-                        logger = logging.getLogger(__name__)
-                        logger.warning(
-                            f"Invalid timestamp value '{v}' - using current time. "
-                            f"Timestamp should be ISO format string or Unix timestamp."
-                        )
                         return datetime.now(UTC)
                 except (ValueError, TypeError):
-                    # Can't parse as float either, log warning and use current time
-                    import logging
-
-                    logger = logging.getLogger(__name__)
-                    logger.warning(
-                        f"Invalid timestamp format '{v}' - using current time. "
-                        f"Timestamp should be ISO format string or Unix timestamp."
-                    )
                     return datetime.now(UTC)
         elif isinstance(v, int | float):
-            # Unix timestamp - validate range
             if 946684800 <= v <= 4102444800:
                 return datetime.fromtimestamp(v, tz=UTC)
             else:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    f"Unix timestamp {v} out of valid range - using current time"
-                )
                 return datetime.now(UTC)
         elif isinstance(v, datetime):
             if v.tzinfo is None:
                 return v.replace(tzinfo=UTC)
             return v
         else:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Invalid timestamp type {type(v)} - using current time")
             return datetime.now(UTC)
 
     @field_validator("confidence", "model_confidence")
     @classmethod
     def validate_confidence(cls, v: Any) -> float | None:
-        """Validate confidence values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Confidence must be between 0 and 1")
         return float(v) if v is not None else None
@@ -267,7 +210,6 @@ class Signal(BaseModel):
     @field_validator("position_size_pct", "stop_loss_pct", "take_profit_pct")
     @classmethod
     def validate_percentages(cls, v: Any) -> float | None:
-        """Validate percentage values"""
         if v is not None and (v < 0 or v > 1):
             raise ValueError("Percentage must be between 0 and 1")
         return float(v) if v is not None else None

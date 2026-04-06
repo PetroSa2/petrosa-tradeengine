@@ -20,7 +20,7 @@ def sample_signal() -> Signal:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -62,7 +62,7 @@ def test_signal_validation_invalid_confidence() -> None:
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         )
 
@@ -85,7 +85,7 @@ def test_signal_validation_invalid_price() -> None:
         price=-100.0,  # Invalid negative price
         quantity=0.1,
         current_price=-100.0,  # Invalid negative price
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     assert signal.price == -100.0
@@ -105,7 +105,7 @@ def test_signal_validation_invalid_quantity() -> None:
         price=45000.0,
         quantity=-0.1,  # Invalid negative quantity
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     assert signal.quantity == -0.1
@@ -175,7 +175,7 @@ def test_signal_model_config_json_encoders() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
         timestamp=datetime(2024, 1, 1, 12, 0, 0),
     )
@@ -332,7 +332,7 @@ def test_signal_field_validators() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
     )
     assert signal.confidence == 0.5
@@ -347,7 +347,7 @@ def test_signal_field_validators() -> None:
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test",
         )
 
@@ -360,7 +360,7 @@ def test_signal_field_validators() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
         position_size_pct=0.1,
         stop_loss_pct=0.02,
@@ -380,7 +380,7 @@ def test_signal_field_validators() -> None:
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test",
             position_size_pct=1.5,  # Invalid: > 1
         )
@@ -399,7 +399,7 @@ def test_signal_timestamp_validator() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
         timestamp="2024-01-01T12:00:00Z",
     )
@@ -414,7 +414,7 @@ def test_signal_timestamp_validator() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
         timestamp=1704110400.0,  # Valid Unix timestamp
     )
@@ -430,7 +430,7 @@ def test_signal_timestamp_validator() -> None:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
         timestamp=dt,
     )

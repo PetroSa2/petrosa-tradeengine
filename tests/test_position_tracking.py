@@ -84,7 +84,7 @@ async def test_position_side_determination():
         price=45000.0,
         quantity=0.001,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
     )
 
@@ -101,7 +101,7 @@ async def test_position_side_determination():
         price=45000.0,
         quantity=0.001,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test",
     )
 

@@ -1,21 +1,23 @@
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
+
+try:
+    from datetime import UTC
+except ImportError:
+    from datetime import timezone
+
+    UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
+try:
     from enum import StrEnum
-else:
-    try:
-        from enum import StrEnum
-    except ImportError:
-        from enum import Enum
+except ImportError:
+    from enum import Enum
 
-        class StrEnum(str, Enum):
-            pass
-
-
-UTC = UTC
+    class StrEnum(str, Enum):
+        def __str__(self):
+            return str(self.value)
 
 
 class OrderSide(StrEnum):
@@ -52,18 +54,13 @@ class OrderStatus(StrEnum):
 class TradeOrder(BaseModel):
     """Trade order model with advanced features"""
 
-    # Core order information
     symbol: str = Field(..., description="Trading symbol (e.g., BTCUSDT)")
     type: str = Field(..., description="Order type")
     side: str = Field(..., description="Order side (buy/sell)")
     amount: float = Field(..., description="Order amount")
-
-    # Price information
     target_price: float | None = Field(None, description="Target execution price")
     stop_loss: float | None = Field(None, description="Stop loss price")
     take_profit: float | None = Field(None, description="Take profit price")
-
-    # Conditional order parameters
     conditional_price: float | None = Field(
         None, description="Price level for conditional execution"
     )
@@ -73,20 +70,14 @@ class TradeOrder(BaseModel):
     conditional_timeout: int | None = Field(
         None, description="Timeout in seconds for conditional orders"
     )
-
-    # Advanced order features
     iceberg_quantity: float | None = Field(
         None, description="Iceberg quantity for iceberg orders"
     )
     client_order_id: str | None = Field(None, description="Client-provided order ID")
-
-    # Order metadata
     order_id: str | None = Field(None, description="Exchange order ID")
     status: OrderStatus = Field(OrderStatus.PENDING, description="Order status")
     filled_amount: float = Field(0.0, description="Amount filled so far")
     average_price: float | None = Field(None, description="Average fill price")
-
-    # Position tracking for hedge mode
     position_id: str | None = Field(None, description="Unique position ID for tracking")
     position_side: str | None = Field(
         None, description="Position side for hedge mode (LONG/SHORT)"
@@ -95,41 +86,27 @@ class TradeOrder(BaseModel):
     strategy_metadata: dict[str, Any] = Field(
         default_factory=dict, description="Strategy parameters for tracking"
     )
-
-    # Simulation flag
     simulate: bool = Field(True, description="Whether to simulate the order")
-
-    # Reduce-only flag (exempt from MIN_NOTIONAL validation)
     reduce_only: bool = Field(
         False, description="Reduce-only order (exempt from MIN_NOTIONAL)"
     )
-
-    # Time in force (for limit/stop orders)
     time_in_force: str | None = Field(
         None, description="Time in force policy (GTC, IOC, etc.)"
     )
-
-    # Position sizing (for risk management)
     position_size_pct: float | None = Field(
         None, description="Position size as a percent of portfolio"
     )
-
-    # Risk management percentages
     stop_loss_pct: float | None = Field(
         None, description="Stop loss as percentage of entry price"
     )
     take_profit_pct: float | None = Field(
         None, description="Take profit as percentage of entry price"
     )
-
-    # Timestamps
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         description="Order creation timestamp",
     )
     updated_at: datetime | None = Field(None, description="Last update timestamp")
-
-    # Metadata
     meta: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )

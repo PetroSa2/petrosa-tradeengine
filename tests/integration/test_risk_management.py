@@ -79,7 +79,7 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
         quantity=0.03,  # $1500 position (exceeds 10% limit)
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -88,9 +88,9 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert (
-        execution_result.get("status") == "rejected"
-    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert execution_result.get("status") == "rejected", (
+        f"Expected rejected status, got {execution_result.get('status')}"
+    )
     assert (
         "risk" in execution_result.get("reason", "").lower()
         or "limit" in execution_result.get("reason", "").lower()
@@ -122,7 +122,7 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
         quantity=0.001,
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -131,9 +131,9 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert (
-        execution_result.get("status") == "rejected"
-    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert execution_result.get("status") == "rejected", (
+        f"Expected rejected status, got {execution_result.get('status')}"
+    )
     assert (
         "daily loss" in execution_result.get("reason", "").lower()
         or "loss limit" in execution_result.get("reason", "").lower()
@@ -185,7 +185,7 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
         quantity=200,  # $100 position
         current_price=0.50,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -194,9 +194,9 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
 
     # Assertions - check execution_result for risk rejection
     execution_result = result.get("execution_result", {})
-    assert (
-        execution_result.get("status") == "rejected"
-    ), f"Expected rejected status, got {execution_result.get('status')}"
+    assert execution_result.get("status") == "rejected", (
+        f"Expected rejected status, got {execution_result.get('status')}"
+    )
     assert (
         "risk" in execution_result.get("reason", "").lower()
         or "exposure" in execution_result.get("reason", "").lower()
@@ -229,7 +229,7 @@ async def test_valid_order_within_all_limits(dispatcher_with_risk_limits):
         quantity=0.001,  # $50 position (0.5% of portfolio)
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -280,7 +280,7 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
         quantity=0.001,
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -301,9 +301,9 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
     )
 
     # Verify metric actually incremented (not just >= which allows no change)
-    assert (
-        final_count > initial_count
-    ), f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
+    assert final_count > initial_count, (
+        f"Expected metric to increment from {initial_count} to {final_count}, but it did not increase"
+    )
 
 
 @pytest.mark.integration
@@ -327,7 +327,7 @@ async def test_multiple_orders_accumulate_towards_limits(dispatcher_with_risk_li
         quantity=0.016,  # $800
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -344,7 +344,7 @@ async def test_multiple_orders_accumulate_towards_limits(dispatcher_with_risk_li
         quantity=0.267,  # $800
         current_price=3000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 

@@ -47,7 +47,7 @@ def sample_signal():
         quantity=0.1,
         current_price=45000.0,
         target_price=45100.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 

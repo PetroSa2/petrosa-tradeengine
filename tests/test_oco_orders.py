@@ -123,7 +123,7 @@ def sample_long_signal() -> Signal:
         current_price=50000.0,
         stop_loss=48000.0,  # 2% below entry
         take_profit=52000.0,  # 4% above entry
-        source="test",
+        source="petrosa-cio",
         strategy="test-oco-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,  # Add strategy_mode
     )
@@ -145,7 +145,7 @@ def sample_short_signal() -> Signal:
         current_price=3000.0,
         stop_loss=3060.0,  # 2% above entry for SHORT
         take_profit=2940.0,  # 2% below entry for SHORT
-        source="test",
+        source="petrosa-cio",
         strategy="test-oco-strategy-short",
     )
 
@@ -549,7 +549,7 @@ async def test_full_oco_lifecycle_long_position(mock_exchange, mock_position_man
                 current_price=50000.0,
                 stop_loss=48000.0,
                 take_profit=52000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="test-lifecycle",
                 strategy_mode=StrategyMode.DETERMINISTIC,
             )
@@ -648,7 +648,7 @@ async def test_full_oco_lifecycle_short_position(mock_exchange, mock_position_ma
                 current_price=3000.0,
                 stop_loss=3060.0,  # 2% above for SHORT
                 take_profit=2940.0,  # 2% below for SHORT
-                source="test",
+                source="petrosa-cio",
                 strategy="test-lifecycle-short",
                 strategy_mode=StrategyMode.DETERMINISTIC,
             )
@@ -741,7 +741,7 @@ async def test_multiple_concurrent_oco_positions(mock_exchange, mock_position_ma
                     current_price=50000.0 + (i * 100),
                     stop_loss=48000.0 + (i * 100),
                     take_profit=52000.0 + (i * 100),
-                    source="test",
+                    source="petrosa-cio",
                     strategy=f"test-multi-strategy-{i}",
                     strategy_mode=StrategyMode.DETERMINISTIC,
                 )
@@ -834,7 +834,7 @@ async def test_oco_order_placement_without_sl_or_tp():
             price=50000.0,
             quantity=0.001,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-no-sltp",
             strategy_mode=StrategyMode.DETERMINISTIC,
         )

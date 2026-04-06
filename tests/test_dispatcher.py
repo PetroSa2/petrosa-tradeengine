@@ -27,7 +27,7 @@ def sample_signal() -> Signal:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -93,7 +93,7 @@ async def test_process_signals_success(dispatcher: Dispatcher) -> None:
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         ),
         Signal(
@@ -107,7 +107,7 @@ async def test_process_signals_success(dispatcher: Dispatcher) -> None:
             price=3000.0,
             quantity=0.1,
             current_price=3000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         ),
     ]
@@ -151,7 +151,7 @@ async def test_validate_signal_invalid_confidence(dispatcher: Dispatcher) -> Non
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         )
 
@@ -171,7 +171,7 @@ async def test_validate_signal_invalid_price(dispatcher: Dispatcher) -> None:
         price=-100.0,  # Invalid negative price
         quantity=0.1,
         current_price=-100.0,  # Invalid negative price
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     assert signal.price == -100.0
@@ -192,7 +192,7 @@ async def test_validate_signal_invalid_quantity(dispatcher: Dispatcher) -> None:
         price=45000.0,
         quantity=-0.1,  # Invalid negative quantity
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     assert signal.quantity == -0.1
@@ -244,7 +244,7 @@ async def test_generate_signal_id_identical_signals(dispatcher: Dispatcher) -> N
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     signal2 = Signal(
@@ -258,7 +258,7 @@ async def test_generate_signal_id_identical_signals(dispatcher: Dispatcher) -> N
         price=51000.0,  # Different price shouldn't affect ID
         quantity=0.2,  # Different quantity shouldn't affect ID
         current_price=51000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -285,7 +285,7 @@ async def test_generate_signal_id_different_signals(dispatcher: Dispatcher) -> N
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-1",
     )
     signal2 = Signal(
@@ -299,7 +299,7 @@ async def test_generate_signal_id_different_signals(dispatcher: Dispatcher) -> N
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-2",
     )
     signal3 = Signal(
@@ -313,7 +313,7 @@ async def test_generate_signal_id_different_signals(dispatcher: Dispatcher) -> N
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-1",
     )
     signal4 = Signal(
@@ -327,7 +327,7 @@ async def test_generate_signal_id_different_signals(dispatcher: Dispatcher) -> N
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-1",
     )
 
@@ -367,7 +367,7 @@ async def test_generate_signal_id_different_timestamps(dispatcher: Dispatcher) -
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     signal2 = Signal(
@@ -381,7 +381,7 @@ async def test_generate_signal_id_different_timestamps(dispatcher: Dispatcher) -
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
     signal3 = Signal(
@@ -395,7 +395,7 @@ async def test_generate_signal_id_different_timestamps(dispatcher: Dispatcher) -
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -427,7 +427,7 @@ async def test_generate_signal_id_format(dispatcher: Dispatcher) -> None:
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -455,7 +455,7 @@ async def test_generate_signal_id_no_timestamp(dispatcher: Dispatcher) -> None:
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -489,7 +489,7 @@ async def test_signal_to_order_buy_signal(dispatcher: Dispatcher) -> None:
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -516,7 +516,7 @@ async def test_signal_to_order_sell_signal(dispatcher: Dispatcher) -> None:
         price=3000.0,
         quantity=0.5,
         current_price=3000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.LIMIT,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -543,7 +543,7 @@ async def test_signal_to_order_close_signal(dispatcher: Dispatcher) -> None:
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -576,7 +576,7 @@ async def test_signal_to_order_negative_price(dispatcher: Dispatcher) -> None:
         price=-100.0,  # Negative price
         quantity=0.1,
         current_price=-100.0,  # Negative current price
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -606,7 +606,7 @@ async def test_signal_to_order_zero_quantity(dispatcher: Dispatcher) -> None:
         price=50000.0,
         quantity=0.0,  # Zero quantity
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -633,7 +633,7 @@ async def test_signal_to_order_missing_optional_fields(dispatcher: Dispatcher) -
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,
@@ -666,7 +666,7 @@ async def test_signal_to_order_with_stop_loss_take_profit(
         price=50000.0,
         quantity=0.1,
         current_price=50000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         order_type=OrderType.MARKET,
         strategy_mode=StrategyMode.DETERMINISTIC,

@@ -55,7 +55,7 @@ def sample_signal() -> Signal:
         price=45000.0,
         quantity=0.1,
         current_price=45000.0,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -138,7 +138,7 @@ async def test_trade_endpoint_multiple_signals(client: TestClient) -> None:
             price=45000.0,
             quantity=0.1,
             current_price=45000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         ),
         Signal(
@@ -152,7 +152,7 @@ async def test_trade_endpoint_multiple_signals(client: TestClient) -> None:
             price=3000.0,
             quantity=0.1,
             current_price=3000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test-strategy",
         ),
     ]

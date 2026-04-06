@@ -78,7 +78,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
         )
         assert signal.symbol == "BTCUSDT"
@@ -95,7 +95,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
             )
         assert exc_info.value is not None
@@ -111,7 +111,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
             )
         assert exc_info.value is not None
@@ -126,7 +126,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             timestamp="2025-01-15T10:00:00Z",
         )
@@ -142,7 +142,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             timestamp=1705315200,  # Unix timestamp
         )
@@ -158,7 +158,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             timestamp=999999999999999,  # Invalid Unix timestamp
         )
@@ -175,7 +175,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             timestamp="invalid_timestamp",
         )
@@ -192,7 +192,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             timestamp=[],  # Invalid type
         )
@@ -209,7 +209,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             model_confidence=0.95,
         )
@@ -226,7 +226,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
                 model_confidence=1.5,  # Invalid
             )
@@ -242,7 +242,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             position_size_pct=0.1,
         )
@@ -259,7 +259,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
                 position_size_pct=1.5,  # Invalid
             )
@@ -275,7 +275,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             stop_loss_pct=0.02,
         )
@@ -292,7 +292,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
                 stop_loss_pct=1.5,  # Invalid
             )
@@ -308,7 +308,7 @@ class TestSignalValidation:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             take_profit_pct=0.05,
         )
@@ -325,7 +325,7 @@ class TestSignalValidation:
                 price=50000.0,
                 quantity=0.1,
                 current_price=50000.0,
-                source="test",
+                source="petrosa-cio",
                 strategy="momentum",
                 take_profit_pct=-0.1,  # Invalid
             )
@@ -347,7 +347,7 @@ class TestSignalValidation:
             quantity=0.1,
             current_price=50000.0,
             target_price=51000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
             metadata={"test": "data"},
             timeframe="1h",
@@ -390,7 +390,7 @@ class TestSignalJSONSerialization:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
         )
         json_data = signal.model_dump()
@@ -407,7 +407,7 @@ class TestSignalJSONSerialization:
             price=50000.0,
             quantity=0.1,
             current_price=50000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="momentum",
         )
         json_str = signal.model_dump_json()

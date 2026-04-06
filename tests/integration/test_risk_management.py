@@ -79,7 +79,7 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
         quantity=0.03,  # $1500 position (exceeds 10% limit)
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -122,7 +122,7 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
         quantity=0.001,
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -185,7 +185,7 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
         quantity=200,  # $100 position
         current_price=0.50,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -229,7 +229,7 @@ async def test_valid_order_within_all_limits(dispatcher_with_risk_limits):
         quantity=0.001,  # $50 position (0.5% of portfolio)
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -280,7 +280,7 @@ async def test_risk_rejection_metric_increments(dispatcher_with_risk_limits):
         quantity=0.001,
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -327,7 +327,7 @@ async def test_multiple_orders_accumulate_towards_limits(dispatcher_with_risk_li
         quantity=0.016,  # $800
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 
@@ -344,7 +344,7 @@ async def test_multiple_orders_accumulate_towards_limits(dispatcher_with_risk_li
         quantity=0.267,  # $800
         current_price=3000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
     )
 

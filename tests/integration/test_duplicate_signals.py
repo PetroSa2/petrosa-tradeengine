@@ -88,7 +88,7 @@ async def test_duplicate_signal_rejected(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -141,7 +141,7 @@ async def test_duplicate_signal_metric_increments(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -205,7 +205,7 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp1,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -223,7 +223,7 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
         quantity=0.01,
         current_price=3000.0,
         timestamp=timestamp2,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -241,7 +241,7 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
         quantity=200,
         current_price=0.50,
         timestamp=timestamp3,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -302,7 +302,7 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp_rounded,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -349,7 +349,7 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp_rounded,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -396,7 +396,7 @@ async def test_signals_within_cache_ttl_rejected(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -451,7 +451,7 @@ async def test_signal_cache_cleanup(dispatcher_with_fakes):
         quantity=0.001,
         current_price=50000.0,
         timestamp=timestamp,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )
@@ -468,7 +468,7 @@ async def test_signal_cache_cleanup(dispatcher_with_fakes):
         quantity=0.01,
         current_price=3000.0,
         timestamp=timestamp,
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )

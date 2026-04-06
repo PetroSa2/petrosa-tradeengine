@@ -35,7 +35,7 @@ def sample_signal():
         quantity=0.01,
         confidence=0.85,
         strength=SignalStrength.STRONG,
-        source="test",
+        source="petrosa-cio",
         strategy="test_strategy",
         timeframe="1h",
         order_type=SignalOrderType.MARKET,

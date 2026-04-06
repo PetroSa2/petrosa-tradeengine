@@ -48,7 +48,7 @@ def sample_signal():
         quantity=0.001,
         current_price=50000.0,
         timestamp=datetime.now(UTC),
-        source="test",
+        source="petrosa-cio",
         strategy="test-strategy",
         strategy_mode=StrategyMode.DETERMINISTIC,
     )

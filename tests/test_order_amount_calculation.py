@@ -43,7 +43,7 @@ class TestOrderAmountCalculation:
             timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test_strategy",
         )
 
@@ -128,7 +128,7 @@ class TestFallbackAmountCalculation:
             timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test_strategy",
         )
 
@@ -138,7 +138,7 @@ class TestFallbackAmountCalculation:
         return Signal(
             strategy_id="test_strategy",
             price=3000.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test_strategy",
             symbol="ETHUSDT",
             action="buy",
@@ -166,7 +166,7 @@ class TestFallbackAmountCalculation:
             timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test_strategy",
         )
 
@@ -297,7 +297,7 @@ class TestErrorLogging:
             timestamp=datetime.now(UTC),
             time_in_force=TimeInForce.GTC,
             position_size_pct=1.0,
-            source="test",
+            source="petrosa-cio",
             strategy="test_strategy",
         )
 

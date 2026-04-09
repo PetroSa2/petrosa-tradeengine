@@ -5,7 +5,9 @@
 
 # Python enforcement
 PYTHON_VERSION_EXPECTED := 3.11
-PYTHON_VERSION_ACTUAL := $(shell python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+# Use venv Python if available (ensures pre-commit hooks use the correct interpreter)
+PYTHON := $(shell [ -f venv/bin/python ] && echo venv/bin/python || echo python3)
+PYTHON_VERSION_ACTUAL := $(shell $(PYTHON) --version | cut -d' ' -f2 | cut -d'.' -f1,2)
 
 # Colors for output
 RED := \033[0;31m

@@ -532,6 +532,9 @@ class OCOManager:
                 self.logger.warning(
                     f"⚠️ {cancel_type} order already closed or unknown (likely filled/cancelled): {e}"
                 )
+                self._mark_oco_completed(
+                    found_key, position_id, sl_order_id, tp_order_id, close_reason
+                )
                 return True, close_reason
 
             # Handle ghost order: order was filled/cancelled externally (e.g. after pod restart)
@@ -598,11 +601,13 @@ class OCOManager:
             )
             return 0
 
+        # SL/TP orders are placed via Binance Algo Order API (algoType=CONDITIONAL),
+        # so they appear in openAlgoOrders (algoId), not futures_get_open_orders.
         try:
-            open_orders = self.exchange.client.futures_get_open_orders()
+            open_orders = await self.exchange.get_open_algo_orders()
         except Exception as e:
             self.logger.warning(
-                f"[STARTUP] Failed to fetch open orders for OCO reconciliation: {e}"
+                f"[STARTUP] Failed to fetch algo orders for OCO reconciliation: {e}"
             )
             return 0
 
@@ -610,14 +615,14 @@ class OCOManager:
         tp_orders: dict[str, list[dict]] = {}
 
         for o in open_orders:
-            order_type = o.get("type", "")
+            order_type = o.get("type", o.get("orderType", ""))
             position_side = o.get("positionSide", "BOTH")
             symbol = o.get("symbol", "")
             key = f"{symbol}_{position_side}"
 
-            if order_type == "STOP_MARKET":
+            if order_type in ("STOP_MARKET", "STOP"):
                 sl_orders.setdefault(key, []).append(o)
-            elif order_type == "TAKE_PROFIT_MARKET":
+            elif order_type in ("TAKE_PROFIT_MARKET", "TAKE_PROFIT"):
                 tp_orders.setdefault(key, []).append(o)
 
         rebuilt = 0
@@ -628,20 +633,23 @@ class OCOManager:
 
             # Pair them up in creation-time order (zip stops at the shorter list)
             for sl_o, tp_o in zip(
-                sorted(sl_list, key=lambda x: x.get("time", 0)),
-                sorted(tp_list, key=lambda x: x.get("time", 0)),
+                sorted(sl_list, key=lambda x: x.get("createTime", x.get("time", 0))),
+                sorted(tp_list, key=lambda x: x.get("createTime", x.get("time", 0))),
                 strict=False,
             ):
                 parts = key.split("_", 1)
                 sym = parts[0]
                 pos_side = parts[1] if len(parts) > 1 else "BOTH"
+                # Algo orders use algoId; fall back to orderId for safety
+                sl_id = str(sl_o.get("algoId") or sl_o.get("orderId", ""))
+                tp_id = str(tp_o.get("algoId") or tp_o.get("orderId", ""))
                 oco_info = {
                     "position_id": f"reconciled_{sym}_{pos_side}_{int(time.time())}",
                     "strategy_position_id": None,
                     "entry_price": 0.0,
-                    "quantity": float(sl_o.get("origQty", 0)),
-                    "sl_order_id": str(sl_o["orderId"]),
-                    "tp_order_id": str(tp_o["orderId"]),
+                    "quantity": float(sl_o.get("quantity", sl_o.get("origQty", 0))),
+                    "sl_order_id": sl_id,
+                    "tp_order_id": tp_id,
                     "symbol": sym,
                     "position_side": pos_side,
                     "status": "active",
@@ -652,6 +660,12 @@ class OCOManager:
                 rebuilt += 1
 
         self.logger.info(f"[STARTUP] Rebuilt {rebuilt} active OCO pairs from Binance")
+
+        # Start monitoring for any reconciled pairs so they are tracked going forward
+        if rebuilt > 0 and not self.monitoring_active:
+            await self.start_monitoring()
+            self.logger.info("[STARTUP] OCO monitoring started for reconciled pairs")
+
         return rebuilt
 
     async def start_monitoring(self) -> None:
@@ -2405,20 +2419,25 @@ class Dispatcher:
                 )
                 if sl_direction_wrong:
                     original_sl = order.stop_loss
-                    sl_pct = (
-                        order.stop_loss_pct
-                        if order.stop_loss_pct and order.stop_loss_pct > 0
-                        else 0.02
-                    )
-                    if is_short:
-                        order.stop_loss = entry_price * (1 + sl_pct)
+                    if order.stop_loss_pct and order.stop_loss_pct > 0:
+                        sl_pct = order.stop_loss_pct
+                        order.stop_loss = (
+                            entry_price * (1 + sl_pct)
+                            if is_short
+                            else entry_price * (1 - sl_pct)
+                        )
+                        self.logger.warning(
+                            f"⚠️ SL DIRECTION FIX: {'SHORT' if is_short else 'LONG'} "
+                            f"stop_loss {original_sl} was on wrong side of entry {entry_price}. "
+                            f"Recalculated to {order.stop_loss} using pct={sl_pct * 100:.1f}%"
+                        )
                     else:
-                        order.stop_loss = entry_price * (1 - sl_pct)
-                    self.logger.warning(
-                        f"⚠️ SL DIRECTION FIX: {'SHORT' if is_short else 'LONG'} "
-                        f"stop_loss {original_sl} was on wrong side of entry {entry_price}. "
-                        f"Recalculated to {order.stop_loss} using pct={sl_pct * 100:.1f}%"
-                    )
+                        self.logger.warning(
+                            f"⚠️ SL DIRECTION WARNING: {'SHORT' if is_short else 'LONG'} "
+                            f"stop_loss {original_sl} is on wrong side of entry {entry_price} "
+                            f"and stop_loss_pct is not set — keeping provided value to avoid "
+                            f"unintended risk changes. Verify signal source."
+                        )
 
             # Check if both SL and TP are specified for OCO behavior
             if (

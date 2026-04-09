@@ -1000,5 +1000,204 @@ class TestOCOPairFinding:
         assert reason == "unknown"
 
 
+# ============================================================================
+# reconcile_from_exchange Tests (AC2 — startup OCO reconciliation)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_rebuilds_pairs(oco_manager, mock_exchange):
+    """reconcile_from_exchange rebuilds active_oco_pairs from Binance algo orders."""
+    algo_orders = [
+        {
+            "algoId": 1001,
+            "symbol": "BTCUSDT",
+            "positionSide": "LONG",
+            "type": "STOP_MARKET",
+            "quantity": "0.001",
+            "createTime": 1000,
+        },
+        {
+            "algoId": 1002,
+            "symbol": "BTCUSDT",
+            "positionSide": "LONG",
+            "type": "TAKE_PROFIT_MARKET",
+            "quantity": "0.001",
+            "createTime": 1001,
+        },
+    ]
+    mock_exchange.get_open_algo_orders = AsyncMock(return_value=algo_orders)
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 1
+    assert "BTCUSDT_LONG" in oco_manager.active_oco_pairs
+    pair = oco_manager.active_oco_pairs["BTCUSDT_LONG"][0]
+    assert pair["sl_order_id"] == "1001"
+    assert pair["tp_order_id"] == "1002"
+    assert pair["status"] == "active"
+    assert pair["reconciled"] is True
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_starts_monitoring(oco_manager, mock_exchange):
+    """reconcile_from_exchange starts monitoring when pairs are rebuilt."""
+    mock_exchange.get_open_algo_orders = AsyncMock(
+        return_value=[
+            {
+                "algoId": 2001,
+                "symbol": "ETHUSDT",
+                "positionSide": "SHORT",
+                "type": "STOP_MARKET",
+                "quantity": "0.01",
+                "createTime": 1000,
+            },
+            {
+                "algoId": 2002,
+                "symbol": "ETHUSDT",
+                "positionSide": "SHORT",
+                "type": "TAKE_PROFIT_MARKET",
+                "quantity": "0.01",
+                "createTime": 1001,
+            },
+        ]
+    )
+    oco_manager.start_monitoring = AsyncMock()
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 1
+    oco_manager.start_monitoring.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_no_orders_no_monitoring(
+    oco_manager, mock_exchange
+):
+    """reconcile_from_exchange does not start monitoring when no pairs found."""
+    mock_exchange.get_open_algo_orders = AsyncMock(return_value=[])
+    oco_manager.start_monitoring = AsyncMock()
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 0
+    oco_manager.start_monitoring.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_handles_api_error(oco_manager, mock_exchange):
+    """reconcile_from_exchange returns 0 and logs warning on API failure."""
+    mock_exchange.get_open_algo_orders = AsyncMock(side_effect=Exception("API down"))
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 0
+    assert oco_manager.active_oco_pairs == {}
+
+
+# ============================================================================
+# Ghost-order cleanup Tests (AC3 — -2013 and null order_id handling)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_cancel_other_order_2013_cleans_local_state(oco_manager, mock_exchange):
+    """code=-2013 on cancel marks pair as externally_closed and returns True."""
+    key = "BTCUSDT_LONG"
+    oco_manager.active_oco_pairs[key] = [
+        {
+            "position_id": "pos-abc",
+            "sl_order_id": "sl-111",
+            "tp_order_id": "tp-222",
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "status": "active",
+        }
+    ]
+
+    mock_exchange.client.futures_cancel_order = Mock(
+        side_effect=Exception("APIError(code=-2013): Order does not exist.")
+    )
+
+    success, reason = await oco_manager.cancel_other_order(
+        position_id="pos-abc",
+        filled_order_id="sl-111",
+        symbol="BTCUSDT",
+        position_side="LONG",
+    )
+
+    assert success is True
+    assert reason == "stop_loss"
+    pair = oco_manager.active_oco_pairs[key][0]
+    assert pair["status"] == "externally_closed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_other_order_null_order_id_cleans_local_state(
+    oco_manager, mock_exchange
+):
+    """Null tp_order_id (code=-1102 scenario) short-circuits and marks pair externally_closed."""
+    key = "ETHUSDT_SHORT"
+    oco_manager.active_oco_pairs[key] = [
+        {
+            "position_id": "pos-xyz",
+            "sl_order_id": "sl-333",
+            "tp_order_id": None,  # Lost state after pod restart
+            "symbol": "ETHUSDT",
+            "position_side": "SHORT",
+            "status": "active",
+        }
+    ]
+
+    # Replace cancel function with a mock so we can assert it was NOT called
+    cancel_mock = Mock()
+    mock_exchange.client.futures_cancel_order = cancel_mock
+
+    success, reason = await oco_manager.cancel_other_order(
+        position_id="pos-xyz",
+        filled_order_id="sl-333",
+        symbol="ETHUSDT",
+        position_side="SHORT",
+    )
+
+    assert success is True
+    assert reason == "stop_loss"
+    cancel_mock.assert_not_called()
+    pair = oco_manager.active_oco_pairs[key][0]
+    assert pair["status"] == "externally_closed"
+
+
+@pytest.mark.asyncio
+async def test_cancel_other_order_2011_cleans_local_state(oco_manager, mock_exchange):
+    """code=-2011 on cancel now also marks pair as externally_closed."""
+    key = "BTCUSDT_SHORT"
+    oco_manager.active_oco_pairs[key] = [
+        {
+            "position_id": "pos-2011",
+            "sl_order_id": "sl-444",
+            "tp_order_id": "tp-555",
+            "symbol": "BTCUSDT",
+            "position_side": "SHORT",
+            "status": "active",
+        }
+    ]
+
+    mock_exchange.client.futures_cancel_order = Mock(
+        side_effect=Exception("APIError(code=-2011): Unknown order sent.")
+    )
+
+    success, reason = await oco_manager.cancel_other_order(
+        position_id="pos-2011",
+        filled_order_id="sl-444",
+        symbol="BTCUSDT",
+        position_side="SHORT",
+    )
+
+    assert success is True
+    assert reason == "stop_loss"
+    pair = oco_manager.active_oco_pairs[key][0]
+    assert pair["status"] == "externally_closed"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

@@ -521,3 +521,165 @@ async def test_place_take_profit_handles_exception(
 
     # Verify attempt was made
     assert mock_exchange.execute.called
+
+
+# ============================================================================
+# AC1 — SL Direction Fix Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_sl_direction_fix_short_sl_below_entry_is_corrected(
+    dispatcher_with_mocks,
+):
+    """AC1: SHORT signal where stop_loss < entry_price → SL is corrected before OCO placement."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+
+    # Set up OCO manager mock to capture the stop_loss_price passed to it
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-001", "tp_order_id": "tp-001"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 70900.0
+    wrong_sl = 70785.4  # Below entry — wrong for SHORT
+    stop_loss_pct = 0.02  # 2%
+    expected_sl = entry_price * (1 + stop_loss_pct)  # 72318.0 — above entry
+
+    short_order = TradeOrder(
+        position_id="test-short-btc",
+        symbol="BTCUSDT",
+        side="sell",
+        type="market",
+        amount=0.001,
+        target_price=entry_price,
+        position_side="SHORT",
+        exchange="binance",
+        stop_loss=wrong_sl,
+        stop_loss_pct=stop_loss_pct,
+        take_profit=entry_price * (1 - 0.03),  # valid TP below entry for SHORT
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 0.001,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(short_order, fill_result)
+
+    assert len(oco_place_calls) == 1, "OCO orders should have been placed"
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    assert actual_sl > entry_price, (
+        f"SHORT stop_loss must be above entry_price. Got {actual_sl}, entry={entry_price}"
+    )
+    assert abs(actual_sl - expected_sl) < 0.01, (
+        f"Expected corrected SL≈{expected_sl}, got {actual_sl}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sl_direction_fix_long_sl_above_entry_is_corrected(dispatcher_with_mocks):
+    """AC1 (LONG): LONG signal where stop_loss > entry_price → SL is corrected before OCO placement."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-002", "tp_order_id": "tp-002"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 50000.0
+    wrong_sl = 51000.0  # Above entry — wrong for LONG
+    stop_loss_pct = 0.02
+    expected_sl = entry_price * (1 - stop_loss_pct)  # 49000.0
+
+    long_order = TradeOrder(
+        position_id="test-long-btc",
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        target_price=entry_price,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=wrong_sl,
+        stop_loss_pct=stop_loss_pct,
+        take_profit=entry_price * (1 + 0.03),  # valid TP above entry for LONG
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 0.001,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(long_order, fill_result)
+
+    assert len(oco_place_calls) == 1, "OCO orders should have been placed"
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    assert actual_sl < entry_price, (
+        f"LONG stop_loss must be below entry_price. Got {actual_sl}, entry={entry_price}"
+    )
+    assert abs(actual_sl - expected_sl) < 0.01, (
+        f"Expected corrected SL≈{expected_sl}, got {actual_sl}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sl_direction_fix_correct_short_sl_not_modified(dispatcher_with_mocks):
+    """AC1 regression: valid SHORT SL (above entry) should not be modified."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-003", "tp_order_id": "tp-003"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 70900.0
+    correct_sl = 72318.0  # Already above entry — correct for SHORT
+
+    short_order = TradeOrder(
+        position_id="test-short-valid",
+        symbol="BTCUSDT",
+        side="sell",
+        type="market",
+        amount=0.001,
+        target_price=entry_price,
+        position_side="SHORT",
+        exchange="binance",
+        stop_loss=correct_sl,
+        stop_loss_pct=0.02,
+        take_profit=entry_price * (1 - 0.03),
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 0.001,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(short_order, fill_result)
+
+    assert len(oco_place_calls) == 1
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    assert abs(actual_sl - correct_sl) < 0.01, (
+        f"Valid SHORT SL should not be modified. Expected {correct_sl}, got {actual_sl}"
+    )

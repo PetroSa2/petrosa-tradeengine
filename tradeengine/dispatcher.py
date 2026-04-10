@@ -603,13 +603,30 @@ class OCOManager:
 
         # SL/TP orders are placed via Binance Algo Order API (algoType=CONDITIONAL),
         # so they appear in openAlgoOrders (algoId), not futures_get_open_orders.
+        # Testnet may not support openAlgoOrders — fall back to standard open orders.
+        open_orders: list[dict] = []
         try:
             open_orders = await self.exchange.get_open_algo_orders()
+            self.logger.info(
+                f"[STARTUP] Fetched {len(open_orders)} algo orders for OCO reconciliation"
+            )
         except Exception as e:
             self.logger.warning(
-                f"[STARTUP] Failed to fetch algo orders for OCO reconciliation: {e}"
+                f"[STARTUP] Algo orders API unavailable ({e}), falling back to standard open orders"
             )
-            return 0
+
+        if not open_orders:
+            try:
+                std_orders = self.exchange.client.futures_get_open_orders()
+                open_orders = list(std_orders) if std_orders else []
+                self.logger.info(
+                    f"[STARTUP] Fallback: fetched {len(open_orders)} standard open orders for OCO reconciliation"
+                )
+            except Exception as e2:
+                self.logger.warning(
+                    f"[STARTUP] Failed to fetch standard open orders for OCO reconciliation: {e2}"
+                )
+                return 0
 
         sl_orders: dict[str, list[dict]] = {}  # key: "SYMBOL_SIDE" -> list of orders
         tp_orders: dict[str, list[dict]] = {}

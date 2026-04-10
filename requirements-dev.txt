@@ -14,4 +14,3 @@ pytest-timeout==2.3.1
 pytest-xdist==3.5.0
 ruff==0.9.9
 safety>=3.2.0
-

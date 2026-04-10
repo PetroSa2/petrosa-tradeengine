@@ -248,12 +248,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("NATS consumer task cancelled successfully")
 
         # Cancel Binance ping loop before closing exchange
-        if binance_exchange._ping_task and not binance_exchange._ping_task.done():
-            binance_exchange._ping_task.cancel()
-            try:
-                await binance_exchange._ping_task
-            except asyncio.CancelledError:
-                pass
+        await binance_exchange.stop_ping_loop()
 
         await binance_exchange.close()
         await simulator_exchange.close()
@@ -440,15 +435,12 @@ async def readiness_check() -> dict[str, Any]:
         validate_mongodb_config()
 
         _TIMEOUT = 3.0
-        # Check if core components are ready (each bounded to avoid event loop stalls)
-        dispatcher_ready = await asyncio.wait_for(
-            dispatcher.health_check(), timeout=_TIMEOUT
-        )
-        binance_ready = await asyncio.wait_for(
-            binance_exchange.health_check(), timeout=_TIMEOUT
-        )
-        simulator_ready = await asyncio.wait_for(
-            simulator_exchange.health_check(), timeout=_TIMEOUT
+        # Run all component checks concurrently, each bounded to avoid event loop stalls.
+        # Total wall-clock time is max(_TIMEOUT, slowest_check) not sum of timeouts.
+        dispatcher_ready, binance_ready, simulator_ready = await asyncio.gather(
+            asyncio.wait_for(dispatcher.health_check(), timeout=_TIMEOUT),
+            asyncio.wait_for(binance_exchange.health_check(), timeout=_TIMEOUT),
+            asyncio.wait_for(simulator_exchange.health_check(), timeout=_TIMEOUT),
         )
 
         if (

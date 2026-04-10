@@ -131,11 +131,32 @@ class BinanceFuturesExchange:
             raise
 
     async def start_ping_loop(self) -> None:
-        """Start background ping loop to keep health sentinel fresh."""
+        """Start background ping loop to keep health sentinel fresh.
+
+        Cancels any previously running ping loop before starting a new one
+        to prevent orphaned tasks on re-initialization.
+        """
+        await self.stop_ping_loop()
         self._ping_task = asyncio.create_task(self._ping_loop())
 
+    async def stop_ping_loop(self) -> None:
+        """Cancel the background ping loop and wait for it to finish."""
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except asyncio.CancelledError:
+                pass
+        self._ping_task = None
+
     async def _ping_loop(self) -> None:
-        """Background coroutine that pings Binance every 20s via executor (non-blocking)."""
+        """Background coroutine that pings Binance every 20s via executor (non-blocking).
+
+        Note: asyncio.wait_for timeout bounds the await but does not interrupt the
+        underlying executor thread. If futures_ping hangs beyond 5s the thread will
+        continue running until the OS-level socket times out. This is acceptable
+        because the sentinel is still updated and the event loop is never blocked.
+        """
         while True:
             try:
                 if self.client is not None:
@@ -148,9 +169,9 @@ class BinanceFuturesExchange:
                     logger.debug("Binance ping OK")
                 else:
                     self._last_ping_ok = False
-            except Exception as e:
+            except Exception:
                 self._last_ping_ok = False
-                logger.warning(f"Binance ping FAIL: {e}")
+                logger.exception("Binance ping FAIL")
             self._last_ping_time = time.monotonic()
             await asyncio.sleep(20)
 

@@ -1086,13 +1086,56 @@ async def test_reconcile_from_exchange_no_orders_no_monitoring(
 
 @pytest.mark.asyncio
 async def test_reconcile_from_exchange_handles_api_error(oco_manager, mock_exchange):
-    """reconcile_from_exchange returns 0 and logs warning on API failure."""
+    """reconcile_from_exchange falls back to standard orders when algo API fails."""
     mock_exchange.get_open_algo_orders = AsyncMock(side_effect=Exception("API down"))
+    # Standard orders fallback also returns nothing → rebuilt == 0
+    mock_exchange.client.futures_get_open_orders = Mock(return_value=[])
 
     rebuilt = await oco_manager.reconcile_from_exchange()
 
     assert rebuilt == 0
     assert oco_manager.active_oco_pairs == {}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_fallback_to_standard_orders(
+    oco_manager, mock_exchange
+):
+    """When algo API fails, reconcile falls back to futures_get_open_orders and rebuilds pairs."""
+    mock_exchange.get_open_algo_orders = AsyncMock(
+        side_effect=Exception("testnet no support")
+    )
+    mock_exchange.client.futures_get_open_orders = Mock(
+        return_value=[
+            {
+                "orderId": 9001,
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "type": "STOP_MARKET",
+                "origQty": "0.001",
+                "time": 1000,
+            },
+            {
+                "orderId": 9002,
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "type": "TAKE_PROFIT_MARKET",
+                "origQty": "0.001",
+                "time": 1001,
+            },
+        ]
+    )
+    oco_manager.start_monitoring = AsyncMock()
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 1
+    assert "BTCUSDT_LONG" in oco_manager.active_oco_pairs
+    pair = oco_manager.active_oco_pairs["BTCUSDT_LONG"][0]
+    assert pair["sl_order_id"] == "9001"
+    assert pair["tp_order_id"] == "9002"
+    assert pair["reconciled"] is True
+    oco_manager.start_monitoring.assert_called_once()
 
 
 # ============================================================================

@@ -1100,24 +1100,21 @@ class TestAdditionalMethods:
     async def test_ping_loop_updates_sentinel_on_success(self, binance_exchange):
         """_ping_loop updates _last_ping_ok=True and _last_ping_time on successful ping."""
         import asyncio
-        import threading
 
-        ping_called = threading.Event()
+        ping_called = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
         def ping_and_signal():
-            ping_called.set()
+            # Thread-safe: schedule event.set() on the event loop thread
+            loop.call_soon_threadsafe(ping_called.set)
             return {}
 
         binance_exchange.client.futures_ping = ping_and_signal
         binance_exchange._last_ping_ok = False
 
         task = asyncio.create_task(binance_exchange._ping_loop())
-        # Wait (in a thread-safe way) for the executor to confirm the ping ran,
-        # then yield to the event loop so _ping_loop can write the sentinel.
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: ping_called.wait(timeout=2.0)
-        )
-        await asyncio.sleep(0)  # one scheduler tick so _ping_loop sets _last_ping_ok
+        await asyncio.wait_for(ping_called.wait(), timeout=5.0)
+        await asyncio.sleep(0)  # one scheduler tick so _ping_loop writes the sentinel
         task.cancel()
         try:
             await task
@@ -1131,22 +1128,20 @@ class TestAdditionalMethods:
     async def test_ping_loop_updates_sentinel_on_failure(self, binance_exchange):
         """_ping_loop sets _last_ping_ok=False when ping raises."""
         import asyncio
-        import threading
 
-        ping_called = threading.Event()
+        ping_called = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
         def ping_fail_and_signal():
-            ping_called.set()
+            loop.call_soon_threadsafe(ping_called.set)
             raise Exception("timeout")
 
         binance_exchange.client.futures_ping = ping_fail_and_signal
         binance_exchange._last_ping_ok = True
 
         task = asyncio.create_task(binance_exchange._ping_loop())
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: ping_called.wait(timeout=2.0)
-        )
-        await asyncio.sleep(0)  # one tick for _ping_loop to set _last_ping_ok=False
+        await asyncio.wait_for(ping_called.wait(), timeout=5.0)
+        await asyncio.sleep(0)  # one tick for _ping_loop to write _last_ping_ok=False
         task.cancel()
         try:
             await task

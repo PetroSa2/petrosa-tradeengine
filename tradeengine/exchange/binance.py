@@ -36,12 +36,17 @@ logger = logging.getLogger(__name__)
 class BinanceFuturesExchange:
     """Binance Futures exchange client for executing trades"""
 
+    _PING_TTL: float = 30.0  # consider healthy if pinged within this window
+
     def __init__(self) -> None:
         self.client: Client | None = None
         self.exchange_info: dict[str, Any] = {}
         self.symbol_info: dict[str, Any] = {}
         self.initialized = False
         self.rate_monitor: RateLimitMonitor | None = None
+        self._last_ping_ok: bool = True
+        self._last_ping_time: float = 0.0
+        self._ping_task: asyncio.Task | None = None  # type: ignore[type-arg]
 
     async def initialize(self) -> None:
         """Initialize Binance Futures exchange connection"""
@@ -125,21 +130,69 @@ class BinanceFuturesExchange:
             self.initialized = False
             raise
 
+    async def start_ping_loop(self) -> None:
+        """Start background ping loop to keep health sentinel fresh.
+
+        Cancels any previously running ping loop before starting a new one
+        to prevent orphaned tasks on re-initialization.
+        """
+        await self.stop_ping_loop()
+        self._ping_task = asyncio.create_task(self._ping_loop())
+
+    async def stop_ping_loop(self) -> None:
+        """Cancel the background ping loop and wait for it to finish."""
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except asyncio.CancelledError:
+                pass
+        self._ping_task = None
+
+    async def _ping_loop(self) -> None:
+        """Background coroutine that pings Binance every 20s via executor (non-blocking).
+
+        Note: asyncio.wait_for timeout bounds the await but does not interrupt the
+        underlying executor thread. If futures_ping hangs beyond 5s the thread will
+        continue running until the OS-level socket times out. This is acceptable
+        because the sentinel is still updated and the event loop is never blocked.
+        """
+        while True:
+            try:
+                if self.client is not None:
+                    loop = asyncio.get_event_loop()
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, self.client.futures_ping),
+                        timeout=5.0,
+                    )
+                    self._last_ping_ok = True
+                    logger.debug("Binance ping OK")
+                else:
+                    self._last_ping_ok = False
+            except Exception:
+                self._last_ping_ok = False
+                logger.exception("Binance ping FAIL")
+            self._last_ping_time = time.monotonic()
+            await asyncio.sleep(20)
+
     async def health_check(self) -> dict[str, Any]:
-        """Check Binance Futures exchange health"""
-        try:
-            if self.client is not None:
-                self.client.futures_ping()
-                return {"status": "healthy", "type": "binance_futures"}
-            else:
-                return {
-                    "status": "degraded",
-                    "type": "binance_futures",
-                    "error": "Client not initialized",
-                }
-        except Exception as e:
-            logger.error(f"Binance Futures health check error: {e}")
-            return {"status": "unhealthy", "error": str(e)}
+        """Check Binance Futures exchange health using cached ping sentinel (non-blocking)."""
+        if self.client is None:
+            return {
+                "status": "degraded",
+                "type": "binance_futures",
+                "error": "Client not initialized",
+            }
+        age = time.monotonic() - self._last_ping_time
+        if age < self._PING_TTL:
+            status = "healthy" if self._last_ping_ok else "unhealthy"
+            return {"status": status, "type": "binance_futures", "cached": True}
+        # Sentinel expired — report degraded (background loop may not have started yet)
+        return {
+            "status": "degraded",
+            "type": "binance_futures",
+            "error": f"ping sentinel expired ({age:.0f}s ago)",
+        }
 
     async def _load_exchange_info(self) -> None:
         """Load futures exchange information and symbol details"""

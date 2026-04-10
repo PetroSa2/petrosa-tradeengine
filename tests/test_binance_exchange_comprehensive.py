@@ -1054,12 +1054,37 @@ class TestAdditionalMethods:
             pass
 
     @pytest.mark.asyncio
-    async def test_health_check(self, binance_exchange):
-        """Test health_check method"""
-        binance_exchange.client.futures_ping = Mock(return_value={})
+    async def test_health_check_cached_healthy(self, binance_exchange):
+        """health_check returns cached 'healthy' without calling futures_ping directly."""
+        import time
+
+        binance_exchange._last_ping_ok = True
+        binance_exchange._last_ping_time = time.monotonic()  # fresh sentinel
         result = await binance_exchange.health_check()
-        assert isinstance(result, dict)
-        assert "status" in result or "healthy" in str(result).lower()
+        assert result["status"] == "healthy"
+        assert result.get("cached") is True
+        # futures_ping must NOT be called — that is the whole point of the fix
+        binance_exchange.client.futures_ping.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_health_check_cached_unhealthy(self, binance_exchange):
+        """health_check returns 'unhealthy' when last ping failed (still non-blocking)."""
+        import time
+
+        binance_exchange._last_ping_ok = False
+        binance_exchange._last_ping_time = time.monotonic()
+        result = await binance_exchange.health_check()
+        assert result["status"] == "unhealthy"
+        assert result.get("cached") is True
+        binance_exchange.client.futures_ping.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_health_check_sentinel_expired(self, binance_exchange):
+        """health_check returns 'degraded' when ping sentinel has expired."""
+        binance_exchange._last_ping_time = 0.0  # far in the past
+        result = await binance_exchange.health_check()
+        assert result["status"] == "degraded"
+        assert "expired" in result.get("error", "")
 
     @pytest.mark.asyncio
     async def test_health_check_no_client(self, binance_exchange):
@@ -1068,10 +1093,62 @@ class TestAdditionalMethods:
         binance_exchange.initialized = False
         result = await binance_exchange.health_check()
         assert isinstance(result, dict)
-        # Should indicate unhealthy or error
-        assert (
-            "status" in result or "error" in result or "healthy" in str(result).lower()
-        )
+        assert result.get("status") == "degraded"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_updates_sentinel_on_success(self, binance_exchange):
+        """_ping_loop updates _last_ping_ok=True and _last_ping_time on successful ping."""
+        import asyncio
+
+        ping_called = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def ping_and_signal():
+            # Thread-safe: schedule event.set() on the event loop thread
+            loop.call_soon_threadsafe(ping_called.set)
+            return {}
+
+        binance_exchange.client.futures_ping = ping_and_signal
+        binance_exchange._last_ping_ok = False
+
+        task = asyncio.create_task(binance_exchange._ping_loop())
+        await asyncio.wait_for(ping_called.wait(), timeout=5.0)
+        await asyncio.sleep(0)  # one scheduler tick so _ping_loop writes the sentinel
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert binance_exchange._last_ping_ok is True
+        assert binance_exchange._last_ping_time > 0
+
+    @pytest.mark.asyncio
+    async def test_ping_loop_updates_sentinel_on_failure(self, binance_exchange):
+        """_ping_loop sets _last_ping_ok=False when ping raises."""
+        import asyncio
+
+        ping_called = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def ping_fail_and_signal():
+            loop.call_soon_threadsafe(ping_called.set)
+            raise Exception("timeout")
+
+        binance_exchange.client.futures_ping = ping_fail_and_signal
+        binance_exchange._last_ping_ok = True
+
+        task = asyncio.create_task(binance_exchange._ping_loop())
+        await asyncio.wait_for(ping_called.wait(), timeout=5.0)
+        await asyncio.sleep(0)  # one tick for _ping_loop to write _last_ping_ok=False
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert binance_exchange._last_ping_ok is False
 
     @pytest.mark.asyncio
     async def test_load_exchange_info_success(self, binance_exchange):

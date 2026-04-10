@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -90,8 +91,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     startup_success = True
     consumer_task = None  # Keep reference to prevent garbage collection
 
-    import asyncio
-
     try:
         # Validate MongoDB configuration first - fail catastrophically if not configured
         logger.info("Validating MongoDB configuration...")
@@ -143,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             logger.info("🧪 TESTING BINANCE CONNECTION AND BALANCE...")
             account_info = await binance_exchange.get_account_info()
-            usdt_balance = next(
+            usdt_balance: dict[str, Any] = next(
                 (a for a in account_info.get("assets", []) if a.get("asset") == "USDT"),
                 {},
             )
@@ -162,6 +161,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.error(f"❌ BINANCE CONNECTION TEST FAILED: {test_error}")
 
         logger.info("Initializing simulator exchange...")
+
+        # Start Binance background ping loop (decouples /ready from exchange latency)
+        await binance_exchange.start_ping_loop()
+        logger.info("✅ Binance background ping loop started")
 
         # Initialize dispatcher
         logger.info("Initializing dispatcher...")
@@ -243,6 +246,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await consumer_task
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
+
+        # Cancel Binance ping loop before closing exchange
+        if binance_exchange._ping_task and not binance_exchange._ping_task.done():
+            binance_exchange._ping_task.cancel()
+            try:
+                await binance_exchange._ping_task
+            except asyncio.CancelledError:
+                pass
 
         await binance_exchange.close()
         await simulator_exchange.close()
@@ -428,10 +439,17 @@ async def readiness_check() -> dict[str, Any]:
 
         validate_mongodb_config()
 
-        # Check if core components are ready
-        dispatcher_ready = await dispatcher.health_check()
-        binance_ready = await binance_exchange.health_check()
-        simulator_ready = await simulator_exchange.health_check()
+        _TIMEOUT = 3.0
+        # Check if core components are ready (each bounded to avoid event loop stalls)
+        dispatcher_ready = await asyncio.wait_for(
+            dispatcher.health_check(), timeout=_TIMEOUT
+        )
+        binance_ready = await asyncio.wait_for(
+            binance_exchange.health_check(), timeout=_TIMEOUT
+        )
+        simulator_ready = await asyncio.wait_for(
+            simulator_exchange.health_check(), timeout=_TIMEOUT
+        )
 
         if (
             dispatcher_ready.get("status") == "healthy"
@@ -996,7 +1014,7 @@ async def get_active_signals(
 @app.get("/state")
 async def get_state(
     symbol: str = Query(..., description="Target symbol for state context"),
-):
+) -> dict[str, Any]:
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.
     Ground-truth data derived from engine authoritative state.

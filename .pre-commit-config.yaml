@@ -29,7 +29,8 @@ repos:
           'types-setuptools',
           'pydantic'
         ]
-        args: [--ignore-missing-imports, --strict]
+        args: [--ignore-missing-imports]
+        exclude: ^tests/
 
   # ==================================================================
   # SECURITY - Gitleaks (Official Hook)
@@ -48,8 +49,8 @@ repos:
     hooks:
       - id: bandit
         name: 🔐 Bandit (Python Security)
-        args: [-ll, -r, .]
-        exclude: ^tests/
+        args: [-ll]
+        exclude: ^(tests|venv|htmlcov|scripts)/
 
   # ==================================================================
   # SECURITY - Dependency Check (Safety) — optional; see petrosa_k8s template

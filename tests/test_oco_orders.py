@@ -56,11 +56,14 @@ def mock_exchange():
 
     exchange.execute = AsyncMock(side_effect=mock_execute)
 
-    # Mock batch order cancellation
-    def mock_cancel_batch(symbol: str, orderIdList: list) -> list:
-        return [{"orderId": oid, "status": "CANCELED"} for oid in orderIdList]
+    # Mock algo order cancellation (DELETE /fapi/v1/algo/algoOrder)
+    def mock_request_futures_api(method, path, signed=False, data=None, **kwargs):
+        if method == "delete" and path == "algoOrder":
+            algo_id = (data or {}).get("algoId")
+            return {"algoId": algo_id, "algoStatus": "CANCELLED"}
+        return {}
 
-    exchange.client.futures_cancel_batch_orders = mock_cancel_batch
+    exchange.client._request_futures_api = Mock(side_effect=mock_request_futures_api)
 
     # Mock single order cancellation
     def mock_cancel_order(symbol: str, orderId: str) -> dict:
@@ -235,7 +238,7 @@ async def test_place_oco_orders_short_position(oco_manager: OCOManager):
 
 
 @pytest.mark.asyncio
-async def test_cancel_oco_pair(oco_manager: OCOManager):
+async def test_cancel_oco_pair(oco_manager: OCOManager, mock_exchange):
     """Test cancelling both SL and TP orders"""
     # First, place OCO orders
     await oco_manager.place_oco_orders(
@@ -261,6 +264,12 @@ async def test_cancel_oco_pair(oco_manager: OCOManager):
         oco_list = oco_manager.active_oco_pairs[exchange_key]
         if len(oco_list) > 0:
             assert oco_list[0]["status"] == "cancelled"
+
+    # Verify algo cancel API was called (not the wrong batch cancel)
+    mock_exchange.client._request_futures_api.assert_called()
+    assert not mock_exchange.client.futures_cancel_batch_orders.called, (
+        "futures_cancel_batch_orders must NOT be called for algo orders"
+    )
 
     # Clean up
     await oco_manager.stop_monitoring()

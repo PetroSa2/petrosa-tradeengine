@@ -326,6 +326,14 @@ class OCOManager:
 
             pair_cancelled = True
             for order_id, label in [(sl_order_id, "SL"), (tp_order_id, "TP")]:
+                if not order_id:
+                    self.logger.warning(
+                        f"⚠️ Missing {label} order ID for {oco_symbol} — "
+                        f"skipping cancel, pair may need reconciliation"
+                    )
+                    pair_cancelled = False
+                    all_cancelled = False
+                    continue
                 try:
                     self.exchange.client._request_futures_api(
                         "delete",

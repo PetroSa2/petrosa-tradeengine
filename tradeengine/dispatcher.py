@@ -324,24 +324,37 @@ class OCOManager:
                 f"sl_order_id={sl_order_id}, tp_order_id={tp_order_id}"
             )
 
-            try:
-                # Cancel both orders using batch cancellation
-                cancel_result = self.exchange.client.futures_cancel_batch_orders(
-                    symbol=oco_symbol, orderIdList=[sl_order_id, tp_order_id]
-                )
-
-                if cancel_result and len(cancel_result) >= 2:
-                    self.logger.info(
-                        f"✅ OCO PAIR CANCELLED for strategy {oco_info.get('strategy_position_id')}"
+            pair_cancelled = True
+            for order_id, label in [(sl_order_id, "SL"), (tp_order_id, "TP")]:
+                if not order_id:
+                    self.logger.warning(
+                        f"⚠️ Missing {label} order ID for {oco_symbol} — "
+                        f"skipping cancel, pair may need reconciliation"
                     )
-                    oco_info["status"] = "cancelled"
-                else:
-                    self.logger.error(f"❌ FAILED TO CANCEL OCO PAIR: {cancel_result}")
+                    pair_cancelled = False
                     all_cancelled = False
-
-            except Exception as e:
-                self.logger.error(f"❌ ERROR CANCELLING OCO PAIR: {e}")
-                all_cancelled = False
+                    continue
+                try:
+                    self.exchange.client._request_futures_api(
+                        "delete",
+                        "algoOrder",
+                        signed=True,
+                        data={"symbol": oco_symbol, "algoId": order_id},
+                    )
+                    self.logger.info(
+                        f"✅ Cancelled algo {label} order {order_id} for {oco_symbol}"
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Failed to cancel algo {label} order {order_id}: {e}"
+                    )
+                    pair_cancelled = False
+                    all_cancelled = False
+            if pair_cancelled:
+                self.logger.info(
+                    f"✅ OCO PAIR CANCELLED for strategy {oco_info.get('strategy_position_id')}"
+                )
+                oco_info["status"] = "cancelled"
 
         return all_cancelled
 

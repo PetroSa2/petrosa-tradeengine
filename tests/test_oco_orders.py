@@ -56,11 +56,14 @@ def mock_exchange():
 
     exchange.execute = AsyncMock(side_effect=mock_execute)
 
-    # Mock batch order cancellation
-    def mock_cancel_batch(symbol: str, orderIdList: list) -> list:
-        return [{"orderId": oid, "status": "CANCELED"} for oid in orderIdList]
+    # Mock algo order cancellation (DELETE /fapi/v1/algo/algoOrder)
+    def mock_request_futures_api(method, path, signed=False, data=None, **kwargs):
+        if method == "delete" and path == "algoOrder":
+            algo_id = (data or {}).get("algoId")
+            return {"algoId": algo_id, "algoStatus": "CANCELLED"}
+        return {}
 
-    exchange.client.futures_cancel_batch_orders = mock_cancel_batch
+    exchange.client._request_futures_api = Mock(side_effect=mock_request_futures_api)
 
     # Mock single order cancellation
     def mock_cancel_order(symbol: str, orderId: str) -> dict:
@@ -235,10 +238,10 @@ async def test_place_oco_orders_short_position(oco_manager: OCOManager):
 
 
 @pytest.mark.asyncio
-async def test_cancel_oco_pair(oco_manager: OCOManager):
+async def test_cancel_oco_pair(oco_manager: OCOManager, mock_exchange):
     """Test cancelling both SL and TP orders"""
-    # First, place OCO orders
-    await oco_manager.place_oco_orders(
+    # First, place OCO orders and capture the returned IDs
+    place_result = await oco_manager.place_oco_orders(
         position_id="test_pos_cancel_789",
         symbol="BTCUSDT",
         position_side="LONG",
@@ -246,6 +249,11 @@ async def test_cancel_oco_pair(oco_manager: OCOManager):
         stop_loss_price=48000.0,
         take_profit_price=52000.0,
     )
+    sl_id = place_result["sl_order_id"]
+    tp_id = place_result["tp_order_id"]
+
+    # Reset call history so we only track cancellation calls
+    mock_exchange.client._request_futures_api.reset_mock()
 
     # Cancel the OCO pair (need to pass symbol and position_side for new key structure)
     result = await oco_manager.cancel_oco_pair(
@@ -261,6 +269,35 @@ async def test_cancel_oco_pair(oco_manager: OCOManager):
         oco_list = oco_manager.active_oco_pairs[exchange_key]
         if len(oco_list) > 0:
             assert oco_list[0]["status"] == "cancelled"
+
+    # Verify algo cancel API called exactly twice (SL + TP) with correct algoIds
+    from unittest.mock import call
+
+    assert mock_exchange.client._request_futures_api.call_count == 2, (
+        "Must call algo DELETE API exactly once for SL and once for TP"
+    )
+    mock_exchange.client._request_futures_api.assert_has_calls(
+        [
+            call(
+                "delete",
+                "algoOrder",
+                signed=True,
+                data={"symbol": "BTCUSDT", "algoId": sl_id},
+            ),
+            call(
+                "delete",
+                "algoOrder",
+                signed=True,
+                data={"symbol": "BTCUSDT", "algoId": tp_id},
+            ),
+        ],
+        any_order=False,
+    )
+
+    # Verify batch cancel API was NOT used
+    assert not mock_exchange.client.futures_cancel_batch_orders.called, (
+        "futures_cancel_batch_orders must NOT be called for algo orders"
+    )
 
     # Clean up
     await oco_manager.stop_monitoring()

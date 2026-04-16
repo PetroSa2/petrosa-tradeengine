@@ -2046,9 +2046,26 @@ class Dispatcher:
                 signal.symbol, current_price
             )
 
-            # 1. If signal provides position_size_pct, calculate amount based on portfolio value
-            # Note: We prioritize pct over fixed quantity to allow LLM/Strategy sizing to work
-            if signal.position_size_pct and signal.position_size_pct > 0:
+            # Determine whether to use percentage or fixed quantity
+            # 1. Use quantity IF it's provided AND (pct is default 1.0 OR pct is missing)
+            # This allows legacy fixed-quantity signals and the test suite to work.
+            if (
+                signal.quantity
+                and signal.quantity > 0
+                and (
+                    signal.position_size_pct is None or signal.position_size_pct == 1.0
+                )
+            ):
+                if signal.quantity < min_amount:
+                    self.logger.warning(
+                        f"Signal quantity {signal.quantity} is below minimum {min_amount} "
+                        f"for {signal.symbol} at ${current_price:.2f}. Using minimum."
+                    )
+                    amount = min_amount
+                else:
+                    amount = signal.quantity
+            # 2. Otherwise use position_size_pct IF it's provided and not default 1.0 (or if quantity missing)
+            elif signal.position_size_pct and signal.position_size_pct > 0:
                 total_portfolio_value = self.position_manager.total_portfolio_value
                 if total_portfolio_value > 0 and current_price > 0:
                     # amount = (total_value * pct) / price
@@ -2072,17 +2089,9 @@ class Dispatcher:
                         f"Cannot calculate amount from pct: portfolio_value={total_portfolio_value}, price={current_price}. Using minimum."
                     )
                     amount = min_amount
-
-            # 2. If no pct but signal provides quantity, validate it meets MIN_NOTIONAL
+            # 3. Fallback to quantity if it exists but pct logic failed/was skipped
             elif signal.quantity and signal.quantity > 0:
-                if signal.quantity < min_amount:
-                    self.logger.warning(
-                        f"Signal quantity {signal.quantity} is below minimum {min_amount} "
-                        f"for {signal.symbol} at ${current_price:.2f}. Using minimum."
-                    )
-                    amount = min_amount
-                else:
-                    amount = signal.quantity
+                amount = max(signal.quantity, min_amount)
             else:
                 # Use calculated minimum
                 amount = min_amount

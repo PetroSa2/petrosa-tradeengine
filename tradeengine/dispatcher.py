@@ -1945,7 +1945,7 @@ class Dispatcher:
             return {"status": "error", "error": str(e)}
 
     def _signal_to_order(
-        self, signal: Signal, order_params: dict[str, Any] = None
+        self, signal: Signal, order_params: dict[str, Any] | None = None
     ) -> TradeOrder:
         """Convert a signal to a trade order with dynamic minimum amounts"""
         import uuid
@@ -2047,14 +2047,12 @@ class Dispatcher:
             )
 
             # Determine whether to use percentage or fixed quantity
-            # 1. Use quantity IF it's provided AND (pct is default 1.0 OR pct is missing)
+            # 1. Use quantity IF it's provided AND pct is missing (None)
             # This allows legacy fixed-quantity signals and the test suite to work.
             if (
                 signal.quantity
                 and signal.quantity > 0
-                and (
-                    signal.position_size_pct is None or signal.position_size_pct == 1.0
-                )
+                and signal.position_size_pct is None
             ):
                 if signal.quantity < min_amount:
                     self.logger.warning(
@@ -2064,7 +2062,7 @@ class Dispatcher:
                     amount = min_amount
                 else:
                     amount = signal.quantity
-            # 2. Otherwise use position_size_pct IF it's provided and not default 1.0 (or if quantity missing)
+            # 2. Otherwise use position_size_pct IF it's provided
             elif signal.position_size_pct and signal.position_size_pct > 0:
                 total_portfolio_value = self.position_manager.total_portfolio_value
                 if total_portfolio_value > 0 and current_price > 0:

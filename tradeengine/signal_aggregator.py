@@ -681,10 +681,10 @@ class LLMProcessor:
             params["position_size_pct"] = adjusted_size
 
         # Risk management parameters (FIX: Include these in order generation)
-        if signal.stop_loss_pct:
+        if signal.stop_loss_pct is not None:
             params["stop_loss_pct"] = str(signal.stop_loss_pct)
 
-        if signal.take_profit_pct:
+        if signal.take_profit_pct is not None:
             params["take_profit_pct"] = str(signal.take_profit_pct)
 
         return params

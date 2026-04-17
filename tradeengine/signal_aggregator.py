@@ -514,7 +514,17 @@ class LLMProcessor:
         context = self._prepare_llm_context(signal, active_signals, conflicting_signals)
 
         # Get LLM reasoning
-        reasoning = await self._get_llm_reasoning(context)
+        if signal.source == "petrosa-cio" and signal.llm_reasoning:
+            # Trust existing reasoning from CIO
+            reasoning = {
+                "approved": True,
+                "confidence": signal.confidence,
+                "reasoning": signal.llm_reasoning,
+                "source": "petrosa-cio",
+            }
+        else:
+            # Get fresh LLM reasoning
+            reasoning = await self._get_llm_reasoning(context)
 
         if not reasoning["approved"]:
             return {
@@ -531,7 +541,9 @@ class LLMProcessor:
             "signal": signal,
             "order_params": order_params,
             "confidence": reasoning.get("confidence", signal.confidence),
-            "reason": "LLM reasoning approved signal",
+            "reason": "LLM reasoning approved signal"
+            if signal.source != "petrosa-cio"
+            else "CIO audit trusted",
             "llm_reasoning": reasoning,
         }
 
@@ -667,6 +679,13 @@ class LLMProcessor:
             # LLM might be more conservative
             adjusted_size = signal.position_size_pct * min(llm_confidence, 0.8)
             params["position_size_pct"] = adjusted_size
+
+        # Risk management parameters (FIX: Include these in order generation)
+        if signal.stop_loss_pct is not None:
+            params["stop_loss_pct"] = str(signal.stop_loss_pct)
+
+        if signal.take_profit_pct is not None:
+            params["take_profit_pct"] = str(signal.take_profit_pct)
 
         return params
 

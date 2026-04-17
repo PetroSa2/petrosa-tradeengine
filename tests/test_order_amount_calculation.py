@@ -64,6 +64,7 @@ class TestOrderAmountCalculation:
     def test_signal_quantity_above_minimum(self, dispatcher, base_signal):
         """Test that signal quantity is used when above minimum"""
         base_signal.quantity = 0.01  # Above typical minimum
+        base_signal.position_size_pct = None
 
         with mock.patch(
             "tradeengine.api.binance_exchange.calculate_min_order_amount"
@@ -78,6 +79,7 @@ class TestOrderAmountCalculation:
     def test_signal_quantity_below_minimum_uses_minimum(self, dispatcher, base_signal):
         """Test that minimum is used when signal quantity is below"""
         base_signal.quantity = 0.0001  # Well below minimum
+        base_signal.position_size_pct = None
 
         with mock.patch(
             "tradeengine.api.binance_exchange.calculate_min_order_amount"

@@ -1545,7 +1545,10 @@ class Dispatcher:
                         f"Converting to order for {signal.symbol} | "
                         f"Processing status: {signal_status}"
                     )
-                    order = self._signal_to_order(signal)
+
+                    # FIX: Pass the processed order_params to _signal_to_order
+                    order_params = result.get("order_params")
+                    order = self._signal_to_order(signal, order_params)
 
                     # Store signal for strategy position creation later
                     self.order_to_signal[order.order_id] = signal
@@ -1941,69 +1944,87 @@ class Dispatcher:
             self.logger.error(f"Order execution with consensus error: {e}")
             return {"status": "error", "error": str(e)}
 
-    def _signal_to_order(self, signal: Signal) -> TradeOrder:
+    def _signal_to_order(
+        self, signal: Signal, order_params: dict[str, Any] | None = None
+    ) -> TradeOrder:
         """Convert a signal to a trade order with dynamic minimum amounts"""
         import uuid
 
+        # Use parameters from signal, but allow overrides from processed order_params
+        current_signal = signal.model_copy()
+        if order_params:
+            if "position_size_pct" in order_params:
+                current_signal.position_size_pct = float(
+                    order_params["position_size_pct"]
+                )
+            if "stop_loss_pct" in order_params:
+                current_signal.stop_loss_pct = float(order_params["stop_loss_pct"])
+            if "take_profit_pct" in order_params:
+                current_signal.take_profit_pct = float(order_params["take_profit_pct"])
+            if "side" in order_params:
+                current_signal.action = order_params["side"]
+
         # Calculate order amount based on signal quantity or dynamic minimum
-        amount = self._calculate_order_amount(signal)
+        amount = self._calculate_order_amount(current_signal)
 
         # Generate unique position ID for tracking
         position_id = str(uuid.uuid4())
 
         # Determine position side for hedge mode (buy=LONG, sell=SHORT)
-        position_side = "LONG" if signal.action == "buy" else "SHORT"
+        position_side = "LONG" if current_signal.action == "buy" else "SHORT"
 
         # Collect all signal parameters for position tracking
         strategy_metadata = {
-            "signal_id": signal.signal_id or signal.id,
-            "strategy_id": signal.strategy_id,
-            "strategy_mode": signal.strategy_mode.value,
-            "source": signal.source,
-            "strategy": signal.strategy,
-            "timeframe": signal.timeframe,
-            "confidence": signal.confidence,
-            "strength": signal.strength.value,
-            "indicators": signal.indicators,
-            "rationale": signal.rationale,
-            "llm_reasoning": signal.llm_reasoning,
-            "metadata": signal.metadata,
-            "meta": signal.meta,
+            "signal_id": current_signal.signal_id or current_signal.id,
+            "strategy_id": current_signal.strategy_id,
+            "strategy_mode": current_signal.strategy_mode.value,
+            "source": current_signal.source,
+            "strategy": current_signal.strategy,
+            "timeframe": current_signal.timeframe,
+            "confidence": current_signal.confidence,
+            "strength": current_signal.strength.value,
+            "indicators": current_signal.indicators,
+            "rationale": current_signal.rationale,
+            "llm_reasoning": current_signal.llm_reasoning,
+            "metadata": current_signal.metadata,
+            "meta": current_signal.meta,
         }
 
         # CRITICAL DEBUG: Log TP/SL values from signal
         self.logger.info(
-            f"🔍 SIGNAL TO ORDER CONVERSION | Symbol: {signal.symbol} | "
-            f"Signal SL: {signal.stop_loss} | Signal TP: {signal.take_profit} | "
-            f"Signal SL_pct: {signal.stop_loss_pct} | Signal TP_pct: {signal.take_profit_pct}"
+            f"🔍 SIGNAL TO ORDER CONVERSION | Symbol: {current_signal.symbol} | "
+            f"Signal SL: {current_signal.stop_loss} | Signal TP: {current_signal.take_profit} | "
+            f"Signal SL_pct: {current_signal.stop_loss_pct} | Signal TP_pct: {current_signal.take_profit_pct}"
         )
 
         # Create the order
         order = TradeOrder(
-            order_id=f"order_{signal.strategy_id}_{datetime.now(UTC).timestamp()}",
-            symbol=signal.symbol,
-            side=signal.action,
-            type=signal.order_type.value,
+            order_id=f"order_{current_signal.strategy_id}_{datetime.now(UTC).timestamp()}",
+            symbol=current_signal.symbol,
+            side=current_signal.action,
+            type=current_signal.order_type.value,
             amount=amount,
-            target_price=signal.current_price,
-            stop_loss=signal.stop_loss,
-            take_profit=signal.take_profit,
-            stop_loss_pct=signal.stop_loss_pct,
-            take_profit_pct=signal.take_profit_pct,
-            conditional_price=signal.conditional_price,
-            conditional_direction=signal.conditional_direction,
-            conditional_timeout=signal.conditional_timeout,
-            iceberg_quantity=signal.iceberg_quantity,
-            client_order_id=signal.client_order_id,
+            target_price=current_signal.current_price,
+            stop_loss=current_signal.stop_loss,
+            take_profit=current_signal.take_profit,
+            stop_loss_pct=current_signal.stop_loss_pct,
+            take_profit_pct=current_signal.take_profit_pct,
+            conditional_price=current_signal.conditional_price,
+            conditional_direction=current_signal.conditional_direction,
+            conditional_timeout=current_signal.conditional_timeout,
+            iceberg_quantity=current_signal.iceberg_quantity,
+            client_order_id=current_signal.client_order_id,
             status=OrderStatus.PENDING,
             reduce_only=False,  # Orders from signals are position-opening
             filled_amount=0.0,
             average_price=0.0,
-            time_in_force=signal.time_in_force.value,
-            position_size_pct=signal.position_size_pct,
-            created_at=signal.timestamp,
-            updated_at=signal.timestamp,
-            simulate=signal.meta.get("simulate", False) if signal.meta else False,
+            time_in_force=current_signal.time_in_force.value,
+            position_size_pct=current_signal.position_size_pct,
+            created_at=current_signal.timestamp,
+            updated_at=current_signal.timestamp,
+            simulate=current_signal.meta.get("simulate", False)
+            if current_signal.meta
+            else False,
             # Hedge mode position tracking
             position_id=position_id,
             position_side=position_side,
@@ -2014,7 +2035,7 @@ class Dispatcher:
         return order
 
     def _calculate_order_amount(self, signal: Signal) -> float:
-        """Calculate order amount ensuring MIN_NOTIONAL is met"""
+        """Calculate order amount ensuring MIN_NOTIONAL is met and supporting position_size_pct"""
         try:
             # Import here to avoid circular imports
             from tradeengine.api import binance_exchange
@@ -2025,8 +2046,14 @@ class Dispatcher:
                 signal.symbol, current_price
             )
 
-            # If signal provides quantity, validate it meets MIN_NOTIONAL
-            if signal.quantity and signal.quantity > 0:
+            # Determine whether to use percentage or fixed quantity
+            # 1. Use quantity IF it's provided AND pct is missing (None)
+            # This allows legacy fixed-quantity signals and the test suite to work.
+            if (
+                signal.quantity
+                and signal.quantity > 0
+                and signal.position_size_pct is None
+            ):
                 if signal.quantity < min_amount:
                     self.logger.warning(
                         f"Signal quantity {signal.quantity} is below minimum {min_amount} "
@@ -2035,14 +2062,42 @@ class Dispatcher:
                     amount = min_amount
                 else:
                     amount = signal.quantity
+            # 2. Otherwise use position_size_pct IF it's provided
+            elif signal.position_size_pct and signal.position_size_pct > 0:
+                total_portfolio_value = self.position_manager.total_portfolio_value
+                if total_portfolio_value > 0 and current_price > 0:
+                    # amount = (total_value * pct) / price
+                    calculated_amount = (
+                        total_portfolio_value * signal.position_size_pct
+                    ) / current_price
+
+                    if calculated_amount < min_amount:
+                        self.logger.warning(
+                            f"Calculated amount {calculated_amount} from {signal.position_size_pct:.2%} size "
+                            f"is below minimum {min_amount}. Using minimum."
+                        )
+                        amount = min_amount
+                    else:
+                        amount = calculated_amount
+                        self.logger.info(
+                            f"Amount calculated from position_size_pct ({signal.position_size_pct:.2%}): {amount}"
+                        )
+                else:
+                    self.logger.warning(
+                        f"Cannot calculate amount from pct: portfolio_value={total_portfolio_value}, price={current_price}. Using minimum."
+                    )
+                    amount = min_amount
+            # 3. Fallback to quantity if it exists but pct logic failed/was skipped
+            elif signal.quantity and signal.quantity > 0:
+                amount = max(signal.quantity, min_amount)
             else:
                 # Use calculated minimum
                 amount = min_amount
 
             self.logger.info(
-                f"Order amount calculated for {signal.symbol}: amount={amount}, "
-                f"signal_qty={signal.quantity}, min_required={min_amount}, "
-                f"current_price={current_price}"
+                f"Order amount final for {signal.symbol}: amount={amount}, "
+                f"signal_qty={signal.quantity}, signal_pct={signal.position_size_pct}, "
+                f"min_required={min_amount}, current_price={current_price}"
             )
 
             return amount

@@ -1114,7 +1114,7 @@ class TestAdditionalMethods:
 
         task = asyncio.create_task(binance_exchange._ping_loop())
         await asyncio.wait_for(ping_called.wait(), timeout=5.0)
-        await asyncio.sleep(0)  # one scheduler tick so _ping_loop writes the sentinel
+        await asyncio.sleep(0.1)  # allow more time for _ping_loop to write the sentinel
         task.cancel()
         try:
             await task

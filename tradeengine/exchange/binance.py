@@ -448,12 +448,15 @@ class BinanceFuturesExchange:
 
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop orders")
+        # AC-3 (#352): use closePosition=true so Binance auto-sweeps the order when the
+        # position closes. quantity + reduceOnly=true do NOT auto-cancel CONDITIONAL algo
+        # orders — they accumulate indefinitely as orphans.
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP_MARKET,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            "quantity": self._format_quantity(order.symbol, order.amount),
+            "closePosition": True,
             "triggerPrice": self._format_price(
                 order.symbol, order.stop_loss
             ),  # Note: triggerPrice, not stopPrice
@@ -464,12 +467,6 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-            # In hedge mode, Binance automatically handles reduceOnly
-            # Do NOT manually set reduceOnly when positionSide is specified
-        else:
-            # Only include reduceOnly when True and NOT in hedge mode
-            if order.reduce_only:
-                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -495,13 +492,14 @@ class BinanceFuturesExchange:
         if not is_valid:
             raise ValueError(error_msg)
 
+        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
-            "quantity": self._format_quantity(order.symbol, order.amount),
+            "closePosition": True,
             "price": self._format_price(order.symbol, order.target_price),
             "triggerPrice": self._format_price(
                 order.symbol, order.stop_loss
@@ -513,12 +511,6 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-            # In hedge mode, Binance automatically handles reduceOnly
-            # Do NOT manually set reduceOnly when positionSide is specified
-        else:
-            # Only include reduceOnly when True and NOT in hedge mode
-            if order.reduce_only:
-                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -534,12 +526,13 @@ class BinanceFuturesExchange:
 
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
+        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            "quantity": self._format_quantity(order.symbol, order.amount),
+            "closePosition": True,
             "triggerPrice": self._format_price(
                 order.symbol, order.take_profit
             ),  # Note: triggerPrice, not stopPrice
@@ -550,12 +543,6 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-            # In hedge mode, Binance automatically handles reduceOnly
-            # Do NOT manually set reduceOnly when positionSide is specified
-        else:
-            # Only include reduceOnly when True and NOT in hedge mode
-            if order.reduce_only:
-                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -583,13 +570,14 @@ class BinanceFuturesExchange:
         if not is_valid:
             raise ValueError(error_msg)
 
+        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
         params = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
-            "quantity": self._format_quantity(order.symbol, order.amount),
+            "closePosition": True,
             "price": self._format_price(order.symbol, order.target_price),
             "triggerPrice": self._format_price(
                 order.symbol, order.take_profit
@@ -601,12 +589,6 @@ class BinanceFuturesExchange:
         # Add positionSide for hedge mode
         if order.position_side:
             params["positionSide"] = order.position_side
-            # In hedge mode, Binance automatically handles reduceOnly
-            # Do NOT manually set reduceOnly when positionSide is specified
-        else:
-            # Only include reduceOnly when True and NOT in hedge mode
-            if order.reduce_only:
-                params["reduceOnly"] = True
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):

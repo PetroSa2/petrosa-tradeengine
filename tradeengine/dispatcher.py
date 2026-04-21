@@ -110,10 +110,23 @@ class OCOManager:
             Dict with sl_order_id and tp_order_id
         """
 
-        # REMOVED: Duplicate OCO prevention - now allows multiple strategies per position
-        # This enables multiple strategies to have their own OCO orders on the same exchange position
-
         exchange_position_key = f"{symbol}_{position_side}"
+
+        # AC-2 (#352): one OCO pair per exchange position. Multiple strategies stacking
+        # independent SL/TP pairs on the same position hits the Binance 10-order limit.
+        existing_pairs = self.active_oco_pairs.get(exchange_position_key, [])
+        active_pairs = [p for p in existing_pairs if p.get("status") == "active"]
+        if active_pairs:
+            self.logger.warning(
+                f"⛔ OCO dedup: {exchange_position_key} already has {len(active_pairs)} "
+                f"active OCO pair(s). Skipping new placement for strategy {strategy_position_id}."
+            )
+            return {
+                "status": "rejected",
+                "error": "duplicate_oco",
+                "exchange_position_key": exchange_position_key,
+                "active_pairs": len(active_pairs),
+            }
 
         self.logger.info(
             f"Placing OCO orders: symbol={symbol}, position_side={position_side}, "
@@ -658,19 +671,25 @@ class OCOManager:
         rebuilt = 0
         all_keys = set(sl_orders.keys()) | set(tp_orders.keys())
         for key in all_keys:
-            sl_list = sl_orders.get(key, [])
-            tp_list = tp_orders.get(key, [])
+            sl_list = sorted(
+                sl_orders.get(key, []),
+                key=lambda x: x.get("createTime", x.get("time", 0)),
+            )
+            tp_list = sorted(
+                tp_orders.get(key, []),
+                key=lambda x: x.get("createTime", x.get("time", 0)),
+            )
+            parts = key.split("_", 1)
+            sym = parts[0]
+            pos_side = parts[1] if len(parts) > 1 else "BOTH"
 
-            # Pair them up in creation-time order (zip stops at the shorter list)
-            for sl_o, tp_o in zip(
-                sorted(sl_list, key=lambda x: x.get("createTime", x.get("time", 0))),
-                sorted(tp_list, key=lambda x: x.get("createTime", x.get("time", 0))),
-                strict=False,
-            ):
-                parts = key.split("_", 1)
-                sym = parts[0]
-                pos_side = parts[1] if len(parts) > 1 else "BOTH"
-                # Algo orders use algoId; fall back to orderId for safety
+            # AC-4 (#352): track every order individually — zip() silently drops unmatched
+            # orders (shorter list wins), leaving orphaned SL or TP with no monitoring.
+            # Instead, pair what we can, then register remaining orders as solo entries so
+            # the monitoring loop can cancel them if the position has already closed.
+            paired_sl = set()
+            paired_tp = set()
+            for sl_o, tp_o in zip(sl_list, tp_list, strict=False):
                 sl_id = str(sl_o.get("algoId") or sl_o.get("orderId", ""))
                 tp_id = str(tp_o.get("algoId") or tp_o.get("orderId", ""))
                 oco_info = {
@@ -687,7 +706,59 @@ class OCOManager:
                     "reconciled": True,
                 }
                 self.active_oco_pairs.setdefault(key, []).append(oco_info)
+                paired_sl.add(sl_id)
+                paired_tp.add(tp_id)
                 rebuilt += 1
+
+            # Register unpaired SL orders so monitoring can cancel them
+            for sl_o in sl_list:
+                sl_id = str(sl_o.get("algoId") or sl_o.get("orderId", ""))
+                if sl_id in paired_sl:
+                    continue
+                oco_info = {
+                    "position_id": f"reconciled_orphan_sl_{sym}_{pos_side}_{int(time.time())}",
+                    "strategy_position_id": None,
+                    "entry_price": 0.0,
+                    "quantity": float(sl_o.get("quantity", sl_o.get("origQty", 0))),
+                    "sl_order_id": sl_id,
+                    "tp_order_id": None,
+                    "symbol": sym,
+                    "position_side": pos_side,
+                    "status": "active",
+                    "created_at": time.time(),
+                    "reconciled": True,
+                    "orphaned": True,
+                }
+                self.active_oco_pairs.setdefault(key, []).append(oco_info)
+                rebuilt += 1
+                self.logger.warning(
+                    f"[STARTUP] Registered orphaned SL order {sl_id} for {key} (no matching TP)"
+                )
+
+            # Register unpaired TP orders so monitoring can cancel them
+            for tp_o in tp_list:
+                tp_id = str(tp_o.get("algoId") or tp_o.get("orderId", ""))
+                if tp_id in paired_tp:
+                    continue
+                oco_info = {
+                    "position_id": f"reconciled_orphan_tp_{sym}_{pos_side}_{int(time.time())}",
+                    "strategy_position_id": None,
+                    "entry_price": 0.0,
+                    "quantity": float(tp_o.get("quantity", tp_o.get("origQty", 0))),
+                    "sl_order_id": None,
+                    "tp_order_id": tp_id,
+                    "symbol": sym,
+                    "position_side": pos_side,
+                    "status": "active",
+                    "created_at": time.time(),
+                    "reconciled": True,
+                    "orphaned": True,
+                }
+                self.active_oco_pairs.setdefault(key, []).append(oco_info)
+                rebuilt += 1
+                self.logger.warning(
+                    f"[STARTUP] Registered orphaned TP order {tp_id} for {key} (no matching SL)"
+                )
 
         self.logger.info(f"[STARTUP] Rebuilt {rebuilt} active OCO pairs from Binance")
 
@@ -760,6 +831,23 @@ class OCOManager:
 
                         sl_order_id = oco_info["sl_order_id"]
                         tp_order_id = oco_info["tp_order_id"]
+
+                        # AC-4 (#352): orphaned entries have one side set to None.
+                        # Cancel whichever order still exists and mark completed.
+                        if oco_info.get("orphaned"):
+                            live_id = sl_order_id or tp_order_id
+                            if live_id and live_id in open_order_ids:
+                                try:
+                                    await self.exchange.cancel_order(live_id, symbol)
+                                    self.logger.info(
+                                        f"🗑️  Cancelled orphaned order {live_id} for {symbol}"
+                                    )
+                                except Exception as _cancel_err:
+                                    self.logger.warning(
+                                        f"Failed to cancel orphaned order {live_id}: {_cancel_err}"
+                                    )
+                            oco_info["status"] = "completed"
+                            continue
 
                         # Check if orders still exist
                         sl_exists = sl_order_id in open_order_ids

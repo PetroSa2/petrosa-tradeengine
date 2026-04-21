@@ -533,16 +533,17 @@ async def test_monitoring_continues_after_pair_completes(oco_manager, fake_excha
     sl1 = result1["sl_order_id"]
     tp1 = result1["tp_order_id"]
 
-    # Place second OCO pair
+    # Place second OCO pair on a DIFFERENT symbol — dedup guard allows one pair per
+    # exchange position; two pairs on the same position is the P0 bug we're fixing.
     result2 = await oco_manager.place_oco_orders(
         position_id="test_pos_continue_2",
-        symbol="BTCUSDT",
+        symbol="ETHUSDT",
         position_side="LONG",
-        quantity=0.002,
-        stop_loss_price=47500.0,
-        take_profit_price=52500.0,
+        quantity=0.1,
+        stop_loss_price=2800.0,
+        take_profit_price=3200.0,
         strategy_position_id="test_strategy_pos_7",
-        entry_price=50000.0,
+        entry_price=3000.0,
     )
 
     sl2 = result2["sl_order_id"]
@@ -574,7 +575,7 @@ async def test_monitoring_continues_after_pair_completes(oco_manager, fake_excha
     assert oco_manager.monitoring_active, "Monitoring should still be active"
 
     # Fill second pair's TP
-    fake_exchange.fill_order("BTCUSDT", tp2, fill_price=52500.0)
+    fake_exchange.fill_order("ETHUSDT", tp2, fill_price=3200.0)
 
     # Wait for second pair to complete (poll up to 10 seconds)
     for _ in range(5):
@@ -587,12 +588,11 @@ async def test_monitoring_continues_after_pair_completes(oco_manager, fake_excha
     assert oco_manager.monitoring_active, "Monitoring should still be active"
 
     # Verify both pairs are marked as completed (or cleaned up)
-    exchange_key = "BTCUSDT_LONG"
-    if exchange_key in oco_manager.active_oco_pairs:
-        pairs = oco_manager.active_oco_pairs[exchange_key]
-        # If pairs still exist, they should be marked as completed
-        for pair in pairs:
-            assert pair["status"] == "completed"
+    for exchange_key in ("BTCUSDT_LONG", "ETHUSDT_LONG"):
+        if exchange_key in oco_manager.active_oco_pairs:
+            pairs = oco_manager.active_oco_pairs[exchange_key]
+            for pair in pairs:
+                assert pair["status"] == "completed"
     # If pairs were cleaned up, that's also acceptable
 
     # Clean up

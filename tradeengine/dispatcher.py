@@ -122,6 +122,7 @@ class OCOManager:
                 f"active OCO pair(s). Skipping new placement for strategy {strategy_position_id}."
             )
             return {
+                "status": "rejected",
                 "error": "duplicate_oco",
                 "exchange_position_key": exchange_position_key,
                 "active_pairs": len(active_pairs),
@@ -830,6 +831,23 @@ class OCOManager:
 
                         sl_order_id = oco_info["sl_order_id"]
                         tp_order_id = oco_info["tp_order_id"]
+
+                        # AC-4 (#352): orphaned entries have one side set to None.
+                        # Cancel whichever order still exists and mark completed.
+                        if oco_info.get("orphaned"):
+                            live_id = sl_order_id or tp_order_id
+                            if live_id and live_id in open_order_ids:
+                                try:
+                                    await self.exchange.cancel_order(live_id, symbol)
+                                    self.logger.info(
+                                        f"🗑️  Cancelled orphaned order {live_id} for {symbol}"
+                                    )
+                                except Exception as _cancel_err:
+                                    self.logger.warning(
+                                        f"Failed to cancel orphaned order {live_id}: {_cancel_err}"
+                                    )
+                            oco_info["status"] = "completed"
+                            continue
 
                         # Check if orders still exist
                         sl_exists = sl_order_id in open_order_ids

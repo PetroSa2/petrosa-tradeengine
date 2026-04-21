@@ -715,7 +715,3 @@ class TradingConfigManager:
 
         if keys_to_delete:
             logger.debug(f"Cache invalidated: {len(keys_to_delete)} entries")
-
-
-# Singleton instance used by position_manager and other modules
-config_manager = TradingConfigManager()

@@ -650,7 +650,7 @@ class PositionManager:
                         f"(attempt {_attempt}/3): {data_manager_error}"
                     )
             if not _create_ok:
-                logger.error(
+                logger.critical(
                     f"❌ CRITICAL: Position {order.position_id} ({order.symbol} {order.position_side}) "
                     f"could NOT be persisted after 3 attempts. "
                     f"Manual reconciliation required — check Data Manager health."
@@ -945,15 +945,18 @@ class PositionManager:
     async def get_position_size_limit(self, symbol: str) -> float:
         """Get position size limit for symbol (checks config, then default)"""
         try:
-            # Check if there's a symbol-specific config
-            from tradeengine.config_manager import config_manager
+            # Use the live config manager (started with MongoDB in api.py lifespan).
+            # Importing the cold singleton from config_manager.py would always return
+            # hardcoded defaults because it has no MongoDB client.
+            from tradeengine.api_filter_routes import get_config_manager
 
-            symbol_config = await config_manager.get_config(symbol=symbol)
+            mgr = get_config_manager()
+            symbol_config = await mgr.get_config(symbol=symbol)
             if symbol_config and symbol_config.get("max_position_size"):
                 return float(symbol_config["max_position_size"])
 
             # Check global config
-            global_config = await config_manager.get_config()
+            global_config = await mgr.get_config()
             if global_config and global_config.get("max_position_size"):
                 return float(global_config["max_position_size"])
 

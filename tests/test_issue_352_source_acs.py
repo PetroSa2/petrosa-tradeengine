@@ -503,6 +503,6 @@ class TestAC1PositionWriteRetry:
                 pytest.skip("_create_position_record not accessible directly")
 
         assert attempt_count == 3, f"Expected 3 retry attempts, got {attempt_count}"
-        assert any("CRITICAL" in m or "3 attempts" in m for m in critical_messages), (
-            f"Expected CRITICAL log after 3 failures, got: {critical_messages}"
+        assert any("3 attempts" in m for m in critical_messages), (
+            f"Expected critical-level log after 3 failures, got: {critical_messages}"
         )

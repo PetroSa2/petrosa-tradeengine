@@ -146,7 +146,7 @@ class SignalConsumer:
             subscribe_subject = subject
 
         logger.info(
-            "🚀 STARTING NATS CONSUMER | Subject: %s | No queue group (duplicate detection in dispatcher)",
+            "🚀 STARTING NATS CONSUMER | Subject: %s | Queue group: tradeengine-workers (AC-5 #352)",
             subscribe_subject,
         )
 
@@ -157,10 +157,11 @@ class SignalConsumer:
                 subscribe_subject,
                 self._message_handler,
             )
-            # Remove queue group - it's preventing message delivery
-            # Each pod will receive all messages, but dispatcher has duplicate detection
+            # AC-5 (#352): queue group ensures exactly one pod processes each signal.
+            # Without this, every pod receives every message → duplicate order placement.
             self.subscription = await self.nc.subscribe(
                 subscribe_subject,
+                queue="tradeengine-workers",
                 cb=self._message_handler,
             )
 

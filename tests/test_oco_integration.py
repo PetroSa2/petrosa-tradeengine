@@ -421,19 +421,21 @@ async def test_oco_placement_verifies_quantity_consistency(
 
 
 @pytest.mark.asyncio
-async def test_oco_placement_handles_multiple_strategies_same_position(
+async def test_oco_placement_dedup_blocks_second_strategy_same_position(
     oco_manager: OCOManager, exchange_spy: ExchangeSpy
 ):
     """
-    Integration test: Verify multiple OCO pairs can exist for same exchange position.
+    AC-2 (#352): Only one OCO pair per exchange position is allowed.
 
-    This tests the multi-strategy OCO tracking feature.
+    A second strategy attempting to place OCO orders on the same position must be
+    rejected with error='duplicate_oco'.  This prevents the Binance 10-order limit
+    from being exhausted by multi-strategy stacking.
     """
     symbol = "BTCUSDT"
     position_side = "LONG"
     exchange_position_key = f"{symbol}_{position_side}"
 
-    # Place first OCO pair
+    # First placement must succeed
     result1 = await oco_manager.place_oco_orders(
         position_id="pos1",
         symbol=symbol,
@@ -443,10 +445,9 @@ async def test_oco_placement_handles_multiple_strategies_same_position(
         take_profit_price=52000.0,
         strategy_position_id="strategy1_pos1",
     )
-
     assert result1["status"] == "success"
 
-    # Place second OCO pair for same exchange position
+    # Second placement on same exchange position must be rejected
     result2 = await oco_manager.place_oco_orders(
         position_id="pos2",
         symbol=symbol,
@@ -456,26 +457,14 @@ async def test_oco_placement_handles_multiple_strategies_same_position(
         take_profit_price=52500.0,
         strategy_position_id="strategy2_pos1",
     )
+    assert result2.get("error") == "duplicate_oco", (
+        f"Expected duplicate_oco rejection, got: {result2}"
+    )
 
-    assert result2["status"] == "success"
-
-    # Verify both pairs are tracked
-    assert exchange_position_key in oco_manager.active_oco_pairs
-    oco_list = oco_manager.active_oco_pairs[exchange_position_key]
-    assert len(oco_list) == 2, "Should have 2 OCO pairs for same exchange position"
-
-    # Verify each pair has unique order IDs
-    order_ids = set()
-    for oco in oco_list:
-        assert oco["sl_order_id"] not in order_ids
-        assert oco["tp_order_id"] not in order_ids
-        order_ids.add(oco["sl_order_id"])
-        order_ids.add(oco["tp_order_id"])
-
-    # Verify strategy tracking
-    strategy_ids = [oco.get("strategy_position_id") for oco in oco_list]
-    assert "strategy1_pos1" in strategy_ids
-    assert "strategy2_pos1" in strategy_ids
+    # Exactly one active OCO pair must be present
+    oco_list = oco_manager.active_oco_pairs.get(exchange_position_key, [])
+    active = [p for p in oco_list if p.get("status") == "active"]
+    assert len(active) == 1, f"Expected 1 active pair, found {len(active)}"
 
     # Clean up
     await oco_manager.stop_monitoring()

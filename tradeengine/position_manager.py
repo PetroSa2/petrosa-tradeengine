@@ -624,22 +624,36 @@ class PositionManager:
                 "commission_total": commission,
             }
 
-            # Persist to Data Manager (with timeout to prevent blocking risk management)
-            try:
-                await asyncio.wait_for(
-                    position_client.create_position(position_data), timeout=2.0
-                )
-                logger.info(
-                    f"Position {order.position_id} created via Data Manager for "
-                    f"{order.symbol} {order.position_side}"
-                )
-            except TimeoutError:
-                logger.warning(
-                    f"⚠️  Data Manager position insert timed out for {order.position_id} (non-critical, continuing)"
-                )
-            except Exception as data_manager_error:
+            # AC-1 (#352): durable write with retry — a silent timeout drop here causes
+            # MySQL positions table to be empty, which triggers every subsequent signal to
+            # open a new entry + OCO pair, accumulating orders until Binance limit.
+            _create_ok = False
+            for _attempt in range(1, 4):
+                try:
+                    await asyncio.wait_for(
+                        position_client.create_position(position_data), timeout=5.0
+                    )
+                    logger.info(
+                        f"Position {order.position_id} created via Data Manager for "
+                        f"{order.symbol} {order.position_side} (attempt {_attempt})"
+                    )
+                    _create_ok = True
+                    break
+                except TimeoutError:
+                    logger.warning(
+                        f"⚠️  Data Manager position insert timed out for {order.position_id} "
+                        f"(attempt {_attempt}/3)"
+                    )
+                except Exception as data_manager_error:
+                    logger.warning(
+                        f"⚠️  Data Manager position insert failed for {order.position_id} "
+                        f"(attempt {_attempt}/3): {data_manager_error}"
+                    )
+            if not _create_ok:
                 logger.error(
-                    f"Failed to create position via Data Manager: {data_manager_error}"
+                    f"❌ CRITICAL: Position {order.position_id} ({order.symbol} {order.position_side}) "
+                    f"could NOT be persisted after 3 attempts. "
+                    f"Manual reconciliation required — check Data Manager health."
                 )
 
             # Export metrics (with timeout to prevent blocking)
@@ -935,13 +949,13 @@ class PositionManager:
             from tradeengine.config_manager import config_manager
 
             symbol_config = await config_manager.get_config(symbol=symbol)
-            if symbol_config and symbol_config.parameters.get("max_position_size"):
-                return float(symbol_config.parameters["max_position_size"])
+            if symbol_config and symbol_config.get("max_position_size"):
+                return float(symbol_config["max_position_size"])
 
             # Check global config
             global_config = await config_manager.get_config()
-            if global_config and global_config.parameters.get("max_position_size"):
-                return float(global_config.parameters["max_position_size"])
+            if global_config and global_config.get("max_position_size"):
+                return float(global_config["max_position_size"])
 
         except Exception as e:
             logger.warning(f"Failed to get config limit for {symbol}: {e}")

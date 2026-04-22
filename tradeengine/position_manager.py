@@ -1034,24 +1034,34 @@ class PositionManager:
             return True
 
         try:
-            # 1. Check Symbol-specific limit (max 10)
+            # 1. Check Symbol-specific limit (max 10 OPEN orders only)
+            # get_open_algo_orders queries Binance API for currently-open orders;
+            # filled or cancelled orders are never included in this count.
             algo_orders = await self.exchange.get_open_algo_orders(symbol=order.symbol)
-            if len(algo_orders) >= 9:  # We need 2 slots for a new OCO (SL + TP)
+            open_count = len(algo_orders)
+            if open_count >= 9:  # Need 2 free slots for a new OCO pair (SL + TP)
                 logger.warning(
                     f"⛔ RISK REJECTION: Algo order limit reached for {order.symbol} "
-                    f"({len(algo_orders)}/10 orders). Cannot place OCO."
+                    f"({open_count}/10 open orders). Cannot place OCO. "
+                    f"Only open (active) orders are counted — filled/cancelled orders "
+                    f"do not contribute to this limit."
                 )
                 return False
 
-            # 2. Check Account-wide limit (max 100)
+            # 2. Check Account-wide limit (max 100 OPEN orders only)
             all_algo_orders = await self.exchange.get_open_algo_orders()
-            if len(all_algo_orders) >= 98:  # Leave room for simultaneous orders
+            global_open_count = len(all_algo_orders)
+            if global_open_count >= 98:  # Leave room for simultaneous orders
                 logger.warning(
                     f"⛔ RISK REJECTION: Global account algo order limit reached "
-                    f"({len(all_algo_orders)}/100 orders). Cannot place OCO."
+                    f"({global_open_count}/100 open orders). Cannot place OCO."
                 )
                 return False
 
+            logger.debug(
+                f"✅ Algo order limits OK for {order.symbol}: "
+                f"symbol={open_count}/10, account={global_open_count}/100 open orders"
+            )
             return True
         except Exception as e:
             logger.error(f"Error checking algo order limits: {e}")

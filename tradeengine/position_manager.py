@@ -1042,9 +1042,11 @@ class PositionManager:
             if open_count >= 9:  # Need 2 free slots for a new OCO pair (SL + TP)
                 logger.warning(
                     f"⛔ RISK REJECTION: Algo order limit reached for {order.symbol} "
-                    f"({open_count}/10 open orders). Cannot place OCO. "
-                    f"Only open (active) orders are counted — filled/cancelled orders "
-                    f"do not contribute to this limit."
+                    f"({open_count}/10 open orders). Cannot place OCO."
+                )
+                logger.debug(
+                    f"Algo limit detail for {order.symbol}: only open (active) orders "
+                    f"are counted; filled/cancelled orders do not contribute."
                 )
                 return False
 

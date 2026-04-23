@@ -2717,11 +2717,12 @@ class Dispatcher:
                     # The existing OCO protects the full exchange position; placing
                     # additional individual SL/TP orders would consume algo order slots
                     # and push towards the Binance 10-order-per-symbol limit.
+                    strategy_label = strategy_position_id or order.order_id or "unknown"
                     self.logger.info(
                         f"✅ OCO CONSOLIDATED: {order.symbol} "
                         f"({oco_result.get('exchange_position_key')}) already has "
                         f"{oco_result.get('active_pairs', 1)} active OCO pair(s). "
-                        f"Strategy {strategy_position_id} added to position without "
+                        f"order={strategy_label} added to position without "
                         f"separate risk orders — existing OCO provides coverage."
                     )
                 else:

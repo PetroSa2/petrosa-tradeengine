@@ -222,25 +222,18 @@ async def test_duplicate_oco_does_not_place_individual_orders(dispatcher_with_fa
 
     result = await dispatcher.dispatch(signal_b)
 
-    # The entry order itself may succeed; we don't care about that.
-    # What matters is that no additional stop/take_profit individual orders were placed.
-    executed_after = fake_exchange.get_executed_orders()
-    stop_or_tp_orders = [
-        o
-        for o in executed_after[initial_executed:]
-        if o.get("type") in ("stop", "take_profit", "stop_loss")
-        # FakeExchange doesn't set "type" on results, but individual orders go through
-        # _place_stop_loss_order / _place_take_profit_order which call exchange.execute().
-        # We detect them by checking that NO extra orders beyond the entry were placed
-        # (FakeExchange records every execute() call).
-    ]
-
-    # The entry order for strategy-b is 1 order. No OCO / individual SL/TP should follow.
-    # Total new orders = at most 1 (the entry market order).
-    new_orders = executed_after[initial_executed:]
+    # FakeExchange.execute() is called for EVERY order the dispatcher places,
+    # including individual SL/TP fallback orders from _place_individual_risk_orders.
+    # With the fix: only the entry market order should be recorded (≤1 new call).
+    # Without the fix: 2 additional calls (SL + TP) would appear, giving ≥3 total.
+    new_orders = fake_exchange.get_executed_orders()[initial_executed:]
+    # SL/TP individual orders use order_ids prefixed "oco_sl_" / "oco_tp_" when placed
+    # via place_oco_orders, and are tracked via exchange.execute(). Any result beyond
+    # the single entry order indicates unwanted individual risk-order placement.
     assert len(new_orders) <= 1, (
-        f"Expected ≤1 new order (entry only) when duplicate OCO is detected, "
-        f"got {len(new_orders)}: {new_orders}"
+        f"Expected ≤1 new exchange.execute() call (entry only) when duplicate OCO is "
+        f"detected, got {len(new_orders)}: {new_orders}. Extra calls indicate the "
+        f"individual SL/TP fallback fired despite existing OCO coverage."
     )
 
 
@@ -270,17 +263,9 @@ async def test_ten_strategy_signals_stay_within_algo_order_limit(dispatcher_with
         result = await dispatcher.dispatch(sig)
         results.append(result)
 
-    # Count how many stop/take_profit type orders were placed.
-    # In FakeExchange.execute(), orders of type "stop" or "take_profit" are the
-    # algo orders that count against Binance limits.
     all_executed = fake_exchange.get_executed_orders()
 
-    # The OCO manager uses dispatcher.oco_manager.place_oco_orders which calls
-    # exchange.execute() twice (SL + TP). Individual fallback would also call execute().
-    # Strategy entry orders are "market" type (1 per signal that passes risk checks).
-    # So: total orders = entry orders + risk orders.
-    # With fix: at most 2 risk orders (1 OCO pair) regardless of strategy count.
-    # Check OCO manager state directly for definitive count.
+    # Verify via OCO manager state: at most 1 active OCO pair for this symbol/side.
     oco_pairs = dispatcher.oco_manager.active_oco_pairs
     xlm_long_pairs = oco_pairs.get("XLMUSDT_LONG", [])
     active_pairs = [p for p in xlm_long_pairs if p.get("status") == "active"]
@@ -289,4 +274,20 @@ async def test_ten_strategy_signals_stay_within_algo_order_limit(dispatcher_with
         f"Expected at most 1 active OCO pair for XLMUSDT_LONG after 10 strategy signals, "
         f"got {len(active_pairs)}. Multiple OCO pairs indicate the dedup guard is not "
         f"preventing duplicate placements."
+    )
+
+    # Verify via exchange execution count: FakeExchange.execute() is called for every
+    # order placed (entry + OCO SL + OCO TP + any individual fallback orders).
+    # With fix: 1 OCO pair = 2 risk orders max, regardless of how many strategy signals fired.
+    # Each entry order = 1 call. Risk orders per fix = at most 2 (1 SL + 1 TP for the first
+    # signal only). Subsequent signals that hit duplicate_oco should add 0 risk orders.
+    # So total = N_entry_orders + 2 (at most).
+    n_entry_orders = sum(
+        1 for r in results if r.get("status") not in ("rejected", "duplicate", "error")
+    )
+    n_risk_order_calls = len(all_executed) - n_entry_orders
+    assert n_risk_order_calls <= 2, (
+        f"Expected at most 2 risk-order exchange.execute() calls (1 SL + 1 TP for the "
+        f"first OCO pair), got {n_risk_order_calls} across {len(strategy_ids)} signals. "
+        f"This indicates individual SL/TP fallback fired for duplicate-OCO positions."
     )

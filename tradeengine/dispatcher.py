@@ -2711,6 +2711,20 @@ class Dispatcher:
                             stop_loss_order_id=oco_result.get("sl_order_id"),
                             take_profit_order_id=oco_result.get("tp_order_id"),
                         )
+                elif oco_result.get("error") == "duplicate_oco":
+                    # Position already has an active OCO pair — expected when multiple
+                    # strategies accumulate into the same exchange position.
+                    # The existing OCO protects the full exchange position; placing
+                    # additional individual SL/TP orders would consume algo order slots
+                    # and push towards the Binance 10-order-per-symbol limit.
+                    strategy_label = strategy_position_id or order.order_id or "unknown"
+                    self.logger.info(
+                        f"✅ OCO CONSOLIDATED: {order.symbol} "
+                        f"({oco_result.get('exchange_position_key')}) already has "
+                        f"{oco_result.get('active_pairs', 1)} active OCO pair(s). "
+                        f"order={strategy_label} added to position without "
+                        f"separate risk orders — existing OCO provides coverage."
+                    )
                 else:
                     self.logger.error(
                         f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result} - falling back to individual orders"

@@ -1148,7 +1148,10 @@ class TestAdditionalMethods:
 
         task = asyncio.create_task(binance_exchange._ping_loop())
         await asyncio.wait_for(ping_called.wait(), timeout=5.0)
-        await asyncio.sleep(0)  # one tick for _ping_loop to write _last_ping_ok=False
+        # Give the executor future and _ping_loop coroutine enough ticks to
+        # process the exception and write _last_ping_ok=False before we assert.
+        for _ in range(5):
+            await asyncio.sleep(0)
         task.cancel()
         try:
             await task

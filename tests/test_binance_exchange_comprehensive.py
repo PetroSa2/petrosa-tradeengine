@@ -898,8 +898,15 @@ class TestFallbackLogic:
 
         result = await binance_exchange.cancel_order("BTCUSDT", 12345)
         assert result is not None
-        # Should have called _request_futures_api for algo order cancellation
-        binance_exchange.client._request_futures_api.assert_called_once()
+        # Should have called _request_futures_api with force_params=True so that
+        # DELETE parameters go in the query string (not the request body)
+        binance_exchange.client._request_futures_api.assert_called_once_with(
+            "delete",
+            "algoOrder",
+            signed=True,
+            force_params=True,
+            data={"symbol": "BTCUSDT", "algoId": 12345},
+        )
 
     @pytest.mark.asyncio
     async def test_get_order_status_fallback_logic(self, binance_exchange):
@@ -1141,7 +1148,13 @@ class TestAdditionalMethods:
 
         task = asyncio.create_task(binance_exchange._ping_loop())
         await asyncio.wait_for(ping_called.wait(), timeout=5.0)
-        await asyncio.sleep(0)  # one tick for _ping_loop to write _last_ping_ok=False
+        # Poll until _ping_loop has processed the executor exception and written
+        # _last_ping_ok=False. Bounded by 2s to avoid hanging on regression.
+        import time as _time
+
+        deadline = _time.monotonic() + 2.0
+        while binance_exchange._last_ping_ok and _time.monotonic() < deadline:
+            await asyncio.sleep(0)
         task.cancel()
         try:
             await task

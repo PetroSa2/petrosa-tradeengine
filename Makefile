@@ -4,7 +4,7 @@
 # Provides consistent development and testing procedures across all services
 
 # Python enforcement
-PYTHON_VERSION_EXPECTED := 3.10
+PYTHON_VERSION_EXPECTED := 3.11
 # Use venv Python if available (ensures pre-commit hooks use the correct interpreter)
 PYTHON := $(shell [ -f venv/bin/python ] && echo venv/bin/python || echo python3)
 PYTHON_VERSION_ACTUAL := $(shell $(PYTHON) --version | cut -d' ' -f2 | cut -d'.' -f1,2)

@@ -1148,9 +1148,12 @@ class TestAdditionalMethods:
 
         task = asyncio.create_task(binance_exchange._ping_loop())
         await asyncio.wait_for(ping_called.wait(), timeout=5.0)
-        # Give the executor future and _ping_loop coroutine enough ticks to
-        # process the exception and write _last_ping_ok=False before we assert.
-        for _ in range(5):
+        # Poll until _ping_loop has processed the executor exception and written
+        # _last_ping_ok=False. Bounded by 2s to avoid hanging on regression.
+        import time as _time
+
+        deadline = _time.monotonic() + 2.0
+        while binance_exchange._last_ping_ok and _time.monotonic() < deadline:
             await asyncio.sleep(0)
         task.cancel()
         try:

@@ -65,7 +65,10 @@ jobs:
                 return;
               }
               pull_number = pr.number;
-              headSha = pr.head.sha;
+              // Fetch the live PR to get the current head SHA — the workflow_run
+              // payload may be stale if a commit was pushed while CI was in-flight.
+              const { data: livePr } = await github.rest.pulls.get({ owner, repo, pull_number });
+              headSha = livePr.head.sha;
             }
 
             // Short-circuit: skip if Copilot already reviewed the current head SHA.

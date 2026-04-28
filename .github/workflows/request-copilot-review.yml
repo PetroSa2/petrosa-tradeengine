@@ -1,6 +1,10 @@
 # Defers GitHub Copilot review until CI Checks complete successfully.
 # Replaces the pull_request trigger with workflow_run to enforce post-CI ordering.
 #
+# Fix for Issue #371: workflow_run.pull_requests[] is always empty in GitHub's event
+# payload even for same-repo PRs. PR resolution is done via the REST API using
+# head_sha + head_branch from the workflow_run context instead.
+#
 # Related: Issue #314 - Defer Copilot Review Until CI Checks Succeed
 # Supersedes: Issue #54, #188
 
@@ -19,12 +23,12 @@ on:
 
 jobs:
   request-copilot-review:
+    # workflow_run.pull_requests[] is always empty (GitHub bug/limitation); the
+    # fork check and PR resolution happen inside the script via the REST API.
     if: >
       (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.pull_requests[0] != null &&
-      github.event.workflow_run.pull_requests[0].head.repo.full_name == github.repository)
+      github.event.workflow_run.event == 'pull_request')
     runs-on: petrosa-org-runners
     permissions:
       pull-requests: write
@@ -40,6 +44,7 @@ jobs:
 
             let pull_number;
             let headSha;
+
             if (context.eventName === 'workflow_dispatch') {
               pull_number = parseInt(context.payload.inputs.pull_number, 10);
               if (!Number.isInteger(pull_number) || pull_number <= 0) {
@@ -54,21 +59,25 @@ jobs:
               }
               headSha = pr.head.sha;
             } else {
+              // workflow_run.pull_requests[] is unreliable — resolve the PR by
+              // matching head_sha + head_branch via the REST API instead.
               const run = context.payload.workflow_run;
-              const pr = run.pull_requests[0];
+              const { data: prs } = await github.rest.pulls.list({
+                owner, repo, state: 'open',
+                head: `${owner}:${run.head_branch}`,
+                per_page: 10,
+              });
+              const pr = prs.find(
+                (p) => p.head.sha === run.head_sha &&
+                        p.head.repo.full_name === `${owner}/${repo}`
+              );
               if (!pr) {
-                console.log('No pull request associated with this workflow_run.');
-                return;
-              }
-              if (pr.head.repo.full_name !== `${owner}/${repo}`) {
-                console.log(`Skipping fork PR from ${pr.head.repo.full_name}`);
+                console.log(`No open same-repo PR for ${run.head_branch}@${run.head_sha}; skipping.`);
                 return;
               }
               pull_number = pr.number;
-              // Fetch the live PR to get the current head SHA — the workflow_run
-              // payload may be stale if a commit was pushed while CI was in-flight.
-              const { data: livePr } = await github.rest.pulls.get({ owner, repo, pull_number });
-              headSha = livePr.head.sha;
+              // Use live PR head SHA (matches run.head_sha; avoids stale payload)
+              headSha = pr.head.sha;
             }
 
             // Short-circuit: skip if Copilot already reviewed the current head SHA.

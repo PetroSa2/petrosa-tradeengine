@@ -23,10 +23,9 @@ on:
 
 jobs:
   request-copilot-review:
-    # Fork-triggered workflow_run events are short-circuited by the job-level
-    # head_repository guard above. For workflow_dispatch, the fork guard runs
-    # inside the script. PR resolution happens via the REST API using head_sha
-    # + head_branch (workflow_run.pull_requests[] is unreliable).
+    # `if` head_repository guard below. For workflow_dispatch, the fork guard
+    # runs inside the script. PR resolution happens via the REST API using
+    # head_sha + head_branch (workflow_run.pull_requests[] is unreliable).
     if: >
       (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&

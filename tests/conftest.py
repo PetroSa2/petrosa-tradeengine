@@ -94,17 +94,19 @@ def setup_test_environment() -> Generator[None, None, None]:
 
 @pytest.fixture(autouse=True)
 def cleanup_logging_state():
-    """Clean up logging state before and after each test."""
-    # BEFORE test
-    for _ in range(3):
-        patch.stopall()
+    """Clean up logging state before and after each test.
+
+    NOTE: We deliberately do NOT call patch.stopall() here because it
+    destroys session-scoped mocks (e.g. mock_binance_global).  OTEL
+    patch cleanup is handled by restore_all_otel_init_patches() in
+    teardown, which selectively restores only otel_init patches.
+    """
+    # BEFORE test — only reset logging handlers
     cleanup_logging()
 
     yield
 
-    # AFTER test
-    for _ in range(3):
-        patch.stopall()
+    # AFTER test — reset logging and selectively restore OTEL patches
     cleanup_logging()
     restore_all_otel_init_patches()
 

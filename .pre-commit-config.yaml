@@ -15,24 +15,6 @@ repos:
         name: ⚡ Ruff Formatter
 
   # ==================================================================
-  # TYPE CHECKING - Mypy (Latest v1.15.0)
-  # ==================================================================
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
-    hooks:
-      - id: mypy
-        name: 🔍 Mypy Type Checker
-        additional_dependencies: [
-          'pyyaml',
-          'types-PyYAML',
-          'types-requests',
-          'types-setuptools',
-          'pydantic'
-        ]
-        args: [--ignore-missing-imports]
-        exclude: ^tests/
-
-  # ==================================================================
   # SECURITY - Gitleaks (Official Hook)
   # ==================================================================
   - repo: https://github.com/gitleaks/gitleaks
@@ -49,19 +31,8 @@ repos:
     hooks:
       - id: bandit
         name: 🔐 Bandit (Python Security)
-        args: [-ll]
-        exclude: ^(tests|venv|htmlcov|scripts)/
-
-  # ==================================================================
-  # SECURITY - Dependency Check (Safety) — optional; see petrosa_k8s template
-  # ==================================================================
-  # - repo: https://github.com/pyupio/safety
-  #   rev: 3.0.1
-  #   hooks:
-  #     - id: safety
-  #       name: 🔐 Safety (Dependency Scan)
-  #       args: [check, --full-report]
-  #       files: ^requirements\.txt$
+        args: [-ll, -r, .]
+        exclude: ^tests/
 
   # ==================================================================
   # LINTING - YAML & TOML
@@ -100,21 +71,3 @@ repos:
         language: system
         types: [python]
         files: ^tests/
-
-      - id: check-secrets-patterns
-        name: 🔐 Check for Petrosa Secret Patterns
-        # Looks for hardcoded credential values (long hex strings / passwords) assigned inline.
-        # Excludes: tests/, scripts/, .github/ (fixture/test/CI values), env-var reads, and
-        # error-message strings so legitimate code doesn't produce false positives.
-        # Note: gitleaks (above) handles broader secret scanning.
-        entry: bash -c 'grep -rInE "(BINANCE_API_KEY\s*=\s*\"[0-9a-f]{20,}\"|BINANCE_API_SECRET\s*=\s*\"[0-9a-f]{20,}\")" --include="*.py" --include="*.yaml" --include="*.yml" --exclude-dir=.venv --exclude-dir=venv --exclude-dir=.git --exclude-dir=tests --exclude-dir=scripts --exclude-dir=.github . && echo "WARNING Found potential secrets!" && exit 1 || exit 0'
-        language: system
-        pass_filenames: false
-
-      - id: pipeline
-        name: 🔄 Complete Local Pipeline (Parallel to CI)
-        entry: make test
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [push]

@@ -148,14 +148,12 @@ def mock_nats_client_session():
 def get_real_configure_logging():
     """
     Helper function to get the real configure_logging function, not a mock.
+
+    NOTE: We do NOT call patch.stopall() here because it destroys session-scoped
+    mocks (e.g. mock_binance_global). Only reload the otel_init module.
     """
     import importlib
     import sys
-    from unittest.mock import patch
-
-    # Stop any active patches aggressively
-    for _ in range(3):
-        patch.stopall()
 
     if "otel_init" in sys.modules:
         module = sys.modules["otel_init"]
@@ -164,8 +162,6 @@ def get_real_configure_logging():
         if module_file and module_file.endswith(".py"):
             try:
                 importlib.reload(module)
-                for _ in range(3):
-                    patch.stopall()
 
                 fresh_otel_init = sys.modules["otel_init"]
                 fresh_func = getattr(fresh_otel_init, "configure_logging", None)

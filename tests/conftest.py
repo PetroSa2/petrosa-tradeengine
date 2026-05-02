@@ -297,7 +297,7 @@ _CI_SKIP_FILES = [
 
 
 def pytest_collection_modifyitems(config, items):
-    """Remove TestClient-based tests when running in CI."""
+    """Skip TestClient-based tests when running in CI."""
     if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         skip_marker = pytest.mark.skip(reason="TestClient tests disabled in CI")
         for item in items:

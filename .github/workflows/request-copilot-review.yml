@@ -1,5 +1,9 @@
+# yamllint disable rule:line-length rule:truthy rule:document-start
 # Defers GitHub Copilot review until CI Checks complete successfully.
 # Replaces the pull_request trigger with workflow_run to enforce post-CI ordering.
+#
+# Merge blocking is handled separately by `copilot-review-gate.yml`, which must pass
+# for the required check `copilot-review` (see docs/COPILOT_REVIEW_ENFORCEMENT.md).
 #
 # Fix for Issue #371: workflow_run.pull_requests[] is always empty in GitHub's event
 # payload even for same-repo PRs. PR resolution is done via the REST API using

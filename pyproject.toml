@@ -143,7 +143,6 @@ python_functions = ["test_*"]
 # Test execution options
 addopts = [
     "-v",
-    "-n", "auto",
     "--strict-markers",
     "--strict-config",
     "--disable-warnings",

@@ -9,8 +9,6 @@ def restore_otel_init_function(module):
     if not hasattr(module, "configure_logging"):
         return None
 
-    patch.stopall()
-
     func = getattr(module, "configure_logging", None)
 
     if func is None:
@@ -57,8 +55,12 @@ def restore_otel_init_function(module):
 
 
 def restore_all_otel_init_patches():
-    """Aggressively restore all otel_init.configure_logging patches."""
-    patch.stopall()
+    """Aggressively restore all otel_init.configure_logging patches.
+
+    NOTE: We no longer call patch.stopall() at the top because it
+    destroys all active patches including session-scoped mocks like
+    mock_binance_global.  Instead we selectively restore only otel_init.
+    """
 
     if "otel_init" in sys.modules:
         restore_otel_init_function(sys.modules["otel_init"])

@@ -7,14 +7,18 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
-# Pre-mock binance in sys.modules BEFORE any imports to survive xdist workers
-_mock_binance = ModuleType("binance")
-_mock_binance.Client = MagicMock
-_enums = ModuleType("binance.enums")
-_exceptions = ModuleType("binance.exceptions")
-sys.modules["binance"] = _mock_binance
-sys.modules["binance.enums"] = _enums
-sys.modules["binance.exceptions"] = _exceptions
+
+def pytest_configure(config):
+    """Mock binance before test collection to prevent real imports in xdist workers."""
+    if "binance" not in sys.modules:
+        _mock = ModuleType("binance")
+        _mock.Client = MagicMock
+        _mock.enums = ModuleType("binance.enums")
+        _mock.exceptions = ModuleType("binance.exceptions")
+        sys.modules["binance"] = _mock
+        sys.modules["binance.enums"] = _mock.enums
+        sys.modules["binance.exceptions"] = _mock.exceptions
+
 
 # Disable OpenTelemetry auto-initialization during tests (BEFORE any imports)
 os.environ["OTEL_NO_AUTO_INIT"] = "1"

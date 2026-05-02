@@ -4,6 +4,14 @@ Global test configuration and fixtures for petrosa-tradeengine.
 
 import os
 import sys
+from unittest.mock import MagicMock
+
+# Pre-mock binance in sys.modules BEFORE any imports to survive xdist workers
+_mock_binance = MagicMock()
+_mock_binance.Client = MagicMock()
+sys.modules["binance"] = _mock_binance
+sys.modules["binance.enums"] = MagicMock()
+sys.modules["binance.exceptions"] = MagicMock()
 
 # Disable OpenTelemetry auto-initialization during tests (BEFORE any imports)
 os.environ["OTEL_NO_AUTO_INIT"] = "1"

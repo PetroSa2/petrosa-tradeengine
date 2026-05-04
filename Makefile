@@ -115,9 +115,9 @@ clean:
 
 # Code quality
 format:
-	@echo "🎨 Formatting code with black and isort..."
-	black . --line-length=88
-	isort . --profile=black --line-length=88
+	@echo "🎨 Formatting code with ruff..."
+	ruff check --fix .
+	ruff format .
 	@echo "✅ Code formatting completed!"
 
 lint:

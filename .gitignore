@@ -323,3 +323,4 @@ backtest_results/
 k8s/kubeconfig.yaml
 test_output.txt
 test_output_debug.txt
+bandit-report.json

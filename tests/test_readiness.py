@@ -66,12 +66,12 @@ class TestReadinessComponentFailureLogging:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
             patch("tradeengine.api.logger") as mock_logger,
-            patch(
-                "tradeengine.api.asyncio.wait_for",
-                side_effect=TimeoutError("Timed out"),
-            ),
         ):
-            mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
+            # Make dispatcher health_check time out by raising TimeoutError
+            async def timeout_health_check():
+                raise TimeoutError("Timed out")
+
+            mock_dispatcher.health_check = timeout_health_check
             mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
 
@@ -177,6 +177,9 @@ class TestReadinessTimeoutAlignment:
             response = client.get("/ready")
             assert response.status_code == 200
 
+            # Verify the response is correct
+            assert response.json() == {"status": "ready"}
+
     def test_binance_health_check_uses_cached_sentinel(self, client):
         """Test that Binance health_check is non-blocking (uses cached sentinel)."""
         with (
@@ -263,12 +266,12 @@ class TestReadinessAggregation:
             patch("tradeengine.api.dispatcher") as mock_dispatcher,
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
-            patch(
-                "tradeengine.api.asyncio.wait_for",
-                side_effect=TimeoutError("Timed out"),
-            ),
         ):
-            mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
+            # Make dispatcher health_check time out by raising TimeoutError
+            async def timeout_health_check():
+                raise TimeoutError("Timed out")
+
+            mock_dispatcher.health_check = timeout_health_check
             mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
 

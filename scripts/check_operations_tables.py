@@ -55,7 +55,7 @@ def check_mysql_operations():
                 table_name = table[0]
 
                 # Get row count for each table
-                cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")
+                cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")  # nosec B608
                 count = cursor.fetchone()[0]
 
                 # Check if it's an operations-related table
@@ -64,7 +64,7 @@ def check_mysql_operations():
                     operations_found = True
 
                     # Get sample data
-                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 3;")
+                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 3;")  # nosec B608
                     sample = cursor.fetchall()
                     if sample:
                         print(f"    📋 Sample data: {sample[0]}")
@@ -86,7 +86,7 @@ def check_mysql_operations():
                 print(f"\n🎯 OPERATIONS TABLES FOUND: {len(operations_tables)}")
                 for table in operations_tables:
                     table_name = table[0]
-                    cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")
+                    cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")  # nosec B608
                     count = cursor.fetchone()[0]
                     print(f"  - {table_name}: {count} rows")
                     operations_found = True
@@ -101,7 +101,7 @@ def check_mysql_operations():
                     print(f"\n📋 {pattern.replace('%', '').upper()} TABLES:")
                     for table in related_tables:
                         table_name = table[0]
-                        cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")
+                        cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")  # nosec B608
                         count = cursor.fetchone()[0]
                         print(f"  - {table_name}: {count} rows")
 

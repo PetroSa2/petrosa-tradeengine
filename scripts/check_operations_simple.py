@@ -74,7 +74,7 @@ def check_mysql_operations():
             all_tables.append(table_name)
 
             # Get row count
-            cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")
+            cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")  # nosec B608
             count = cursor.fetchone()[0]
 
             # Check for operations-related tables
@@ -88,7 +88,7 @@ def check_mysql_operations():
                 print(f"    📝 Columns: {[col[0] for col in columns]}")
 
                 if count > 0:
-                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 3;")
+                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 3;")  # nosec B608
                     samples = cursor.fetchall()
                     print(f"    📋 Sample data: {samples[0] if samples else 'No data'}")
             else:
@@ -107,12 +107,12 @@ def check_mysql_operations():
         if operational_tables:
             print("\n📋 TABLES THAT MIGHT CONTAIN OPERATIONAL DATA:")
             for table_name in operational_tables:
-                cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")
+                cursor.execute(f"SELECT COUNT(*) FROM `{table_name}`;")  # nosec B608
                 count = cursor.fetchone()[0]
                 print(f"  - {table_name}: {count} rows")
 
                 if count > 0:
-                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 1;")
+                    cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 1;")  # nosec B608
                     sample = cursor.fetchone()
                     if sample:
                         print("    📋 Has data: ✅")

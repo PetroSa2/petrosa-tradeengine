@@ -1,28 +1,29 @@
+---
 wing: petrosa_tradeengine
 rooms:
-- name: configuration
-  description: Files from infra/
-- name: contracts
-  description: Files from contracts/
-- name: testing
-  description: Files from tests/
-- name: gemini_notes
-  description: Files from gemini-notes/
-- name: shared
-  description: Files from shared/
-- name: documentation
-  description: Files from docs/
-- name: tradeengine
-  description: Files from tradeengine/
-- name: examples
-  description: Files from examples/
-- name: scripts
-  description: Files from scripts/
-- name: htmlcov
-  description: Files from htmlcov/
-- name: petrosa_tradeengine.egg_info
-  description: Files from petrosa_tradeengine.egg-info/
-- name: backend
-  description: Files from db/
-- name: general
-  description: Files that don't fit other rooms
+  - name: configuration
+    description: Files from infra/
+  - name: contracts
+    description: Files from contracts/
+  - name: testing
+    description: Files from tests/
+  - name: gemini_notes
+    description: Files from gemini-notes/
+  - name: shared
+    description: Files from shared/
+  - name: documentation
+    description: Files from docs/
+  - name: tradeengine
+    description: Files from tradeengine/
+  - name: examples
+    description: Files from examples/
+  - name: scripts
+    description: Files from scripts/
+  - name: htmlcov
+    description: Files from htmlcov/
+  - name: petrosa_tradeengine.egg_info
+    description: Files from petrosa_tradeengine.egg-info/
+  - name: backend
+    description: Files from db/
+  - name: general
+    description: Files that don't fit other rooms

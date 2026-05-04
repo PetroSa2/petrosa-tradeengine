@@ -12,7 +12,7 @@ import asyncio
 # Mock modules before importing api
 import sys
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -58,6 +58,42 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+# --- Helper async functions for mocking health checks ---
+# These are REAL async functions that return actual coroutines when called.
+# This avoids the AsyncMock issue where AsyncMock(return_value={...})() returns
+# a Mock object instead of an awaitable coroutine.
+
+
+async def healthy_check():
+    """Mock health check that returns healthy status."""
+    return {"status": "healthy"}
+
+
+async def unhealthy_check():
+    """Mock health check that returns unhealthy status."""
+    return {"status": "unhealthy", "error": "not initialized"}
+
+
+async def unhealthy_ping_check():
+    """Mock health check that returns unhealthy status for ping failure."""
+    return {"status": "unhealthy", "error": "ping sentinel expired"}
+
+
+async def unhealthy_ping_failed_check():
+    """Mock health check that returns unhealthy status for ping failed."""
+    return {"status": "unhealthy", "error": "ping failed"}
+
+
+async def timeout_check():
+    """Mock health check that raises TimeoutError."""
+    raise TimeoutError("Timed out")
+
+
+async def error_check():
+    """Mock health check that raises RuntimeError."""
+    raise RuntimeError("Database connection lost")
+
+
 # --- AC-1: Readiness failure logs include which component failed and why ---
 
 
@@ -66,24 +102,11 @@ class TestReadinessComponentFailureLogging:
 
     def test_dispatcher_timeout_logs_component_name(self, client):
         """Test that dispatcher timeout is logged with component name."""
-
-        # Create a real async function that raises TimeoutError when awaited
-        async def timeout_health_check():
-            raise TimeoutError("Timed out")
-
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(dispatcher, "health_check", timeout_health_check),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", timeout_check),
+            patch.object(binance_exchange, "health_check", healthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
             patch("tradeengine.api.logger") as mock_logger,
         ):
             # Should return 503
@@ -98,26 +121,9 @@ class TestReadinessComponentFailureLogging:
         """Test that Binance unhealthy status is logged with component name."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(
-                    return_value={
-                        "status": "unhealthy",
-                        "error": "ping sentinel expired",
-                    }
-                ),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", unhealthy_ping_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 503
@@ -128,24 +134,11 @@ class TestReadinessComponentFailureLogging:
 
     def test_simulator_exception_logs_component_and_error(self, client):
         """Test that simulator exception is logged with component name and error."""
-
-        # Create a real async function that raises RuntimeError when awaited
-        async def error_health_check():
-            raise RuntimeError("Database connection lost")
-
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(simulator_exchange, "health_check", error_health_check),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", healthy_check),
+            patch.object(simulator_exchange, "health_check", error_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 503
@@ -160,25 +153,9 @@ class TestReadinessComponentFailureLogging:
         """Test that when all components fail, all names are in the error."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(
-                    return_value={"status": "unhealthy", "error": "not initialized"}
-                ),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "unhealthy", "error": "ping failed"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(
-                    return_value={"status": "unhealthy", "error": "not initialized"}
-                ),
-            ),
+            patch.object(dispatcher, "health_check", unhealthy_check),
+            patch.object(binance_exchange, "health_check", unhealthy_ping_failed_check),
+            patch.object(simulator_exchange, "health_check", unhealthy_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 503
@@ -199,21 +176,9 @@ class TestReadinessTimeoutAlignment:
         """Test that readiness uses 5s timeout (aligned with Binance ping loop)."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", healthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             # Call readiness
             response = client.get("/ready")
@@ -224,28 +189,25 @@ class TestReadinessTimeoutAlignment:
 
     def test_binance_health_check_uses_cached_sentinel(self, client):
         """Test that Binance health_check is non-blocking (uses cached sentinel)."""
-        mock_health = AsyncMock(return_value={"status": "healthy"})
+        call_count = 0
+
+        async def counting_healthy_check():
+            nonlocal call_count
+            call_count += 1
+            return {"status": "healthy"}
 
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(binance_exchange, "health_check", mock_health),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", counting_healthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             # Call readiness
             response = client.get("/ready")
             # Should succeed quickly (non-blocking)
             assert response.status_code == 200
             # Verify health_check was called
-            mock_health.assert_called_once()
+            assert call_count == 1
 
 
 # --- AC-3: Tests for readiness aggregation behavior ---
@@ -258,21 +220,9 @@ class TestReadinessAggregation:
         """Test that all healthy components return {'status': 'ready'}."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", healthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 200
@@ -282,21 +232,9 @@ class TestReadinessAggregation:
         """Test that one unhealthy component returns 503."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "unhealthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", unhealthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 503
@@ -305,21 +243,9 @@ class TestReadinessAggregation:
         """Test that error detail is never empty (regression test for empty logs)."""
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(
-                dispatcher,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "unhealthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", healthy_check),
+            patch.object(binance_exchange, "health_check", unhealthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             response = client.get("/ready")
             assert response.status_code == 503
@@ -333,24 +259,11 @@ class TestReadinessAggregation:
 
     def test_timeout_produces_meaningful_error(self, client):
         """Test that timeout produces a meaningful error message."""
-
-        # Create a real async function that raises TimeoutError when awaited
-        async def timeout_health_check():
-            raise TimeoutError("Timed out")
-
         with (
             patch("shared.constants.validate_mongodb_config"),
-            patch.object(dispatcher, "health_check", timeout_health_check),
-            patch.object(
-                binance_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
-            patch.object(
-                simulator_exchange,
-                "health_check",
-                AsyncMock(return_value={"status": "healthy"}),
-            ),
+            patch.object(dispatcher, "health_check", timeout_check),
+            patch.object(binance_exchange, "health_check", healthy_check),
+            patch.object(simulator_exchange, "health_check", healthy_check),
         ):
             response = client.get("/ready")
             # Error should mention timeout and component

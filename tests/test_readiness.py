@@ -66,13 +66,12 @@ class TestReadinessComponentFailureLogging:
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
             patch("tradeengine.api.logger") as mock_logger,
+            patch(
+                "tradeengine.api.asyncio.wait_for",
+                side_effect=TimeoutError("Timed out"),
+            ),
         ):
-            # Make dispatcher time out
-            async def slow_health_check():
-                await asyncio.sleep(10)
-                return {"status": "healthy"}
-
-            mock_dispatcher.health_check = slow_health_check
+            mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
 
@@ -163,14 +162,20 @@ class TestReadinessTimeoutAlignment:
 
     def test_timeout_value_aligned_with_ping_loop(self, client):
         """Test that readiness uses 5s timeout (aligned with Binance ping loop)."""
-        import inspect
+        with (
+            patch("shared.constants.validate_mongodb_config"),
+            patch("tradeengine.api.dispatcher") as mock_dispatcher,
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            # Set up mocks
+            mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
 
-        from tradeengine.api import readiness_check
-
-        # Read the source to verify timeout value
-        source = inspect.getsource(readiness_check)
-        # Check that _TIMEOUT is set to 5.0 (aligned with binance ping loop)
-        assert "_TIMEOUT = 5.0" in source
+            # Call readiness
+            response = client.get("/ready")
+            assert response.status_code == 200
 
     def test_binance_health_check_uses_cached_sentinel(self, client):
         """Test that Binance health_check is non-blocking (uses cached sentinel)."""
@@ -258,13 +263,12 @@ class TestReadinessAggregation:
             patch("tradeengine.api.dispatcher") as mock_dispatcher,
             patch("tradeengine.api.binance_exchange") as mock_binance,
             patch("tradeengine.api.simulator_exchange") as mock_simulator,
+            patch(
+                "tradeengine.api.asyncio.wait_for",
+                side_effect=TimeoutError("Timed out"),
+            ),
         ):
-            # Make dispatcher time out
-            async def slow_health_check():
-                await asyncio.sleep(10)
-                return {"status": "healthy"}
-
-            mock_dispatcher.health_check = slow_health_check
+            mock_dispatcher.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
             mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
 

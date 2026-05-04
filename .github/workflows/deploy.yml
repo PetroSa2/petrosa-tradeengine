@@ -182,6 +182,8 @@ jobs:
           mkdir -p deployments
           VERSION="${{ needs.create-release.outputs.version }}"
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}"
+          WORKFLOW_URL="${WORKFLOW_URL}/actions/runs/${{ github.run_id }}"
           cat >> deployments/history.log << EOF
           ========================================
           Deployment Record
@@ -190,9 +192,7 @@ jobs:
           Version: $VERSION
           Triggered by: ${{ github.actor }}
           Timestamp: $TIMESTAMP
-          Workflow Run: ${{ github.server_url }}/\
-          ${{ github.repository }}/actions/runs/\
-          ${{ github.run_id }}
+          Workflow Run: ${WORKFLOW_URL}
           ========================================
           EOF
 

@@ -444,33 +444,43 @@ async def readiness_check() -> dict[str, Any]:
         # Using 5s timeout to align with Binance ping loop timeout.
         _TIMEOUT = 5.0
 
-        # Check each component with individual timeout handling to identify WHICH component fails
+        # Define components to check
         components = {
             "dispatcher": dispatcher.health_check(),
             "binance_exchange": binance_exchange.health_check(),
             "simulator_exchange": simulator_exchange.health_check(),
         }
 
-        results = {}
-        for name, coro in components.items():
+        # Helper to check a single component with timeout
+        async def check_component(name: str, coro: Any) -> tuple[str, dict[str, Any]]:
             try:
-                results[name] = await asyncio.wait_for(coro, timeout=_TIMEOUT)
+                result = await asyncio.wait_for(coro, timeout=_TIMEOUT)
+                return (name, result)
             except TimeoutError:
-                logger.error(
-                    f"Readiness check error: Component '{name}' timed out after {_TIMEOUT}s"
-                )
-                results[name] = {
+                error_result = {
                     "status": "unhealthy",
                     "error": f"Timeout after {_TIMEOUT}s",
                 }
-            except Exception as e:
                 logger.error(
-                    f"Readiness check error: Component '{name}' failed: {type(e).__name__}: {e}"
+                    f"Readiness check error: Component '{name}' timed out after {_TIMEOUT}s"
                 )
-                results[name] = {
+                return (name, error_result)
+            except Exception as e:
+                error_result = {
                     "status": "unhealthy",
                     "error": str(e) or f"{type(e).__name__}",
                 }
+                logger.error(
+                    f"Readiness check error: Component '{name}' failed: {type(e).__name__}: {e}"
+                )
+                return (name, error_result)
+
+        # Run all checks concurrently
+        tasks = [check_component(name, coro) for name, coro in components.items()]
+        results_list = await asyncio.gather(*tasks)
+
+        # Convert to dict
+        results = dict(results_list)
 
         # Check overall readiness
         all_healthy = all(r.get("status") == "healthy" for r in results.values())

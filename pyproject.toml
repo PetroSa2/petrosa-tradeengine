@@ -62,12 +62,6 @@ extend-exclude = '''
 )/
 '''
 
-[tool.isort]
-profile = "black"
-line_length = 88
-known_first_party = ["contracts", "shared", "tradeengine", "otel_init"]
-combine_as_imports = true
-
 [tool.flake8]
 ignore = ["E501", "W503"]
 

@@ -1,7 +1,7 @@
 ---
 name: Deploy
 
-"on":
+on:
   push:
     branches: ['main']
   workflow_dispatch:
@@ -45,11 +45,10 @@ jobs:
       - name: Set version
         id: version
         run: |
-          # Extract version from pyproject.toml
-          RAW_VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)
-          BASE_VERSION="v${RAW_VERSION}"
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          VERSION="${BASE_VERSION}-r${{ github.run_number }}-${SHORT_SHA}"
+          RAW="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml)"
+          BASE="v${RAW}"
+          SHORT="$(echo '${{ github.sha }}' | cut -c1-7)"
+          VERSION="${BASE}-r${{ github.run_number }}-${SHORT}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
@@ -118,7 +117,7 @@ jobs:
           app_id: ${{ secrets.GITOPS_APP_ID }}
           private_key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
           installation_retrieval_mode: id
-          installation_retrieval_payload: ${{ secrets.GITOPS_APP_INSTALLATION_ID }}  # yamllint disable-line rule:line-length
+          installation_retrieval_payload: ${{ secrets.GITOPS_APP_INSTALLATION_ID }}
 
       - name: Checkout petrosa_k8s
         uses: actions/checkout@v4
@@ -135,25 +134,17 @@ jobs:
       - name: Update tradeengine image tag in GitOps manifests
         run: |
           VERSION="${{ needs.build-and-push.outputs.version }}"
-          # Update the image tag in manifests robustly
           find petrosa_k8s/k8s/tradeengine -type f \
-            \( -name "*.yaml" -o -name "*.yml" \) \
-            -print0 | xargs -0 -r sed -E -i \
-            "s|(image:[[:space:]]*)([^[:space:]]*/)?(petrosa-tradeengine)"\
-            ":[^[:space:]]*|\1\2\3:$VERSION|g"
-
-          # Update version labels specifically
+            \( -name "*.yaml" -o -name "*.yml" \) -print0 | \
+            xargs -0 -r sed -E -i \
+            "s|(image:[[:space:]]*)([^[:space:]]*/)?(petrosa-tradeengine):[^[:space:]]*|\1\2:\3:$VERSION|g"
           find petrosa_k8s/k8s/tradeengine -type f \
-            \( -name "*.yaml" -o -name "*.yml" \) \
-            -print0 | xargs -0 -r sed -E -i \
-            "s/^([[:space:]]*(version|app\.kubernetes\.io\/version))"\
-            ":.*/\1: $VERSION/g"
-
-          # Also handle any lingering placeholders for backward compatibility
+            \( -name "*.yaml" -o -name "*.yml" \) -print0 | \
+            xargs -0 -r sed -E -i \
+            "s/^([[:space:]]*(version|app\.kubernetes\.io\/version)):.*/\1: $VERSION/g"
           find petrosa_k8s/k8s/tradeengine -type f \
-            \( -name "*.yaml" -o -name "*.yml" \) \
-            -print0 | xargs -0 -r sed -i "s/VERSION_PLACEHOLDER/$VERSION/g"
-
+            \( -name "*.yaml" -o -name "*.yml" \) -print0 | \
+            xargs -0 -r sed -i "s/VERSION_PLACEHOLDER/$VERSION/g"
           echo "Updated tradeengine image tag to $VERSION"
 
       - name: Commit and push to petrosa_k8s
@@ -163,11 +154,9 @@ jobs:
           git config user.email "gitops-bot@users.noreply.github.com"
           git add k8s/tradeengine/
           if git diff --staged --quiet; then
-            echo "No changes to commit (version might already be up to date)"
+            echo "No changes to commit"
           else
-            git commit -m \
-              "gitops: tradeengine image "\
-              "${{ needs.build-and-push.outputs.version }}"
+            git commit -m "gitops: tradeengine ${{ needs.build-and-push.outputs.version }}"
             git push origin main
           fi
 
@@ -181,19 +170,18 @@ jobs:
         run: |
           mkdir -p deployments
           VERSION="${{ needs.create-release.outputs.version }}"
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}"
-          WORKFLOW_URL="${WORKFLOW_URL}/actions/runs/${{ github.run_id }}"
-          cat >> deployments/history.log << EOF
-          ========================================
+          TIMESTAMP="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          WORKFLOW_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          cat >> deployments/history.log <<EOF
+          =======================================
           Deployment Record
-          ========================================
+          =======================================
           Service: tradeengine
           Version: $VERSION
           Triggered by: ${{ github.actor }}
           Timestamp: $TIMESTAMP
-          Workflow Run: ${WORKFLOW_URL}
-          ========================================
+          Workflow Run: $WORKFLOW_URL
+          =======================================
           EOF
 
       - name: Upload deployment history artifact
@@ -205,19 +193,16 @@ jobs:
       - name: Notify Deployment Status
         run: |
           VERSION="${{ needs.create-release.outputs.version }}"
-
-          if [ "${{ needs.gitops-update.result }}" == "success" ]; then
-            echo "✅ Build, Push, and GitOps Update successful!"
-            echo "📦 Version: ${VERSION}"
-            echo "🚀 Deployed via petrosa_k8s hub"
-          elif [ "${{ needs.gitops-update.result }}" == "skipped" ] && \
-               [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "ℹ️ PR: Build and Push successful (GitOps update skipped)"
-            echo "📦 Version: ${VERSION}"
+          if [ "${{ needs.gitops-update.result }}" = "success" ]; then
+            echo "Build, Push, and GitOps Update successful!"
+            echo "Version: ${VERSION}"
+          elif [ "${{ needs.gitops-update.result }}" = "skipped" ] && \
+               [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "PR: Build and Push successful (GitOps skipped)"
+            echo "Version: ${VERSION}"
           else
-            echo "❌ GitOps Update failed (or was unsuccessful)!"
-            echo "📦 Version: ${VERSION}"
-            echo "🐳 Image pushed, but manifest update in petrosa_k8s failed."
+            echo "GitOps Update failed!"
+            echo "Version: ${VERSION}"
           fi
 
   cleanup:

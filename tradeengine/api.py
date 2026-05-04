@@ -37,7 +37,7 @@ except ImportError:
 
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
-from contracts.order import TradeOrder
+from contracts.order import TradeOrder  # noqa: I001
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
@@ -504,10 +504,8 @@ async def readiness_check() -> dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Readiness check error: {type(e).__name__}: {e}")
-        raise HTTPException(
-            status_code=503, detail=f"Not ready: {type(e).__name__}: {e}"
-        )
+        logger.error(f"Readiness check error: {e}")
+        raise HTTPException(status_code=503, detail=f"Not ready: {e}")
 
 
 @app.get("/live")

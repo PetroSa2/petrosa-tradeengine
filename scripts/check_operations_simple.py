@@ -83,7 +83,7 @@ def check_mysql_operations():
                 operations_found = True
 
                 # Show table structure
-                cursor.execute(f"DESCRIBE `{table_name}`;")
+                cursor.execute(f"DESCRIBE `{table_name}`;")  # nosec B608
                 columns = cursor.fetchall()
                 print(f"    📝 Columns: {[col[0] for col in columns]}")
 

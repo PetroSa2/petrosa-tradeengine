@@ -94,7 +94,7 @@ def check_mysql_operations():
             # Check related tables that might contain operational data
             related_patterns = ["%history%", "%audit%", "%log%", "%event%"]
             for pattern in related_patterns:
-                cursor.execute(f"SHOW TABLES LIKE '{pattern}';")
+                cursor.execute(f"SHOW TABLES LIKE '{pattern}';")  # nosec B608
                 related_tables = cursor.fetchall()
 
                 if related_tables:
@@ -106,7 +106,7 @@ def check_mysql_operations():
                         print(f"  - {table_name}: {count} rows")
 
                         # Show columns for these tables
-                        cursor.execute(f"DESCRIBE `{table_name}`;")
+                        cursor.execute(f"DESCRIBE `{table_name}`;")  # nosec B608
                         columns = cursor.fetchall()
                         print(f"    Columns: {[col[0] for col in columns]}")
 

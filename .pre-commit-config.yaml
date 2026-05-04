@@ -14,7 +14,6 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
         name: ⚡ Ruff Formatter
-        args: [--check]
 
   # ==================================================================
   # SECURITY - Gitleaks (Official Hook)
@@ -33,8 +32,8 @@ repos:
     hooks:
       - id: bandit
         name: 🔐 Bandit (Python Security)
-        args: [-ll, -c, .bandit]
-        exclude: ^(tests/|venv/|\.venv/)
+        args: [-ll, -r, --exclude, tests/, --configfile, .bandit]
+        files: \.py$
 
   # ==================================================================
   # LINTING - YAML & TOML

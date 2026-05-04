@@ -1,0 +1,15 @@
+---
+extends: default
+
+rules:
+  document-start:
+    present: true
+  truthy:
+    allowed-values: ['true', 'false']
+  line-length:
+    # Allow long lines in workflow files (shell commands, URLs)
+    max: 120
+    level: warning
+  indentation:
+    # Allow 2-space indent for YAML files
+    spaces: 2

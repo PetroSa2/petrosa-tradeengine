@@ -226,24 +226,21 @@ pipeline:
 	@echo "1️⃣ Installing dependencies..."
 	$(MAKE) install-dev
 	@echo ""
-	@echo "2️⃣ Running pre-commit checks..."
-	$(MAKE) pre-commit
-	@echo ""
-	@echo "3️⃣ Running code quality checks..."
+	@echo "2️⃣ Running code quality checks..."
 	$(MAKE) format
 	$(MAKE) lint
 	$(MAKE) type-check
 	@echo ""
-	@echo "4️⃣ Running tests..."
+	@echo "3️⃣ Running tests..."
 	$(MAKE) test
 	@echo ""
-	@echo "5️⃣ Running security scans..."
+	@echo "4️⃣ Running security scans..."
 	$(MAKE) security
 	@echo ""
-	@echo "6️⃣ Building Docker image..."
+	@echo "5️⃣ Building Docker image..."
 	$(MAKE) build
 	@echo ""
-	@echo "7️⃣ Testing container..."
+	@echo "6️⃣ Testing container..."
 	$(MAKE) container
 	@echo ""
 	@echo "✅ Pipeline completed successfully!"

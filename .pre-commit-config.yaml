@@ -1,3 +1,4 @@
+---
 # Golden Pre-Commit Configuration for Petrosa (v3.0)
 # Use: copy to .pre-commit-config.yaml in any Petrosa repo
 
@@ -31,8 +32,8 @@ repos:
     hooks:
       - id: bandit
         name: 🔐 Bandit (Python Security)
-        args: [-ll, -r, .]
-        exclude: ^tests/
+        args: [-ll, -r, --exclude, tests/, --configfile, .bandit]
+        files: \.py$
 
   # ==================================================================
   # LINTING - YAML & TOML

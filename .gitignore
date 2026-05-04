@@ -297,6 +297,7 @@ temp/
 .coverage
 htmlcov/
 coverage.json
+bandit-report.json
 
 # Monitoring and metrics
 prometheus-data/

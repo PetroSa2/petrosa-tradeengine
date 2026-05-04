@@ -37,7 +37,7 @@ except ImportError:
 
 # Import Pyroscope profiling initialization
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
-from contracts.order import TradeOrder
+from contracts.order import TradeOrder  # noqa: I001
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
@@ -427,30 +427,82 @@ async def get_distributed_state() -> dict[str, Any]:
 
 @app.get("/ready")
 async def readiness_check() -> dict[str, Any]:
-    """Readiness probe for Kubernetes"""
+    """Readiness probe for Kubernetes
+
+    Checks all critical components concurrently with per-component timeout handling.
+    Logs which component failed and why - never produces empty error messages.
+    """
     try:
         # Validate MongoDB configuration first
         from shared.constants import validate_mongodb_config
 
         validate_mongodb_config()
 
-        _TIMEOUT = 3.0
-        # Run all component checks concurrently, each bounded to avoid event loop stalls.
-        # Total wall-clock time is max(_TIMEOUT, slowest_check) not sum of timeouts.
-        dispatcher_ready, binance_ready, simulator_ready = await asyncio.gather(
-            asyncio.wait_for(dispatcher.health_check(), timeout=_TIMEOUT),
-            asyncio.wait_for(binance_exchange.health_check(), timeout=_TIMEOUT),
-            asyncio.wait_for(simulator_exchange.health_check(), timeout=_TIMEOUT),
-        )
+        # Timeout alignment: Binance health_check() is NON-BLOCKING (cached ping sentinel
+        # with _PING_TTL=30s). The background ping loop runs every 20s with 5s timeout.
+        # Dispatcher and simulator health checks are also expected to be fast.
+        # Using 5s timeout to align with Binance ping loop timeout.
+        _TIMEOUT = 5.0
 
-        if (
-            dispatcher_ready.get("status") == "healthy"
-            and binance_ready.get("status") == "healthy"
-            and simulator_ready.get("status") == "healthy"
-        ):
+        # Define components to check
+        components = {
+            "dispatcher": dispatcher.health_check(),
+            "binance_exchange": binance_exchange.health_check(),
+            "simulator_exchange": simulator_exchange.health_check(),
+        }
+
+        # Helper to check a single component with timeout
+        async def check_component(name: str, coro: Any) -> tuple[str, dict[str, Any]]:
+            try:
+                result = await asyncio.wait_for(coro, timeout=_TIMEOUT)
+                return (name, result)
+            except TimeoutError:
+                error_result = {
+                    "status": "unhealthy",
+                    "error": f"Timeout after {_TIMEOUT}s",
+                }
+                logger.error(
+                    f"Readiness check error: Component '{name}' timed out after {_TIMEOUT}s"
+                )
+                return (name, error_result)
+            except Exception as e:
+                error_result = {
+                    "status": "unhealthy",
+                    "error": str(e) or f"{type(e).__name__}",
+                }
+                logger.error(
+                    f"Readiness check error: Component '{name}' failed: {type(e).__name__}: {e}"
+                )
+                return (name, error_result)
+
+        # Run all checks concurrently
+        tasks = [check_component(name, coro) for name, coro in components.items()]
+        results_list = await asyncio.gather(*tasks)
+
+        # Convert to dict
+        results = dict(results_list)
+
+        # Check overall readiness
+        all_healthy = all(r.get("status") == "healthy" for r in results.values())
+
+        if all_healthy:
             return {"status": "ready"}
         else:
-            raise HTTPException(status_code=503, detail="Components not ready")
+            # Build detailed error message with component status
+            failed_components = {
+                name: r for name, r in results.items() if r.get("status") != "healthy"
+            }
+            error_details = []
+            for name, status in failed_components.items():
+                error_msg = status.get("error", "Unknown error")
+                error_details.append(f"{name}: {error_msg}")
+
+            detail = f"Components not ready: {', '.join(error_details)}"
+            logger.error(f"Readiness check failed: {detail}")
+            raise HTTPException(status_code=503, detail=detail)
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Readiness check error: {e}")
         raise HTTPException(status_code=503, detail=f"Not ready: {e}")

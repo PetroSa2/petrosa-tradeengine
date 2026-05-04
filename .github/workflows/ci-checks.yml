@@ -1,7 +1,8 @@
+---
 name: CI Checks
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: 'true'
   push:
     branches: [main, develop]
   pull_request:

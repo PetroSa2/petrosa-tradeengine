@@ -31,7 +31,7 @@ except ImportError:
 
 # Internal OTEL logging helpers can vary by version
 try:
-    from opentelemetry._logs import std_to_otel
+    from opentelemetry._logs import std_to_otel  # type: ignore
 except ImportError:
     std_to_otel = None
 
@@ -702,9 +702,9 @@ async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
         try:
             # Process the order through the dispatcher
             result = await dispatcher.execute_order(order)
-            span.set_attribute("order.status", result.get("status", "unknown"))
+            span.set_attribute("order.status", str(result.get("status", "unknown")))
             if result.get("order_id"):
-                span.set_attribute("order.exchange_id", result.get("order_id"))
+                span.set_attribute("order.exchange_id", str(result.get("order_id")))
             span.set_status(trace.Status(trace.StatusCode.OK))
             return {
                 "status": "success",

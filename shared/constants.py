@@ -8,7 +8,7 @@ import warnings
 from datetime import datetime, timezone
 
 try:
-    from datetime import UTC
+    from datetime import UTC as UTC
 except ImportError:
     from datetime import timezone
 
@@ -27,9 +27,6 @@ except ImportError:
 
 # Configure local logger for validation warnings
 logger = logging.getLogger(__name__)
-
-# Timezone
-UTC = UTC
 
 
 class Environment(StrEnum):

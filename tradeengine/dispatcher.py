@@ -79,7 +79,7 @@ class OCOManager:
         self.active_oco_pairs: dict[
             str, list[dict[str, Any]]
         ] = {}  # exchange_position_key -> [oco_info, ...]
-        self.monitoring_task: asyncio.Task | None = None
+        self.monitoring_task: asyncio.Task[Any] | None = None
         self.monitoring_active = False
 
     async def place_oco_orders(
@@ -630,7 +630,7 @@ class OCOManager:
         # SL/TP orders are placed via Binance Algo Order API (algoType=CONDITIONAL),
         # so they appear in openAlgoOrders (algoId), not futures_get_open_orders.
         # Testnet may not support openAlgoOrders — fall back to standard open orders.
-        open_orders: list[dict] = []
+        open_orders: list[dict[str, Any]] = []
         try:
             open_orders = await self.exchange.get_open_algo_orders()
             self.logger.info(
@@ -654,8 +654,10 @@ class OCOManager:
                 )
                 return 0
 
-        sl_orders: dict[str, list[dict]] = {}  # key: "SYMBOL_SIDE" -> list of orders
-        tp_orders: dict[str, list[dict]] = {}
+        sl_orders: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # key: "SYMBOL_SIDE" -> list of orders
+        tp_orders: dict[str, list[dict[str, Any]]] = {}
 
         for o in open_orders:
             order_type = o.get("type", o.get("orderType", ""))
@@ -962,7 +964,7 @@ class OCOManager:
         position_id: str,
         filled_order_id: str,
         close_reason: str,
-        oco_info: dict,
+        oco_info: dict[str, Any],
         dispatcher,
     ) -> None:
         """Close ONLY the owning strategy's position when its OCO completes
@@ -2542,7 +2544,7 @@ class Dispatcher:
             # Fallback to order.target_price if fill_price is missing or zero
             entry_price_raw = result.get("fill_price")
 
-            def is_zero(val):
+            def is_zero(val: Any) -> bool:
                 if not val:
                     return True
                 try:
@@ -2662,7 +2664,7 @@ class Dispatcher:
                 # Fallback to order.target_price if fill_price is missing or zero
                 entry_price_raw = result.get("fill_price")
 
-                def is_zero(val):
+                def is_zero(val: Any) -> bool:
                     if not val:
                         return True
                     try:
@@ -3234,7 +3236,7 @@ class Dispatcher:
                 "NEW",
             ]:
                 sl_result["stop_price"] = original_order.stop_loss
-                return sl_result
+                return sl_result  # type: ignore
 
             # Check if it's the "would immediately trigger" error
             error_msg = str(sl_result.get("error", ""))
@@ -3254,7 +3256,7 @@ class Dispatcher:
                     self.logger.error(
                         "Cannot calculate adjusted SL: invalid entry price"
                     )
-                    return sl_result
+                    return sl_result  # type: ignore
 
                 is_long = original_order.side == "buy"
                 if is_long:
@@ -3284,7 +3286,7 @@ class Dispatcher:
                         f"(moved from {original_order.stop_loss})"
                     )
                     sl_result["stop_price"] = adjusted_sl
-                    return sl_result
+                    return sl_result  # type: ignore
 
                 # Attempt 3: Use a wider adjustment (2% from entry)
                 if is_long:
@@ -3310,17 +3312,17 @@ class Dispatcher:
                         f"(moved from {original_order.stop_loss})"
                     )
                     sl_result["stop_price"] = adjusted_sl
-                    return sl_result
+                    return sl_result  # type: ignore
 
                 # If all attempts fail, log critical warning but return result
                 self.logger.error(
                     f"❌ CRITICAL: All SL placement attempts failed for {original_order.symbol}. "
                     f"Position is NOT PROTECTED by stop loss!"
                 )
-                return sl_result
+                return sl_result  # type: ignore
 
             # For other errors, return the original result
-            return sl_result
+            return sl_result  # type: ignore
 
         except Exception as e:
             self.logger.error(f"❌ Exception in SL fallback logic: {e}", exc_info=True)

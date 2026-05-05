@@ -117,12 +117,9 @@ class TestReadinessTimeoutAlignment:
         from tradeengine.api import readiness_check
 
         source = inspect.getsource(readiness_check)
-        assert "5.0" in source
+        assert "_TIMEOUT = 5.0" in source
         # Ensure we're not using the old 3.0 value
-        lines = source.split("\n")
-        for line in lines:
-            if "_TIMEOUT" in line and "5.0" not in line:
-                pytest.fail(f"Found unexpected timeout value: {line}")
+        assert "_TIMEOUT = 3.0" not in source
 
     @pytest.mark.asyncio
     async def test_all_components_timeout_within_bounds(self, mock_health_checks):

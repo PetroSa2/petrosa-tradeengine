@@ -1,9 +1,14 @@
 # Bandit configuration file in YAML format
-tests:
+skips:
+  - B101  # assert_used
   - B104  # hardcoded_bind_all_interfaces
+  - B105  # hardcoded_password_string
+  - B311  # pseudo-random generators
+  - B608  # hardcoded_sql_expressions
 
 exclude_dirs:
   - tests/
+  - scripts/
   - .venv/
   - venv/
   - htmlcov/

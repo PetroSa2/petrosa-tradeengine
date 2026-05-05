@@ -3227,7 +3227,11 @@ class Dispatcher:
             self.logger.info(
                 f"🔄 Attempt 1: Placing SL at original price {original_order.stop_loss}"
             )
-            sl_result = await self.exchange.execute(stop_loss_order)
+            from typing import cast
+
+            sl_result = cast(
+                dict[str, Any], await self.exchange.execute(stop_loss_order)
+            )
 
             if sl_result.get("status") in [
                 "filled",
@@ -3236,7 +3240,7 @@ class Dispatcher:
                 "NEW",
             ]:
                 sl_result["stop_price"] = original_order.stop_loss
-                return sl_result  # type: ignore
+                return sl_result
 
             # Check if it's the "would immediately trigger" error
             error_msg = str(sl_result.get("error", ""))
@@ -3256,7 +3260,7 @@ class Dispatcher:
                     self.logger.error(
                         "Cannot calculate adjusted SL: invalid entry price"
                     )
-                    return sl_result  # type: ignore
+                    return sl_result
 
                 is_long = original_order.side == "buy"
                 if is_long:
@@ -3273,7 +3277,9 @@ class Dispatcher:
 
                 # Update stop loss order with adjusted price
                 stop_loss_order.stop_loss = adjusted_sl
-                sl_result = await self.exchange.execute(stop_loss_order)
+                sl_result = cast(
+                    dict[str, Any], await self.exchange.execute(stop_loss_order)
+                )
 
                 if sl_result.get("status") in [
                     "filled",
@@ -3286,7 +3292,7 @@ class Dispatcher:
                         f"(moved from {original_order.stop_loss})"
                     )
                     sl_result["stop_price"] = adjusted_sl
-                    return sl_result  # type: ignore
+                    return sl_result
 
                 # Attempt 3: Use a wider adjustment (2% from entry)
                 if is_long:
@@ -3299,7 +3305,9 @@ class Dispatcher:
                 )
 
                 stop_loss_order.stop_loss = adjusted_sl
-                sl_result = await self.exchange.execute(stop_loss_order)
+                sl_result = cast(
+                    dict[str, Any], await self.exchange.execute(stop_loss_order)
+                )
 
                 if sl_result.get("status") in [
                     "filled",
@@ -3312,17 +3320,17 @@ class Dispatcher:
                         f"(moved from {original_order.stop_loss})"
                     )
                     sl_result["stop_price"] = adjusted_sl
-                    return sl_result  # type: ignore
+                    return sl_result
 
                 # If all attempts fail, log critical warning but return result
                 self.logger.error(
                     f"❌ CRITICAL: All SL placement attempts failed for {original_order.symbol}. "
                     f"Position is NOT PROTECTED by stop loss!"
                 )
-                return sl_result  # type: ignore
+                return sl_result
 
             # For other errors, return the original result
-            return sl_result  # type: ignore
+            return sl_result
 
         except Exception as e:
             self.logger.error(f"❌ Exception in SL fallback logic: {e}", exc_info=True)

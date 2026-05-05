@@ -2110,9 +2110,11 @@ class Dispatcher:
             position_size_pct=current_signal.position_size_pct,
             created_at=current_signal.timestamp,
             updated_at=current_signal.timestamp,
-            simulate=current_signal.meta.get("simulate", False)
-            if current_signal.meta
-            else False,
+            simulate=(
+                current_signal.meta.get("simulate", False)
+                if current_signal.meta
+                else False
+            ),
             # Hedge mode position tracking
             position_id=position_id,
             position_side=position_side,

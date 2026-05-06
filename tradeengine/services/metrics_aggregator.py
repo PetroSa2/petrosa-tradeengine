@@ -30,7 +30,7 @@ class MetricsAggregator:
     - Historical data (> 24h): Query MongoDB (if available)
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize metrics aggregator"""
         self.cache: dict[str, Any] = {}
         self.cache_ttl_seconds = 60  # Cache metrics for 1 minute
@@ -102,7 +102,9 @@ class MetricsAggregator:
                     datetime.now(UTC) - cached_time
                 ).total_seconds() < self.cache_ttl_seconds:
                     logger.debug(f"Returning cached metrics for key: {cache_key}")
-                    return cached_data
+                    from typing import cast
+
+                    return cast(dict[str, Any], cached_data)
 
             # Calculate time window
             end_time = datetime.now(UTC)

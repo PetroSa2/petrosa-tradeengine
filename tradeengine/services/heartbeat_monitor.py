@@ -59,7 +59,7 @@ class HeartbeatMonitor:
         self.consecutive_heartbeats: int = 0
         self.restricted_mode: bool = False
         self.is_running: bool = False
-        self._monitor_task: asyncio.Task | None = None
+        self._monitor_task: asyncio.Task[Any] | None = None
 
     async def start(self) -> None:
         """Start the monitor and subscribe to heartbeats."""

@@ -541,9 +541,11 @@ class LLMProcessor:
             "signal": signal,
             "order_params": order_params,
             "confidence": reasoning.get("confidence", signal.confidence),
-            "reason": "LLM reasoning approved signal"
-            if signal.source != "petrosa-cio"
-            else "CIO audit trusted",
+            "reason": (
+                "LLM reasoning approved signal"
+                if signal.source != "petrosa-cio"
+                else "CIO audit trusted"
+            ),
             "llm_reasoning": reasoning,
         }
 

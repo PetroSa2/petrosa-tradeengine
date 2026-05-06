@@ -10,11 +10,7 @@ from typing import Any
 
 from contracts.order import TradeOrder
 from shared.audit import audit_logger
-from shared.constants import (
-    CONDITIONAL_ORDER_TIMEOUT,
-    PRICE_MONITORING_INTERVAL,
-    UTC,
-)
+from shared.constants import CONDITIONAL_ORDER_TIMEOUT, PRICE_MONITORING_INTERVAL, UTC
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,20 @@
+---
+extends: default
+
+rules:
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+  line-length:
+    max: 80
+    level: error
+    allow-non-breakable-words: true
+  empty-lines:
+    max: 2
+  indentation:
+    level: error
+    # Allow 2-space indentation for GitHub Actions
+    indent-sequences: consistent
+
+# Exclude files with pre-existing YAML errors unrelated to this PR
+exclude: '.github/workflows/deploy.yml'

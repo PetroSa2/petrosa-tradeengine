@@ -8,7 +8,7 @@ import warnings
 from datetime import datetime, timezone
 
 try:
-    from datetime import UTC
+    from datetime import UTC as UTC
 except ImportError:
     from datetime import timezone
 
@@ -27,9 +27,6 @@ except ImportError:
 
 # Configure local logger for validation warnings
 logger = logging.getLogger(__name__)
-
-# Timezone
-UTC = UTC
 
 
 class Environment(StrEnum):
@@ -192,15 +189,19 @@ BINANCE_BASE_URL = os.getenv(
 )
 BINANCE_FUTURES_BASE_URL = os.getenv(
     "BINANCE_FUTURES_BASE_URL",
-    "https://testnet.binancefuture.com"
-    if BINANCE_TESTNET
-    else "https://fapi.binance.com",
+    (
+        "https://testnet.binancefuture.com"
+        if BINANCE_TESTNET
+        else "https://fapi.binance.com"
+    ),
 )
 BINANCE_WS_URL = os.getenv(
     "BINANCE_WS_URL",
-    "wss://testnet.binance.vision/ws"
-    if BINANCE_TESTNET
-    else "wss://stream.binance.com:9443/ws",
+    (
+        "wss://testnet.binance.vision/ws"
+        if BINANCE_TESTNET
+        else "wss://stream.binance.com:9443/ws"
+    ),
 )
 BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT", "10"))
 BINANCE_RETRY_ATTEMPTS = int(os.getenv("BINANCE_RETRY_ATTEMPTS", "3"))

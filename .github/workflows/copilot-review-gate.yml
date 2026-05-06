@@ -17,6 +17,8 @@
 name: copilot-review
 
 on:
+  pull_request:
+    types: [synchronize]
   pull_request_review:
     types: [submitted, edited, dismissed]
   workflow_run:
@@ -56,6 +58,9 @@ jobs:
 
             async function resolvePullRequest() {
               if (context.eventName === 'pull_request_review') {
+                return context.payload.pull_request;
+              }
+              if (context.eventName === 'pull_request') {
                 return context.payload.pull_request;
               }
               if (context.eventName === 'workflow_run') {

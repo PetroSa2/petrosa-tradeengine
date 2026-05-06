@@ -31,7 +31,7 @@ except ImportError:
 
 # Internal OTEL logging helpers can vary by version
 try:
-    from opentelemetry._logs import std_to_otel
+    from opentelemetry._logs import std_to_otel  # type: ignore
 except ImportError:
     std_to_otel = None
 
@@ -427,33 +427,80 @@ async def get_distributed_state() -> dict[str, Any]:
 
 @app.get("/ready")
 async def readiness_check() -> dict[str, Any]:
-    """Readiness probe for Kubernetes"""
+    """Readiness probe for Kubernetes.
+
+    Checks all critical components concurrently and returns detailed
+    error information if any component is not healthy.
+    """
     try:
         # Validate MongoDB configuration first
         from shared.constants import validate_mongodb_config
 
         validate_mongodb_config()
 
-        _TIMEOUT = 3.0
-        # Run all component checks concurrently, each bounded to avoid event loop stalls.
-        # Total wall-clock time is max(_TIMEOUT, slowest_check) not sum of timeouts.
-        dispatcher_ready, binance_ready, simulator_ready = await asyncio.gather(
-            asyncio.wait_for(dispatcher.health_check(), timeout=_TIMEOUT),
-            asyncio.wait_for(binance_exchange.health_check(), timeout=_TIMEOUT),
-            asyncio.wait_for(simulator_exchange.health_check(), timeout=_TIMEOUT),
+        # Timeout aligned with Binance ping sentinel (_PING_TTL=30s)
+        # Using 5.0s to allow for network latency while staying well under 30s
+        _TIMEOUT = 5.0
+
+        async def check_component(name: str, coro: Any) -> tuple[str, dict[str, Any]]:
+            """Check a single component with timeout and error handling."""
+            try:
+                result = await asyncio.wait_for(coro, timeout=_TIMEOUT)
+                if result.get("status") == "healthy":
+                    return name, {"status": "healthy"}
+                return name, {"status": "unhealthy", "detail": result}
+            except TimeoutError:
+                return name, {
+                    "status": "timeout",
+                    "detail": f"Component {name} timed out after {_TIMEOUT}s",
+                }
+            except Exception as e:
+                return name, {
+                    "status": "error",
+                    "detail": f"Component {name} error: {e!s}",
+                }
+
+        # Run all component checks concurrently
+        results = await asyncio.gather(
+            check_component("dispatcher", dispatcher.health_check()),
+            check_component("binance", binance_exchange.health_check()),
+            check_component("simulator", simulator_exchange.health_check()),
         )
 
-        if (
-            dispatcher_ready.get("status") == "healthy"
-            and binance_ready.get("status") == "healthy"
-            and simulator_ready.get("status") == "healthy"
-        ):
-            return {"status": "ready"}
-        else:
-            raise HTTPException(status_code=503, detail="Components not ready")
+        # Convert to dict for easy lookup
+        component_status = {name: status for name, status in results}
+
+        # Check if all components are healthy
+        all_healthy = all(
+            status.get("status") == "healthy" for status in component_status.values()
+        )
+
+        if all_healthy:
+            return {"status": "ready", "components": component_status}
+
+        # Build detailed error message with component details
+        failed_components = {
+            name: status
+            for name, status in component_status.items()
+            if status.get("status") != "healthy"
+        }
+
+        error_details = []
+        for name, status in failed_components.items():
+            detail = status.get("detail", status.get("status", "unknown"))
+            error_details.append(f"{name}: {detail}")
+
+        error_msg = "; ".join(error_details)
+        logger.error(f"Readiness check failed: {error_msg}")
+        raise HTTPException(
+            status_code=503, detail=f"Components not ready: {error_msg}"
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Readiness check error: {e}")
-        raise HTTPException(status_code=503, detail=f"Not ready: {e}")
+        logger.error(f"Readiness check unexpected error: {e}")
+        raise HTTPException(status_code=503, detail=f"Not ready: {e!s}")
 
 
 @app.get("/live")
@@ -655,9 +702,9 @@ async def place_advanced_order(order: TradeOrder) -> dict[str, Any]:
         try:
             # Process the order through the dispatcher
             result = await dispatcher.execute_order(order)
-            span.set_attribute("order.status", result.get("status", "unknown"))
+            span.set_attribute("order.status", str(result.get("status", "unknown")))
             if result.get("order_id"):
-                span.set_attribute("order.exchange_id", result.get("order_id"))
+                span.set_attribute("order.exchange_id", str(result.get("order_id")))
             span.set_status(trace.Status(trace.StatusCode.OK))
             return {
                 "status": "success",

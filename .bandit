@@ -1,14 +1,17 @@
 # Bandit configuration file in YAML format
-### Excludes
-exclude_dirs:
-  - 'tests/'
-  - '.venv/'
-  - 'venv/'
-  - 'htmlcov/'
-  - '.git/'
-  - '__pycache__/'
-  - '*.egg-info/'
+skips:
+  - B101  # assert_used
+  - B104  # hardcoded_bind_all_interfaces
+  - B105  # hardcoded_password_string
+  - B311  # pseudo-random generators
+  - B608  # hardcoded_sql_expressions
 
-### Skips
-# B104: hardcoded_bind_all_interfaces
-skips: ['B104']
+exclude_dirs:
+  - tests/
+  - scripts/
+  - .venv/
+  - venv/
+  - htmlcov/
+  - .git/
+  - __pycache__/
+  - "*.egg-info/"

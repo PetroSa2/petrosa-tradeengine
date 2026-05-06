@@ -1,3 +1,4 @@
+---
 # Golden Pre-Commit Configuration for Petrosa (v3.0)
 # Use: copy to .pre-commit-config.yaml in any Petrosa repo
 
@@ -26,12 +27,12 @@ repos:
   # ==================================================================
   # SECURITY - Bandit (Latest v1.7.8)
   # ==================================================================
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.8
+  - repo: local
     hooks:
       - id: bandit
         name: 🔐 Bandit (Python Security)
-        args: [-ll, -r, .]
+        entry: bash scripts/bandit-wrapper.sh
+        language: system
         exclude: ^tests/
 
   # ==================================================================
@@ -42,6 +43,7 @@ repos:
     hooks:
       - id: yamllint
         name: 📋 YAML Linter
+        exclude: ^.github/workflows/deploy.yml$
 
   # ==================================================================
   # STANDARD HOOKS

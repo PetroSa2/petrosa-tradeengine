@@ -79,7 +79,7 @@ class OCOManager:
         self.active_oco_pairs: dict[
             str, list[dict[str, Any]]
         ] = {}  # exchange_position_key -> [oco_info, ...]
-        self.monitoring_task: asyncio.Task | None = None
+        self.monitoring_task: asyncio.Task[Any] | None = None
         self.monitoring_active = False
 
     async def place_oco_orders(
@@ -630,7 +630,7 @@ class OCOManager:
         # SL/TP orders are placed via Binance Algo Order API (algoType=CONDITIONAL),
         # so they appear in openAlgoOrders (algoId), not futures_get_open_orders.
         # Testnet may not support openAlgoOrders — fall back to standard open orders.
-        open_orders: list[dict] = []
+        open_orders: list[dict[str, Any]] = []
         try:
             open_orders = await self.exchange.get_open_algo_orders()
             self.logger.info(
@@ -654,8 +654,10 @@ class OCOManager:
                 )
                 return 0
 
-        sl_orders: dict[str, list[dict]] = {}  # key: "SYMBOL_SIDE" -> list of orders
-        tp_orders: dict[str, list[dict]] = {}
+        sl_orders: dict[
+            str, list[dict[str, Any]]
+        ] = {}  # key: "SYMBOL_SIDE" -> list of orders
+        tp_orders: dict[str, list[dict[str, Any]]] = {}
 
         for o in open_orders:
             order_type = o.get("type", o.get("orderType", ""))
@@ -962,7 +964,7 @@ class OCOManager:
         position_id: str,
         filled_order_id: str,
         close_reason: str,
-        oco_info: dict,
+        oco_info: dict[str, Any],
         dispatcher,
     ) -> None:
         """Close ONLY the owning strategy's position when its OCO completes
@@ -2110,9 +2112,11 @@ class Dispatcher:
             position_size_pct=current_signal.position_size_pct,
             created_at=current_signal.timestamp,
             updated_at=current_signal.timestamp,
-            simulate=current_signal.meta.get("simulate", False)
-            if current_signal.meta
-            else False,
+            simulate=(
+                current_signal.meta.get("simulate", False)
+                if current_signal.meta
+                else False
+            ),
             # Hedge mode position tracking
             position_id=position_id,
             position_side=position_side,
@@ -2540,7 +2544,7 @@ class Dispatcher:
             # Fallback to order.target_price if fill_price is missing or zero
             entry_price_raw = result.get("fill_price")
 
-            def is_zero(val):
+            def is_zero(val: Any) -> bool:
                 if not val:
                     return True
                 try:
@@ -2660,7 +2664,7 @@ class Dispatcher:
                 # Fallback to order.target_price if fill_price is missing or zero
                 entry_price_raw = result.get("fill_price")
 
-                def is_zero(val):
+                def is_zero(val: Any) -> bool:
                     if not val:
                         return True
                     try:
@@ -3223,7 +3227,11 @@ class Dispatcher:
             self.logger.info(
                 f"🔄 Attempt 1: Placing SL at original price {original_order.stop_loss}"
             )
-            sl_result = await self.exchange.execute(stop_loss_order)
+            from typing import cast
+
+            sl_result = cast(
+                dict[str, Any], await self.exchange.execute(stop_loss_order)
+            )
 
             if sl_result.get("status") in [
                 "filled",
@@ -3269,7 +3277,9 @@ class Dispatcher:
 
                 # Update stop loss order with adjusted price
                 stop_loss_order.stop_loss = adjusted_sl
-                sl_result = await self.exchange.execute(stop_loss_order)
+                sl_result = cast(
+                    dict[str, Any], await self.exchange.execute(stop_loss_order)
+                )
 
                 if sl_result.get("status") in [
                     "filled",
@@ -3295,7 +3305,9 @@ class Dispatcher:
                 )
 
                 stop_loss_order.stop_loss = adjusted_sl
-                sl_result = await self.exchange.execute(stop_loss_order)
+                sl_result = cast(
+                    dict[str, Any], await self.exchange.execute(stop_loss_order)
+                )
 
                 if sl_result.get("status") in [
                     "filled",

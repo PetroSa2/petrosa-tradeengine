@@ -18,6 +18,7 @@ from shared.constants import (
     RISK_MANAGEMENT_ENABLED,
     UTC,
     get_mongodb_connection_string,
+    redact_uri,
 )
 
 # Import Data Manager position client
@@ -1325,10 +1326,8 @@ class PositionManager:
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),
             "mongodb_connected": self.mongodb_db is not None,
-            "mongodb_uri": (
-                self.settings.mongodb_uri
-                if self.settings.mongodb_uri
-                else get_mongodb_connection_string()
+            "mongodb_uri": redact_uri(
+                self.settings.mongodb_uri or get_mongodb_connection_string()
             ),
         }
 

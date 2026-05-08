@@ -15,7 +15,7 @@ from typing import Any
 import pymongo.errors
 
 from shared.config import Settings
-from shared.constants import UTC, get_mongodb_connection_string
+from shared.constants import UTC, get_mongodb_connection_string, redact_uri
 
 logger = logging.getLogger(__name__)
 
@@ -387,10 +387,8 @@ class DistributedLockManager:
             "is_leader": self.is_leader,
             "leader_info": leader_info,
             "mongodb_connected": self.mongodb_db is not None,
-            "mongodb_uri": (
-                self.settings.mongodb_uri
-                if self.settings.mongodb_uri
-                else get_mongodb_connection_string()
+            "mongodb_uri": redact_uri(
+                self.settings.mongodb_uri or get_mongodb_connection_string()
             ),
             "lock_timeout": self.lock_timeout,
             "heartbeat_interval": self.heartbeat_interval,

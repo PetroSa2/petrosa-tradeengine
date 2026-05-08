@@ -96,6 +96,15 @@ def get_mongodb_connection_string() -> str:
     return f"{MONGODB_URI}/{MONGODB_DATABASE}"
 
 
+def redact_uri(uri: str | None) -> str:
+    """Return URI with credentials masked. Safe for health endpoints and logs."""
+    import re
+
+    if not uri:
+        return ""
+    return re.sub(r"(://)[^:@/]+(?::[^@/]+)?@", r"\1***@", uri)
+
+
 NATS_SERVERS = os.getenv("NATS_SERVERS", "nats://localhost:4222")
 NATS_ENABLED = os.getenv("NATS_ENABLED", "false").lower() == "true"
 NATS_URL = os.getenv("NATS_URL", "nats://nats-server:4222")

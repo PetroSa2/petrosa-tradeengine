@@ -1,6 +1,6 @@
 {
   "errors": [],
-  "generated_at": "2026-05-05T17:59:23Z",
+  "generated_at": "2026-05-08T16:16:29Z",
   "metrics": {
     "./contracts/__init__.py": {
       "CONFIDENCE.HIGH": 0,
@@ -167,7 +167,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 311,
+      "loc": 317,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -180,7 +180,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 318,
+      "loc": 316,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -466,7 +466,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 1046,
+      "loc": 1045,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -557,7 +557,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 14930,
+      "loc": 14933,
       "nosec": 0,
       "skipped_tests": 0
     }

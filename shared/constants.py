@@ -97,12 +97,18 @@ def get_mongodb_connection_string() -> str:
 
 
 def redact_uri(uri: str | None) -> str:
-    """Return URI with credentials masked. Safe for health endpoints and logs."""
+    """Return URI with credentials masked. Safe for health endpoints and logs.
+
+    Masks any ``userinfo`` component (``user``, ``user:``, ``user:pass``,
+    even ``:pass``) that precedes ``@`` in a URI authority, replacing it with
+    ``***``. Returns an empty string for ``None``/empty input. Idempotent on
+    URIs that contain no credentials.
+    """
     import re
 
     if not uri:
         return ""
-    return re.sub(r"(://)[^:@/]+(?::[^@/]+)?@", r"\1***@", uri)
+    return re.sub(r"(://)[^@/]*@", r"\1***@", uri)
 
 
 NATS_SERVERS = os.getenv("NATS_SERVERS", "nats://localhost:4222")

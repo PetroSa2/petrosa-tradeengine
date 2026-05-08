@@ -69,6 +69,14 @@ class TestRedactUri:
 
         assert redact_uri("") == ""
 
+    def test_empty_password_in_uri_masked(self) -> None:
+        from shared.constants import redact_uri
+
+        raw = "mongodb://user:@localhost:27017/mydb"
+        result = redact_uri(raw)
+        assert "user" not in result
+        assert result == "mongodb://***@localhost:27017/mydb"
+
     def test_uri_without_credentials_unchanged(self) -> None:
         from shared.constants import redact_uri
 
@@ -99,13 +107,13 @@ class TestPositionManagerHealthCheck:
 
         _assert_no_secrets(result)
         assert "mongodb_uri" in result
-        assert "topsecret" not in result
+        assert "topsecret" not in str(result)
 
 
 class TestDistributedLockHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_no_credential_leak(self) -> None:
-        from unittest.mock import AsyncMock, MagicMock, patch
+        from unittest.mock import MagicMock, patch
 
         from shared.distributed_lock import DistributedLockManager
 

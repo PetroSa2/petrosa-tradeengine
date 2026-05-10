@@ -155,6 +155,9 @@ class TestCIOEnforcement:
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+        dispatcher._execute_order_with_consensus = AsyncMock(
+            return_value={"status": "filled", "order_id": "test-order"}
+        )
 
         result = await dispatcher.dispatch(sample_signal)
 
@@ -188,6 +191,9 @@ class TestCIOEnforcement:
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+        dispatcher._execute_order_with_consensus = AsyncMock(
+            return_value={"status": "filled", "order_id": "test-order"}
+        )
 
         result = await dispatcher.dispatch(sample_signal)
 
@@ -205,6 +211,9 @@ class TestCIOEnforcement:
         # Mock successful processing
         dispatcher.process_signal = AsyncMock(return_value={"status": "success"})
         dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+        dispatcher._execute_order_with_consensus = AsyncMock(
+            return_value={"status": "filled", "order_id": "test-order"}
+        )
 
         result = await dispatcher.dispatch(sample_signal)
 

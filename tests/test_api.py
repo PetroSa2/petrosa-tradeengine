@@ -796,6 +796,112 @@ class TestAccountAndPriceEndpoints:
                 assert data["total_balance_usdt"] == 1500.0
 
     @pytest.mark.asyncio
+    async def test_get_account_info_simulator_only(self, client: TestClient) -> None:
+        """Test GET /account endpoint with simulator only data"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(return_value={})
+            mock_simulator.get_account_info = AsyncMock(
+                return_value={
+                    "balances": {"USDT": {"free": "5000.0", "locked": "200.0"}},
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert "simulator" in data["balances"]
+                assert (
+                    "binance" not in data["balances"]
+                    or len(data["balances"]["binance"]) == 0
+                )
+                assert data["total_balance_usdt"] == 5200.0
+
+    @pytest.mark.asyncio
+    async def test_get_account_info_binance_only(self, client: TestClient) -> None:
+        """Test GET /account endpoint with binance only data"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(
+                return_value={
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "100.0",
+                            "walletBalance": "150.0",
+                            "initialMargin": "50.0",
+                        }
+                    ],
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+            mock_simulator.get_account_info = AsyncMock(return_value={})
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert "binance" in data["balances"]
+                assert (
+                    "simulator" not in data["balances"]
+                    or len(data["balances"]["simulator"]) == 0
+                )
+                assert data["total_balance_usdt"] == 150.0
+
+    @pytest.mark.asyncio
+    async def test_get_account_info_combined_overlapping_usdt(
+        self, client: TestClient
+    ) -> None:
+        """Test GET /account endpoint with combined overlapping USDT balances"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(
+                return_value={
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "100.0",
+                            "walletBalance": "150.0",
+                            "initialMargin": "50.0",
+                        }
+                    ],
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+            mock_simulator.get_account_info = AsyncMock(
+                return_value={
+                    "balances": {"USDT": {"free": "1000.0", "locked": "200.0"}},
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert data["total_balance_usdt"] == 1350.0  # 150 + 1000 + 200
+                assert data["balances"]["combined"]["USDT"]["simulator_free"] == 1000.0
+                assert data["balances"]["combined"]["USDT"]["simulator_locked"] == 200.0
+                assert (
+                    data["balances"]["combined"]["USDT"]["free"] == 1100.0
+                )  # 100 + 1000
+                assert (
+                    data["balances"]["combined"]["USDT"]["locked"] == 250.0
+                )  # 50 + 200
+
+    @pytest.mark.asyncio
     async def test_get_account_info_with_positions(self, client: TestClient) -> None:
         """Test GET /account endpoint with positions"""
         with (

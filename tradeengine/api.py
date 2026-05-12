@@ -736,27 +736,34 @@ async def get_account_info() -> AccountResponse:
         combined_positions: dict[str, Any] = {}
         combined_pnl: dict[str, Any] = {}
 
+        def safe_float(val: Any, default: float = 0.0) -> float:
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+
         # Merge binance data (Futures)
         if binance_account:
             # Binance futures uses 'assets' instead of 'balances'
             binance_assets = binance_account.get("assets", [])
-            if isinstance(binance_assets, list):
+
+            if isinstance(binance_assets, list) and binance_assets:
                 for asset in binance_assets:
                     if isinstance(asset, dict) and "asset" in asset:
                         asset_name = asset["asset"]
                         # Map futures fields to standard balance format for backwards compatibility
                         mapped_balance = {
                             "asset": asset_name,
-                            "free": float(asset.get("availableBalance", 0)),
-                            "locked": float(
-                                asset.get("initialMargin", 0)
+                            "free": safe_float(asset.get("availableBalance")),
+                            "locked": safe_float(
+                                asset.get("initialMargin")
                             ),  # Using initialMargin as locked proxy
-                            "wallet_balance": float(asset.get("walletBalance", 0)),
-                            "unrealized_profit": float(
-                                asset.get("unrealizedProfit", 0)
+                            "wallet_balance": safe_float(asset.get("walletBalance")),
+                            "unrealized_profit": safe_float(
+                                asset.get("unrealizedProfit")
                             ),
-                            "margin_balance": float(asset.get("marginBalance", 0)),
-                            "maint_margin": float(asset.get("maintMargin", 0)),
+                            "margin_balance": safe_float(asset.get("marginBalance")),
+                            "maint_margin": safe_float(asset.get("maintMargin")),
                         }
                         combined_balances["binance"][asset_name] = mapped_balance
                         combined_balances["combined"][asset_name] = (
@@ -787,33 +794,28 @@ async def get_account_info() -> AccountResponse:
                     combined_balances["simulator"][asset_name] = balance
                     # Merge with combined taking care not to overwrite binance
                     if asset_name in combined_balances["combined"]:
-                        try:
-                            # Combine free and locked
-                            b_free = float(
-                                combined_balances["combined"][asset_name].get("free", 0)
-                            )
-                            b_locked = float(
-                                combined_balances["combined"][asset_name].get(
-                                    "locked", 0
-                                )
-                            )
-                            s_free = float(balance.get("free", 0))
-                            s_locked = float(balance.get("locked", 0))
+                        # Combine free and locked
+                        b_free = safe_float(
+                            combined_balances["combined"][asset_name].get("free")
+                        )
+                        b_locked = safe_float(
+                            combined_balances["combined"][asset_name].get("locked")
+                        )
+                        s_free = safe_float(balance.get("free"))
+                        s_locked = safe_float(balance.get("locked"))
 
-                            combined_balances["combined"][asset_name]["free"] = (
-                                b_free + s_free
-                            )
-                            combined_balances["combined"][asset_name]["locked"] = (
-                                b_locked + s_locked
-                            )
-                            combined_balances["combined"][asset_name][
-                                "simulator_free"
-                            ] = s_free
-                            combined_balances["combined"][asset_name][
-                                "simulator_locked"
-                            ] = s_locked
-                        except (ValueError, TypeError):
-                            pass
+                        combined_balances["combined"][asset_name]["free"] = (
+                            b_free + s_free
+                        )
+                        combined_balances["combined"][asset_name]["locked"] = (
+                            b_locked + s_locked
+                        )
+                        combined_balances["combined"][asset_name]["simulator_free"] = (
+                            s_free
+                        )
+                        combined_balances["combined"][asset_name][
+                            "simulator_locked"
+                        ] = s_locked
                     else:
                         combined_balances["combined"][asset_name] = balance.copy()
 
@@ -826,20 +828,24 @@ async def get_account_info() -> AccountResponse:
         # Binance wallet balance
         b_wallet = 0.0
         if "USDT" in combined_balances["binance"]:
-            # wallet_balance is the true equity in futures
+            # wallet_balance represents the total margin balance without unrealized PnL
             if "wallet_balance" in combined_balances["binance"]["USDT"]:
-                b_wallet = float(combined_balances["binance"]["USDT"]["wallet_balance"])
+                b_wallet = safe_float(
+                    combined_balances["binance"]["USDT"]["wallet_balance"]
+                )
             else:
-                b_free = float(combined_balances["binance"]["USDT"].get("free", 0))
-                b_locked = float(combined_balances["binance"]["USDT"].get("locked", 0))
+                b_free = safe_float(combined_balances["binance"]["USDT"].get("free"))
+                b_locked = safe_float(
+                    combined_balances["binance"]["USDT"].get("locked")
+                )
                 b_wallet = b_free + b_locked
 
         # Simulator balance
         s_free = 0.0
         s_locked = 0.0
         if "USDT" in combined_balances["simulator"]:
-            s_free = float(combined_balances["simulator"]["USDT"].get("free", 0))
-            s_locked = float(combined_balances["simulator"]["USDT"].get("locked", 0))
+            s_free = safe_float(combined_balances["simulator"]["USDT"].get("free"))
+            s_locked = safe_float(combined_balances["simulator"]["USDT"].get("locked"))
 
         total_balance_usdt = b_wallet + s_free + s_locked
 

@@ -754,7 +754,15 @@ class TestAccountAndPriceEndpoints:
         ):
             mock_binance.get_account_info = AsyncMock(
                 return_value={
-                    "balances": [{"asset": "USDT", "free": "1000.0", "locked": "0.0"}],
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "1000.0",
+                            "walletBalance": "1500.0",
+                            "initialMargin": "500.0",
+                            "unrealizedProfit": "0.0",
+                        }
+                    ],
                     "positions": {},
                     "pnl": {},
                 }
@@ -774,6 +782,18 @@ class TestAccountAndPriceEndpoints:
                 data = response.json()
                 assert "account_type" in data
                 assert "balances" in data
+                assert "binance" in data["balances"]
+                assert "simulator" in data["balances"]
+                assert "combined" in data["balances"]
+
+                # Check Binance asset mapping
+                assert data["balances"]["binance"]["USDT"]["free"] == 1000.0
+                assert data["balances"]["binance"]["USDT"]["locked"] == 500.0
+                assert data["balances"]["binance"]["USDT"]["wallet_balance"] == 1500.0
+
+                # Check combined USDT total logic: binance wallet_balance + simulator free/locked
+                # Simulator BTC shouldn't affect USDT
+                assert data["total_balance_usdt"] == 1500.0
 
     @pytest.mark.asyncio
     async def test_get_account_info_with_positions(self, client: TestClient) -> None:

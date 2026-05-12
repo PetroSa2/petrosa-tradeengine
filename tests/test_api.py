@@ -754,7 +754,15 @@ class TestAccountAndPriceEndpoints:
         ):
             mock_binance.get_account_info = AsyncMock(
                 return_value={
-                    "balances": [{"asset": "USDT", "free": "1000.0", "locked": "0.0"}],
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "1000.0",
+                            "walletBalance": "1500.0",
+                            "initialMargin": "500.0",
+                            "unrealizedProfit": "0.0",
+                        }
+                    ],
                     "positions": {},
                     "pnl": {},
                 }
@@ -774,6 +782,124 @@ class TestAccountAndPriceEndpoints:
                 data = response.json()
                 assert "account_type" in data
                 assert "balances" in data
+                assert "binance" in data["balances"]
+                assert "simulator" in data["balances"]
+                assert "combined" in data["balances"]
+
+                # Check Binance asset mapping
+                assert data["balances"]["binance"]["USDT"]["free"] == 1000.0
+                assert data["balances"]["binance"]["USDT"]["locked"] == 500.0
+                assert data["balances"]["binance"]["USDT"]["wallet_balance"] == 1500.0
+
+                # Check combined USDT total logic: binance wallet_balance + simulator free/locked
+                # Simulator BTC shouldn't affect USDT
+                assert data["total_balance_usdt"] == 1500.0
+
+    @pytest.mark.asyncio
+    async def test_get_account_info_simulator_only(self, client: TestClient) -> None:
+        """Test GET /account endpoint with simulator only data"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(return_value={})
+            mock_simulator.get_account_info = AsyncMock(
+                return_value={
+                    "balances": {"USDT": {"free": "5000.0", "locked": "200.0"}},
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert "simulator" in data["balances"]
+                assert (
+                    "binance" not in data["balances"]
+                    or len(data["balances"]["binance"]) == 0
+                )
+                assert data["total_balance_usdt"] == 5200.0
+
+    @pytest.mark.asyncio
+    async def test_get_account_info_binance_only(self, client: TestClient) -> None:
+        """Test GET /account endpoint with binance only data"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(
+                return_value={
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "100.0",
+                            "walletBalance": "150.0",
+                            "initialMargin": "50.0",
+                        }
+                    ],
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+            mock_simulator.get_account_info = AsyncMock(return_value={})
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert "binance" in data["balances"]
+                assert (
+                    "simulator" not in data["balances"]
+                    or len(data["balances"]["simulator"]) == 0
+                )
+                assert data["total_balance_usdt"] == 150.0
+
+    @pytest.mark.asyncio
+    async def test_get_account_info_combined_overlapping_usdt(
+        self, client: TestClient
+    ) -> None:
+        """Test GET /account endpoint with combined overlapping USDT balances"""
+        with (
+            patch("tradeengine.api.binance_exchange") as mock_binance,
+            patch("tradeengine.api.simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.get_account_info = AsyncMock(
+                return_value={
+                    "assets": [
+                        {
+                            "asset": "USDT",
+                            "availableBalance": "100.0",
+                            "walletBalance": "150.0",
+                            "initialMargin": "50.0",
+                        }
+                    ],
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+            mock_simulator.get_account_info = AsyncMock(
+                return_value={
+                    "balances": {"USDT": {"free": "1000.0", "locked": "200.0"}},
+                    "positions": {},
+                    "pnl": {},
+                }
+            )
+
+            response = client.get("/account")
+            assert response.status_code in [200, 500]
+            if response.status_code == 200:
+                data = response.json()
+                assert data["total_balance_usdt"] == 1350.0  # 150 + 1000 + 200
+                assert data["balances"]["combined"]["USDT"]["simulator_free"] == 1000.0
+                assert data["balances"]["combined"]["USDT"]["simulator_locked"] == 200.0
+                assert (
+                    data["balances"]["combined"]["USDT"]["free"] == 1100.0
+                )  # 100 + 1000
+                assert (
+                    data["balances"]["combined"]["USDT"]["locked"] == 250.0
+                )  # 50 + 200
 
     @pytest.mark.asyncio
     async def test_get_account_info_with_positions(self, client: TestClient) -> None:

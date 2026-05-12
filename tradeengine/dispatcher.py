@@ -1687,7 +1687,14 @@ class Dispatcher:
 
                     result["execution_result"] = execution_result
                     _exec_status = execution_result.get("status", "unknown")
-                    if _exec_status in ("error", "rejected", "cancelled", "failed", "rolled_back", "rollback_failed"):
+                    if _exec_status in (
+                        "error",
+                        "rejected",
+                        "cancelled",
+                        "failed",
+                        "rolled_back",
+                        "rollback_failed",
+                    ):
                         result["status"] = "exchange_failed"
                     else:
                         result["status"] = "executed"

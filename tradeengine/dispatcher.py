@@ -1686,9 +1686,18 @@ class Dispatcher:
                             raise
 
                     result["execution_result"] = execution_result
-                    result["status"] = (
-                        "executed"  # Change status to executed for consistency
-                    )
+                    _exec_status = execution_result.get("status", "unknown")
+                    if _exec_status in (
+                        "error",
+                        "rejected",
+                        "cancelled",
+                        "failed",
+                        "rolled_back",
+                        "rollback_failed",
+                    ):
+                        result["status"] = "exchange_failed"
+                    else:
+                        result["status"] = "executed"
 
                     # NEW: Update last accumulation time if order was executed successfully
                     if execution_result.get("status") in (
@@ -1707,10 +1716,11 @@ class Dispatcher:
 
                     self.logger.info(
                         f"🎯 SIGNAL DISPATCH COMPLETE: {signal.strategy_id} | "
-                        f"Execution status: {execution_result.get('status')}"
+                        f"Execution status: {execution_result.get('status')} | "
+                        f"Dispatch status: {result['status']}"
                     )
                     signals_processed.labels(
-                        status="executed", action=signal.action
+                        status=result["status"], action=signal.action
                     ).inc()
                 elif signal_status == "rejected":
                     self.logger.info(

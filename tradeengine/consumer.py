@@ -332,11 +332,14 @@ class SignalConsumer:
                     result = await self.dispatcher.dispatch(signal)
                     logger.debug("Dispatch completed for: %s", signal.strategy_id)
 
-                    messages_processed.labels(status="success").inc()
+                    outcome_status = result.get("status", "unknown")
+                    messages_processed.labels(status=outcome_status).inc()
+                    log_prefix = "✅" if outcome_status == "executed" else "⚠️"
                     logger.info(
-                        "✅ NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
+                        "%s NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
+                        log_prefix,
                         signal.strategy_id,
-                        result.get("status"),
+                        outcome_status,
                         result,
                     )
                     logger.debug(

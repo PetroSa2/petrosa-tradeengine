@@ -87,6 +87,47 @@ async def test_dispatch_returns_exchange_failed_on_binance_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_returns_exchange_failed_on_binance_failed_status() -> None:
+    """Binance _format_error_result returns status='failed' for API errors (-2019 etc).
+    dispatch() must map 'failed' -> 'exchange_failed', not 'executed'."""
+    dispatcher = Dispatcher()
+
+    signal = _make_signal()
+    # This is the real shape returned by binance.py::_format_error_result
+    binance_error_result = {
+        "status": "failed",
+        "error": "APIError(code=-2019): Margin is insufficient.",
+    }
+
+    with (
+        patch.object(
+            dispatcher,
+            "process_signal",
+            new_callable=AsyncMock,
+            return_value={"status": "success", "order_params": {"quantity": 0.01}},
+        ),
+        patch.object(
+            dispatcher,
+            "_execute_order_with_consensus",
+            new_callable=AsyncMock,
+            return_value=binance_error_result,
+        ),
+        patch("tradeengine.dispatcher.distributed_lock_manager") as mock_lock,
+        patch.object(dispatcher, "heartbeat_monitor", None),
+        patch.object(dispatcher.settings, "enforce_cio_audit", False),
+    ):
+        mock_lock.execute_with_lock = AsyncMock(return_value=binance_error_result)
+
+        result = await dispatcher.dispatch(signal)
+
+    assert result["status"] == "exchange_failed", (
+        f"Expected 'exchange_failed', got '{result['status']}'. "
+        "binance._format_error_result returns 'failed', which must not map to 'executed'."
+    )
+    assert result["execution_result"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_returns_executed_on_binance_new() -> None:
     """When Binance accepts the order (status=NEW), dispatch must return executed."""
     dispatcher = Dispatcher()

@@ -64,6 +64,9 @@ class PositionManager:
         self.exchange = exchange
         self.portfolio_value_last_update: datetime | None = None
         self.portfolio_value_lock = asyncio.Lock()
+        self.rejection_reason: str | None = (
+            None  # Set by check_position_limits on rejection
+        )
 
     async def initialize(self) -> None:
         """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
@@ -972,10 +975,12 @@ class PositionManager:
     async def check_position_limits(self, order: TradeOrder) -> bool:
         """Check if order meets position size limits with distributed state"""
         if not RISK_MANAGEMENT_ENABLED:
+            self.rejection_reason = None
             return True
 
         # Refresh portfolio value before checks (mandatory as per AC)
         if not await self._refresh_portfolio_value():
+            self.rejection_reason = "refresh_failure"
             logger.error(
                 f"⛔ RISK REJECTION: Failed to refresh portfolio value for {order.symbol} - aborting entry"
             )
@@ -984,6 +989,7 @@ class PositionManager:
         # AC-1 (#352): Explicit zero-capital guard — return a distinct reason before
         # _calculate_portfolio_exposure() hits the "safest for risk" 1.0 fallback.
         if self.total_portfolio_value <= 0:
+            self.rejection_reason = "insufficient_margin"
             logger.error(
                 f"⛔ RISK REJECTION: Insufficient margin — available capital is "
                 f"${self.total_portfolio_value:.2f} (total_portfolio_value <= 0). "
@@ -1010,6 +1016,7 @@ class PositionManager:
                     f"Position size would exceed limit: {order.symbol} {position_side} "
                     f"current={current_quantity}, new={new_quantity}, max={max_position_size}"
                 )
+                self.rejection_reason = "absolute_position_size"
                 return False
 
         # Check individual position size limit
@@ -1021,6 +1028,7 @@ class PositionManager:
                 f"Position size {order.position_size_pct} exceeds limit "
                 f"{self.max_position_size_pct}"
             )
+            self.rejection_reason = "position_size_pct"
             return False
 
         # Check portfolio exposure limit
@@ -1030,12 +1038,15 @@ class PositionManager:
                 f"Portfolio exposure {current_exposure:.2%} exceeds limit "
                 f"{self.max_portfolio_exposure_pct:.2%}"
             )
+            self.rejection_reason = "portfolio_exposure"
             return False
 
         # Check algo order limits (prevent -4045 error)
         if not await self.check_algo_order_limits(order):
+            self.rejection_reason = "algo_order_limits"
             return False
 
+        self.rejection_reason = None
         return True
 
     async def check_algo_order_limits(self, order: TradeOrder) -> bool:
@@ -1158,9 +1169,10 @@ class PositionManager:
         """Calculate current portfolio exposure
 
         Returns 1.0 (100%) when portfolio value is zero/negative as a safety
-        guard.  check_position_limits() now intercepts this case explicitly
-        via the zero-capital guard (AC-1 #352) so that callers get a
-        distinct "insufficient margin" rejection instead.
+        guard. The zero-capital guard in check_position_limits() (AC-1 #352)
+        intercepts this case first with a distinct ``insufficient_margin``
+        rejection reason; callers should inspect rejection_reason rather than
+        relying on this float value alone for diagnostics.
         """
         if self.total_portfolio_value <= 0:
             return 1.0

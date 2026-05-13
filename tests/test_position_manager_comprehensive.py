@@ -593,11 +593,12 @@ async def test_calculate_portfolio_exposure(position_manager):
 
 @pytest.mark.asyncio
 async def test_check_position_limits_zero_portfolio_value(
-    position_manager, sample_long_order
+    position_manager, sample_long_order, caplog
 ):
     """AC-1 (#352): zero portfolio value returns distinct insufficient-margin rejection"""
     position_manager.total_portfolio_value = 0.0
     position_manager.max_portfolio_exposure_pct = 0.5
+    caplog.set_level("ERROR")
 
     with patch.object(
         position_manager,
@@ -613,15 +614,20 @@ async def test_check_position_limits_zero_portfolio_value(
             with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
                 result = await position_manager.check_position_limits(sample_long_order)
                 assert result is False
+                assert position_manager.rejection_reason == "insufficient_margin"
+                assert any("Insufficient margin" in msg for msg in caplog.messages), (
+                    "expected distinct insufficient-margin log message"
+                )
 
 
 @pytest.mark.asyncio
 async def test_check_position_limits_negative_portfolio_value(
-    position_manager, sample_long_order
+    position_manager, sample_long_order, caplog
 ):
     """AC-1 (#352): negative portfolio value also returns insufficient-margin rejection"""
     position_manager.total_portfolio_value = -500.0
     position_manager.max_portfolio_exposure_pct = 0.5
+    caplog.set_level("ERROR")
 
     with patch.object(
         position_manager,
@@ -637,6 +643,10 @@ async def test_check_position_limits_negative_portfolio_value(
             with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
                 result = await position_manager.check_position_limits(sample_long_order)
                 assert result is False
+                assert position_manager.rejection_reason == "insufficient_margin"
+                assert any("Insufficient margin" in msg for msg in caplog.messages), (
+                    "expected distinct insufficient-margin log message"
+                )
 
 
 @pytest.mark.asyncio
@@ -661,6 +671,7 @@ async def test_check_position_limits_small_positive_balance(
             with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
                 result = await position_manager.check_position_limits(sample_long_order)
                 assert result is True
+                assert position_manager.rejection_reason is None
 
 
 @pytest.mark.asyncio
@@ -677,6 +688,7 @@ async def test_check_position_limits_refresh_failure(
         with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
             result = await position_manager.check_position_limits(sample_long_order)
             assert result is False
+            assert position_manager.rejection_reason == "refresh_failure"
 
 
 @pytest.mark.asyncio

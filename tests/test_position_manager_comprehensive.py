@@ -587,6 +587,124 @@ async def test_calculate_portfolio_exposure(position_manager):
 
 
 # ============================================================================
+# Zero-Balance / Insufficient Margin Tests (#352)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_check_position_limits_zero_portfolio_value(
+    position_manager, sample_long_order, caplog
+):
+    """AC-1 (#352): zero portfolio value returns distinct insufficient-margin rejection"""
+    position_manager.total_portfolio_value = 0.0
+    position_manager.max_portfolio_exposure_pct = 0.5
+    caplog.set_level("ERROR")
+
+    with patch.object(
+        position_manager,
+        "_refresh_portfolio_value",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        with patch(
+            "shared.mysql_client.position_client.get_open_positions",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                result = await position_manager.check_position_limits(sample_long_order)
+                assert result is False
+                assert position_manager.rejection_reason == "insufficient_margin"
+                assert any("Insufficient margin" in msg for msg in caplog.messages), (
+                    "expected distinct insufficient-margin log message"
+                )
+
+
+@pytest.mark.asyncio
+async def test_check_position_limits_negative_portfolio_value(
+    position_manager, sample_long_order, caplog
+):
+    """AC-1 (#352): negative portfolio value also returns insufficient-margin rejection"""
+    position_manager.total_portfolio_value = -500.0
+    position_manager.max_portfolio_exposure_pct = 0.5
+    caplog.set_level("ERROR")
+
+    with patch.object(
+        position_manager,
+        "_refresh_portfolio_value",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        with patch(
+            "shared.mysql_client.position_client.get_open_positions",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                result = await position_manager.check_position_limits(sample_long_order)
+                assert result is False
+                assert position_manager.rejection_reason == "insufficient_margin"
+                assert any("Insufficient margin" in msg for msg in caplog.messages), (
+                    "expected distinct insufficient-margin log message"
+                )
+
+
+@pytest.mark.asyncio
+async def test_check_position_limits_small_positive_balance(
+    position_manager, sample_long_order
+):
+    """AC-3 (#352): small positive portfolio value allows trading within limits"""
+    position_manager.total_portfolio_value = 1.0
+    position_manager.max_portfolio_exposure_pct = 0.8
+
+    with patch.object(
+        position_manager,
+        "_refresh_portfolio_value",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        with patch(
+            "shared.mysql_client.position_client.get_open_positions",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                result = await position_manager.check_position_limits(sample_long_order)
+                assert result is True
+                assert position_manager.rejection_reason is None
+
+
+@pytest.mark.asyncio
+async def test_check_position_limits_refresh_failure(
+    position_manager, sample_long_order
+):
+    """AC-3 (#352): refresh failure is rejected without exposure-calculation side effects"""
+    with patch.object(
+        position_manager,
+        "_refresh_portfolio_value",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+            result = await position_manager.check_position_limits(sample_long_order)
+            assert result is False
+            assert position_manager.rejection_reason == "refresh_failure"
+
+
+@pytest.mark.asyncio
+async def test_calculate_portfolio_exposure_zero_value(position_manager):
+    """AC-2 (#352): _calculate_portfolio_exposure returns 1.0 for zero/negative capital"""
+    position_manager.total_portfolio_value = 0.0
+
+    exposure = position_manager._calculate_portfolio_exposure()
+    assert exposure == 1.0
+
+    position_manager.total_portfolio_value = -100.0
+    exposure = position_manager._calculate_portfolio_exposure()
+    assert exposure == 1.0
+
+
+# ============================================================================
 # Position Query Tests
 # ============================================================================
 

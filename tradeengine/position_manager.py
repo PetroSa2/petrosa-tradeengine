@@ -974,10 +974,20 @@ class PositionManager:
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
-        # NEW: Refresh portfolio value before checks (mandatory as per AC)
+        # Refresh portfolio value before checks (mandatory as per AC)
         if not await self._refresh_portfolio_value():
             logger.error(
                 f"⛔ RISK REJECTION: Failed to refresh portfolio value for {order.symbol} - aborting entry"
+            )
+            return False
+
+        # AC-1 (#352): Explicit zero-capital guard — return a distinct reason before
+        # _calculate_portfolio_exposure() hits the "safest for risk" 1.0 fallback.
+        if self.total_portfolio_value <= 0:
+            logger.error(
+                f"⛔ RISK REJECTION: Insufficient margin — available capital is "
+                f"${self.total_portfolio_value:.2f} (total_portfolio_value <= 0). "
+                f"Order {order.symbol} rejected; check exchange account funding."
             )
             return False
 
@@ -1145,11 +1155,15 @@ class PositionManager:
             logger.warning(f"Failed to refresh daily P&L from Data Manager: {e}")
 
     def _calculate_portfolio_exposure(self) -> float:
-        """Calculate current portfolio exposure"""
+        """Calculate current portfolio exposure
+
+        Returns 1.0 (100%) when portfolio value is zero/negative as a safety
+        guard.  check_position_limits() now intercepts this case explicitly
+        via the zero-capital guard (AC-1 #352) so that callers get a
+        distinct "insufficient margin" rejection instead.
+        """
         if self.total_portfolio_value <= 0:
-            return (
-                1.0  # Maximum exposure if no portfolio value (safest for risk checks)
-            )
+            return 1.0
 
         total_exposure = 0.0
 

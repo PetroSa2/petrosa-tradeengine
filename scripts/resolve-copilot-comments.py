@@ -86,7 +86,14 @@ def gh_graphql(query: str, variables: dict) -> dict:
             cmd += ["-F", f"{key}={val}"]
         else:
             cmd += ["-f", f"{key}={val}"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        print(
+            "Error: 'gh' CLI not found. Install it from https://cli.github.com and run 'gh auth login'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if result.returncode != 0:
         print(f"GraphQL error: {result.stderr}", file=sys.stderr)
         sys.exit(1)
@@ -104,7 +111,8 @@ def load_threads(owner: str, repo: str, pr: int) -> tuple[str, list[dict]]:
     cursor = None
     head_sha = None
 
-    for _ in range(20):
+    _PAGE_LIMIT = 20
+    for page in range(_PAGE_LIMIT):
         variables: dict = {"owner": owner, "repo": repo, "pr": pr, "cursor": cursor}
         data = gh_graphql(_THREADS_QUERY, variables)
         pr_data = data["data"]["repository"]["pullRequest"]
@@ -131,6 +139,13 @@ def load_threads(owner: str, repo: str, pr: int) -> tuple[str, list[dict]]:
         if not conn["pageInfo"]["hasNextPage"]:
             break
         cursor = conn["pageInfo"]["endCursor"]
+        if page == _PAGE_LIMIT - 1:
+            print(
+                f"Error: exceeded {_PAGE_LIMIT}-page pagination limit while threads remain. "
+                "Aborting to avoid silently missing unresolved threads.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     return head_sha or "", threads
 

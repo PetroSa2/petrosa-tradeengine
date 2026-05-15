@@ -196,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="List unresolved threads without resolving them",
     )
+    parser.add_argument(
+        "--skip-outdated",
+        action="store_true",
+        help="Skip outdated threads (preserves legacy behavior)",
+    )
     args = parser.parse_args(argv)
 
     owner, repo, pr_number = parse_pr_ref(args.pr, args.repo)
@@ -210,9 +215,9 @@ def main(argv: list[str] | None = None) -> int:
     copilot_unresolved = [
         t
         for t in threads
-        if not t["isOutdated"]
-        and not t["isResolved"]
+        if not t["isResolved"]
         and is_copilot_login(t["starterLogin"])
+        and (not args.skip_outdated or not t["isOutdated"])
     ]
 
     print(f"  Total threads: {len(threads)}")
@@ -232,11 +237,15 @@ def main(argv: list[str] | None = None) -> int:
     for i, t in enumerate(copilot_unresolved, 1):
         tid = t["id"]
         label = f"[{i}/{len(copilot_unresolved)}]"
-        comment_body = f"Addressed in commit {sha}."
-        print(f"  {label} Replying on thread {tid}...")
-        post_reply(tid, comment_body)
-        print(f"  {label} Resolving thread {tid}...")
-        ok = resolve_thread(tid)
+        if t["isOutdated"]:
+            print(f"  {label} Resolving outdated thread {tid} (no reply)...")
+            ok = resolve_thread(tid)
+        else:
+            comment_body = f"Addressed in commit {sha}."
+            print(f"  {label} Replying on thread {tid}...")
+            post_reply(tid, comment_body)
+            print(f"  {label} Resolving thread {tid}...")
+            ok = resolve_thread(tid)
         if ok:
             resolved_count += 1
             print("    ✓ Resolved")

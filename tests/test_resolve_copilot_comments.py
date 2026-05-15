@@ -200,7 +200,6 @@ class TestMain:
     def test_nothing_to_resolve(self):
         threads = _build_threads(
             (True, False, "copilot"),
-            (False, True, "copilot"),
             (False, False, "alice"),
         )
         with (
@@ -209,6 +208,23 @@ class TestMain:
             patch.object(rcc, "resolve_thread") as mock_resolve,
         ):
             rc = rcc.main(["https://github.com/O/R/pull/1"])
+
+        assert rc == 0
+        mock_reply.assert_not_called()
+        mock_resolve.assert_not_called()
+
+    def test_nothing_to_resolve_with_skip_outdated(self):
+        threads = _build_threads(
+            (True, False, "copilot"),
+            (False, True, "copilot"),
+            (False, False, "alice"),
+        )
+        with (
+            patch.object(rcc, "load_threads", return_value=("abc", threads)),
+            patch.object(rcc, "post_reply") as mock_reply,
+            patch.object(rcc, "resolve_thread") as mock_resolve,
+        ):
+            rc = rcc.main(["https://github.com/O/R/pull/1", "--skip-outdated"])
 
         assert rc == 0
         mock_reply.assert_not_called()
@@ -232,6 +248,59 @@ class TestMain:
         assert mock_resolve.call_count == 2
         mock_reply.assert_any_call("TID1", "Addressed in commit deadbeef.")
         mock_reply.assert_any_call("TID2", "Addressed in commit deadbeef.")
+
+    def test_resolves_outdated_threads_by_default(self):
+        threads = _build_threads(
+            (False, False, "copilot"),
+            (False, True, "copilot"),  # outdated — resolved by default
+            (False, True, "alice"),  # outdated human — skipped
+        )
+        with (
+            patch.object(rcc, "load_threads", return_value=("abcdef012345", threads)),
+            patch.object(rcc, "post_reply") as mock_reply,
+            patch.object(rcc, "resolve_thread", return_value=True) as mock_resolve,
+        ):
+            rc = rcc.main(["https://github.com/O/R/pull/1", "--sha", "deadbeef"])
+
+        assert rc == 0
+        # Non-outdated: reply + resolve; outdated: resolve only (no reply)
+        assert mock_reply.call_count == 1
+        assert mock_resolve.call_count == 2
+        mock_reply.assert_any_call("TID1", "Addressed in commit deadbeef.")
+
+    def test_skip_outdated_flag_preserves_legacy_behavior(self):
+        threads = _build_threads(
+            (False, False, "copilot"),
+            (False, True, "copilot"),  # outdated — skipped with --skip-outdated
+        )
+        with (
+            patch.object(rcc, "load_threads", return_value=("abc", threads)),
+            patch.object(rcc, "post_reply") as mock_reply,
+            patch.object(rcc, "resolve_thread", return_value=True) as mock_resolve,
+        ):
+            rc = rcc.main(
+                ["https://github.com/O/R/pull/1", "--sha", "dead", "--skip-outdated"]
+            )
+
+        assert rc == 0
+        assert mock_reply.call_count == 1
+        assert mock_resolve.call_count == 1
+        mock_reply.assert_any_call("TID1", "Addressed in commit dead.")
+
+    def test_outdated_threads_no_reply_comment(self):
+        threads = _build_threads(
+            (False, True, "copilot"),  # only outdated
+        )
+        with (
+            patch.object(rcc, "load_threads", return_value=("abc", threads)),
+            patch.object(rcc, "post_reply") as mock_reply,
+            patch.object(rcc, "resolve_thread", return_value=True) as mock_resolve,
+        ):
+            rc = rcc.main(["https://github.com/O/R/pull/1", "--sha", "dead"])
+
+        assert rc == 0
+        mock_reply.assert_not_called()
+        mock_resolve.assert_called_once_with("TID1")
 
     def test_uses_pr_head_sha_when_no_sha_flag(self):
         threads = _build_threads((False, False, "copilot"))

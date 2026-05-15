@@ -2,21 +2,28 @@
 """
 Resolves unresolved Copilot-started review threads on a GitHub PR.
 
-Queries review threads via GitHub GraphQL, posts an "Addressed in commit <sha>"
-reply on each unresolved Copilot thread, then calls resolveReviewThread to set
-isResolved=true — allowing the copilot-review gate to pass without human clicks.
+Queries review threads via GitHub GraphQL, resolves them so that GitHub's
+required_conversation_resolution branch protection gate is fully cleared.
 
-Only threads started by Copilot are resolved; human-started threads are skipped.
+By default, BOTH non-outdated and outdated Copilot-started threads are resolved.
+Outdated threads are resolved silently (no reply comment) to avoid noise on
+stale context. Non-outdated threads receive an "Addressed in commit <sha>" reply.
+Human-started threads are always skipped.
+
+Use --skip-outdated to preserve the legacy behavior (resolve only non-outdated
+Copilot threads, matching the copilot-review gate's own logic).
 
 Usage:
     python scripts/resolve-copilot-comments.py <PR_URL_or_number> \
-        [--repo OWNER/REPO] [--sha SHA] [--dry-run]
+        [--repo OWNER/REPO] [--sha SHA] [--dry-run] [--skip-outdated]
 
 Examples:
     python scripts/resolve-copilot-comments.py \
         https://github.com/PetroSa2/petrosa-tradeengine/pull/364
     python scripts/resolve-copilot-comments.py 364 \
         --repo PetroSa2/petrosa-tradeengine --dry-run
+    python scripts/resolve-copilot-comments.py 364 \
+        --repo PetroSa2/petrosa-tradeengine --skip-outdated
 """
 
 import argparse

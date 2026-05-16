@@ -352,6 +352,7 @@ class OCOManager:
                         "delete",
                         "algoOrder",
                         signed=True,
+                        force_params=True,
                         data={"symbol": oco_symbol, "algoId": order_id},
                     )
                     self.logger.info(

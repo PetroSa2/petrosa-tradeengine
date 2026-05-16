@@ -14,6 +14,11 @@ name: copilot-review
 
 on:
   workflow_dispatch:
+    inputs:
+      pull_number:
+        description: 'PR number to gate'
+        required: true
+        type: number
   pull_request_review:
     types: [submitted, edited, dismissed]
   workflow_run:
@@ -52,6 +57,15 @@ jobs:
             const repo = context.repo.repo;
 
             async function resolvePullRequest() {
+              if (context.eventName === 'workflow_dispatch') {
+                const pull_number_input = parseInt(context.payload.inputs?.pull_number, 10);
+                if (!Number.isInteger(pull_number_input) || pull_number_input <= 0) {
+                  core.setFailed('workflow_dispatch requires a valid pull_number input');
+                  return null;
+                }
+                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: pull_number_input });
+                return pr;
+              }
               if (context.eventName === 'pull_request_review' || context.eventName === 'pull_request_review_thread') {
                 return context.payload.pull_request;
               }
@@ -118,7 +132,6 @@ jobs:
                 (r) =>
                   r.user &&
                   isCopilotPrReviewer(r.user.login) &&
-                  r.commit_id === headSha &&
                   r.state !== 'DISMISSED' &&
                   r.state !== 'PENDING'
               );

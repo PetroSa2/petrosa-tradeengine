@@ -132,7 +132,6 @@ jobs:
                 (r) =>
                   r.user &&
                   isCopilotPrReviewer(r.user.login) &&
-                  r.commit_id === headSha &&
                   r.state !== 'DISMISSED' &&
                   r.state !== 'PENDING'
               );

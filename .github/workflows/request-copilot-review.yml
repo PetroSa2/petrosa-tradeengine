@@ -100,10 +100,11 @@ jobs:
             };
             const alreadyReviewed = reviews.some(
               (r) => isCopilot(r.user?.login) &&
-                r.state !== 'DISMISSED' && r.state !== 'PENDING'
+                r.state !== 'DISMISSED' && r.state !== 'PENDING' &&
+                r.commit_id === headSha
             );
             if (alreadyReviewed) {
-              console.log(`Copilot already reviewed this PR; skipping re-request.`);
+              console.log(`Copilot already reviewed this PR at HEAD ${headSha}; skipping re-request.`);
               return;
             }
 

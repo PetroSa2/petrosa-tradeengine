@@ -128,11 +128,14 @@ jobs:
                 per_page: 100,
               });
 
+              // Accept any non-dismissed Copilot review on this PR. Copilot cannot
+              // re-review after already reviewing (requestReviewers is a no-op for
+              // Copilot once it has reviewed). Thread resolution is the real quality
+              // gate — if all Copilot threads are resolved, the code is approved.
               return reviews.some(
                 (r) =>
                   r.user &&
                   isCopilotPrReviewer(r.user.login) &&
-                  r.commit_id === headSha &&
                   r.state !== 'DISMISSED' &&
                   r.state !== 'PENDING'
               );

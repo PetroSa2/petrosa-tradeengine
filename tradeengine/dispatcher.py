@@ -352,6 +352,7 @@ class OCOManager:
                         "delete",
                         "algoOrder",
                         signed=True,
+                        force_params=True,
                         data={"symbol": oco_symbol, "algoId": order_id},
                     )
                     self.logger.info(
@@ -661,6 +662,8 @@ class OCOManager:
 
         for o in open_orders:
             order_type = o.get("type", o.get("orderType", ""))
+            if order_type == "CONDITIONAL":
+                order_type = o.get("origType", order_type)
             position_side = o.get("positionSide", "BOTH")
             symbol = o.get("symbol", "")
             key = f"{symbol}_{position_side}"

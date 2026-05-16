@@ -282,12 +282,14 @@ async def test_cancel_oco_pair(oco_manager: OCOManager, mock_exchange):
                 "delete",
                 "algoOrder",
                 signed=True,
+                force_params=True,
                 data={"symbol": "BTCUSDT", "algoId": sl_id},
             ),
             call(
                 "delete",
                 "algoOrder",
                 signed=True,
+                force_params=True,
                 data={"symbol": "BTCUSDT", "algoId": tp_id},
             ),
         ],
@@ -1171,6 +1173,49 @@ async def test_reconcile_from_exchange_fallback_to_standard_orders(
     pair = oco_manager.active_oco_pairs["BTCUSDT_LONG"][0]
     assert pair["sl_order_id"] == "9001"
     assert pair["tp_order_id"] == "9002"
+    assert pair["reconciled"] is True
+    oco_manager.start_monitoring.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_from_exchange_conditional_type_regression(
+    oco_manager, mock_exchange
+):
+    """Fallback to standard orders with type=CONDITIONAL correctly resolves via origType (P0 regression test for #370)."""
+    mock_exchange.get_open_algo_orders = AsyncMock(
+        side_effect=Exception("testnet no support")
+    )
+    mock_exchange.client.futures_get_open_orders = Mock(
+        return_value=[
+            {
+                "orderId": 8001,
+                "symbol": "ETHUSDT",
+                "positionSide": "LONG",
+                "type": "CONDITIONAL",
+                "origType": "STOP_MARKET",
+                "origQty": "0.100",
+                "time": 2000,
+            },
+            {
+                "orderId": 8002,
+                "symbol": "ETHUSDT",
+                "positionSide": "LONG",
+                "type": "CONDITIONAL",
+                "origType": "TAKE_PROFIT_MARKET",
+                "origQty": "0.100",
+                "time": 2001,
+            },
+        ]
+    )
+    oco_manager.start_monitoring = AsyncMock()
+
+    rebuilt = await oco_manager.reconcile_from_exchange()
+
+    assert rebuilt == 1
+    assert "ETHUSDT_LONG" in oco_manager.active_oco_pairs
+    pair = oco_manager.active_oco_pairs["ETHUSDT_LONG"][0]
+    assert pair["sl_order_id"] == "8001"
+    assert pair["tp_order_id"] == "8002"
     assert pair["reconciled"] is True
     oco_manager.start_monitoring.assert_called_once()
 

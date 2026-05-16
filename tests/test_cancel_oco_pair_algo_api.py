@@ -5,8 +5,8 @@ Root cause: cancel_oco_pair() was calling futures_cancel_batch_orders() which si
 succeeds for conditional algo orders without actually cancelling them, causing orphaned
 orders to accumulate until the 100-order account cap was reached.
 
-Fix: cancel_oco_pair() must call DELETE /fapi/v1/algo/algoOrder (via _request_futures_api)
-for each SL/TP algo order individually.
+Fix: cancel_oco_pair() must call DELETE /fapi/v1/algo/algoOrder (via _request_futures_api
+with force_params=True) for each SL/TP algo order individually.
 """
 
 import logging
@@ -29,12 +29,17 @@ def oco_manager(mock_exchange):
     return OCOManager(exchange=mock_exchange, logger=logging.getLogger("test"))
 
 
-class TestCancelOcoPairUsesWrongAPI:
+class TestCancelOcoPairAlgoOrderAPI:
+    """
+    Verifies that cancel_oco_pair() cancels SL/TP orders via the Binance algo-order
+    DELETE endpoint, not via futures_cancel_batch_orders which silently ignores them.
+    """
+
     @pytest.mark.asyncio
-    async def test_cancel_oco_pair_silently_fails_for_algo_orders(
+    async def test_cancel_oco_pair_calls_algo_api_twice(
         self, oco_manager, mock_exchange
     ):
-        """Reproducer for issue #334: verify cancel_oco_pair calls algo-order DELETE API."""
+        """Reproducer for issue #334: cancel_oco_pair must call algo-order DELETE API for SL and TP."""
         algo_cancel_calls = []
         mock_exchange.client._request_futures_api = MagicMock(
             side_effect=lambda *a, **kw: algo_cancel_calls.append((a, kw))
@@ -67,7 +72,7 @@ class TestCancelOcoPairUsesWrongAPI:
     async def test_cancel_oco_pair_uses_correct_algo_api_endpoint(
         self, oco_manager, mock_exchange
     ):
-        """Verify the correct method, path, and payload are passed to _request_futures_api."""
+        """Verify method, path, signed, force_params, and algoId payload for each cancel call."""
         algo_cancel_calls = []
         mock_exchange.client._request_futures_api = MagicMock(
             side_effect=lambda *a, **kw: algo_cancel_calls.append((a, kw))
@@ -99,6 +104,9 @@ class TestCancelOcoPairUsesWrongAPI:
             assert args[0] == "delete", "Must use DELETE method"
             assert args[1] == "algoOrder", "Must target algoOrder endpoint"
             assert kwargs.get("signed") is True, "Must be signed request"
+            assert kwargs.get("force_params") is True, (
+                "DELETE algo orders require force_params=True to send params as query string"
+            )
             data = kwargs.get("data", {})
             assert data.get("symbol") == "ETHUSDT"
             assert data.get("algoId") in (sl_id, tp_id)

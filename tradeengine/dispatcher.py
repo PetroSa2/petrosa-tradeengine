@@ -79,6 +79,8 @@ class OCOManager:
         self.active_oco_pairs: dict[
             str, list[dict[str, Any]]
         ] = {}  # exchange_position_key -> [oco_info, ...]
+        # #371: CONDITIONAL entries whose OCO must wait for FILLED. Key = exchange entry order id.
+        self.pending_entries: dict[str, dict[str, Any]] = {}
         self.monitoring_task: asyncio.Task[Any] | None = None
         self.monitoring_active = False
 
@@ -794,11 +796,120 @@ class OCOManager:
                 pass
         self.logger.info("🔍 STOPPED ORDER MONITORING")
 
+    def _is_conditional_pending_entry(
+        self, order: TradeOrder, result: dict[str, Any] | None
+    ) -> bool:
+        """Return True when entry is a CONDITIONAL/algo order that hasn't fired yet.
+
+        CONDITIONAL_LIMIT/CONDITIONAL_STOP entries return status=NEW with no real fill.
+        Placing OCO against the stale target_price triggers Binance -2021 (#371).
+        """
+        order_type = str(order.type)
+        if order_type not in (
+            OrderType.CONDITIONAL_LIMIT.value,
+            OrderType.CONDITIONAL_STOP.value,
+        ):
+            return False
+        status = (result or {}).get("status")
+        return status == "NEW"
+
+    async def defer_oco_until_filled(
+        self, order: TradeOrder, entry_order_id: str
+    ) -> None:
+        """Queue a CONDITIONAL entry for post-fill OCO placement.
+
+        The monitor loop polls the entry order; on FILLED it captures avgPrice
+        from the exchange and triggers OCO with the real entry price.
+        """
+        if not entry_order_id:
+            self.logger.warning(
+                f"⚠️ Cannot defer OCO for {order.symbol}: missing entry_order_id"
+            )
+            return
+        self.pending_entries[entry_order_id] = {
+            "order": order,
+            "symbol": order.symbol,
+            "entry_order_id": entry_order_id,
+            "registered_at": time.time(),
+        }
+        self.logger.info(
+            f"⏸️ OCO DEFERRED: entry {entry_order_id} ({order.symbol}) is CONDITIONAL/NEW — "
+            f"waiting for FILLED before placing SL/TP. pending_count={len(self.pending_entries)}"
+        )
+        if not self.monitoring_active:
+            await self.start_monitoring()
+
+    async def _check_pending_entries(self) -> None:
+        """Poll deferred entries; trigger OCO when their entry order is FILLED."""
+        if not self.pending_entries:
+            return
+        filled_terminal = {"filled", "FILLED", "partially_filled", "PARTIALLY_FILLED"}
+        for entry_id, info in list(self.pending_entries.items()):
+            order = info["order"]
+            symbol = info["symbol"]
+            try:
+                status_resp = await self.exchange.get_order_status(symbol, entry_id)
+            except Exception as e:
+                self.logger.warning(
+                    f"⚠️ Pending-entry status check failed for {entry_id} ({symbol}): {e}"
+                )
+                continue
+            status = status_resp.get("status")
+            if status not in filled_terminal:
+                continue
+
+            try:
+                executed_qty = float(status_resp.get("executed_qty") or 0)
+                cum_quote = float(status_resp.get("cummulative_quote_qty") or 0)
+            except (ValueError, TypeError):
+                executed_qty = 0.0
+                cum_quote = 0.0
+
+            if executed_qty > 0 and cum_quote > 0:
+                avg_price = cum_quote / executed_qty
+            else:
+                try:
+                    avg_price = float(status_resp.get("price") or 0)
+                except (ValueError, TypeError):
+                    avg_price = 0.0
+
+            if avg_price <= 0 or executed_qty <= 0:
+                self.logger.warning(
+                    f"⚠️ Cannot place deferred OCO for {symbol}: avg_price={avg_price}, "
+                    f"executed_qty={executed_qty}. Dropping pending entry {entry_id}."
+                )
+                del self.pending_entries[entry_id]
+                continue
+
+            synthetic_result = {
+                "order_id": entry_id,
+                "status": "filled",
+                "fill_price": avg_price,
+                "amount": executed_qty,
+                "symbol": symbol,
+            }
+            self.logger.info(
+                f"▶️ Deferred OCO trigger: entry {entry_id} FILLED at avg_price={avg_price} "
+                f"qty={executed_qty}. Placing OCO now."
+            )
+            # Remove BEFORE awaiting OCO placement so a re-entrant loop tick can't double-trigger.
+            del self.pending_entries[entry_id]
+            try:
+                if self.dispatcher:
+                    await self.dispatcher._place_risk_management_orders(
+                        order, synthetic_result
+                    )
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Deferred OCO placement failed for {symbol} (entry {entry_id}): {e}"
+                )
+
     async def _monitor_orders(self) -> None:
         """
         Monitor active orders for fills and trigger OCO logic
         This runs in a separate task
         NEW: Works with multiple OCO pairs per exchange position
+        NEW (#371): Also drives deferred-OCO post-fill triggers via _check_pending_entries
         """
 
         self.logger.info("🔍 STARTING ORDER MONITORING (MULTI-STRATEGY MODE)")
@@ -809,8 +920,13 @@ class OCOManager:
             f"Active OCO pairs: {total_pairs} across {len(self.active_oco_pairs)} positions"
         )
 
-        while self.monitoring_active and self.active_oco_pairs:
+        while self.monitoring_active and (
+            self.active_oco_pairs or self.pending_entries
+        ):
             try:
+                # #371: Drive deferred-OCO triggers for CONDITIONAL entries that have FILLED.
+                await self._check_pending_entries()
+
                 # Check each exchange position's OCO pairs
                 for exchange_position_key, oco_list in list(
                     self.active_oco_pairs.items()
@@ -1951,16 +2067,32 @@ class Dispatcher:
                         f"🛡️ ATTEMPTING TO PLACE RISK MANAGEMENT ORDERS for {order.symbol} | position_updated={position_updated}"
                     )
                     try:
-                        self.logger.info(
-                            f"🔧 Calling _place_risk_management_orders() for {order.symbol}"
-                        )
-                        await asyncio.wait_for(
-                            self._place_risk_management_orders(order, result),
-                            timeout=10.0,  # Longer timeout for exchange API calls
-                        )
-                        self.logger.info(
-                            f"✅ Risk management orders placed for {order.symbol}"
-                        )
+                        # #371: If entry is a CONDITIONAL order that hasn't fired
+                        # (status=NEW with no real fill), defer OCO placement until
+                        # the entry reaches FILLED. Placing OCO immediately against the
+                        # stale target_price has triggered Binance -2021 rejections.
+                        if self.oco_manager._is_conditional_pending_entry(
+                            order, result
+                        ):
+                            entry_oid = str(result.get("order_id") or "")
+                            await self.oco_manager.defer_oco_until_filled(
+                                order, entry_oid
+                            )
+                            self.logger.info(
+                                f"⏸️ Skipping immediate risk-management placement for {order.symbol}: "
+                                f"entry is CONDITIONAL/NEW, OCO deferred until FILLED"
+                            )
+                        else:
+                            self.logger.info(
+                                f"🔧 Calling _place_risk_management_orders() for {order.symbol}"
+                            )
+                            await asyncio.wait_for(
+                                self._place_risk_management_orders(order, result),
+                                timeout=10.0,  # Longer timeout for exchange API calls
+                            )
+                            self.logger.info(
+                                f"✅ Risk management orders placed for {order.symbol}"
+                            )
                     except Exception as e:
                         self.logger.error(
                             f"[CRITICAL] OCO placement failed. Initiating atomic rollback for symbol {order.symbol}: {e}"

@@ -891,3 +891,257 @@ async def test_sl_floor_overrides_absolute_stop_loss_too_close(dispatcher_with_m
         f"Absolute SL too close to entry should be floored. "
         f"Expected {expected_sl}, got {actual_sl}"
     )
+
+
+# ============================================================================
+# Take-Profit Fallback Tests (per #372)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_with_fallback_succeeds_first_try(
+    dispatcher_with_mocks, sample_filled_order
+):
+    """First-attempt success path: -2021 never seen, original TP placed."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.execute.return_value = {
+        "status": "NEW",
+        "order_id": "tp-ok",
+    }
+
+    from contracts.order import OrderStatus
+
+    tp_order = TradeOrder(
+        order_id="tp-test",
+        symbol=sample_filled_order.symbol,
+        side="sell",
+        type="take_profit",
+        amount=sample_filled_order.amount,
+        take_profit=sample_filled_order.take_profit,
+        target_price=None,
+        position_id=sample_filled_order.position_id,
+        position_side=sample_filled_order.position_side,
+        exchange="binance",
+        stop_loss=None,
+        conditional_price=None,
+        conditional_direction=None,
+        conditional_timeout=None,
+        iceberg_quantity=None,
+        client_order_id=None,
+        filled_amount=0.0,
+        average_price=None,
+        simulate=False,
+        time_in_force="GTC",
+        position_size_pct=None,
+        status=OrderStatus.PENDING,
+    )
+
+    result = await dispatcher._place_take_profit_with_fallback(
+        tp_order, sample_filled_order
+    )
+
+    assert result["status"] == "NEW"
+    assert result["take_profit_price"] == sample_filled_order.take_profit
+    assert mock_exchange.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_with_fallback_long_adjusts_down_on_2021(
+    dispatcher_with_mocks, sample_filled_order
+):
+    """LONG TP that would immediately trigger: fallback moves TP DOWN 1%, then succeeds."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.execute.side_effect = [
+        {"status": "error", "error": "APIError -2021 Order would immediately trigger"},
+        {"status": "NEW", "order_id": "tp-fallback-1"},
+    ]
+
+    original_tp = float(sample_filled_order.take_profit)
+    from contracts.order import OrderStatus
+
+    tp_order = TradeOrder(
+        order_id="tp-test",
+        symbol=sample_filled_order.symbol,
+        side="sell",
+        type="take_profit",
+        amount=sample_filled_order.amount,
+        take_profit=original_tp,
+        target_price=None,
+        position_id=sample_filled_order.position_id,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=None,
+        conditional_price=None,
+        conditional_direction=None,
+        conditional_timeout=None,
+        iceberg_quantity=None,
+        client_order_id=None,
+        filled_amount=0.0,
+        average_price=None,
+        simulate=False,
+        time_in_force="GTC",
+        position_size_pct=None,
+        status=OrderStatus.PENDING,
+    )
+
+    result = await dispatcher._place_take_profit_with_fallback(
+        tp_order,
+        sample_filled_order,  # sample_filled_order.side == "buy" -> LONG entry
+    )
+
+    assert result["status"] == "NEW"
+    assert result["take_profit_price"] == pytest.approx(original_tp * 0.99)
+    assert mock_exchange.execute.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_with_fallback_short_adjusts_up_on_2021(
+    dispatcher_with_mocks,
+):
+    """SHORT TP that would immediately trigger: fallback moves TP UP 1%, then succeeds."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+
+    short_order = TradeOrder(
+        position_id="short-pos",
+        symbol="BTCUSDT",
+        side="sell",
+        type="market",
+        amount=0.002,
+        target_price=50000.0,
+        position_side="SHORT",
+        exchange="binance",
+        take_profit=48000.0,
+    )
+
+    mock_exchange.execute.side_effect = [
+        {"status": "error", "error": "code: -2021 immediately trigger"},
+        {"status": "NEW", "order_id": "tp-fallback-2"},
+    ]
+
+    from contracts.order import OrderStatus
+
+    tp_order = TradeOrder(
+        order_id="tp-test",
+        symbol="BTCUSDT",
+        side="buy",
+        type="take_profit",
+        amount=0.002,
+        take_profit=48000.0,
+        target_price=None,
+        position_id="short-pos",
+        position_side="SHORT",
+        exchange="binance",
+        stop_loss=None,
+        conditional_price=None,
+        conditional_direction=None,
+        conditional_timeout=None,
+        iceberg_quantity=None,
+        client_order_id=None,
+        filled_amount=0.0,
+        average_price=None,
+        simulate=False,
+        time_in_force="GTC",
+        position_size_pct=None,
+        status=OrderStatus.PENDING,
+    )
+
+    result = await dispatcher._place_take_profit_with_fallback(tp_order, short_order)
+
+    assert result["status"] == "NEW"
+    assert result["take_profit_price"] == pytest.approx(48000.0 * 1.01)
+    assert mock_exchange.execute.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_with_fallback_caps_at_two_adjustments(
+    dispatcher_with_mocks, sample_filled_order
+):
+    """AC: cap at 2 adjustments — third attempt does not happen even if 2nd also fails."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.execute.side_effect = [
+        {"status": "error", "error": "-2021"},
+        {"status": "error", "error": "-2021"},
+        {"status": "error", "error": "-2021"},
+    ]
+
+    from contracts.order import OrderStatus
+
+    tp_order = TradeOrder(
+        order_id="tp-test",
+        symbol=sample_filled_order.symbol,
+        side="sell",
+        type="take_profit",
+        amount=sample_filled_order.amount,
+        take_profit=sample_filled_order.take_profit,
+        target_price=None,
+        position_id=sample_filled_order.position_id,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=None,
+        conditional_price=None,
+        conditional_direction=None,
+        conditional_timeout=None,
+        iceberg_quantity=None,
+        client_order_id=None,
+        filled_amount=0.0,
+        average_price=None,
+        simulate=False,
+        time_in_force="GTC",
+        position_size_pct=None,
+        status=OrderStatus.PENDING,
+    )
+
+    result = await dispatcher._place_take_profit_with_fallback(
+        tp_order, sample_filled_order
+    )
+
+    assert result["status"] == "error"
+    # 1 original + 2 adjustment attempts = 3 total; never 4.
+    assert mock_exchange.execute.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_place_take_profit_with_fallback_non_2021_error_short_circuits(
+    dispatcher_with_mocks, sample_filled_order
+):
+    """Non -2021 errors return immediately without attempting price adjustment."""
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.execute.return_value = {
+        "status": "error",
+        "error": "APIError -2010 Account has insufficient balance",
+    }
+
+    from contracts.order import OrderStatus
+
+    tp_order = TradeOrder(
+        order_id="tp-test",
+        symbol=sample_filled_order.symbol,
+        side="sell",
+        type="take_profit",
+        amount=sample_filled_order.amount,
+        take_profit=sample_filled_order.take_profit,
+        target_price=None,
+        position_id=sample_filled_order.position_id,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=None,
+        conditional_price=None,
+        conditional_direction=None,
+        conditional_timeout=None,
+        iceberg_quantity=None,
+        client_order_id=None,
+        filled_amount=0.0,
+        average_price=None,
+        simulate=False,
+        time_in_force="GTC",
+        position_size_pct=None,
+        status=OrderStatus.PENDING,
+    )
+
+    result = await dispatcher._place_take_profit_with_fallback(
+        tp_order, sample_filled_order
+    )
+
+    assert result["status"] == "error"
+    # Original attempt only; no fallback because the error is not -2021.
+    assert mock_exchange.execute.call_count == 1

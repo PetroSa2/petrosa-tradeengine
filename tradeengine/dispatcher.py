@@ -3229,9 +3229,14 @@ class Dispatcher:
                 f"{take_profit_order.amount} @ {adjusted_take_profit}"
             )
 
-            # Execute take profit order
+            # Execute take profit order — with -2021 fallback strategy per #372.
+            # Symmetric to _place_stop_loss_with_fallback: if the market has
+            # already crossed the original TP, retry with the TP moved 1% then
+            # 2% closer to entry before giving up.
             if self.exchange:
-                tp_result = await self.exchange.execute(take_profit_order)
+                tp_result = await self._place_take_profit_with_fallback(
+                    take_profit_order, order
+                )
             else:
                 tp_result = {"status": "error", "error": "No exchange configured"}
 
@@ -3243,10 +3248,14 @@ class Dispatcher:
                 "pending",
                 "NEW",
             ]:
+                # If the fallback adjusted the TP, surface the resolved price
+                # so the log line matches the real on-exchange order rather
+                # than the original (potentially stale) value.
+                resolved_tp = tp_result.get("take_profit_price", order.take_profit)
                 self.logger.info(
                     f"✅ TAKE PROFIT PLACED: {order.symbol} | "
                     f"Order ID: {tp_result.get('order_id', 'N/A')} | "
-                    f"Take Profit Price: {order.take_profit} | "
+                    f"Take Profit Price: {resolved_tp} | "
                     f"Status: {tp_result.get('status')}"
                 )
 
@@ -3569,6 +3578,145 @@ class Dispatcher:
 
         except Exception as e:
             self.logger.error(f"❌ Exception in SL fallback logic: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}
+
+    async def _place_take_profit_with_fallback(
+        self, take_profit_order: TradeOrder, original_order: TradeOrder
+    ) -> dict[str, Any]:
+        """
+        Place take profit order with fallback strategies for API errors (per #372).
+
+        Mirrors the SL fallback pattern. Fallback strategy for APIError -2021
+        (Order would immediately trigger), which happens when fast market moves
+        have already crossed the planned TP before placement:
+
+        1. Try the original TP price.
+        2. If -2021, adjust TP 1% CLOSER to entry (LONG: lower TP; SHORT: higher TP).
+        3. If still -2021, adjust TP 2% closer to entry.
+        4. Cap at 2 adjustments — if all fail, return the last result so the caller
+           can decide whether to leave the position without a TP.
+
+        Args:
+            take_profit_order: The take profit order to place.
+            original_order: The original position entry order (provides side + entry
+                target_price for context).
+
+        Returns:
+            Result dictionary with status and order details. On successful adjusted
+            placement, the dict is annotated with `take_profit_price`.
+        """
+        try:
+            from typing import cast
+
+            self.logger.info(
+                f"🔄 Attempt 1: Placing TP at original price {take_profit_order.take_profit}"
+            )
+            tp_result = cast(
+                dict[str, Any], await self.exchange.execute(take_profit_order)
+            )
+
+            if tp_result.get("status") in [
+                "filled",
+                "partially_filled",
+                "pending",
+                "NEW",
+            ]:
+                tp_result["take_profit_price"] = take_profit_order.take_profit
+                return tp_result
+
+            error_msg = str(tp_result.get("error", ""))
+            if "-2021" in error_msg or "immediately trigger" in error_msg.lower():
+                self.logger.warning(
+                    f"⚠️  TP order would immediately trigger at "
+                    f"{take_profit_order.take_profit}. Attempting fallback strategies..."
+                )
+
+                original_tp = take_profit_order.take_profit
+                if original_tp is None or float(original_tp) <= 0:
+                    self.logger.error(
+                        "Cannot calculate adjusted TP: invalid original TP price"
+                    )
+                    return tp_result
+
+                # is_long indicates the ENTRY side. TP for a LONG entry is ABOVE
+                # entry; if the market has rallied past it (would immediately
+                # trigger as filled), we adjust TP DOWN (closer to entry).
+                # Symmetrically: TP for a SHORT entry is BELOW entry; if the
+                # market has fallen past it, we adjust TP UP (closer to entry).
+                is_long = original_order.side == "buy"
+
+                # Attempt 2: 1% adjustment toward entry.
+                if is_long:
+                    adjusted_tp = float(original_tp) * 0.99
+                else:
+                    adjusted_tp = float(original_tp) * 1.01
+
+                self.logger.info(
+                    f"🔄 Attempt 2: Placing TP at adjusted price {adjusted_tp} "
+                    f"(original: {original_tp})"
+                )
+
+                take_profit_order.take_profit = adjusted_tp
+                tp_result = cast(
+                    dict[str, Any], await self.exchange.execute(take_profit_order)
+                )
+
+                if tp_result.get("status") in [
+                    "filled",
+                    "partially_filled",
+                    "pending",
+                    "NEW",
+                ]:
+                    self.logger.warning(
+                        f"✅ TP placed at adjusted price {adjusted_tp} "
+                        f"(moved from {original_tp})"
+                    )
+                    tp_result["take_profit_price"] = adjusted_tp
+                    return tp_result
+
+                # Attempt 3: 2% adjustment toward entry (cap per #372 AC).
+                if is_long:
+                    adjusted_tp = float(original_tp) * 0.98
+                else:
+                    adjusted_tp = float(original_tp) * 1.02
+
+                self.logger.info(
+                    f"🔄 Attempt 3: Placing TP at wider adjusted price {adjusted_tp}"
+                )
+
+                take_profit_order.take_profit = adjusted_tp
+                tp_result = cast(
+                    dict[str, Any], await self.exchange.execute(take_profit_order)
+                )
+
+                if tp_result.get("status") in [
+                    "filled",
+                    "partially_filled",
+                    "pending",
+                    "NEW",
+                ]:
+                    self.logger.warning(
+                        f"✅ TP placed at wider adjusted price {adjusted_tp} "
+                        f"(moved from {original_tp})"
+                    )
+                    tp_result["take_profit_price"] = adjusted_tp
+                    return tp_result
+
+                # All attempts failed — position will be SL-protected but
+                # un-take-profited until a downstream re-attempt fires.
+                self.logger.error(
+                    f"❌ All TP placement attempts failed for {original_order.symbol}. "
+                    f"Position is left without a take-profit order; SL still active."
+                )
+                return tp_result
+
+            # For non -2021 errors, surface the original result unchanged so the
+            # caller can distinguish "TP didn't fit the market" from "TP failed
+            # for another reason" (e.g., margin, lot-size, account state).
+            return tp_result
+
+        except Exception as e:
+            self.logger.error(f"❌ Exception in TP fallback logic: {e}", exc_info=True)
             return {"status": "error", "error": str(e)}
 
     async def shutdown(self) -> None:

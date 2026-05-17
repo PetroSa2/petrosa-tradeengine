@@ -1459,7 +1459,7 @@ class Dispatcher:
         """Process a trading signal with distributed state management"""
         try:
             # Log signal
-            if audit_logger.enabled and audit_logger.connected:
+            if audit_logger.enabled:
                 audit_logger.log_signal(signal.model_dump())
 
             # Add signal to aggregator
@@ -1494,7 +1494,7 @@ class Dispatcher:
                 }
 
             # Log result
-            if audit_logger.enabled and audit_logger.connected:
+            if audit_logger.enabled:
                 audit_logger.log_signal(
                     {
                         "signal": signal.model_dump(),
@@ -1508,7 +1508,7 @@ class Dispatcher:
 
         except Exception as e:
             self.logger.error(f"Signal processing error: {e}")
-            if audit_logger.enabled and audit_logger.connected:
+            if audit_logger.enabled:
                 audit_logger.log_error(
                     {
                         "error": str(e),
@@ -2141,7 +2141,7 @@ class Dispatcher:
                                 )
 
                                 # Log critical event to audit trail
-                                if audit_logger.enabled and audit_logger.connected:
+                                if audit_logger.enabled:
                                     audit_logger.log_trade(
                                         {
                                             "event": "atomic_rollback",
@@ -2396,7 +2396,7 @@ class Dispatcher:
                 )
 
                 # Log order
-                if audit_logger.enabled and audit_logger.connected:
+                if audit_logger.enabled:
                     audit_logger.log_order(order.model_dump())
 
                 # Execute order on Binance exchange
@@ -2443,7 +2443,7 @@ class Dispatcher:
                         await self.order_manager.track_order(order, result)
 
                 # Log result
-                if audit_logger.enabled and audit_logger.connected:
+                if audit_logger.enabled:
                     audit_logger.log_order(
                         {
                             "order": order.model_dump(),
@@ -2516,7 +2516,7 @@ class Dispatcher:
                     f"❌ ORDER EXECUTION FAILED: {order.order_id} | Error: {e}",
                     exc_info=True,
                 )
-                if audit_logger.enabled and audit_logger.connected:
+                if audit_logger.enabled:
                     audit_logger.log_error(
                         {
                             "error": str(e),

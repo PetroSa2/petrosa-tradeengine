@@ -127,10 +127,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("✅ Configuration rate limiter initialized")
 
         # Initialize audit logger
-        if audit_logger.enabled and audit_logger.connected:
-            logger.info("Audit logging enabled and connected")
-        elif audit_logger.enabled:
-            logger.warning("Audit logging enabled but not connected")
+        if audit_logger.enabled:
+            logger.info(
+                "Audit logging enabled (backend=%s, mode=%s)",
+                audit_logger.backend,
+                audit_logger.mode,
+            )
         else:
             logger.info("Audit logging disabled")
 
@@ -370,10 +372,7 @@ async def health_check() -> HealthResponse:
             "dispatcher": await dispatcher.health_check(),
             "binance_exchange": await binance_exchange.health_check(),
             "simulator_exchange": await simulator_exchange.health_check(),
-            "audit_logger": {
-                "enabled": audit_logger.enabled,
-                "connected": audit_logger.connected,
-            },
+            "audit_logger": audit_logger.health(),
             "mongodb_config": {
                 "status": "healthy",
                 "configured": True,

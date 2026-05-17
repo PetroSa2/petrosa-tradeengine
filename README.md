@@ -105,6 +105,14 @@ A modular, event-driven trading execution system focused on crypto trading. Cons
 
 #### MongoDB (Audit Log)
 
+> **Status note (#354):** the in-process `audit_logger` (`shared/audit.py`) is
+> currently a **stdout stub** — it emits structured log lines via Python
+> `logging` and does not write to MongoDB. The schema below documents the
+> intended persistent backend. The `/health` endpoint reports the live audit
+> contract under `components.audit_logger` (`backend`, `mode`,
+> `is_persistent`). See [`docs/AUDIT_LOGGING.md`](docs/AUDIT_LOGGING.md) for
+> the full contract and migration notes.
+
 **Collection:** `trade_audit_log`
 
 **Document Structure:**

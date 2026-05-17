@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from contracts.order import OrderType, TradeOrder
-from tradeengine.dispatcher import OCOManager
+from tradeengine.dispatcher import Dispatcher, OCOManager
 
 
 def _make_conditional_order(
@@ -269,3 +269,169 @@ async def test_check_pending_entries_keeps_entry_when_status_lookup_fails(
 
     assert "entry-cond-1" in oco_manager.pending_entries
     mock_dispatcher._place_risk_management_orders.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_pending_entries_keeps_entry_on_partially_filled(
+    oco_manager: OCOManager, mock_exchange: Mock, mock_dispatcher: Mock
+) -> None:
+    """F2: partially_filled is NOT terminal. Placing OCO sized to the partial fill
+    would leave the residual fill uncovered. We must wait for fully FILLED."""
+    order = _make_conditional_order()
+    oco_manager.pending_entries["entry-cond-1"] = {
+        "order": order,
+        "symbol": order.symbol,
+        "entry_order_id": "entry-cond-1",
+        "registered_at": 0.0,
+    }
+    mock_exchange.get_order_status.return_value = {
+        "order_id": "entry-cond-1",
+        "status": "partially_filled",
+        "executed_qty": 0.0005,
+        "cummulative_quote_qty": 25.0,
+        "price": 50000.0,
+    }
+
+    await oco_manager._check_pending_entries()
+
+    assert "entry-cond-1" in oco_manager.pending_entries
+    mock_dispatcher._place_risk_management_orders.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_pending_entries_also_keeps_partially_filled_uppercase(
+    oco_manager: OCOManager, mock_exchange: Mock, mock_dispatcher: Mock
+) -> None:
+    """F2: case-insensitive — PARTIALLY_FILLED stays pending too."""
+    order = _make_conditional_order()
+    oco_manager.pending_entries["entry-cond-1"] = {
+        "order": order,
+        "symbol": order.symbol,
+        "entry_order_id": "entry-cond-1",
+        "registered_at": 0.0,
+    }
+    mock_exchange.get_order_status.return_value = {
+        "order_id": "entry-cond-1",
+        "status": "PARTIALLY_FILLED",
+        "executed_qty": 0.0005,
+        "cummulative_quote_qty": 25.0,
+        "price": 50000.0,
+    }
+
+    await oco_manager._check_pending_entries()
+
+    assert "entry-cond-1" in oco_manager.pending_entries
+    mock_dispatcher._place_risk_management_orders.assert_not_called()
+
+
+# -----------------------------------------------------------------------------
+# F7: Dispatcher call-site gating tests via _route_conditional_pending_to_defer
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dispatcher_with_mocks(mock_exchange: Mock) -> Dispatcher:
+    """Real Dispatcher instance with the OCOManager methods we exercise mocked.
+
+    Keeps the Dispatcher's gating logic real (the thing under test) while
+    isolating exchange and defer side-effects.
+    """
+    d = Dispatcher(exchange=mock_exchange)
+    # OCOManager is constructed in Dispatcher.__init__; replace its async hooks
+    # so we can assert call counts without driving real monitoring tasks.
+    d.oco_manager.defer_oco_until_filled = AsyncMock(return_value=None)
+    return d
+
+
+@pytest.mark.asyncio
+async def test_route_returns_none_for_non_conditional_order(
+    dispatcher_with_mocks: Dispatcher,
+) -> None:
+    """Non-conditional orders must fall through to the immediate-OCO path."""
+    order = _make_market_order()
+    result = {"order_id": "ord-mkt-1", "status": "NEW", "fill_price": 50000.0}
+
+    routed = await dispatcher_with_mocks._route_conditional_pending_to_defer(
+        order, result
+    )
+
+    assert routed is None
+    dispatcher_with_mocks.oco_manager.defer_oco_until_filled.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_defers_conditional_new_with_entry_id(
+    dispatcher_with_mocks: Dispatcher,
+) -> None:
+    """F7 happy path: CONDITIONAL+NEW with order_id → defer is called, result
+    is returned for early exit (skipping immediate OCO + rollback block)."""
+    order = _make_conditional_order()
+    result = {"order_id": "ord-cond-7", "status": "NEW"}
+
+    routed = await dispatcher_with_mocks._route_conditional_pending_to_defer(
+        order, result
+    )
+
+    assert routed is result  # signal early-return to caller
+    dispatcher_with_mocks.oco_manager.defer_oco_until_filled.assert_awaited_once_with(
+        order, "ord-cond-7"
+    )
+
+
+@pytest.mark.asyncio
+async def test_route_escalates_when_order_id_missing(
+    dispatcher_with_mocks: Dispatcher,
+) -> None:
+    """F4: CONDITIONAL+NEW with no order_id must mutate result to a loud
+    failure state (not silently return) and NOT call defer."""
+    order = _make_conditional_order()
+    result: dict[str, Any] = {"order_id": None, "status": "NEW"}
+
+    routed = await dispatcher_with_mocks._route_conditional_pending_to_defer(
+        order, result
+    )
+
+    assert routed is result
+    assert routed["status"] == "deferred_oco_failed"
+    assert "Missing entry_order_id" in routed["error"]
+    dispatcher_with_mocks.oco_manager.defer_oco_until_filled.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_escalates_when_order_id_empty_string(
+    dispatcher_with_mocks: Dispatcher,
+) -> None:
+    """F4 variant: order_id is empty string (not None)."""
+    order = _make_conditional_order()
+    result: dict[str, Any] = {"order_id": "", "status": "NEW"}
+
+    routed = await dispatcher_with_mocks._route_conditional_pending_to_defer(
+        order, result
+    )
+
+    assert routed["status"] == "deferred_oco_failed"
+    dispatcher_with_mocks.oco_manager.defer_oco_until_filled.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_does_not_trigger_rollback_when_defer_raises(
+    dispatcher_with_mocks: Dispatcher,
+) -> None:
+    """F1: if defer_oco_until_filled itself raises, the route mutates result
+    to deferred_oco_failed and returns it. The exception must NOT propagate
+    up to the dispatcher's atomic-rollback handler, because the CONDITIONAL
+    position is NEW (not open on the exchange) and must not be MARKET-closed."""
+    order = _make_conditional_order()
+    result = {"order_id": "ord-cond-9", "status": "NEW"}
+    dispatcher_with_mocks.oco_manager.defer_oco_until_filled = AsyncMock(
+        side_effect=RuntimeError("monitor task crashed")
+    )
+
+    # Must NOT raise. Must return result.
+    routed = await dispatcher_with_mocks._route_conditional_pending_to_defer(
+        order, result
+    )
+
+    assert routed is result
+    assert routed["status"] == "deferred_oco_failed"
+    assert "monitor task crashed" in routed["error"]

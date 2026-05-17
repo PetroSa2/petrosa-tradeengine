@@ -840,10 +840,16 @@ class OCOManager:
             await self.start_monitoring()
 
     async def _check_pending_entries(self) -> None:
-        """Poll deferred entries; trigger OCO when their entry order is FILLED."""
+        """Poll deferred entries; trigger OCO when their entry order is FILLED.
+
+        Note: partially_filled is intentionally NOT terminal here. A CONDITIONAL
+        order can fill in stages; placing OCO sized to the partial fill would
+        leave the residual fill uncovered. We wait for fully FILLED so the OCO
+        quantity matches the complete entry size.
+        """
         if not self.pending_entries:
             return
-        filled_terminal = {"filled", "FILLED", "partially_filled", "PARTIALLY_FILLED"}
+        filled_terminal = {"filled", "FILLED"}
         for entry_id, info in list(self.pending_entries.items()):
             order = info["order"]
             symbol = info["symbol"]
@@ -2066,33 +2072,27 @@ class Dispatcher:
                     self.logger.info(
                         f"🛡️ ATTEMPTING TO PLACE RISK MANAGEMENT ORDERS for {order.symbol} | position_updated={position_updated}"
                     )
+
+                    # #371: Route CONDITIONAL/NEW entries to the deferred-OCO path.
+                    # Returning a non-None result means "handled — skip the immediate
+                    # OCO placement and the rollback-guarded block below."
+                    deferred_result = await self._route_conditional_pending_to_defer(
+                        order, result
+                    )
+                    if deferred_result is not None:
+                        return deferred_result
+
                     try:
-                        # #371: If entry is a CONDITIONAL order that hasn't fired
-                        # (status=NEW with no real fill), defer OCO placement until
-                        # the entry reaches FILLED. Placing OCO immediately against the
-                        # stale target_price has triggered Binance -2021 rejections.
-                        if self.oco_manager._is_conditional_pending_entry(
-                            order, result
-                        ):
-                            entry_oid = str(result.get("order_id") or "")
-                            await self.oco_manager.defer_oco_until_filled(
-                                order, entry_oid
-                            )
-                            self.logger.info(
-                                f"⏸️ Skipping immediate risk-management placement for {order.symbol}: "
-                                f"entry is CONDITIONAL/NEW, OCO deferred until FILLED"
-                            )
-                        else:
-                            self.logger.info(
-                                f"🔧 Calling _place_risk_management_orders() for {order.symbol}"
-                            )
-                            await asyncio.wait_for(
-                                self._place_risk_management_orders(order, result),
-                                timeout=10.0,  # Longer timeout for exchange API calls
-                            )
-                            self.logger.info(
-                                f"✅ Risk management orders placed for {order.symbol}"
-                            )
+                        self.logger.info(
+                            f"🔧 Calling _place_risk_management_orders() for {order.symbol}"
+                        )
+                        await asyncio.wait_for(
+                            self._place_risk_management_orders(order, result),
+                            timeout=10.0,  # Longer timeout for exchange API calls
+                        )
+                        self.logger.info(
+                            f"✅ Risk management orders placed for {order.symbol}"
+                        )
                     except Exception as e:
                         self.logger.error(
                             f"[CRITICAL] OCO placement failed. Initiating atomic rollback for symbol {order.symbol}: {e}"
@@ -2659,6 +2659,58 @@ class Dispatcher:
             "daily_pnl": self.position_manager.get_daily_pnl(),
             "total_unrealized_pnl": self.position_manager.get_total_unrealized_pnl(),
         }
+
+    async def _route_conditional_pending_to_defer(
+        self, order: TradeOrder, result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """#371: Route CONDITIONAL+NEW entries to the deferred-OCO path.
+
+        Returns:
+            - None  → caller should proceed with immediate OCO placement (default path)
+            - dict  → the (possibly mutated) result; caller must return it immediately
+                      and skip the rollback-guarded block. A CONDITIONAL+NEW order has
+                      no live exchange position yet, so defer-path failures must NOT
+                      trigger atomic MARKET rollback against a non-existent position.
+        """
+        if not self.oco_manager._is_conditional_pending_entry(order, result):
+            return None
+
+        entry_oid = str(result.get("order_id") or "")
+        if not entry_oid:
+            # Exchange accepted a CONDITIONAL but returned no order_id.
+            # Surface loudly — silent return would leave the eventual fill
+            # unprotected by SL/TP.
+            self.logger.error(
+                f"[CRITICAL] CONDITIONAL entry for {order.symbol} returned "
+                f"status=NEW but no order_id — cannot defer OCO. "
+                f"Position will be UNPROTECTED if the entry triggers. "
+                f"result={result}"
+            )
+            result["status"] = "deferred_oco_failed"
+            result["error"] = (
+                "Missing entry_order_id for CONDITIONAL — OCO cannot be deferred"
+            )
+            return result
+
+        try:
+            await self.oco_manager.defer_oco_until_filled(order, entry_oid)
+            self.logger.info(
+                f"⏸️ Skipping immediate risk-management placement for {order.symbol}: "
+                f"entry is CONDITIONAL/NEW, OCO deferred until FILLED"
+            )
+            return result
+        except Exception as defer_err:
+            # Defer-path failure: log loudly but DO NOT trigger rollback.
+            # The CONDITIONAL is on the exchange in NEW state; closing it
+            # requires cancel_order, not market-close.
+            self.logger.error(
+                f"[CRITICAL] Failed to defer OCO for CONDITIONAL "
+                f"{order.symbol} (entry {entry_oid}): {defer_err}. "
+                f"Eventual fill will be UNPROTECTED unless operator intervenes."
+            )
+            result["status"] = "deferred_oco_failed"
+            result["error"] = f"defer_oco_until_filled raised: {defer_err}"
+            return result
 
     async def _place_risk_management_orders(
         self, order: TradeOrder, result: dict[str, Any]

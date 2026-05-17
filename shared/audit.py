@@ -1,3 +1,29 @@
+"""Audit logging for trading operations.
+
+Current implementation is a stdout stub: structured log lines are emitted via
+Python's `logging` module. There is no remote persistence layer wired up here.
+
+The previous version of this module exposed `connected = False` while leaving
+the actual audit calls operational at the log level. Health probes reported
+`audit_logger.connected = false` and dispatcher call sites gated on
+`enabled and connected`, which silently no-op'd every audit write while
+operators saw what looked like a connectivity problem.
+
+The contract is now explicit:
+
+- `enabled` controls whether anything is emitted at all.
+- `backend` names where the records go (currently always ``"stdout"``).
+- `mode` reports ``"stub"`` until a persistent backend is wired up.
+- `is_persistent` is False until that happens.
+
+The ``connected`` attribute is preserved for backwards compatibility (some
+tests still patch it) but is no longer consulted by any gate. It mirrors
+``is_persistent`` so the value remains truthful.
+
+A separate MySQL audit logger lives in :mod:`shared.logger`; do not conflate
+the two.
+"""
+
 import logging
 from typing import Any
 
@@ -5,13 +31,29 @@ from shared.config import Settings
 
 
 class AuditLogger:
-    """Audit logging for trading operations with MongoDB integration"""
+    """Stdout audit logger stub for trading operations."""
+
+    backend = "stdout"
+    mode = "stub"
+    is_persistent = False
 
     def __init__(self) -> None:
         self.settings = Settings()
         self.enabled = True
-        self.connected = False
+        # Deprecated. Kept for backwards-compat with tests that patch it.
+        # Mirrors is_persistent (False for the stub backend).
+        self.connected = self.is_persistent
         self.logger = logging.getLogger(__name__)
+
+    def health(self) -> dict[str, Any]:
+        """Return audit logger health/contract for /health payloads."""
+        return {
+            "status": "healthy" if self.enabled else "disabled",
+            "enabled": self.enabled,
+            "backend": self.backend,
+            "mode": self.mode,
+            "is_persistent": self.is_persistent,
+        }
 
     def log_signal(self, signal_data: dict[str, Any]) -> None:
         """Log trading signal for audit purposes"""
@@ -19,7 +61,6 @@ class AuditLogger:
             return
 
         try:
-            # In a real implementation, this would write to MongoDB
             self.logger.info(f"Signal logged: {signal_data}")
         except Exception as e:
             self.logger.error(f"Failed to log signal: {e}")
@@ -30,7 +71,6 @@ class AuditLogger:
             return
 
         try:
-            # In a real implementation, this would write to MongoDB
             self.logger.info(f"Trade logged: {trade_data}")
         except Exception as e:
             self.logger.error(f"Failed to log trade: {e}")
@@ -81,7 +121,6 @@ class AuditLogger:
             return
 
         try:
-            # In a real implementation, this would write to MongoDB
             self.logger.info(f"Account logged: {account_data}")
         except Exception as e:
             self.logger.error(f"Failed to log account: {e}")
@@ -92,7 +131,6 @@ class AuditLogger:
             return
 
         try:
-            # In a real implementation, this would write to MongoDB
             self.logger.info(f"Risk logged: {risk_data}")
         except Exception as e:
             self.logger.error(f"Failed to log risk: {e}")
@@ -103,7 +141,6 @@ class AuditLogger:
             return
 
         try:
-            # In a real implementation, this would write to MongoDB
             self.logger.info(f"Performance logged: {performance_data}")
         except Exception as e:
             self.logger.error(f"Failed to log performance: {e}")

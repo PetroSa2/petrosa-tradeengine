@@ -15,6 +15,21 @@ except ImportError:
     UTC = timezone.utc  # noqa: UP017
 from typing import TYPE_CHECKING, Any
 
+
+def parse_datetime_aware(v: str) -> datetime:
+    """Parse an ISO 8601 string into a timezone-aware datetime.
+
+    Handles Python 3.10 incompatibility with the 'Z' suffix and ensures
+    naive datetimes (no tz info) are coerced to UTC.
+    """
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    dt = datetime.fromisoformat(v)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
 try:
     from enum import StrEnum
 except ImportError:

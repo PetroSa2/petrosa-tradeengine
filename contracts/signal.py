@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from shared.constants import parse_datetime_aware
+
 try:
     from enum import StrEnum
 except ImportError:
@@ -178,7 +180,7 @@ class Signal(BaseModel):
     def validate_timestamp(cls, v: Any) -> datetime:
         if isinstance(v, str):
             try:
-                return datetime.fromisoformat(v)
+                return parse_datetime_aware(v)
             except ValueError:
                 try:
                     timestamp_float = float(v)

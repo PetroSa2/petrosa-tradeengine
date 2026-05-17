@@ -2764,6 +2764,44 @@ class Dispatcher:
                 )
                 entry_price = 0.0
 
+            # MIN SL DISTANCE FLOOR: enforce a minimum safe distance against
+            # premature stop-outs from strategy anomalies or micro-volatility.
+            from shared.constants import MIN_SL_DISTANCE_PCT
+
+            if (
+                order.stop_loss_pct is not None
+                and order.stop_loss_pct > 0
+                and order.stop_loss_pct < MIN_SL_DISTANCE_PCT
+            ):
+                self.logger.warning(
+                    f"⚠️ SL FLOOR: stop_loss_pct {order.stop_loss_pct * 100:.3f}% is below "
+                    f"floor {MIN_SL_DISTANCE_PCT * 100:.3f}% for {order.symbol}. "
+                    f"Overriding to floor."
+                )
+                order.stop_loss_pct = MIN_SL_DISTANCE_PCT
+                # Drop any precomputed absolute stop_loss so it gets recomputed
+                # from the floored percentage below.
+                order.stop_loss = None
+
+            # If an absolute stop_loss was provided directly, enforce the floor
+            # on its implied distance from entry as well.
+            if (
+                order.stop_loss
+                and order.stop_loss > 0
+                and entry_price > 0
+                and not order.stop_loss_pct
+            ):
+                implied_pct = abs(entry_price - order.stop_loss) / entry_price
+                if implied_pct < MIN_SL_DISTANCE_PCT:
+                    self.logger.warning(
+                        f"⚠️ SL FLOOR: stop_loss {order.stop_loss} implies "
+                        f"{implied_pct * 100:.3f}% distance from entry {entry_price} "
+                        f"for {order.symbol}, below floor {MIN_SL_DISTANCE_PCT * 100:.3f}%. "
+                        f"Overriding to floor."
+                    )
+                    order.stop_loss_pct = MIN_SL_DISTANCE_PCT
+                    order.stop_loss = None
+
             # CRITICAL FIX: Calculate absolute prices from percentages if missing
             if not order.stop_loss and order.stop_loss_pct and entry_price > 0:
                 if order.side == "buy":  # LONG

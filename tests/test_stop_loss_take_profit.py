@@ -683,3 +683,211 @@ async def test_sl_direction_fix_correct_short_sl_not_modified(dispatcher_with_mo
     assert abs(actual_sl - correct_sl) < 0.01, (
         f"Valid SHORT SL should not be modified. Expected {correct_sl}, got {actual_sl}"
     )
+
+
+# ============================================================================
+# Issue #373: Minimum SL Distance Floor Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_sl_floor_overrides_too_tight_pct_long(dispatcher_with_mocks):
+    """#373: LONG with stop_loss_pct below floor → floored to MIN_SL_DISTANCE_PCT."""
+    from shared.constants import MIN_SL_DISTANCE_PCT
+
+    dispatcher, _ = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-f1", "tp_order_id": "tp-f1"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 56.88
+    too_tight_pct = 0.0019  # 0.19% — below default floor 0.5%
+
+    order = TradeOrder(
+        position_id="test-373-long",
+        symbol="LTCUSDT",
+        side="buy",
+        type="market",
+        amount=1.0,
+        target_price=entry_price,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss_pct=too_tight_pct,
+        take_profit_pct=0.02,
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 1.0,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(order, fill_result)
+
+    assert len(oco_place_calls) == 1, "OCO orders should have been placed"
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    expected_sl = entry_price * (1 - MIN_SL_DISTANCE_PCT)
+    assert abs(actual_sl - expected_sl) < 1e-6, (
+        f"Expected floored SL≈{expected_sl}, got {actual_sl}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sl_floor_overrides_too_tight_pct_short(dispatcher_with_mocks):
+    """#373: SHORT with stop_loss_pct below floor → floored to MIN_SL_DISTANCE_PCT."""
+    from shared.constants import MIN_SL_DISTANCE_PCT
+
+    dispatcher, _ = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-f2", "tp_order_id": "tp-f2"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 56.88
+    too_tight_pct = 0.002
+
+    order = TradeOrder(
+        position_id="test-373-short",
+        symbol="LTCUSDT",
+        side="sell",
+        type="market",
+        amount=1.0,
+        target_price=entry_price,
+        position_side="SHORT",
+        exchange="binance",
+        stop_loss_pct=too_tight_pct,
+        take_profit_pct=0.02,
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 1.0,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(order, fill_result)
+
+    assert len(oco_place_calls) == 1
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    expected_sl = entry_price * (1 + MIN_SL_DISTANCE_PCT)
+    assert abs(actual_sl - expected_sl) < 1e-6, (
+        f"Expected floored SL≈{expected_sl}, got {actual_sl}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sl_floor_does_not_override_when_pct_above_floor(dispatcher_with_mocks):
+    """#373 regression: stop_loss_pct already above floor should be left alone."""
+    dispatcher, _ = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-f3", "tp_order_id": "tp-f3"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 50000.0
+    safe_pct = 0.02  # 2% — well above 0.5% floor
+
+    order = TradeOrder(
+        position_id="test-373-safe",
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        target_price=entry_price,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss_pct=safe_pct,
+        take_profit_pct=0.03,
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 0.001,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(order, fill_result)
+
+    assert len(oco_place_calls) == 1
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    expected_sl = entry_price * (1 - safe_pct)
+    assert abs(actual_sl - expected_sl) < 0.01, (
+        f"Above-floor SL must not be modified. Expected {expected_sl}, got {actual_sl}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sl_floor_overrides_absolute_stop_loss_too_close(dispatcher_with_mocks):
+    """#373: absolute stop_loss whose implied distance is below floor is also overridden.
+
+    This is the exact scenario reported in the issue:
+    LTCUSDT LONG entry=56.88, SL=56.77 → 0.19% distance, below the 0.5% floor.
+    """
+    from shared.constants import MIN_SL_DISTANCE_PCT
+
+    dispatcher, _ = dispatcher_with_mocks
+
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-f4", "tp_order_id": "tp-f4"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 56.88
+    tight_sl = 56.77  # ~0.193% distance — below default 0.5% floor
+
+    order = TradeOrder(
+        position_id="test-373-abs",
+        symbol="LTCUSDT",
+        side="buy",
+        type="market",
+        amount=1.0,
+        target_price=entry_price,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=tight_sl,
+        take_profit=entry_price * (1 + 0.02),
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 1.0,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(order, fill_result)
+
+    assert len(oco_place_calls) == 1
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    expected_sl = entry_price * (1 - MIN_SL_DISTANCE_PCT)
+    assert abs(actual_sl - expected_sl) < 1e-6, (
+        f"Absolute SL too close to entry should be floored. "
+        f"Expected {expected_sl}, got {actual_sl}"
+    )

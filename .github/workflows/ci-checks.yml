@@ -12,16 +12,12 @@ on:
 
 jobs:
   pipeline:
-    name: CI Pipeline (Python ${{ matrix.python-version }})
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.10', '3.11']
+    name: CI Pipeline
     uses: PetroSa2/petrosa-shared-workflows/.github/workflows/ci-pipeline.yml@main  # yamllint disable-line rule:line-length
     with:
       service-name: 'tradeengine'
       image-name: 'yurisa2/petrosa-tradeengine'
-      python-version: ${{ matrix.python-version }}
+      python-version: '3.11'
       skip-docker-build: true
       coverage-threshold: '20'
       pytest-extra-args: >-  # yamllint disable-line rule:line-length

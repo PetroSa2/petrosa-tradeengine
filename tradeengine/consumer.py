@@ -10,7 +10,7 @@ import nats.aio.subscription
 from opentelemetry import context, trace
 from opentelemetry.propagate import extract
 
-from shared.constants import UTC
+from shared.constants import UTC, parse_datetime_aware
 
 # Conditional import for compatibility
 try:
@@ -300,7 +300,7 @@ class SignalConsumer:
                         signal_data["timestamp"] = datetime.now(UTC)
                     else:
                         try:
-                            signal_data["timestamp"] = datetime.fromisoformat(
+                            signal_data["timestamp"] = parse_datetime_aware(
                                 timestamp_raw
                             )
                         except (ValueError, TypeError) as e:

@@ -11,7 +11,7 @@ from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
 from pydantic import BaseModel
 
-from shared.constants import UTC
+from shared.constants import UTC, parse_datetime_aware
 
 # Optional OpenTelemetry imports
 try:
@@ -1083,7 +1083,7 @@ async def get_active_signals(
                     isinstance(s["timestamp"], datetime)
                     and s["timestamp"] >= from_time
                     or isinstance(s["timestamp"], str)
-                    and datetime.fromisoformat(s["timestamp"]) >= from_time
+                    and parse_datetime_aware(s["timestamp"]) >= from_time
                 )
             ]
 
@@ -1096,7 +1096,7 @@ async def get_active_signals(
                     isinstance(s["timestamp"], datetime)
                     and s["timestamp"] <= to_time
                     or isinstance(s["timestamp"], str)
-                    and datetime.fromisoformat(s["timestamp"]) <= to_time
+                    and parse_datetime_aware(s["timestamp"]) <= to_time
                 )
             ]
 

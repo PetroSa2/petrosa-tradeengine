@@ -75,8 +75,9 @@ jobs:
           context: .
           push: true
           tags: |
-            yurisa2/petrosa-tradeengine:${{ steps.bump_version.outputs.new_version }}
-            yurisa2/petrosa-tradeengine:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine:${{
+              steps.bump_version.outputs.new_version }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/petrosa-tradeengine:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -132,8 +133,9 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit (version might already be up to date)"
           else
-            # yamllint disable-line rule:line-length
-            git commit -m "gitops: tradeengine image ${{ steps.bump_version.outputs.new_version }}"
+            MSG="gitops: tradeengine image ${{
+              steps.bump_version.outputs.new_version }}"
+            git commit -m "$MSG"
             git push origin main
           fi
 
@@ -142,7 +144,6 @@ jobs:
           mkdir -p deployments
           TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-          # yamllint disable-line rule:line-length
           cat >> deployments/history.log << EOF
           ========================================
           Deployment Record
@@ -153,7 +154,8 @@ jobs:
           Triggered by: ${{ github.actor }}
           Reason: ${{ inputs.reason }}
           Timestamp: $TIMESTAMP
-          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Workflow Run: ${{ github.server_url }}/${{
+            github.repository }}/actions/runs/${{ github.run_id }}
           ========================================
 
           EOF
@@ -165,8 +167,9 @@ jobs:
 
           ## Details
           - **Service**: \`tradeengine\`
-          # yamllint disable-line rule:line-length
-          - **Version**: \`${{ steps.current_version.outputs.version }}\` → \`${{ steps.bump_version.outputs.new_version }}\`
+          - **Version**: \`${{
+            steps.current_version.outputs.version }}\` → \`${{
+            steps.bump_version.outputs.new_version }}\`
           - **Bump Type**: \`${{ inputs.version_bump }}\`
           - **Triggered by**: @${{ github.actor }}
           - **Reason**: ${{ inputs.reason }}

@@ -107,6 +107,29 @@ def cleanup_logging_state():
 
     yield
 
+
+@pytest.fixture()
+def real_petrosa_otel():
+    """Temporarily restore the real petrosa_otel module for tests that need it.
+
+    test_consumer.py replaces sys.modules["petrosa_otel"] with a MagicMock at
+    module level, which poisons any subsequent import of petrosa_otel symbols.
+    This fixture saves the mock, loads the real module from disk, and restores
+    the saved state after the test.
+    """
+    import importlib
+
+    saved = {k: v for k, v in sys.modules.items() if k.startswith("petrosa_otel")}
+    for key in list(sys.modules.keys()):
+        if key.startswith("petrosa_otel"):
+            del sys.modules[key]
+    importlib.import_module("petrosa_otel")
+    yield
+    for key in list(sys.modules.keys()):
+        if key.startswith("petrosa_otel"):
+            del sys.modules[key]
+    sys.modules.update(saved)
+
     # AFTER test — reset logging and selectively restore OTEL patches
     cleanup_logging()
     restore_all_otel_init_patches()

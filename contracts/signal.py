@@ -97,6 +97,10 @@ class Signal(BaseModel):
     id: str | None = Field(None, description="Unique identifier for this signal")
     strategy_id: str = Field(..., description="Unique identifier for the strategy")
     signal_id: str | None = Field(None, description="Unique identifier for this signal")
+    decision_id: str | None = Field(
+        None,
+        description="uuid4 hex string assigned by petrosa-cio for the decision that produced this signal; None for strategy-direct signals",
+    )
     strategy_mode: StrategyMode = Field(
         StrategyMode.DETERMINISTIC, description="Processing mode for this signal"
     )

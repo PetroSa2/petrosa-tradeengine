@@ -72,10 +72,10 @@ class TestSignalDecisionIdField:
 
 
 class TestSetDecisionContextOnSpan:
-    def test_decision_id_set_on_span_when_present(self):
+    def test_decision_id_set_on_span_when_present(self, real_petrosa_otel):
         from unittest.mock import MagicMock
 
-        from tradeengine.consumer import set_decision_context
+        from petrosa_otel import set_decision_context
 
         span = MagicMock()
         span.is_recording.return_value = True
@@ -109,10 +109,10 @@ class TestSetDecisionContextOnSpan:
         assert captured.get("decision.strategy_id") == "momentum_v1"
         assert captured.get("decision.symbol") == "ETHUSDT"
 
-    def test_no_decision_id_key_when_none(self):
+    def test_no_decision_id_key_when_none(self, real_petrosa_otel):
         from unittest.mock import MagicMock
 
-        from tradeengine.consumer import set_decision_context
+        from petrosa_otel import set_decision_context
 
         span = MagicMock()
         span.is_recording.return_value = True

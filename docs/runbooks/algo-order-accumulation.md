@@ -64,3 +64,5 @@ Any count above 2 per active position is anomalous. Above 4 means orphans have s
 - Related: #372 (TradeEngine TP fallback) — overlapping order-management surface.
 
 _Last verified clean: 2026-05-18T00:12Z (#559 verification run)._
+
+<!-- #559 verification re-trigger 1779063822 -->

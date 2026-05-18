@@ -19,8 +19,17 @@ on:
         description: 'PR number to gate'
         required: true
         type: number
-  pull_request_review:
-    types: [submitted, edited, dismissed]
+  # NOTE (PetroSa2/petrosa_k8s#559): the `pull_request_review` trigger was
+  # removed because Copilot bot's review submission fires this workflow with
+  # triggering_actor=Copilot (a Bot account, BOT_kgDOCnlnWA node_id). GitHub's
+  # workflow-approval policy (`fork-pr-contributor-approval`) treats Bot
+  # accounts as external actors regardless of the policy value, producing the
+  # "1 workflow awaiting approval" banner on every PR. The `workflow_run`
+  # trigger below does the same gate evaluation but inherits the
+  # yurisa2 actor from the CI Checks → Request Copilot Review chain, so it
+  # runs cleanly without approval. The 15s "fast re-evaluation on Copilot
+  # submission" optimization (#362) is lost; the gate now relies entirely on
+  # the polling loop, which still converges within the existing budget.
   workflow_run:
     workflows: ["Request Copilot Review"]
     types: [completed]

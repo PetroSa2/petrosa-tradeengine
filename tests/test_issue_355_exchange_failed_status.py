@@ -4,7 +4,7 @@ NATS consumer must NOT log 'executed' when Binance rejects the order (e.g. -2019
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,8 +14,12 @@ sys.modules.setdefault("petrosa_otel", MagicMock())
 sys.modules["petrosa_otel"].extract_trace_context = MagicMock(return_value=None)
 
 from contracts.signal import Signal  # noqa: E402
+from shared.constants import UTC  # noqa: E402
 from tradeengine.consumer import SignalConsumer  # noqa: E402
 from tradeengine.dispatcher import Dispatcher  # noqa: E402
+
+_RECENT_TS = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+_RECENT_DT = datetime.now(UTC) - timedelta(seconds=5)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,7 +40,7 @@ def _make_signal(**overrides) -> Signal:
         "current_price": 50000.0,
         "source": "petrosa-cio",
         "strategy": "test-strat",
-        "timestamp": datetime(2025, 1, 1, 12, 0, 0),
+        "timestamp": _RECENT_DT,
     }
     defaults.update(overrides)
     return Signal(**defaults)
@@ -225,7 +229,7 @@ async def test_consumer_logs_warning_prefix_on_exchange_failed() -> None:
         "current_price": 50000.0,
         "source": "petrosa-cio",
         "strategy": "test-strat",
-        "timestamp": "2025-01-01T12:00:00",
+        "timestamp": _RECENT_TS,
     }
 
     mock_msg = MagicMock()
@@ -292,7 +296,7 @@ async def test_consumer_logs_success_prefix_on_executed() -> None:
         "current_price": 50000.0,
         "source": "petrosa-cio",
         "strategy": "test-strat",
-        "timestamp": "2025-01-01T12:00:00",
+        "timestamp": _RECENT_TS,
     }
 
     mock_msg = MagicMock()

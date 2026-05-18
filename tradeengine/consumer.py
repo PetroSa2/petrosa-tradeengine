@@ -14,11 +14,14 @@ from shared.constants import UTC, parse_datetime_aware
 
 # Conditional import for compatibility
 try:
-    from petrosa_otel import extract_trace_context
+    from petrosa_otel import extract_trace_context, set_decision_context
 except ImportError:
-    # Fallback for environments without petrosa_otel or name mismatch
+
     def extract_trace_context(data: Any) -> Any:
         return None
+
+    def set_decision_context(span: Any, **kwargs: Any) -> None:
+        pass
 
 
 from prometheus_client import Counter
@@ -316,6 +319,20 @@ class SignalConsumer:
                             signal_data["timestamp"] = datetime.now(UTC)
 
                     signal = Signal(**signal_data)
+
+                    # Propagate decision.* OTel span attributes from CIO decision_id
+                    set_decision_context(
+                        span,
+                        strategy_id=signal.strategy_id,
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        confidence=signal.confidence,
+                        **(
+                            {"decision_id": signal.decision_id}
+                            if signal.decision_id
+                            else {}
+                        ),
+                    )
 
                     max_age = DEFAULT_TRADING_PARAMETERS.get(
                         "max_signal_age_seconds", 300

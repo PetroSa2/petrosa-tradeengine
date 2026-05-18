@@ -2223,6 +2223,7 @@ class Dispatcher:
             "llm_reasoning": current_signal.llm_reasoning,
             "metadata": current_signal.metadata,
             "meta": current_signal.meta,
+            "decision_id": current_signal.decision_id,
         }
 
         # CRITICAL DEBUG: Log TP/SL values from signal

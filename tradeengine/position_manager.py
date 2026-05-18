@@ -946,6 +946,27 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error exporting position closed metrics: {e}")
 
+    async def _get_allowed_symbols(self) -> list[str]:
+        """Return allowed_symbols from live config, falling back to DEFAULT_TRADING_PARAMETERS.
+
+        Empty list means all symbols are permitted (safe default).
+        """
+        try:
+            from tradeengine.api_filter_routes import get_config_manager
+
+            mgr = get_config_manager()
+            global_config = await mgr.get_config()
+            if global_config and "allowed_symbols" in global_config:
+                value = global_config["allowed_symbols"]
+                if isinstance(value, list):
+                    return value
+        except Exception as e:
+            logger.warning("Failed to get allowed_symbols from config: %s", e)
+
+        from tradeengine.defaults import DEFAULT_TRADING_PARAMETERS
+
+        return DEFAULT_TRADING_PARAMETERS.get("allowed_symbols", [])
+
     async def get_position_size_limit(self, symbol: str) -> float:
         """Get position size limit for symbol (checks config, then default)"""
         try:
@@ -977,6 +998,17 @@ class PositionManager:
         if not RISK_MANAGEMENT_ENABLED:
             self.rejection_reason = None
             return True
+
+        # P6.3: Symbol whitelist check — runs before any expensive portfolio refresh.
+        # Empty / unset list means all symbols are allowed (safe default).
+        allowed_symbols = await self._get_allowed_symbols()
+        if allowed_symbols and order.symbol not in allowed_symbols:
+            self.rejection_reason = "symbol_not_allowed"
+            logger.warning(
+                "⛔ RISK REJECTION: Symbol %s not in allowed_symbols whitelist",
+                order.symbol,
+            )
+            return False
 
         # Refresh portfolio value before checks (mandatory as per AC)
         if not await self._refresh_portfolio_value():

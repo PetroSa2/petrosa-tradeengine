@@ -24,14 +24,20 @@ on:
   # triggering_actor=Copilot (a Bot account, BOT_kgDOCnlnWA node_id). GitHub's
   # workflow-approval policy (`fork-pr-contributor-approval`) treats Bot
   # accounts as external actors regardless of the policy value, producing the
-  # "1 workflow awaiting approval" banner on every PR. The `workflow_run`
-  # trigger below does the same gate evaluation but inherits the
-  # yurisa2 actor from the CI Checks → Request Copilot Review chain, so it
-  # runs cleanly without approval. The 15s "fast re-evaluation on Copilot
-  # submission" optimization (#362) is lost; the gate now relies entirely on
-  # the polling loop, which still converges within the existing budget.
+  # "1 workflow awaiting approval" banner on every PR.
+  #
+  # We trigger from "CI Checks" (one workflow_run hop) instead of
+  # "Request Copilot Review" (two workflow_run hops). At two hops,
+  # `payload.workflow_run.head_branch/head_sha` collapses to the
+  # default branch's HEAD, so PR resolution fails ("No open same-repo PR
+  # for main@..."). With CI Checks as the upstream, payload reports the
+  # actual PR branch + PR head SHA, and the gate can find the PR.
+  #
+  # The Request Copilot Review workflow still triggers from CI Checks in
+  # parallel — Copilot review request happens alongside the gate's polling
+  # loop, so there is no scheduling regression.
   workflow_run:
-    workflows: ["Request Copilot Review"]
+    workflows: ["CI Checks"]
     types: [completed]
 
 concurrency:
@@ -47,7 +53,8 @@ jobs:
     name: copilot-review
     if: >
       github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request')
     runs-on: petrosa-org-runners
     permissions:
       contents: read

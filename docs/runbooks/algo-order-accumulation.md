@@ -62,3 +62,4 @@ Any count above 2 per active position is anomalous. Above 4 means orphans have s
 
 - Originally tracked by #352 AC-7 in `petrosa_k8s`. The PrometheusRule manifests were removed in #536 (never fired anyway — local minimal-prometheus had zero AlertManagers). #539 re-instates them as Grafana Cloud Alerts. This runbook is the AC4 link.
 - Related: #372 (TradeEngine TP fallback) — overlapping order-management surface.
+<!-- #559 decisive test: brand-new PR post-policy-change 1779065037 -->

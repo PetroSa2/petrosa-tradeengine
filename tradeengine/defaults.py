@@ -56,6 +56,7 @@ DEFAULT_TRADING_PARAMETERS = {
     "timeframe_conflict_resolution": "higher_timeframe_wins",
     "max_signal_age_seconds": 300,
     "min_confidence_threshold": 0.5,
+    "allowed_symbols": [],
     # -------------------------------------------------------------------------
     # Strategy Weights (default weights for conflict resolution)
     # -------------------------------------------------------------------------

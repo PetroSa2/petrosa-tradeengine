@@ -1067,3 +1067,129 @@ class TestPositionManagerHelperMethods:
         ):
             await position_manager.reset_daily_pnl()
             assert position_manager.daily_pnl == 0.0
+
+
+class TestSymbolWhitelist:
+    """Tests for P6.3 symbol whitelist pre-trade risk check (petrosa_k8s#609)."""
+
+    @pytest.mark.asyncio
+    async def test_symbol_not_in_whitelist_is_rejected(
+        self, position_manager, sample_long_order
+    ):
+        """Order for a symbol not in the whitelist must be rejected."""
+        with patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=["ETHUSDT", "BNBUSDT"],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                result = await position_manager.check_position_limits(sample_long_order)
+
+        assert result is False
+        assert position_manager.rejection_reason == "symbol_not_allowed"
+
+    @pytest.mark.asyncio
+    async def test_symbol_in_whitelist_proceeds(
+        self, position_manager, sample_long_order
+    ):
+        """Order for a symbol on the whitelist must not be rejected by the whitelist check."""
+        position_manager.total_portfolio_value = 10000.0
+        with patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=["BTCUSDT", "ETHUSDT"],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                with patch.object(
+                    position_manager,
+                    "_refresh_portfolio_value",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                ):
+                    with patch.object(
+                        position_manager,
+                        "_refresh_positions_from_data_manager",
+                        new_callable=AsyncMock,
+                    ):
+                        result = await position_manager.check_position_limits(
+                            sample_long_order
+                        )
+
+        assert result is True
+        assert position_manager.rejection_reason is None
+
+    @pytest.mark.asyncio
+    async def test_empty_whitelist_allows_all_symbols(
+        self, position_manager, sample_long_order
+    ):
+        """Empty allowed_symbols list means all symbols are permitted (safe default)."""
+        position_manager.total_portfolio_value = 10000.0
+        with patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
+                with patch.object(
+                    position_manager,
+                    "_refresh_portfolio_value",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                ):
+                    with patch.object(
+                        position_manager,
+                        "_refresh_positions_from_data_manager",
+                        new_callable=AsyncMock,
+                    ):
+                        result = await position_manager.check_position_limits(
+                            sample_long_order
+                        )
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_get_allowed_symbols_falls_back_to_defaults(self, position_manager):
+        """_get_allowed_symbols returns DEFAULT_TRADING_PARAMETERS['allowed_symbols'] when config unavailable."""
+        with patch(
+            "tradeengine.position_manager.PositionManager._get_allowed_symbols",
+            wraps=position_manager._get_allowed_symbols,
+        ):
+            with patch(
+                "tradeengine.api_filter_routes.get_config_manager",
+                side_effect=Exception("no config manager"),
+            ):
+                with patch(
+                    "tradeengine.defaults.DEFAULT_TRADING_PARAMETERS",
+                    {"allowed_symbols": ["BTCUSDT"]},
+                ):
+                    result = await position_manager._get_allowed_symbols()
+
+        assert result == ["BTCUSDT"]
+
+    @pytest.mark.asyncio
+    async def test_get_allowed_symbols_uses_live_config(self, position_manager):
+        """_get_allowed_symbols prefers live config over defaults."""
+        mock_mgr = AsyncMock()
+        mock_mgr.get_config = AsyncMock(
+            return_value={"allowed_symbols": ["ETHUSDT", "SOLUSDT"]}
+        )
+        with patch(
+            "tradeengine.api_filter_routes.get_config_manager",
+            return_value=mock_mgr,
+        ):
+            result = await position_manager._get_allowed_symbols()
+
+        assert result == ["ETHUSDT", "SOLUSDT"]
+
+    @pytest.mark.asyncio
+    async def test_risk_disabled_bypasses_whitelist(
+        self, position_manager, sample_long_order
+    ):
+        """When RISK_MANAGEMENT_ENABLED is False the whitelist check is skipped."""
+        with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", False):
+            result = await position_manager.check_position_limits(sample_long_order)
+
+        assert result is True

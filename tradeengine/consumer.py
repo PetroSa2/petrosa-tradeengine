@@ -25,6 +25,7 @@ from prometheus_client import Counter
 
 from contracts.signal import Signal
 from shared.config import settings
+from tradeengine.defaults import DEFAULT_TRADING_PARAMETERS
 from tradeengine.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,21 @@ class SignalConsumer:
                             signal_data["timestamp"] = datetime.now(UTC)
 
                     signal = Signal(**signal_data)
+
+                    max_age = DEFAULT_TRADING_PARAMETERS.get(
+                        "max_signal_age_seconds", 300
+                    )
+                    signal_age = (datetime.now(UTC) - signal.timestamp).total_seconds()
+                    if signal_age > max_age:
+                        logger.warning(
+                            "⚠️ STALE SIGNAL REJECTED | Strategy: %s | Symbol: %s | Age: %.1fs | Max: %ds",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal_age,
+                            max_age,
+                        )
+                        messages_processed.labels(status="stale_rejected").inc()
+                        return
 
                     logger.info(
                         "✅ SIGNAL PARSED SUCCESSFULLY | %s | %s %s @ %s",

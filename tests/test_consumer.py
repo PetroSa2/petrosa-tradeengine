@@ -5,11 +5,16 @@ import json
 
 # Mock petrosa_otel before importing consumer
 import sys
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from shared.constants import UTC
+
+# Pre-existing tests used a hardcoded 2025 timestamp; we replace it with a
+# module-level constant that is always fresh (< max_signal_age_seconds).
+_RECENT_TS = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
 
 sys.modules["petrosa_otel"] = MagicMock()
 sys.modules["petrosa_otel"].extract_trace_context = MagicMock(return_value=None)
@@ -111,7 +116,23 @@ async def test_message_handler_success(
 
         # Create a mock message
         mock_msg = AsyncMock()
-        mock_msg.data = b'{"strategy_id": "test", "symbol": "BTCUSDT", "signal_type": "buy", "action": "buy", "confidence": 0.8, "strength": "medium", "timeframe": "1h", "price": 45000.0, "quantity": 0.1, "current_price": 45000.0, "source": "test", "strategy": "test-strategy", "timestamp": "2025-07-16T03:19:53.609036"}'
+        mock_msg.data = json.dumps(
+            {
+                "strategy_id": "test",
+                "symbol": "BTCUSDT",
+                "signal_type": "buy",
+                "action": "buy",
+                "confidence": 0.8,
+                "strength": "medium",
+                "timeframe": "1h",
+                "price": 45000.0,
+                "quantity": 0.1,
+                "current_price": 45000.0,
+                "source": "test",
+                "strategy": "test-strategy",
+                "timestamp": _RECENT_TS,
+            }
+        ).encode()
         mock_msg.subject = "test.subject"
         mock_msg.reply = None
 
@@ -128,7 +149,23 @@ async def test_message_handler_error(consumer: SignalConsumer) -> None:
 
         # Create a mock message
         mock_msg = AsyncMock()
-        mock_msg.data = b'{"strategy_id": "test", "symbol": "BTCUSDT", "signal_type": "buy", "action": "buy", "confidence": 0.8, "strength": "medium", "timeframe": "1h", "price": 45000.0, "quantity": 0.1, "current_price": 45000.0, "source": "test", "strategy": "test-strategy", "timestamp": "2025-07-16T03:19:53.609036"}'
+        mock_msg.data = json.dumps(
+            {
+                "strategy_id": "test",
+                "symbol": "BTCUSDT",
+                "signal_type": "buy",
+                "action": "buy",
+                "confidence": 0.8,
+                "strength": "medium",
+                "timeframe": "1h",
+                "price": 45000.0,
+                "quantity": 0.1,
+                "current_price": 45000.0,
+                "source": "test",
+                "strategy": "test-strategy",
+                "timestamp": _RECENT_TS,
+            }
+        ).encode()
         mock_msg.subject = "test.subject"
         mock_msg.reply = None
 
@@ -400,7 +437,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
             "_otel_trace_context": {"trace_id": "123", "span_id": "456"},
         }
         mock_msg.data = json.dumps(signal_data).encode()
@@ -434,7 +471,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
             "_otel_trace_headers": {"traceparent": "00-123-456-01"},
         }
         mock_msg.data = json.dumps(signal_data).encode()
@@ -470,7 +507,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
         }
         mock_msg.data = json.dumps(signal_data).encode()
         mock_msg.subject = "test.subject"
@@ -502,7 +539,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
         }
         mock_msg.data = json.dumps(signal_data).encode()
         mock_msg.subject = "test.subject"
@@ -537,7 +574,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
         }
         mock_msg.data = json.dumps(signal_data).encode()
         mock_msg.subject = "test.subject"
@@ -574,7 +611,7 @@ class TestMessageHandler:
             "current_price": 45000.0,
             "source": "test",
             "strategy": "test-strategy",
-            "timestamp": "2025-07-16T03:19:53.609036",
+            "timestamp": _RECENT_TS,
         }
         mock_msg.data = json.dumps(signal_data).encode()
         mock_msg.subject = "test.subject"
@@ -643,3 +680,112 @@ class TestRunConsumer:
                 await run_consumer()
 
                 mock_consumer.start_consuming.assert_called_once()
+
+
+class TestStaleSignalRefusal:
+    """Tests for P6.1 stale-signal refusal (petrosa_k8s#607)."""
+
+    def _make_msg(self, timestamp_iso: str) -> AsyncMock:
+        mock_msg = AsyncMock()
+        signal_data = {
+            "strategy_id": "test",
+            "symbol": "BTCUSDT",
+            "signal_type": "buy",
+            "action": "buy",
+            "confidence": 0.8,
+            "strength": "medium",
+            "timeframe": "1h",
+            "price": 45000.0,
+            "quantity": 0.1,
+            "current_price": 45000.0,
+            "source": "test",
+            "strategy": "test-strategy",
+            "timestamp": timestamp_iso,
+        }
+        mock_msg.data = json.dumps(signal_data).encode()
+        mock_msg.subject = "signals.trading.test"
+        mock_msg.reply = None
+        return mock_msg
+
+    @pytest.mark.asyncio
+    async def test_stale_signal_is_rejected(self, consumer: SignalConsumer) -> None:
+        """Signal older than max_signal_age_seconds must not reach the dispatcher."""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.dispatch = AsyncMock(return_value={"status": "executed"})
+        consumer.dispatcher = mock_dispatcher
+
+        stale_ts = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
+        mock_msg = self._make_msg(stale_ts)
+
+        with patch(
+            "tradeengine.consumer.DEFAULT_TRADING_PARAMETERS",
+            {"max_signal_age_seconds": 300},
+        ):
+            await consumer._message_handler(mock_msg)
+
+        mock_dispatcher.dispatch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fresh_signal_reaches_dispatcher(
+        self, consumer: SignalConsumer
+    ) -> None:
+        """Signal within max_signal_age_seconds must be dispatched normally."""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.dispatch = AsyncMock(return_value={"status": "executed"})
+        consumer.dispatcher = mock_dispatcher
+
+        fresh_ts = (datetime.now(UTC) - timedelta(seconds=10)).isoformat()
+        mock_msg = self._make_msg(fresh_ts)
+
+        with patch(
+            "tradeengine.consumer.DEFAULT_TRADING_PARAMETERS",
+            {"max_signal_age_seconds": 300},
+        ):
+            await consumer._message_handler(mock_msg)
+
+        mock_dispatcher.dispatch.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stale_rejection_increments_metric(
+        self, consumer: SignalConsumer
+    ) -> None:
+        """Stale rejection must increment messages_processed{status=stale_rejected}."""
+        mock_dispatcher = AsyncMock()
+        consumer.dispatcher = mock_dispatcher
+
+        stale_ts = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
+        mock_msg = self._make_msg(stale_ts)
+
+        with patch(
+            "tradeengine.consumer.DEFAULT_TRADING_PARAMETERS",
+            {"max_signal_age_seconds": 300},
+        ):
+            with patch("tradeengine.consumer.messages_processed") as mock_counter:
+                mock_labels = MagicMock()
+                mock_counter.labels.return_value = mock_labels
+
+                await consumer._message_handler(mock_msg)
+
+                mock_counter.labels.assert_called_with(status="stale_rejected")
+                mock_labels.inc.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_boundary_signal_at_max_age_is_accepted(
+        self, consumer: SignalConsumer
+    ) -> None:
+        """Signal exactly at max_signal_age_seconds boundary must pass (not stale)."""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.dispatch = AsyncMock(return_value={"status": "executed"})
+        consumer.dispatcher = mock_dispatcher
+
+        # Exactly at the boundary — should NOT be rejected (age == max_age is acceptable)
+        boundary_ts = (datetime.now(UTC) - timedelta(seconds=299)).isoformat()
+        mock_msg = self._make_msg(boundary_ts)
+
+        with patch(
+            "tradeengine.consumer.DEFAULT_TRADING_PARAMETERS",
+            {"max_signal_age_seconds": 300},
+        ):
+            await consumer._message_handler(mock_msg)
+
+        mock_dispatcher.dispatch.assert_called_once()

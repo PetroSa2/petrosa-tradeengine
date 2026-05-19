@@ -23,6 +23,10 @@ from tradeengine.metrics import (
 )
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
+from tradeengine.services.execution_event_publisher import (
+    EventType as ExecutionEventType,
+    execution_event_publisher,
+)
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
 from tradeengine.strategy_position_manager import strategy_position_manager
@@ -1610,6 +1614,11 @@ class Dispatcher:
                                 "RESTRICTED_MODE: CIO Heartbeat Lost",
                             )
                         )
+                        await self._emit_execution_event_from_signal(
+                            signal,
+                            event_type="rejected",
+                            reason="restricted_mode_cio_heartbeat_lost",
+                        )
                         return {
                             "status": "aborted",
                             "reason": "RESTRICTED_MODE: CIO heartbeat lost, opening new positions is strictly forbidden.",
@@ -1643,6 +1652,12 @@ class Dispatcher:
                                 trace.StatusCode.ERROR,
                                 f"Unauthorized source: {signal.source}",
                             )
+                        )
+                        await self._emit_execution_event_from_signal(
+                            signal,
+                            event_type="rejected",
+                            reason="cio_enforcement_unauthorized_source",
+                            extra={"source": signal.source},
                         )
                         return {
                             "status": "rejected",
@@ -1737,6 +1752,12 @@ class Dispatcher:
                                     "rejection.reason", "accumulation_cooldown"
                                 )
                                 span.set_status(trace.Status(trace.StatusCode.OK))
+                                await self._emit_execution_event_from_signal(
+                                    signal,
+                                    event_type="rejected",
+                                    reason="accumulation_cooldown",
+                                    extra={"remaining_sec": int(remaining)},
+                                )
                                 return {
                                     "status": "rejected",
                                     "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
@@ -1855,6 +1876,13 @@ class Dispatcher:
                     signals_processed.labels(
                         status="rejected", action=signal.action
                     ).inc()
+                    await self._emit_execution_event_from_signal(
+                        signal,
+                        event_type="rejected",
+                        reason=str(result.get("reason", "risk_or_signal_rejected"))[
+                            :128
+                        ],
+                    )
                 else:
                     self.logger.warning(
                         f"⚠️  SIGNAL VALIDATION FAILED: {signal.strategy_id} | "
@@ -2178,6 +2206,82 @@ class Dispatcher:
         except Exception as e:
             self.logger.error(f"Order execution with consensus error: {e}")
             return {"status": "error", "error": str(e)}
+
+    async def _emit_execution_event_from_signal(
+        self,
+        signal: Signal,
+        *,
+        event_type: ExecutionEventType,
+        reason: str,
+        order_id: str = "",
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit an execution.events.<strategy_id> message keyed off a Signal."""
+        merged_extra: dict[str, Any] = {
+            "symbol": getattr(signal, "symbol", None),
+            "side": getattr(signal, "action", None),
+        }
+        if extra:
+            merged_extra.update(extra)
+        try:
+            await execution_event_publisher.publish(
+                event_type=event_type,
+                strategy_id=signal.strategy_id,
+                order_id=order_id,
+                reason=reason,
+                decision_id=signal.decision_id,
+                extra=merged_extra,
+            )
+        except Exception as emit_err:
+            self.logger.warning(
+                "execution_event emit (signal-keyed) failed for %s: %s",
+                signal.strategy_id,
+                emit_err,
+            )
+
+    async def _emit_execution_event_from_order(
+        self,
+        order: TradeOrder,
+        result: dict[str, Any],
+        *,
+        event_type: ExecutionEventType,
+        reason: str,
+    ) -> None:
+        """Emit an execution.events.<strategy_id> message keyed off an executed TradeOrder."""
+        strategy_meta = order.strategy_metadata or {}
+        strategy_id = strategy_meta.get("strategy_id") or "unknown"
+        decision_id = strategy_meta.get("decision_id")
+        # Prefer exchange order_id (Binance numeric id) when present; fall back to internal id.
+        exchange_order_id = result.get("order_id") if isinstance(result, dict) else None
+        order_id = str(exchange_order_id or order.order_id or "")
+
+        fill_qty = None
+        if isinstance(result, dict):
+            # Binance fills carry total filled qty; partial_fill needs this to be meaningful.
+            fill_qty = result.get("amount") or result.get("filled") or None
+
+        extra: dict[str, Any] = {
+            "symbol": order.symbol,
+            "side": order.side,
+            "qty": order.amount,
+        }
+        if fill_qty is not None:
+            extra["fill_qty"] = fill_qty
+        try:
+            await execution_event_publisher.publish(
+                event_type=event_type,
+                strategy_id=strategy_id,
+                order_id=order_id,
+                reason=reason,
+                decision_id=decision_id,
+                extra=extra,
+            )
+        except Exception as emit_err:
+            self.logger.warning(
+                "execution_event emit (order-keyed) failed for %s: %s",
+                order.order_id,
+                emit_err,
+            )
 
     def _signal_to_order(
         self, signal: Signal, order_params: dict[str, Any] | None = None
@@ -2510,6 +2614,51 @@ class Dispatcher:
                 if result.get("fill_price"):
                     span.set_attribute("order.fill_price", result.get("fill_price"))
                 span.set_status(trace.Status(trace.StatusCode.OK))
+
+                # Emit execution.events.<strategy_id> for order lifecycle (#586 AC2/AC4).
+                # Mapping Binance/exchange statuses onto our four-event vocabulary.
+                exch_status_raw = str(result.get("status", "")).lower()
+                mapped_event: ExecutionEventType | None = None
+                emit_reason = ""
+                if exch_status_raw in ("filled",):
+                    mapped_event = "filled"
+                    emit_reason = "binance_filled"
+                elif exch_status_raw in ("partially_filled", "partial", "partial_fill"):
+                    mapped_event = "partial_fill"
+                    fq = result.get("amount") or 0
+                    emit_reason = f"partial_{fq}_of_{order.amount}"
+                elif exch_status_raw in (
+                    "new",
+                    "pending",
+                    "accepted",
+                    "open",
+                    "working",
+                ):
+                    mapped_event = "placed"
+                    emit_reason = (
+                        "binance_accepted" if not order.simulate else "simulated_placed"
+                    )
+                elif exch_status_raw in (
+                    "rejected",
+                    "expired",
+                    "cancelled",
+                    "canceled",
+                    "failed",
+                    "error",
+                ):
+                    mapped_event = "rejected"
+                    err = result.get("error")
+                    emit_reason = f"exchange_{exch_status_raw}" + (
+                        f": {str(err)[:80]}" if err else ""
+                    )
+
+                if mapped_event is not None:
+                    await self._emit_execution_event_from_order(
+                        order,
+                        result,
+                        event_type=mapped_event,
+                        reason=emit_reason,
+                    )
                 return result
 
             except Exception as e:
@@ -2527,6 +2676,12 @@ class Dispatcher:
                     )
                 span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                 span.record_exception(e)
+                await self._emit_execution_event_from_order(
+                    order,
+                    {"status": "error", "error": str(e)},
+                    event_type="rejected",
+                    reason=f"order_execution_exception: {str(e)[:80]}",
+                )
                 return {"status": "error", "error": str(e)}
 
     def get_cio_state(self, symbol: str) -> dict[str, Any]:

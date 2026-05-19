@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     # Align default with shared.constants default and TA bot publisher
     nats_topic_signals: str = "signals.trading.*"
     nats_topic_heartbeat: str = "cio.heartbeat"
+    nats_topic_execution_events: str = "execution.events"
 
     # CIO Enforcement (Ticket #304 / P0 #1)
     enforce_cio_audit: bool = True  # Default to True for maximum safety
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
         # Set NATS configuration from constants
         from shared.constants import (
             NATS_ENABLED,
+            NATS_TOPIC_EXECUTION_EVENTS,
             NATS_TOPIC_HEARTBEAT,
             NATS_TOPIC_SIGNALS,
             get_nats_connection_string,
@@ -109,6 +111,9 @@ class Settings(BaseSettings):
 
         if not kwargs.get("nats_topic_heartbeat"):
             self.nats_topic_heartbeat = NATS_TOPIC_HEARTBEAT
+
+        if not kwargs.get("nats_topic_execution_events"):
+            self.nats_topic_execution_events = NATS_TOPIC_EXECUTION_EVENTS
 
     @property
     def is_production(self) -> bool:

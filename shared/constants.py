@@ -131,6 +131,10 @@ NATS_ENABLED = os.getenv("NATS_ENABLED", "false").lower() == "true"
 NATS_URL = os.getenv("NATS_URL", "nats://nats-server:4222")
 NATS_TOPIC_SIGNALS = os.getenv("NATS_TOPIC_SIGNALS", "signals.trading.*")
 NATS_TOPIC_HEARTBEAT = os.getenv("NATS_TOPIC_HEARTBEAT", "cio.heartbeat")
+# Per PetroSa2/petrosa_k8s#586 (P0.2c) — prefix only; publisher appends ".<strategy_id>".
+NATS_TOPIC_EXECUTION_EVENTS = os.getenv(
+    "NATS_TOPIC_EXECUTION_EVENTS", "execution.events"
+)
 NATS_QUEUE_GROUP = os.getenv("NATS_QUEUE_GROUP", "petrosa-tradeengine")
 NATS_CONNECT_TIMEOUT = int(os.getenv("NATS_CONNECT_TIMEOUT", "5"))
 NATS_RECONNECT_TIME_WAIT = int(os.getenv("NATS_RECONNECT_TIME_WAIT", "1"))

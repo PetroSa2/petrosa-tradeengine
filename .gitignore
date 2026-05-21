@@ -325,3 +325,5 @@ test_output.txt
 test_output_debug.txt
 bandit-report.json
 bandit-report.json
+
+.serena/cache/

@@ -6,7 +6,7 @@ except ImportError:
     from datetime import timezone
 
     UTC = timezone.utc  # noqa: UP017
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -107,6 +107,38 @@ class TradeOrder(BaseModel):
         description="Order creation timestamp",
     )
     updated_at: datetime | None = Field(None, description="Last update timestamp")
+    # P6.2 (#608): rejection persistence per FR41. All three fields are
+    # additive + optional so deserializing pre-#608 TradeOrders (which
+    # carry no rejection fields) still succeeds.
+    rejection_reason: str | None = Field(
+        None,
+        description=(
+            "Human-readable rejection reason. Free-form text or exchange "
+            "error code+message — e.g., 'balance_below_minimum', "
+            "'symbol_not_whitelisted', '4001: insufficient margin'."
+        ),
+    )
+    rejected_at: datetime | None = Field(
+        None, description="UTC timestamp when the rejection was emitted"
+    )
+    rejection_source: (
+        Literal[
+            "risk_check",
+            "exchange",
+            "stale_signal",
+            "whitelist",
+            "balance",
+            "validation",
+        ]
+        | None
+    ) = Field(
+        None,
+        description=(
+            "Bounded enum identifying which subsystem rejected the order. "
+            "Kept as a Literal rather than free-form so dashboards stay "
+            "queryable; new sources require a contract bump."
+        ),
+    )
     meta: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
@@ -114,3 +146,33 @@ class TradeOrder(BaseModel):
     model_config = {
         "json_encoders": {datetime: lambda v: v.isoformat()},
     }
+
+    def mark_rejected(
+        self,
+        *,
+        source: Literal[
+            "risk_check",
+            "exchange",
+            "stale_signal",
+            "whitelist",
+            "balance",
+            "validation",
+        ],
+        reason: str,
+        rejected_at: datetime | None = None,
+    ) -> "TradeOrder":
+        """Mutate this TradeOrder into the rejected state in one call.
+
+        Sets `status = REJECTED`, populates `rejection_reason`,
+        `rejection_source`, and `rejected_at` (default: now in UTC),
+        and updates `updated_at`. Returns self for fluent use at
+        rejection call-sites so producers don't need to know which
+        fields to keep in sync.
+        """
+        ts = rejected_at or datetime.now(UTC)
+        self.status = OrderStatus.REJECTED
+        self.rejection_reason = reason
+        self.rejection_source = source
+        self.rejected_at = ts
+        self.updated_at = ts
+        return self

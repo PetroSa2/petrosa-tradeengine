@@ -134,10 +134,16 @@ async def test_daily_loss_limit_exceeded(dispatcher_with_risk_limits):
     assert execution_result.get("status") == "rejected", (
         f"Expected rejected status, got {execution_result.get('status')}"
     )
+    # Per #651: rejection reason is now the machine-readable
+    # "daily_loss_limits_exceeded" string (grep-friendly per AC3).
+    reason_lower = execution_result.get("reason", "").lower()
     assert (
-        "daily loss" in execution_result.get("reason", "").lower()
-        or "loss limit" in execution_result.get("reason", "").lower()
+        "daily_loss" in reason_lower
+        or "loss_limit" in reason_lower
+        or "loss limit" in reason_lower
     )
+    # Per #651: result dict now carries rejection_source.
+    assert execution_result.get("rejection_source") == "risk_check"
 
     # Verify no order was executed
     assert len(fake_exchange.get_executed_orders()) == 0
@@ -197,10 +203,17 @@ async def test_portfolio_exposure_limit_exceeded(dispatcher_with_risk_limits):
     assert execution_result.get("status") == "rejected", (
         f"Expected rejected status, got {execution_result.get('status')}"
     )
+    # Per #651: rejection reason now comes from position_manager's
+    # rejection_reason attribute. "portfolio_exposure" or
+    # "position_limits_exceeded" (fallback) are the expected machine
+    # tokens — both produce rejection_source="risk_check".
+    reason_lower = execution_result.get("reason", "").lower()
     assert (
-        "risk" in execution_result.get("reason", "").lower()
-        or "exposure" in execution_result.get("reason", "").lower()
+        "portfolio_exposure" in reason_lower
+        or "position_limits" in reason_lower
+        or "exposure" in reason_lower
     )
+    assert execution_result.get("rejection_source") == "risk_check"
 
     # Verify no order was executed
     assert len(fake_exchange.get_executed_orders()) == 0

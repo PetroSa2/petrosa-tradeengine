@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from opentelemetry import trace
 from prometheus_client import Counter, Histogram
@@ -1658,6 +1658,7 @@ class Dispatcher:
                             event_type="rejected",
                             reason="cio_enforcement_unauthorized_source",
                             extra={"source": signal.source},
+                            rejection_source="validation",
                         )
                         return {
                             "status": "rejected",
@@ -1757,6 +1758,7 @@ class Dispatcher:
                                     event_type="rejected",
                                     reason="accumulation_cooldown",
                                     extra={"remaining_sec": int(remaining)},
+                                    rejection_source="stale_signal",
                                 )
                                 return {
                                     "status": "rejected",
@@ -1882,6 +1884,11 @@ class Dispatcher:
                         reason=str(result.get("reason", "risk_or_signal_rejected"))[
                             :128
                         ],
+                        # Per #651: the upstream `_execute_order_with_consensus`
+                        # path (the only producer of result["status"]=="rejected"
+                        # at this point) already populated the order's
+                        # rejection fields. Use the dict's hint when present.
+                        rejection_source=result.get("rejection_source"),
                     )
                 else:
                     self.logger.warning(
@@ -1917,6 +1924,36 @@ class Dispatcher:
             ).inc()
 
             if not await self.position_manager.check_position_limits(order):
+                # Per #651: map the position_manager's structured
+                # rejection_reason into the P6.2 Literal[rejection_source]
+                # vocabulary so the audit-trail carries dashboard-queryable
+                # data. position_manager.rejection_reason is set by
+                # check_position_limits via attribute mutation.
+                pm_reason = (
+                    getattr(self.position_manager, "rejection_reason", None)
+                    or "position_limits_exceeded"
+                )
+                pm_source_map: dict[
+                    str,
+                    Literal[
+                        "risk_check",
+                        "exchange",
+                        "stale_signal",
+                        "whitelist",
+                        "balance",
+                        "validation",
+                    ],
+                ] = {
+                    "symbol_not_allowed": "whitelist",
+                    "insufficient_margin": "balance",
+                    "refresh_failure": "risk_check",
+                    "absolute_position_size": "risk_check",
+                    "position_size_pct": "risk_check",
+                    "portfolio_exposure": "risk_check",
+                    "algo_order_limits": "risk_check",
+                }
+                rej_source = pm_source_map.get(pm_reason, "risk_check")
+                order.mark_rejected(source=rej_source, reason=pm_reason)
                 risk_rejections_total.labels(
                     reason="position_limits_exceeded",
                     symbol=order.symbol,
@@ -1928,9 +1965,20 @@ class Dispatcher:
                     exchange=order.exchange,
                 ).inc()
                 self.logger.warning(
-                    f"⛔ RISK REJECTION: Position limits exceeded for {order.symbol}"
+                    f"⛔ RISK REJECTION: Position limits exceeded for {order.symbol} "
+                    f"(source={rej_source}, reason={pm_reason})"
                 )
-                return {"status": "rejected", "reason": "Risk limits exceeded"}
+                await self._emit_execution_event_from_order(
+                    order,
+                    {"status": "rejected"},
+                    event_type="rejected",
+                    reason=pm_reason,
+                )
+                return {
+                    "status": "rejected",
+                    "reason": pm_reason,
+                    "rejection_source": rej_source,
+                }
 
             risk_checks_total.labels(
                 check_type="position_limits",
@@ -1945,6 +1993,13 @@ class Dispatcher:
             ).inc()
 
             if not await self.position_manager.check_daily_loss_limits():
+                # Per #651: daily-loss is a risk_check rejection; mark the
+                # order with the structured fields so the audit-trail row
+                # carries the same data shape as position-limit rejects.
+                order.mark_rejected(
+                    source="risk_check",
+                    reason="daily_loss_limits_exceeded",
+                )
                 risk_rejections_total.labels(
                     reason="daily_loss_limits_exceeded",
                     symbol=order.symbol,
@@ -1958,7 +2013,17 @@ class Dispatcher:
                 self.logger.warning(
                     f"⛔ RISK REJECTION: Daily loss limits exceeded for {order.symbol}"
                 )
-                return {"status": "rejected", "reason": "Daily loss limits exceeded"}
+                await self._emit_execution_event_from_order(
+                    order,
+                    {"status": "rejected"},
+                    event_type="rejected",
+                    reason="daily_loss_limits_exceeded",
+                )
+                return {
+                    "status": "rejected",
+                    "reason": "daily_loss_limits_exceeded",
+                    "rejection_source": "risk_check",
+                }
 
             risk_checks_total.labels(
                 check_type="daily_loss_limits",
@@ -2215,14 +2280,38 @@ class Dispatcher:
         reason: str,
         order_id: str = "",
         extra: dict[str, Any] | None = None,
+        rejection_source: (
+            Literal[
+                "risk_check",
+                "exchange",
+                "stale_signal",
+                "whitelist",
+                "balance",
+                "validation",
+            ]
+            | None
+        ) = None,
+        rejected_at: datetime | None = None,
     ) -> None:
-        """Emit an execution.events.<strategy_id> message keyed off a Signal."""
+        """Emit an execution.events.<strategy_id> message keyed off a Signal.
+
+        Per #651 (P6.2 follow-up): when `rejection_source` is provided, the
+        structured P6.2 rejection fields ride along in `extra` so the
+        data-manager audit-trail captures them on the rejection row. The
+        ExecutionEvent model on the subscriber side keeps unknown fields in
+        its `payload` dict, so no contract bump is required.
+        """
         merged_extra: dict[str, Any] = {
             "symbol": getattr(signal, "symbol", None),
             "side": getattr(signal, "action", None),
         }
         if extra:
             merged_extra.update(extra)
+        if rejection_source is not None:
+            ts = rejected_at or datetime.now(UTC)
+            merged_extra["rejection_source"] = rejection_source
+            merged_extra["rejection_reason"] = reason
+            merged_extra["rejected_at"] = ts.isoformat()
         try:
             await execution_event_publisher.publish(
                 event_type=event_type,
@@ -2247,7 +2336,13 @@ class Dispatcher:
         event_type: ExecutionEventType,
         reason: str,
     ) -> None:
-        """Emit an execution.events.<strategy_id> message keyed off an executed TradeOrder."""
+        """Emit an execution.events.<strategy_id> message keyed off an executed TradeOrder.
+
+        Per #651 (P6.2 follow-up): if the order has been through
+        `TradeOrder.mark_rejected(...)` (i.e. `rejection_source` is set),
+        the structured P6.2 rejection fields ride along in `extra` so the
+        data-manager audit-trail captures them on the rejection row.
+        """
         strategy_meta = order.strategy_metadata or {}
         strategy_id = strategy_meta.get("strategy_id") or "unknown"
         decision_id = strategy_meta.get("decision_id")
@@ -2267,6 +2362,11 @@ class Dispatcher:
         }
         if fill_qty is not None:
             extra["fill_qty"] = fill_qty
+        if order.rejection_source is not None:
+            extra["rejection_source"] = order.rejection_source
+            extra["rejection_reason"] = order.rejection_reason
+            if order.rejected_at is not None:
+                extra["rejected_at"] = order.rejected_at.isoformat()
         try:
             await execution_event_publisher.publish(
                 event_type=event_type,
@@ -2537,6 +2637,14 @@ class Dispatcher:
                                 f"Error: {exchange_error} | Order ID: {order.order_id}",
                                 exc_info=True,
                             )
+                            # Per #651: an exchange-thrown exception is a
+                            # rejection_source="exchange" outcome — mark the
+                            # order so the audit-trail row carries the P6.2
+                            # structured fields.
+                            order.mark_rejected(
+                                source="exchange",
+                                reason=str(exchange_error)[:200],
+                            )
                             result = {"status": "error", "error": str(exchange_error)}
                             await self.order_manager.track_order(order, result)
                     else:
@@ -2546,6 +2654,20 @@ class Dispatcher:
                         )
                         result = {"status": "pending", "no_exchange": True}
                         await self.order_manager.track_order(order, result)
+
+                # Per #651: if the exchange's wrapper returned a "failed"
+                # status (binance.py:_format_error_result) without raising,
+                # treat that as an exchange-side rejection too — only mark
+                # if not already marked by the except clause above.
+                if (
+                    result is not None
+                    and result.get("status") == "failed"
+                    and order.rejection_source is None
+                ):
+                    order.mark_rejected(
+                        source="exchange",
+                        reason=str(result.get("error", "exchange_failed"))[:200],
+                    )
 
                 # Log result
                 if audit_logger.enabled:

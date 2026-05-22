@@ -347,6 +347,38 @@ class SignalConsumer:
                             max_age,
                         )
                         messages_processed.labels(status="stale_rejected").inc()
+                        # Per #651: stale-signal rejections happen before
+                        # the dispatcher creates a TradeOrder, but the
+                        # audit-trail still needs the P6.2 structured
+                        # fields. Publish a signal-keyed rejected event
+                        # directly with rejection_source="stale_signal".
+                        try:
+                            from tradeengine.services.execution_event_publisher import (
+                                execution_event_publisher,
+                            )
+
+                            rejected_at = datetime.now(UTC)
+                            await execution_event_publisher.publish(
+                                event_type="rejected",
+                                strategy_id=signal.strategy_id,
+                                order_id="",
+                                reason=f"stale_signal_age_{signal_age:.1f}s",
+                                decision_id=signal.decision_id,
+                                extra={
+                                    "symbol": signal.symbol,
+                                    "side": signal.action,
+                                    "rejection_source": "stale_signal",
+                                    "rejection_reason": f"stale_signal_age_{signal_age:.1f}s",
+                                    "rejected_at": rejected_at.isoformat(),
+                                    "max_signal_age_seconds": max_age,
+                                },
+                            )
+                        except Exception as emit_err:
+                            logger.warning(
+                                "stale_signal execution_event emit failed for %s: %s",
+                                signal.strategy_id,
+                                emit_err,
+                            )
                         return
 
                     logger.info(

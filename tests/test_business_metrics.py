@@ -321,7 +321,11 @@ class TestRiskManagementMetrics:
 
             assert final_value > initial_value
             assert result["status"] == "rejected"
-            assert "Risk limits exceeded" in result["reason"]
+            # Per #651: rejection reason is now machine-readable (grep-friendly)
+            # rather than a human sentence. The metric label still uses the
+            # underscore-cased reason for cardinality consistency.
+            assert "position_limits_exceeded" in result["reason"]
+            assert result["rejection_source"] == "risk_check"
 
     @pytest.mark.asyncio
     async def test_risk_rejection_daily_loss(self, dispatcher, sample_order):
@@ -364,7 +368,9 @@ class TestRiskManagementMetrics:
 
             assert final_value > initial_value
             assert result["status"] == "rejected"
-            assert "Daily loss limits exceeded" in result["reason"]
+            # Per #651: rejection reason is now machine-readable.
+            assert "daily_loss_limits_exceeded" in result["reason"]
+            assert result["rejection_source"] == "risk_check"
 
     @pytest.mark.asyncio
     async def test_risk_checks_position_limits_passed(self, dispatcher, sample_order):

@@ -498,6 +498,14 @@ class StrategyPositionManager:
         except Exception as e:
             logger.error(f"Error closing contribution: {e}")
 
+    def get_all_open_strategy_positions(self) -> list[dict[str, Any]]:
+        """Return a shallow copy of all in-memory positions with status == 'open'."""
+        return [
+            dict(pos)
+            for pos in self.strategy_positions.values()
+            if pos.get("status") == "open"
+        ]
+
     def get_strategy_position(self, strategy_position_id: str) -> dict[str, Any] | None:
         """Get strategy position by ID"""
         return self.strategy_positions.get(strategy_position_id)

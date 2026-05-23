@@ -41,6 +41,7 @@ from contracts.order import TradeOrder
 from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
+from shared.mysql_client import position_client
 from tradeengine.api_config_routes import (
     router as config_router,
     set_config_manager,
@@ -54,6 +55,14 @@ from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
+from tradeengine.position_health_guard import (
+    PositionStopsHealthResponse,
+    check_position_stops,
+)
+from tradeengine.services.execution_event_publisher import execution_event_publisher
+from tradeengine.strategy_position_manager import (
+    strategy_position_manager as _strategy_position_manager,
+)
 
 # OpenTelemetry tracer for business context spans
 # Trigger CI run
@@ -1274,6 +1283,16 @@ async def get_positions(
     except Exception as e:
         logger.error(f"Positions error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get positions: {e}")
+
+
+@app.get("/positions/stops-health", response_model=PositionStopsHealthResponse)
+async def positions_stops_health() -> PositionStopsHealthResponse:
+    return await check_position_stops(
+        strategy_pos_manager=_strategy_position_manager,
+        position_client=position_client,
+        exchange=binance_exchange,
+        event_publisher=execution_event_publisher,
+    )
 
 
 @app.get("/positions/{symbol}")

@@ -27,8 +27,16 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-EventType = Literal["placed", "filled", "rejected", "partial_fill"]
-_VALID_EVENT_TYPES: set[str] = {"placed", "filled", "rejected", "partial_fill"}
+EventType = Literal[
+    "placed", "filled", "rejected", "partial_fill", "position_force_closed_no_stops"
+]
+_VALID_EVENT_TYPES: set[str] = {
+    "placed",
+    "filled",
+    "rejected",
+    "partial_fill",
+    "position_force_closed_no_stops",
+}
 
 
 execution_events_published = Counter(

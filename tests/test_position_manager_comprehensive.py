@@ -1193,3 +1193,46 @@ class TestSymbolWhitelist:
             result = await position_manager.check_position_limits(sample_long_order)
 
         assert result is True
+
+
+# ============================================================================
+# Portfolio Value Refresh — #404 regression
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_refresh_portfolio_value_available_balance_present(position_manager):
+    """Normal path: available_balance in response sets total_portfolio_value."""
+    position_manager.exchange.get_account_info = AsyncMock(
+        return_value={"available_balance": 3957.93, "total_wallet_balance": 3593.72}
+    )
+    result = await position_manager._refresh_portfolio_value()
+    assert result is True
+    assert position_manager.total_portfolio_value == pytest.approx(3957.93)
+
+
+@pytest.mark.asyncio
+async def test_refresh_portfolio_value_fallback_to_wallet_balance(position_manager):
+    """Fallback path (#404): available_balance absent, total_wallet_balance used.
+
+    Reproduces the production incident where availableBalance was missing from
+    the Binance Futures account response while the account was fully funded but
+    all margin committed to open positions, causing total_portfolio_value to
+    stay at 0.0 and every order to be rejected with source=balance.
+    """
+    position_manager.exchange.get_account_info = AsyncMock(
+        return_value={"total_wallet_balance": 3593.72, "maker_commission": 2}
+    )
+    result = await position_manager._refresh_portfolio_value()
+    assert result is True
+    assert position_manager.total_portfolio_value == pytest.approx(3593.72)
+
+
+@pytest.mark.asyncio
+async def test_refresh_portfolio_value_both_absent_returns_false(position_manager):
+    """Error path: neither available_balance nor total_wallet_balance returns False."""
+    position_manager.exchange.get_account_info = AsyncMock(
+        return_value={"maker_commission": 2, "can_trade": True}
+    )
+    result = await position_manager._refresh_portfolio_value()
+    assert result is False

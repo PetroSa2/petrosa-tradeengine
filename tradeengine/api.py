@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
+import nats.errors
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
@@ -198,6 +199,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             def task_done_callback(task: asyncio.Task) -> None:  # type: ignore[type-arg]
                 try:
                     task.result()  # This will raise any exception that occurred
+                except nats.errors.ConnectionClosedError as e:
+                    logger.error(
+                        f"❌ NATS consumer connection closed: {e}", exc_info=True
+                    )
+                    logger.info("Reconnecting NATS consumer...")
+                    # nc is already None after stop_consuming() reset it; belt-and-suspenders
+                    signal_consumer.nc = None
+                    try:
+                        new_task = asyncio.create_task(
+                            signal_consumer.start_consuming()
+                        )
+                        app.state.consumer_task = new_task
+                        new_task.add_done_callback(task_done_callback)
+                        logger.info("✅ NATS consumer reconnect+restart scheduled")
+                    except Exception as restart_error:
+                        logger.error(
+                            f"❌ Failed to restart NATS consumer: {restart_error}"
+                        )
                 except Exception as e:
                     logger.error(f"❌ NATS consumer task failed: {e}", exc_info=True)
                     # Try to restart the consumer on failure

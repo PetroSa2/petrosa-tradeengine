@@ -491,12 +491,20 @@ class SignalConsumer:
         self.running = False
 
         if self.subscription:
-            await self.subscription.unsubscribe()
-            logger.info("NATS subscription closed")
+            try:
+                await self.subscription.unsubscribe()
+                logger.info("NATS subscription closed")
+            except nats.errors.ConnectionClosedError:
+                logger.info("NATS subscription already closed (connection was dropped)")
+            self.subscription = None
 
         if self.nc:
-            await self.nc.close()
-            logger.info("NATS consumer stopped")
+            try:
+                await self.nc.close()
+                logger.info("NATS consumer stopped")
+            except Exception:
+                pass
+            self.nc = None
 
 
 # Global consumer instance

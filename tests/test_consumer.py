@@ -789,3 +789,49 @@ class TestStaleSignalRefusal:
             await consumer._message_handler(mock_msg)
 
         mock_dispatcher.dispatch.assert_called_once()
+
+
+# Regression tests for #402 — NATS consumer crash loop on ConnectionClosedError
+
+
+@pytest.mark.asyncio
+async def test_stop_consuming_guards_against_closed_connection() -> None:
+    """stop_consuming() must not raise when the NATS connection is already closed.
+
+    Regression: previously, subscription.unsubscribe() raised ConnectionClosedError
+    from inside the finally block of start_consuming(), masking the original error
+    and crashing the lifespan task (97 restarts in 32h, exitCode=0, ~3 min cycle).
+    """
+    import nats.errors
+
+    consumer = SignalConsumer()
+    mock_nc = AsyncMock()
+    mock_sub = AsyncMock()
+    mock_sub.unsubscribe.side_effect = nats.errors.ConnectionClosedError()
+    consumer.nc = mock_nc
+    consumer.subscription = mock_sub
+
+    # Must complete without raising
+    await consumer.stop_consuming()
+
+    assert consumer.nc is None, (
+        "nc must be reset to None so next start triggers re-init"
+    )
+    assert consumer.subscription is None
+
+
+@pytest.mark.asyncio
+async def test_stop_consuming_resets_state_on_clean_close() -> None:
+    """stop_consuming() resets nc and subscription to None on a normal close."""
+    consumer = SignalConsumer()
+    mock_nc = AsyncMock()
+    mock_sub = AsyncMock()
+    consumer.nc = mock_nc
+    consumer.subscription = mock_sub
+
+    await consumer.stop_consuming()
+
+    assert consumer.nc is None
+    assert consumer.subscription is None
+    mock_sub.unsubscribe.assert_awaited_once()
+    mock_nc.close.assert_awaited_once()

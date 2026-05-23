@@ -109,7 +109,9 @@ class PositionManager:
     async def _refresh_portfolio_value(self) -> bool:
         """Fetch real-time availableBalance from Binance exchange.
 
-        Uses availableBalance (Wallet Balance - Initial Margin - Open Order Margin).
+        Primary: availableBalance (Wallet Balance - Initial Margin - Open Order Margin).
+        Fallback: totalWalletBalance when availableBalance is absent (e.g. all margin
+        committed to open positions — the account is funded, just fully allocated).
         Implements a 5s cache duration.
         Returns True if update succeeded, False otherwise.
         """
@@ -137,11 +139,26 @@ class PositionManager:
                         f"Dynamic portfolio value updated: ${self.total_portfolio_value:,.2f} (available balance)"
                     )
                     return True
-                else:
-                    logger.error(
-                        "Failed to extract available_balance from Binance account info"
+
+                # availableBalance absent from Binance response — fall back to
+                # totalWalletBalance so a fully-margined account isn't treated as
+                # empty and every order rejected. (#404)
+                total_wallet = account_info.get("total_wallet_balance")
+                if total_wallet is not None:
+                    self.total_portfolio_value = float(total_wallet)
+                    self.portfolio_value_last_update = now
+                    logger.warning(
+                        "available_balance absent from Binance account info — "
+                        f"using total_wallet_balance=${self.total_portfolio_value:,.2f} as fallback. "
+                        f"Keys present: {sorted(account_info.keys())}"
                     )
-                    return False
+                    return True
+
+                logger.error(
+                    "Failed to extract available_balance or total_wallet_balance from "
+                    f"Binance account info. Keys present: {sorted(account_info.keys())}"
+                )
+                return False
             except Exception as e:
                 logger.error(f"Error fetching portfolio value from Binance: {e}")
                 return False

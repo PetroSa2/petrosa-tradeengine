@@ -129,6 +129,7 @@ class TradeOrder(BaseModel):
             "whitelist",
             "balance",
             "validation",
+            "leverage_bound",
         ]
         | None
     ) = Field(
@@ -157,6 +158,7 @@ class TradeOrder(BaseModel):
             "whitelist",
             "balance",
             "validation",
+            "leverage_bound",
         ],
         reason: str,
         rejected_at: datetime | None = None,

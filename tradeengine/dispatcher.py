@@ -14,6 +14,7 @@ from shared.config import Settings
 from shared.constants import UTC
 from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
+from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     order_execution_latency_seconds,
     order_failures_total,
@@ -1288,6 +1289,9 @@ class Dispatcher:
         # Initialize OCO Manager for SL/TP order management
         self.oco_manager = OCOManager(exchange, self.logger, self)
 
+        # Initialize Leverage Bound Guard (FR64, P6.4)
+        self.leverage_bound_guard = LeverageBoundGuard()
+
         # Duplicate signal detection cache
         # Format: {signal_id: timestamp} - stores signal IDs with their reception time
         self.signal_cache: dict[str, float] = {}
@@ -2030,6 +2034,76 @@ class Dispatcher:
                 result="passed",
                 exchange=order.exchange,
             ).inc()
+
+            # -- AC2 + AC3: Leverage Bound check (FR64, P6.4) ----------------
+            risk_checks_total.labels(
+                check_type="leverage_bound",
+                result="checking",
+                exchange=order.exchange,
+            ).inc()
+            try:
+                from tradeengine.config_manager import TradingConfigManager
+
+                # Resolve config for this order's scope
+                _strategy_id: str | None = order.strategy_metadata.get("strategy_id")
+                _config_mgr: TradingConfigManager | None = getattr(
+                    self, "config_manager", None
+                )
+                if _config_mgr is not None:
+                    _resolved = await _config_mgr.get_config(
+                        symbol=order.symbol,
+                        side=("LONG" if order.side == "buy" else "SHORT"),
+                        strategy_id=_strategy_id,
+                    )
+                else:
+                    from tradeengine.defaults import get_default_parameters
+
+                    _resolved = get_default_parameters()
+
+                # Collect open position leverages for AC3
+                _open_leverages: list[int] = [
+                    int(pos.get("strategy_metadata", {}).get("leverage", 10))
+                    for pos in strategy_position_manager.get_all_open_strategy_positions()
+                ]
+
+                _lb_pass, _lb_reason = self.leverage_bound_guard.check(
+                    order, _resolved, _open_leverages
+                )
+            except Exception as _lb_exc:
+                self.logger.warning(
+                    f"Leverage bound guard raised an unexpected error for "
+                    f"{order.symbol} — failing open (order proceeds): {_lb_exc}"
+                )
+                _lb_pass, _lb_reason = True, ""
+
+            if not _lb_pass:
+                order.mark_rejected(source="leverage_bound", reason=_lb_reason)
+                risk_checks_total.labels(
+                    check_type="leverage_bound",
+                    result="rejected",
+                    exchange=order.exchange,
+                ).inc()
+                self.logger.warning(
+                    f"RISK REJECTION: Leverage bound exceeded for {order.symbol} — {_lb_reason}"
+                )
+                await self._emit_execution_event_from_order(
+                    order,
+                    {"status": "rejected"},
+                    event_type="rejected",
+                    reason=_lb_reason[:128],
+                )
+                return {
+                    "status": "rejected",
+                    "reason": _lb_reason,
+                    "rejection_source": "leverage_bound",
+                }
+
+            risk_checks_total.labels(
+                check_type="leverage_bound",
+                result="passed",
+                exchange=order.exchange,
+            ).inc()
+            # -- End AC2+AC3 --------------------------------------------------
 
             # Execute order
             result = await self.execute_order(order)

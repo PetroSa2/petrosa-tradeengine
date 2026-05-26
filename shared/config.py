@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # MySQL Configuration (legacy support)
     mysql_uri: str | None = None
 
+    # Position Reconciliation (FR65)
+    position_reconciliation_enabled: bool = True
+    position_reconciliation_interval_seconds: int = 60
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

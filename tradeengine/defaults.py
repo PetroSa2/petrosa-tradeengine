@@ -96,6 +96,12 @@ DEFAULT_TRADING_PARAMETERS = {
     "enable_longs": True,
     "slippage_tolerance_pct": 0.1,
     "max_retries": 3,
+    # -------------------------------------------------------------------------
+    # Leverage Bound Parameters (FR64, P6.4)
+    # -------------------------------------------------------------------------
+    "max_leverage_bound": 125,  # Per-strategy/scope max leverage (1-125x). Must be int; 125 = effectively uncapped.
+    "portfolio_leverage_cap": 0,  # Portfolio-aggregate leverage cap (0 = disabled).
+    "leverage_breach_alert_threshold": 3,  # Consecutive breaches before operator alert fires.
 }
 
 # =============================================================================
@@ -848,6 +854,76 @@ PARAMETER_SCHEMA = {
         "when_to_change": (
             "Increase for unreliable network or exchange issues. Decrease for "
             "fast-moving markets where stale orders are risky."
+        ),
+    },
+    # -------------------------------------------------------------------------
+    # Leverage Bound Parameters (FR64, P6.4)
+    # -------------------------------------------------------------------------
+    "max_leverage_bound": {
+        "type": "integer",
+        "description": (
+            "Operator-configured maximum leverage allowed for this scope (per-strategy, "
+            "per-symbol, or global). 125 = no effective cap (Binance max). When the "
+            "strategy's configured `leverage` parameter exceeds this bound, the order "
+            "is rejected pre-placement with rejection_source='leverage_bound'. "
+            "**Example**: set to 10 on a conservative strategy to enforce a 10x ceiling "
+            "regardless of what the CIO recommends."
+        ),
+        "default": 125,
+        "min": 1,
+        "max": 125,
+        "example": 10,
+        "impact": (
+            "Hard cap on per-strategy leverage. Prevents CIO recommendations that "
+            "exceed operator-approved risk from reaching the exchange."
+        ),
+        "when_to_change": (
+            "Lower this during high-volatility periods or for new strategies under "
+            "evaluation. Raise it when the strategy has a proven track record."
+        ),
+    },
+    "portfolio_leverage_cap": {
+        "type": "integer",
+        "description": (
+            "Portfolio-aggregate leverage cap. Measured as the sum of configured "
+            "leverage across all open positions. 0 = disabled. When an incoming order "
+            "would push the aggregate above this cap, the order is rejected with "
+            "rejection_source='leverage_bound'. **Example**: cap=50 with three 10x "
+            "positions open (sum=30) allows one more 10x position (sum→40) but not "
+            "a 25x one (sum→55 > 50)."
+        ),
+        "default": 0,
+        "min": 0,
+        "max": 10000,
+        "example": 50,
+        "impact": (
+            "Prevents portfolio-wide over-leveraging even when individual strategies "
+            "are within their own bounds."
+        ),
+        "when_to_change": (
+            "Set to 0 to disable. Otherwise, tune based on account size and total "
+            "risk tolerance. Lower = more conservative portfolio."
+        ),
+    },
+    "leverage_breach_alert_threshold": {
+        "type": "integer",
+        "description": (
+            "Number of consecutive leverage-bound breach attempts on this scope before "
+            "an operator alert is emitted. **Example**: 3 means CIO must recommend a "
+            "leverage-exceeding trade 3 times in a row before the alert fires. "
+            "Helps distinguish transient misconfigurations from systematic drift."
+        ),
+        "default": 3,
+        "min": 1,
+        "max": 100,
+        "example": 3,
+        "impact": (
+            "Controls alert sensitivity. Lower = more sensitive to repeated "
+            "lever-bound violations."
+        ),
+        "when_to_change": (
+            "Lower to catch misconfigured CIO strategies earlier. Raise to reduce "
+            "alert noise during normal strategy exploration."
         ),
     },
 }

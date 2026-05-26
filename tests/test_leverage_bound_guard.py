@@ -13,6 +13,7 @@ Also covers:
 """
 
 import pytest
+from prometheus_client import REGISTRY
 
 from contracts.order import OrderStatus, TradeOrder
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
@@ -145,6 +146,12 @@ def test_ac5_alert_fires_after_threshold_breaches():
     scope = "cio_v1:BTCUSDT"
     assert guard._consecutive_breaches.get(scope, 0) == 3
 
+    # Verify the Prometheus alert gauge was actually set to 1.
+    gauge_value = REGISTRY.get_sample_value(
+        "tradeengine_leverage_bound_breach_alert", {"scope": scope}
+    )
+    assert gauge_value == 1.0, f"Expected gauge=1 after threshold, got {gauge_value}"
+
 
 def test_ac5_breach_counter_resets_after_pass():
     """A passing order after two breaches resets the counter."""
@@ -159,6 +166,39 @@ def test_ac5_breach_counter_resets_after_pass():
 
     scope = "cio_v1:BTCUSDT"
     assert scope not in guard._consecutive_breaches
+
+
+# ---------------------------------------------------------------------------
+# AC3: Portfolio breach counter reset (M2 regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_ac3_portfolio_breach_counter_resets_after_pass():
+    """Portfolio breach counter (portfolio:{symbol}) resets when an order passes."""
+    guard = LeverageBoundGuard()
+    order = _make_order(strategy_id="cio_v1")
+    failing_cfg = _config(
+        leverage=25, max_leverage_bound=125, portfolio_leverage_cap=50
+    )
+    passing_cfg = _config(
+        leverage=10, max_leverage_bound=125, portfolio_leverage_cap=50
+    )
+
+    # Breach: 30 existing + 25 new = 55 > cap 50
+    guard.check(order, failing_cfg, open_position_leverages=[10, 10, 10])
+
+    portfolio_scope = f"portfolio:{order.symbol}"
+    assert guard._consecutive_breaches.get(portfolio_scope, 0) == 1
+
+    # Pass: 10 existing + 10 new = 20 ≤ cap 50 → counter must clear
+    guard.check(order, passing_cfg, open_position_leverages=[10])
+
+    assert portfolio_scope not in guard._consecutive_breaches
+
+    gauge_value = REGISTRY.get_sample_value(
+        "tradeengine_leverage_bound_breach_alert", {"scope": portfolio_scope}
+    )
+    assert gauge_value == 0.0, f"Expected gauge=0 after reset, got {gauge_value}"
 
 
 # ---------------------------------------------------------------------------

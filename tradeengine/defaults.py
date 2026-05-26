@@ -99,7 +99,7 @@ DEFAULT_TRADING_PARAMETERS = {
     # -------------------------------------------------------------------------
     # Leverage Bound Parameters (FR64, P6.4)
     # -------------------------------------------------------------------------
-    "max_leverage_bound": 125,  # Per-strategy/scope max leverage (1-125x). None = no cap.
+    "max_leverage_bound": 125,  # Per-strategy/scope max leverage (1-125x). Must be int; 125 = effectively uncapped.
     "portfolio_leverage_cap": 0,  # Portfolio-aggregate leverage cap (0 = disabled).
     "leverage_breach_alert_threshold": 3,  # Consecutive breaches before operator alert fires.
 }

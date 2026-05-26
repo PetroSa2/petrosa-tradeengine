@@ -2060,11 +2060,26 @@ class Dispatcher:
 
                     _resolved = get_default_parameters()
 
-                # Collect open position leverages for AC3
-                _open_leverages: list[int] = [
-                    int(pos.get("strategy_metadata", {}).get("leverage", 10))
-                    for pos in strategy_position_manager.get_all_open_strategy_positions()
-                ]
+                # Collect open position leverages for AC3 by looking up each
+                # position's resolved config. Falls back to 10x if config lookup
+                # fails or config_manager is unavailable.
+                _open_leverages: list[int] = []
+                for _pos in strategy_position_manager.get_all_open_strategy_positions():
+                    try:
+                        _pos_strat = _pos.get("strategy_id")
+                        _pos_sym = _pos.get("symbol", order.symbol)
+                        _pos_side = _pos.get("side", "LONG")
+                        if _config_mgr is not None and _pos_strat:
+                            _pos_cfg = await _config_mgr.get_config(
+                                symbol=_pos_sym,
+                                side=_pos_side,
+                                strategy_id=_pos_strat,
+                            )
+                            _open_leverages.append(int(_pos_cfg.get("leverage", 10)))
+                        else:
+                            _open_leverages.append(10)
+                    except Exception:
+                        _open_leverages.append(10)
 
                 _lb_pass, _lb_reason = self.leverage_bound_guard.check(
                     order, _resolved, _open_leverages

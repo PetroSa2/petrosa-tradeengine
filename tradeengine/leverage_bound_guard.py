@@ -10,7 +10,7 @@ Checks:
        across all currently-open positions must not exceed portfolio_leverage_cap
        after the order is placed.
 - AC5: Repeated breach attempts (consecutive rejections on the same scope)
-       increment leverage_bound_breaches_total; when the count hits
+       increment leverage_bound_rejections_total; when the count hits
        leverage_breach_alert_threshold the operator alert metric fires.
 """
 
@@ -90,7 +90,7 @@ class LeverageBoundGuard:
         )
 
         scope_key = (
-            f"{order.strategy_metadata.get('strategy_id', 'unknown')}:{order.symbol}"
+            f"{order.strategy_metadata.get('strategy_id') or 'unknown'}:{order.symbol}"
         )
 
         # -- AC2: per-strategy bound ------------------------------------------
@@ -133,8 +133,9 @@ class LeverageBoundGuard:
                 )
                 return False, reason
 
-        # Both checks passed — reset breach counter for this scope.
+        # Both checks passed — reset breach counters for both scope keys.
         self._reset_breach(scope_key)
+        self._reset_breach(f"portfolio:{order.symbol}")
         return True, ""
 
     # ------------------------------------------------------------------

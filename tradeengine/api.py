@@ -182,6 +182,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Initializing dispatcher...")
         await dispatcher.initialize()
 
+        # Start position reconciler (FR65 / AC1)
+        from shared.config import settings as _te_settings
+        from tradeengine.position_reconciler import PositionReconciler
+
+        if (
+            _te_settings.position_reconciliation_enabled
+            and not _te_settings.simulation_enabled
+        ):
+            _reconciler = PositionReconciler(
+                exchange=binance_exchange,
+                position_manager=dispatcher.position_manager,
+                interval_seconds=_te_settings.position_reconciliation_interval_seconds,
+            )
+            await _reconciler.start()
+            app.state.position_reconciler = _reconciler
+            logger.info(
+                "✅ Position reconciler started (interval=%ss)",
+                _te_settings.position_reconciliation_interval_seconds,
+            )
+        else:
+            logger.info(
+                "⚠️ Position reconciler disabled (simulation=%s, enabled=%s)",
+                _te_settings.simulation_enabled,
+                _te_settings.position_reconciliation_enabled,
+            )
+
         # Initialize and start NATS consumer
         logger.info("Initializing NATS consumer...")
         from tradeengine.consumer import signal_consumer
@@ -276,6 +302,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await consumer_task
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
+
+        # Stop position reconciler
+        if hasattr(app.state, "position_reconciler"):
+            await app.state.position_reconciler.stop()
+            logger.info("✅ Position reconciler stopped")
 
         # Cancel Binance ping loop before closing exchange
         await binance_exchange.stop_ping_loop()

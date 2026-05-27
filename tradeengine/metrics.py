@@ -1,13 +1,19 @@
 """
-Position Tracking Metrics - Prometheus metrics for hedge mode position tracking
+Position Tracking Metrics - hedge mode position tracking.
 
 ⚠️ CRITICAL: These metrics follow the exact same pattern as existing metrics in
 dispatcher.py, api.py, and consumer.py. DO NOT modify the pattern or it will
 break the observability stack.
 
-All metrics are automatically exported to Grafana Cloud via OTLP.
+Dual-export (per #415): every business metric below is a `prometheus_client`
+instrument exposed via the Prometheus scrape endpoint (pull model). In addition,
+a parallel set of OTel SDK instruments (see the "OTel SDK instruments" section
+at the bottom of this module) is registered against the `MeterProvider` wired by
+`petrosa_otel.setup_telemetry()`, so the same business metrics also flow via the
+OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 """
 
+from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
 # Position Lifecycle Metrics
@@ -225,4 +231,66 @@ last_heartbeat_received_timestamp = Gauge(
 restricted_mode_status = Gauge(
     "tradeengine_restricted_mode_status",
     "Binary status of RESTRICTED_MODE (1 = Restricted, 0 = Normal)",
+)
+
+
+# ============================================================
+# OTel SDK instruments (dual-export — OTLP push to Grafana Alloy)
+# ============================================================
+# Per #415: registered ALONGSIDE the prometheus_client instruments above (the
+# Prometheus pull path is unchanged). These flow through the MeterProvider wired
+# by petrosa_otel.setup_telemetry(); get_meter() returns a proxy meter before the
+# provider is installed, so module-level creation is safe. Names mirror the
+# prometheus metric names for cross-system correlation in Grafana.
+meter = get_meter("tradeengine.metrics")
+
+# Order execution
+otel_orders_executed_by_type = meter.create_counter(
+    "tradeengine_orders_executed_by_type_total",
+    description="Total orders executed by type (OTLP dual-export)",
+)
+otel_order_failures = meter.create_counter(
+    "tradeengine_order_failures_total",
+    description="Total order execution failures (OTLP dual-export)",
+)
+otel_order_execution_latency_seconds = meter.create_histogram(
+    "tradeengine_order_execution_latency_seconds",
+    description="Order execution latency in seconds (OTLP dual-export)",
+    unit="s",
+)
+
+# Position / PnL
+otel_positions_opened = meter.create_counter(
+    "tradeengine_positions_opened_total",
+    description="Total positions opened (OTLP dual-export)",
+)
+otel_positions_closed = meter.create_counter(
+    "tradeengine_positions_closed_total",
+    description="Total positions closed (OTLP dual-export)",
+)
+otel_position_pnl_usd = meter.create_histogram(
+    "tradeengine_position_pnl_usd",
+    description="Per-position realized PnL in USD (OTLP dual-export)",
+)
+otel_total_realized_pnl_usd = meter.create_up_down_counter(
+    "tradeengine_total_realized_pnl_usd",
+    description="Cumulative realized PnL in USD (OTLP dual-export)",
+)
+otel_total_unrealized_pnl_usd = meter.create_up_down_counter(
+    "tradeengine_total_unrealized_pnl_usd",
+    description="Total unrealized PnL in USD (OTLP dual-export)",
+)
+otel_total_daily_pnl_usd = meter.create_up_down_counter(
+    "tradeengine_total_daily_pnl_usd",
+    description="Total daily PnL in USD (OTLP dual-export)",
+)
+
+# Risk management
+otel_risk_rejections = meter.create_counter(
+    "tradeengine_risk_rejections_total",
+    description="Total orders rejected by risk management (OTLP dual-export)",
+)
+otel_risk_checks = meter.create_counter(
+    "tradeengine_risk_checks_total",
+    description="Total risk checks performed (OTLP dual-export)",
 )

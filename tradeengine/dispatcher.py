@@ -28,6 +28,7 @@ from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
     execution_event_publisher,
 )
+from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
 from tradeengine.strategy_position_manager import strategy_position_manager
@@ -2417,6 +2418,12 @@ class Dispatcher:
                 emit_err,
             )
 
+        await self._feed_halt_detector(
+            event_type=event_type,
+            rejection_source=rejection_source,
+            decision_id=signal.decision_id,
+        )
+
     async def _emit_execution_event_from_order(
         self,
         order: TradeOrder,
@@ -2470,6 +2477,39 @@ class Dispatcher:
                 "execution_event emit (order-keyed) failed for %s: %s",
                 order.order_id,
                 emit_err,
+            )
+
+        await self._feed_halt_detector(
+            event_type=event_type,
+            rejection_source=order.rejection_source,
+            decision_id=decision_id,
+        )
+
+    async def _feed_halt_detector(
+        self,
+        *,
+        event_type: ExecutionEventType,
+        rejection_source: str | None,
+        decision_id: str | None,
+    ) -> None:
+        """Hand one execution event off to the halt-suspected detector.
+
+        Best-effort: never raises into the caller — the order / rejection
+        path tolerates an unhealthy observability subsystem.
+        """
+        try:
+            if event_type == "rejected":
+                await halt_suspected_detector.on_rejection(
+                    rejection_source=rejection_source,
+                    decision_id=decision_id,
+                )
+            elif event_type in ("placed", "filled", "partial_fill"):
+                await halt_suspected_detector.on_completion()
+        except Exception as exc:
+            self.logger.warning(
+                "halt_suspected_detector hook failed for event_type=%s: %s",
+                event_type,
+                exc,
             )
 
     def _signal_to_order(

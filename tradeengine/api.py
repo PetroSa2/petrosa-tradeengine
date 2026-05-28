@@ -266,6 +266,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.warning("⚠️ NATS consumer not initialized (likely disabled)")
 
+        # Start health evaluator (publishes evaluator.tradeengine.verdict).
+        # Read-only over existing Prometheus metrics. Guarded so an older
+        # petrosa-otel that lacks the evaluators framework degrades gracefully.
+        try:
+            from tradeengine.evaluators import build_tradeengine_health_evaluator
+
+            _evaluator = build_tradeengine_health_evaluator(
+                nats_servers=_te_settings.nats_servers
+            )
+            if _evaluator is not None:
+                await _evaluator.start()
+                app.state.health_evaluator = _evaluator
+                logger.info("✅ Health evaluator started")
+        except ImportError:
+            logger.warning(
+                "petrosa_otel.evaluators unavailable; health evaluator disabled"
+            )
+
         logger.info("Trading engine startup completed successfully")
 
     except Exception as e:
@@ -302,6 +320,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await consumer_task
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
+
+        # Stop health evaluator
+        if hasattr(app.state, "health_evaluator"):
+            await app.state.health_evaluator.stop()
+            logger.info("✅ Health evaluator stopped")
 
         # Stop position reconciler
         if hasattr(app.state, "position_reconciler"):

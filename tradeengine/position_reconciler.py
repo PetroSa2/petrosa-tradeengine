@@ -95,7 +95,8 @@ def detect_divergences(
 ) -> list[dict[str, Any]]:
     """AC2: return structured divergence records.
 
-    Three categories:
+    Three categories (AC5 of #424 adds a fourth — see
+    :func:`detect_unhedged_positions`):
     - untracked: Binance has a non-zero position, local tracker is empty
     - ghost:     local tracker has a position, Binance shows nothing
     - mutation:  both exist but quantity differs beyond tolerance
@@ -147,6 +148,76 @@ def detect_divergences(
                         ),
                     }
                 )
+
+    return divergences
+
+
+def _order_is_reduce_only(order: dict[str, Any]) -> bool:
+    """Treat both ``reduceOnly=True`` and ``closePosition=True`` as
+    reduce-only — Binance uses ``closePosition`` for sweep-everything
+    SL/TP and ``reduceOnly`` for sized stops; either flag protects the
+    position from further accumulation."""
+    return bool(order.get("reduceOnly")) or bool(order.get("closePosition"))
+
+
+def detect_unhedged_positions(
+    binance_positions: dict[tuple[str, str], dict[str, Any]],
+    binance_open_orders_by_symbol: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """AC5 of #424: detect positions on Binance with no matching SL+TP.
+
+    For each non-zero Binance position, scan the open-order list for the
+    same ``(symbol, positionSide)`` and require at least one reduceOnly
+    STOP-shaped order AND at least one reduceOnly TAKE_PROFIT-shaped
+    order. Anything less is unhedged — emit a structured divergence.
+
+    The 2026-05-30 incident had 11/12 live positions unhedged on Binance
+    while the reconciler reported clean — root cause #5 of #424.
+    """
+    divergences: list[dict[str, Any]] = []
+
+    for (symbol, side), bp in binance_positions.items():
+        orders = binance_open_orders_by_symbol.get(symbol, []) or []
+        sl_present = False
+        tp_present = False
+        for o in orders:
+            o_side = str(o.get("positionSide", "BOTH")).upper()
+            # Hedge-mode rows must match exactly; one-way-mode rows ("BOTH")
+            # cover any side.
+            if o_side not in ("BOTH", side):
+                continue
+            if not _order_is_reduce_only(o):
+                continue
+            o_type = str(o.get("type") or o.get("origType") or "").upper()
+            if "STOP" in o_type:
+                sl_present = True
+            elif "TAKE_PROFIT" in o_type:
+                tp_present = True
+
+        if sl_present and tp_present:
+            continue
+
+        # Build a precise human-readable detail for the alert payload.
+        missing: list[str] = []
+        if not sl_present:
+            missing.append("SL")
+        if not tp_present:
+            missing.append("TP")
+        divergences.append(
+            {
+                "category": "unhedged",
+                "symbol": symbol,
+                "side": side,
+                "binance_qty": abs(float(bp.get("positionAmt", 0))),
+                "local_qty": 0.0,
+                "sl_present": sl_present,
+                "tp_present": tp_present,
+                "detail": (
+                    f"Position on Binance lacks reduceOnly {'+'.join(missing)} "
+                    f"order(s) — unhedged"
+                ),
+            }
+        )
 
     return divergences
 
@@ -225,6 +296,15 @@ class PositionReconciler:
         local_positions = self._position_manager.get_positions()
 
         divergences = detect_divergences(binance_positions, local_positions)
+
+        # AC5 of #424: also detect positions on Binance with no matching
+        # reduceOnly SL+TP orders. Fetch open algo orders per unique
+        # symbol present in binance_positions and append unhedged
+        # divergences to the same list so the existing metric/alert
+        # paths surface them uniformly.
+        unhedged = await self._detect_unhedged_for(binance_positions)
+        divergences.extend(unhedged)
+
         self._last_divergence_count = len(divergences)
 
         for d in divergences:
@@ -241,6 +321,31 @@ class PositionReconciler:
 
         reconciliation_runs_total.labels(result="ok").inc()
         return divergences
+
+    async def _detect_unhedged_for(
+        self,
+        binance_positions: dict[tuple[str, str], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """AC5 helper: fetch open algo orders for each unique symbol and
+        delegate to :func:`detect_unhedged_positions`. Returns [] on
+        empty input or when the exchange call fails (logged); never
+        raises into the caller — reconciliation should keep running."""
+        if not binance_positions:
+            return []
+        symbols = {symbol for symbol, _ in binance_positions.keys()}
+        orders_by_symbol: dict[str, list[dict[str, Any]]] = {}
+        for symbol in symbols:
+            try:
+                orders = await self._exchange.get_open_algo_orders(symbol=symbol)
+            except Exception:
+                logger.exception(
+                    "PositionReconciler: get_open_algo_orders(%s) failed; "
+                    "skipping unhedged check for this symbol",
+                    symbol,
+                )
+                orders = []
+            orders_by_symbol[symbol] = orders or []
+        return detect_unhedged_positions(binance_positions, orders_by_symbol)
 
     # ------------------------------------------------------------------
     # Alert / evaluator helpers

@@ -3473,6 +3473,32 @@ class Dispatcher:
                             stop_loss_order_id=oco_result.get("sl_order_id"),
                             take_profit_order_id=oco_result.get("tp_order_id"),
                         )
+
+                    # AC3 of #424 (2026-05-30 OCO incident): also propagate
+                    # the real Binance algo-order IDs into the
+                    # strategy_position record so stops-health verification
+                    # has the right values to check against the exchange.
+                    # set_strategy_position_orders validates the IDs via
+                    # RiskOrderIds, rejecting price-shaped strings.
+                    if strategy_position_id:
+                        try:
+                            await (
+                                strategy_position_manager.set_strategy_position_orders(
+                                    strategy_position_id=strategy_position_id,
+                                    sl_order_id=oco_result.get("sl_order_id"),
+                                    tp_order_id=oco_result.get("tp_order_id"),
+                                )
+                            )
+                        except Exception as exc:
+                            # Swallow validation/persistence errors here so
+                            # OCO-placement success is not undone by a
+                            # downstream record-keeping failure — but log
+                            # loudly so the bad-id case stays visible.
+                            self.logger.error(
+                                "set_strategy_position_orders failed for %s: %s",
+                                strategy_position_id,
+                                exc,
+                            )
                 elif oco_result.get("error") == "duplicate_oco":
                     # Position already has an active OCO pair — expected when multiple
                     # strategies accumulate into the same exchange position.

@@ -45,13 +45,21 @@ DRAWDOWN_BREACH_SUBJECT_PREFIX = "alerts.drawdown.breach"
 
 @dataclass(frozen=True)
 class Breach:
-    """A drawdown-breach event prior to NATS publication."""
+    """A drawdown-breach event prior to NATS publication.
+
+    AC6.a of P4.6 / FR62 (#422): ``envelope_version`` + ``envelope_source``
+    carry the envelope-snapshot reference for post-hoc analysis. Optional
+    (None) to preserve backwards compatibility with breaches detected
+    before the envelope-fetch helper was wired (legacy / partial-deploy).
+    """
 
     strategy_id: str
     observed_drawdown_pct: float
     envelope_value_pct: float
     exceeded_by_pct: float
     detected_at: datetime
+    envelope_version: int | None = None
+    envelope_source: str | None = None
 
 
 def check_drawdown_breach(
@@ -59,6 +67,8 @@ def check_drawdown_breach(
     strategy_id: str,
     observed_drawdown_pct: float,
     envelope_value_pct: float,
+    envelope_version: int | None = None,
+    envelope_source: str | None = None,
 ) -> Breach | None:
     """Return a :class:`Breach` iff ``observed_drawdown_pct > envelope_value_pct``.
 
@@ -67,6 +77,10 @@ def check_drawdown_breach(
     operator one tick of grace before alerting — matches the convention in
     ``PortfolioTracker.would_breach_ceiling`` where the cluster passes the
     test until it strictly exceeds the ceiling.
+
+    AC6.a of P4.6 / FR62 (#422): when the envelope dict is available,
+    callers pass its ``version`` and ``source`` so the Breach payload
+    carries them through to NATS for post-hoc analysis.
     """
     if not strategy_id:
         return None
@@ -78,6 +92,8 @@ def check_drawdown_breach(
         envelope_value_pct=float(envelope_value_pct),
         exceeded_by_pct=float(observed_drawdown_pct - envelope_value_pct),
         detected_at=datetime.now(UTC),
+        envelope_version=envelope_version,
+        envelope_source=envelope_source,
     )
 
 
@@ -201,10 +217,12 @@ class DrawdownBreachEmitter:
             "envelope_value_pct": breach.envelope_value_pct,
             "exceeded_by_pct": breach.exceeded_by_pct,
             "detected_at": breach.detected_at.astimezone(UTC).isoformat(),
-            # FR62 envelope fields land in #422; NULL here so the schema is
-            # forward-compatible.
-            "envelope_version": None,
-            "envelope_source": None,
+            # AC6.a of P4.6 / FR62 (#422): envelope snapshot reference.
+            # NULL for legacy breaches detected before the envelope-fetch
+            # helper was wired — schema stays additively compatible
+            # (AC6.d "tolerant of missing fields").
+            "envelope_version": breach.envelope_version,
+            "envelope_source": breach.envelope_source,
         }
         if self._alert_publisher is None:
             logger.info(
@@ -256,14 +274,33 @@ async def check_and_emit(
     with cio's EnvelopeFetcher contract). When the fetcher is unconfigured
     or the call fails, it transparently falls back to the legacy stub.
     """
+    envelope_version: int | None = None
+    envelope_source: str | None = None
     if envelope_value_pct is None:
-        envelope_value_pct, _envelope = await get_envelope_value_for_strategy(
+        envelope_value_pct, envelope = await get_envelope_value_for_strategy(
             strategy_id
         )
+        # AC6.a of P4.6 / FR62 (#422): plumb envelope version+source into
+        # the Breach so post-hoc analysis can correlate breach events
+        # back to the exact envelope snapshot active at breach time.
+        if isinstance(envelope, dict):
+            raw_version = envelope.get("version")
+            if isinstance(raw_version, int):
+                envelope_version = raw_version
+            elif raw_version is not None:
+                try:
+                    envelope_version = int(raw_version)
+                except (TypeError, ValueError):
+                    envelope_version = None
+            raw_source = envelope.get("source")
+            if isinstance(raw_source, str):
+                envelope_source = raw_source
     breach = check_drawdown_breach(
         strategy_id=strategy_id,
         observed_drawdown_pct=observed_drawdown_pct,
         envelope_value_pct=envelope_value_pct,
+        envelope_version=envelope_version,
+        envelope_source=envelope_source,
     )
     if breach is not None:
         await emitter.emit(breach)

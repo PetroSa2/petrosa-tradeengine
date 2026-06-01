@@ -1,13 +1,51 @@
 import logging
+import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from contracts.order import TradeOrder
 from shared.constants import UTC
 
 logger = logging.getLogger(__name__)
+
+
+# AC3 of #424: a Binance futures algo-order ID is a 13+ digit integer.
+# Anything else (price strings, sentinel placeholders, UUIDs) MUST be
+# rejected at the storage boundary so stops-health verification works.
+_BINANCE_ALGO_ID_RE = re.compile(r"^\d{13,}$")
+
+
+def _is_real_algo_id(value: Any) -> bool:
+    """True when value is a string that looks like a Binance algo order ID."""
+    if value is None:
+        return False
+    return bool(_BINANCE_ALGO_ID_RE.match(str(value)))
+
+
+class RiskOrderIds(BaseModel):
+    """Storage-side model for the SL/TP Binance algo-order IDs.
+
+    AC3 of #424: writers MUST go through this model so price-shaped
+    values (e.g. "2022.6338") cannot leak into the sl_order_id /
+    tp_order_id slots and pretend to be real algo orders.
+    """
+
+    sl_order_id: str | None = None
+    tp_order_id: str | None = None
+
+    @field_validator("sl_order_id", "tp_order_id")
+    @classmethod
+    def _must_be_binance_algo_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = str(v)
+        if not _BINANCE_ALGO_ID_RE.match(s):
+            raise ValueError(
+                f"order_id must be a Binance algo-order ID (>=13 digits); got {s!r}"
+            )
+        return s
 
 
 class PositionStopStatus(BaseModel):
@@ -33,6 +71,26 @@ class PositionStopStatus(BaseModel):
     source: Literal["memory", "mysql", "both"]
 
 
+class StopsDivergence(BaseModel):
+    """A position whose stored order IDs are not present on Binance.
+
+    Emitted for AC3 of #424 so the operator dashboard can list exactly
+    which positions diverge from the exchange — instead of a single
+    aggregate "violation_count" that hides the why.
+    """
+
+    strategy_position_id: str
+    symbol: str
+    side: str
+    stored_sl_order_id: str | None
+    stored_tp_order_id: str | None
+    sl_present_on_binance: bool
+    tp_present_on_binance: bool
+    sl_id_is_real_algo_id: bool
+    tp_id_is_real_algo_id: bool
+    detail: str
+
+
 class PositionStopsHealthResponse(BaseModel):
     timestamp: str
     total_checked: int
@@ -40,6 +98,7 @@ class PositionStopsHealthResponse(BaseModel):
     violation_count: int
     alarms_emitted: int
     positions: list[PositionStopStatus]
+    divergences: list[StopsDivergence] = []
 
 
 async def check_position_stops(
@@ -88,9 +147,39 @@ async def check_position_stops(
             source_map[pid] = "mysql"
 
     result_positions: list[PositionStopStatus] = []
+    divergences: list[StopsDivergence] = []
     healthy_count = 0
     violation_count = 0
     alarms_emitted = 0
+
+    # AC3 of #424: per-symbol cache of Binance open algo-order IDs. None
+    # signals "verification unavailable" (exchange call failed) — we then
+    # only fall back to a fail-open healthy verdict when the local IDs
+    # at least pass the shape check.
+    binance_open_by_symbol: dict[str, set[str] | None] = {}
+
+    async def _binance_ids_for(symbol: str) -> set[str] | None:
+        if symbol in binance_open_by_symbol:
+            return binance_open_by_symbol[symbol]
+        if exchange is None or not hasattr(exchange, "get_all_open_orders"):
+            binance_open_by_symbol[symbol] = None
+            return None
+        try:
+            raw = await exchange.get_all_open_orders(symbol=symbol)
+        except Exception as exc:
+            logger.warning(
+                "stops-health: get_all_open_orders(%s) failed: %s — verification unavailable",
+                symbol,
+                exc,
+            )
+            binance_open_by_symbol[symbol] = None
+            return None
+        if raw is None:
+            normalized: set[str] | None = set()
+        else:
+            normalized = {str(x) for x in raw}
+        binance_open_by_symbol[symbol] = normalized
+        return normalized
 
     for spid, pos in merged.items():
         sl_order_id = pos.get("sl_order_id")
@@ -98,24 +187,77 @@ async def check_position_stops(
         has_sl = sl_order_id is not None
         has_tp = tp_order_id is not None
         src = source_map.get(spid, "memory")
+        symbol_for_pos = pos.get("symbol", "unknown")
 
         if has_sl and has_tp:
-            result_positions.append(
-                PositionStopStatus(
+            # AC3 of #424: verify on Binance before declaring healthy.
+            # A position is healthy only when BOTH stored IDs look like
+            # Binance algo IDs AND are actually open on the exchange.
+            binance_ids = await _binance_ids_for(symbol_for_pos)
+            sl_real = _is_real_algo_id(sl_order_id)
+            tp_real = _is_real_algo_id(tp_order_id)
+            sl_present = (
+                binance_ids is not None and sl_real and str(sl_order_id) in binance_ids
+            )
+            tp_present = (
+                binance_ids is not None and tp_real and str(tp_order_id) in binance_ids
+            )
+
+            verified_healthy = binance_ids is not None and sl_present and tp_present
+            # Fail-open path: if Binance verification is unavailable, only
+            # accept the position as healthy when local IDs at least pass
+            # the shape check — otherwise the price-string bug stays hidden.
+            unverified_healthy = binance_ids is None and sl_real and tp_real
+
+            if verified_healthy or unverified_healthy:
+                result_positions.append(
+                    PositionStopStatus(
+                        strategy_position_id=spid,
+                        symbol=symbol_for_pos,
+                        side=pos.get("side", "unknown"),
+                        has_sl_order=True,
+                        has_tp_order=True,
+                        sl_order_id=str(sl_order_id),
+                        tp_order_id=str(tp_order_id),
+                        status="healthy",
+                        remediation_outcome="none",
+                        source=src,
+                    )
+                )
+                healthy_count += 1
+                continue
+
+            # Verification ran AND the stored IDs are not both present on
+            # Binance — record a divergence and fall through to remediation.
+            divergences.append(
+                StopsDivergence(
                     strategy_position_id=spid,
-                    symbol=pos.get("symbol", "unknown"),
+                    symbol=symbol_for_pos,
                     side=pos.get("side", "unknown"),
-                    has_sl_order=True,
-                    has_tp_order=True,
-                    sl_order_id=str(sl_order_id),
-                    tp_order_id=str(tp_order_id),
-                    status="healthy",
-                    remediation_outcome="none",
-                    source=src,
+                    stored_sl_order_id=(
+                        str(sl_order_id) if sl_order_id is not None else None
+                    ),
+                    stored_tp_order_id=(
+                        str(tp_order_id) if tp_order_id is not None else None
+                    ),
+                    sl_present_on_binance=bool(sl_present),
+                    tp_present_on_binance=bool(tp_present),
+                    sl_id_is_real_algo_id=sl_real,
+                    tp_id_is_real_algo_id=tp_real,
+                    detail=(
+                        f"sl_present={sl_present} tp_present={tp_present} "
+                        f"sl_real={sl_real} tp_real={tp_real}"
+                    ),
                 )
             )
-            healthy_count += 1
-            continue
+            # Rewrite local flags so the existing missing-* remediation
+            # block downstream treats the unverified side as missing.
+            has_sl = bool(sl_present)
+            has_tp = bool(tp_present)
+            if has_sl and has_tp:
+                # Defensive: should be unreachable given verified_healthy
+                # would have caught this; included for clarity.
+                continue
 
         violation_count += 1
         if not has_sl and not has_tp:
@@ -235,4 +377,5 @@ async def check_position_stops(
         violation_count=violation_count,
         alarms_emitted=alarms_emitted,
         positions=result_positions,
+        divergences=divergences,
     )

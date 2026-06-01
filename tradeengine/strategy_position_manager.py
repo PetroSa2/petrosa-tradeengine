@@ -130,8 +130,13 @@ class StrategyPositionManager:
                 "entry_order_id": entry_order_id,
                 "take_profit_price": take_profit_price,
                 "stop_loss_price": stop_loss_price,
-                "tp_order_id": order.take_profit,  # Will be set when OCO placed
-                "sl_order_id": order.stop_loss,  # Will be set when OCO placed
+                # AC3 of #424: these must hold real Binance algo-order IDs,
+                # not the price-shaped placeholders that surfaced in the
+                # 2026-05-30 incident. They are populated by the OCO-success
+                # path via set_strategy_position_orders() once the algo orders
+                # come back with their real IDs.
+                "tp_order_id": None,
+                "sl_order_id": None,
                 "status": "open",
                 "exchange_position_key": exchange_position_key,
                 "strategy_metadata": {
@@ -179,6 +184,37 @@ class StrategyPositionManager:
         except Exception as e:
             logger.error(f"Error creating strategy position: {e}")
             raise
+
+    async def set_strategy_position_orders(
+        self,
+        strategy_position_id: str,
+        sl_order_id: str | None = None,
+        tp_order_id: str | None = None,
+    ) -> None:
+        # AC3 of #424 (2026-05-30 OCO incident): the previous code stored
+        # price strings here as placeholders, which made the stops-health
+        # endpoint report 366 positions healthy while Binance had only 12
+        # positions and 2 close orders. IDs are validated against the
+        # Binance algo-order pattern via RiskOrderIds — non-matching values
+        # are rejected at the boundary so the bug cannot recur.
+        from tradeengine.position_health_guard import RiskOrderIds
+
+        validated = RiskOrderIds(
+            sl_order_id=sl_order_id,
+            tp_order_id=tp_order_id,
+        )
+
+        record = self.strategy_positions.get(strategy_position_id)
+        if record is None:
+            logger.warning(
+                "set_strategy_position_orders: %s not in memory — skipping in-memory update",
+                strategy_position_id,
+            )
+        else:
+            if validated.sl_order_id is not None:
+                record["sl_order_id"] = validated.sl_order_id
+            if validated.tp_order_id is not None:
+                record["tp_order_id"] = validated.tp_order_id
 
     async def close_strategy_position(
         self,

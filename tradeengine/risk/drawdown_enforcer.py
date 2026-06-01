@@ -82,21 +82,99 @@ def check_drawdown_breach(
 
 
 def get_stub_envelope_value(strategy_id: str) -> float:
-    """Return the configured envelope value for a strategy.
+    """Return the legacy stub envelope value for a strategy.
 
-    **Stub source** — returns ``settings.max_daily_loss_pct`` regardless of
-    ``strategy_id``. The full implementation in [petrosa-tradeengine#421](https://github.com/PetroSa2/petrosa-tradeengine/issues/421)
-    swaps this for an HTTP call to ``petrosa-data-manager`` via the
-    EnvelopeFetcher pattern from [petrosa-cio#155](https://github.com/PetroSa2/petrosa-cio/pull/155).
+    Returns ``settings.max_daily_loss_pct`` regardless of ``strategy_id``.
+    Used as the FALLBACK when the real envelope fetcher (#421) is not
+    configured or the data-manager call fails — see
+    :func:`get_envelope_value_for_strategy`.
 
-    Same signature so the call sites in this leaf are unchanged after #421
-    lands. Returns 0.0 if the setting is unavailable.
+    Returns 0.0 if the setting is unavailable.
     """
-    _ = strategy_id  # Future: will key the lookup
+    _ = strategy_id
     value = getattr(settings, "max_daily_loss_pct", None)
     if value is None:
         return 0.0
     return float(value)
+
+
+def _extract_envelope_value_pct(envelope: dict[str, Any]) -> float | None:
+    """Pull the comparator value out of a data-manager envelope dict.
+
+    Looks at ``envelope["value"]["max_drawdown_pct"]`` per the schema cio
+    uses (see ``petrosa-cio/tests/unit/test_envelope_fetcher.py``). Returns
+    ``None`` if the field is missing or not a number — caller falls back
+    to the stub.
+    """
+    value_obj = envelope.get("value") if isinstance(envelope, dict) else None
+    if not isinstance(value_obj, dict):
+        return None
+    raw = value_obj.get("max_drawdown_pct")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+async def get_envelope_value_for_strategy(
+    strategy_id: str,
+) -> tuple[float, dict[str, Any] | None]:
+    """Fetch the active envelope for a strategy and return (value_pct, envelope).
+
+    AC3.d of P4.6 (FR62, #421): the FR30 comparator reads the active
+    envelope via the same HTTP client contract as cio (see
+    :mod:`tradeengine.services.envelope_fetcher`). When the fetcher is
+    unconfigured, errors out, or returns an envelope without a parseable
+    ``max_drawdown_pct``, the function falls back to the legacy stub
+    (``settings.max_daily_loss_pct``) and returns ``(stub_value, None)``.
+
+    Returns a 2-tuple so the caller can also surface the envelope's
+    ``version`` and ``source`` metadata (deferred to #422's schema
+    extension — this leaf just exposes the source).
+    """
+    # Local import to avoid a startup-time cycle: envelope_fetcher imports
+    # httpx eagerly and we want this module importable even in tooling that
+    # doesn't have the HTTP stack wired.
+    from tradeengine.services.envelope_fetcher import (
+        EnvelopeFetchError,
+        EnvelopeNotFoundError,
+        get_envelope_fetcher,
+        strategy_key,
+    )
+
+    fetcher = get_envelope_fetcher()
+    if fetcher is None:
+        return get_stub_envelope_value(strategy_id), None
+
+    try:
+        envelope = await fetcher.get_active(strategy_key(strategy_id))
+    except EnvelopeNotFoundError:
+        # AC3.b lives in cio (the admission refuses the order). Here in
+        # the tradeengine drawdown path, "no envelope" still has to make
+        # a decision — fall back to the legacy stub so the comparator
+        # keeps working under partial-deploy / pre-onboarding conditions.
+        logger.info(
+            "envelope_fallback_no_envelope",
+            extra={"strategy_id": strategy_id},
+        )
+        return get_stub_envelope_value(strategy_id), None
+    except EnvelopeFetchError as exc:
+        logger.warning(
+            "envelope_fallback_fetch_error",
+            extra={"strategy_id": strategy_id, "error": str(exc)},
+        )
+        return get_stub_envelope_value(strategy_id), None
+
+    value_pct = _extract_envelope_value_pct(envelope)
+    if value_pct is None:
+        logger.warning(
+            "envelope_fallback_missing_max_drawdown_pct",
+            extra={"strategy_id": strategy_id, "envelope": envelope},
+        )
+        return get_stub_envelope_value(strategy_id), envelope
+    return value_pct, envelope
 
 
 class DrawdownBreachEmitter:
@@ -171,9 +249,17 @@ async def check_and_emit(
     reconciliation loop (or order-acceptance path). Returns the breach
     that fired, or ``None`` when no breach was detected. The emitter
     failure mode (NATS down) is logged but not propagated.
+
+    Envelope source (#421 / P4.6-AC3.d): when ``envelope_value_pct`` is
+    not supplied, the function fetches the active envelope from
+    data-manager via :func:`get_envelope_value_for_strategy` (no drift
+    with cio's EnvelopeFetcher contract). When the fetcher is unconfigured
+    or the call fails, it transparently falls back to the legacy stub.
     """
     if envelope_value_pct is None:
-        envelope_value_pct = get_stub_envelope_value(strategy_id)
+        envelope_value_pct, _envelope = await get_envelope_value_for_strategy(
+            strategy_id
+        )
     breach = check_drawdown_breach(
         strategy_id=strategy_id,
         observed_drawdown_pct=observed_drawdown_pct,

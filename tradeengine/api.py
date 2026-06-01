@@ -479,6 +479,35 @@ async def health_check() -> HealthResponse:
         raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
 
 
+@app.get("/healthz/envelopes")
+async def healthz_envelopes() -> dict[str, Any]:
+    """AC3.f of P4.6 (#421): surface the envelope-version-in-use per strategy.
+
+    Returns the cached envelope state from the local EnvelopeFetcher so
+    operators can confirm cross-service parity with cio's matching
+    ``/healthz/envelopes`` surface. Each entry includes envelope_id,
+    version, source, cache age, and freshness flag.
+
+    When the fetcher is not configured (no data-manager URL set), returns
+    ``{"configured": false, "envelopes": {}}`` — the FR30 comparator falls
+    back to the legacy stub in that case.
+    """
+    from tradeengine.services.envelope_fetcher import get_envelope_fetcher
+
+    fetcher = get_envelope_fetcher()
+    if fetcher is None:
+        return {
+            "configured": False,
+            "envelopes": {},
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+    return {
+        "configured": True,
+        "envelopes": fetcher.cache_snapshot(),
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
 @app.get("/distributed-state")
 async def get_distributed_state() -> dict[str, Any]:
     """Get distributed state information"""

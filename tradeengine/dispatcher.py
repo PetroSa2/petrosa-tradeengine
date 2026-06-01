@@ -283,6 +283,46 @@ class OCOManager:
                     "status": "success",
                 }
             else:
+                # #425 (RC#1 of #424): partial OCO failure — one leg posted, the other did not.
+                # Cancel the surviving leg on Binance before returning to prevent an orphan
+                # blocking the next placement attempt with -4130 ("open stop/TP already exists").
+                surviving_leg: tuple[str, str] | None = None
+                if sl_order_id and not tp_order_id:
+                    surviving_leg = ("SL", sl_order_id)
+                elif tp_order_id and not sl_order_id:
+                    surviving_leg = ("TP", tp_order_id)
+
+                if surviving_leg is not None:
+                    leg_label, surviving_id = surviving_leg
+                    self.logger.error(
+                        f"⚠️ PARTIAL OCO FAILURE: {leg_label} leg posted "
+                        f"(algoId={surviving_id}) but counterparty failed for "
+                        f"{symbol} {position_side}. Cancelling surviving leg."
+                    )
+                    try:
+                        self.exchange.client._request_futures_api(
+                            "delete",
+                            "algoOrder",
+                            signed=True,
+                            force_params=True,
+                            data={"symbol": symbol, "algoId": surviving_id},
+                        )
+                        self.logger.info(
+                            f"✅ Cancelled orphan {leg_label} algoId={surviving_id} "
+                            f"for {symbol} {position_side}"
+                        )
+                    except Exception as cancel_err:
+                        from tradeengine.metrics import oco_orphan_leg_total
+
+                        self.logger.error(
+                            f"❌ FAILED to cancel orphan {leg_label} "
+                            f"algoId={surviving_id} for {symbol} {position_side}: "
+                            f"{cancel_err}"
+                        )
+                        oco_orphan_leg_total.labels(
+                            symbol=symbol, side=position_side, leg=leg_label
+                        ).inc()
+
                 self.logger.error("❌ FAILED TO PLACE OCO ORDERS")
                 self.logger.error(f"  SL Result: {sl_result}")
                 self.logger.error(f"  TP Result: {tp_result}")

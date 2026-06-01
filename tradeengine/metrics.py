@@ -142,6 +142,15 @@ active_oco_pairs_per_position = Gauge(
     ["symbol", "position_side", "exchange"],
 )
 
+# #425 (RC#1 of #424): orphan leg from partial OCO failure that could not be cancelled.
+# Incremented when one leg posts, the counterpart fails, and the surviving-leg cancel
+# attempt itself errors — i.e., the position remains unhedged on Binance.
+oco_orphan_leg_total = Counter(
+    "petrosa_tradeengine_oco_orphan_leg_total",
+    "OCO partial-failure events where the surviving leg could not be cancelled",
+    ["symbol", "side", "leg"],
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================

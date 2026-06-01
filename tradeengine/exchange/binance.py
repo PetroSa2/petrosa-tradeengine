@@ -761,24 +761,52 @@ class BinanceFuturesExchange:
         }
 
     async def validate_and_adjust_price_for_percent_filter(
-        self, symbol: str, price: float, order_type: str
-    ) -> tuple[bool, float, str]:
-        """Validate and intelligently adjust order price to be within PERCENT_PRICE filter limits.
+        self,
+        symbol: str,
+        price: float,
+        order_type: str,
+        min_safe_distance_pct: float | None = None,
+    ) -> tuple[bool, float | None, str]:
+        """Validate and intelligently adjust an order price to fit Binance's PERCENT_PRICE filter.
 
-        If the price violates the filter, it will be automatically adjusted to the nearest
-        valid price with a safety margin to avoid rejection.
+        AC4 of #424 (2026-05-30 OCO incident): for stop-loss-shaped orders
+        the adjuster also refuses to return a price within
+        ``min_safe_distance_pct`` of the current market — placing such a
+        stop is guaranteed to trigger on routine candle volatility,
+        producing the 272x APIError(-2021) flood observed in the incident.
 
         Args:
             symbol: Trading symbol
             price: Order price to validate/adjust
-            order_type: Type of order (for logging)
+            order_type: Type of order; case-insensitive substring "STOP"
+                triggers the safety-floor check.
+            min_safe_distance_pct: Minimum |distance| from market in percent
+                below which the adjuster will refuse to return a price.
+                Defaults to ``settings.te_min_sl_distance_pct`` (env var
+                ``TE_MIN_SL_DISTANCE_PCT``, default 6.0). Only enforced
+                for stop-loss-shaped order_types — TPs may legitimately
+                sit near market.
 
         Returns:
-            tuple: (is_adjusted, adjusted_price, message)
-                   (False, original_price, "") if already valid
-                   (True, adjusted_price, "adjustment description") if adjusted
+            tuple: ``(is_adjusted, adjusted_price, message)``
+                - ``(False, original_price, "")`` if already valid
+                - ``(True, adjusted_price, msg)`` if adjusted inside the filter
+                - ``(False, None, reason)`` if the requested price cannot
+                  satisfy both PERCENT_PRICE and the safety floor — the
+                  dispatcher must NOT place the order and should emit a
+                  structured rejection instead.
         """
+        # Local import to avoid a config-import cycle in test setups.
+        from shared.config import Settings
+
         try:
+            if min_safe_distance_pct is None:
+                try:
+                    min_safe_distance_pct = float(Settings().te_min_sl_distance_pct)
+                except Exception:
+                    min_safe_distance_pct = 6.0
+            is_stop = "STOP" in (order_type or "").upper()
+
             # Get current market price
             current_price = await self._get_current_price(symbol)
 
@@ -795,10 +823,50 @@ class BinanceFuturesExchange:
             # Calculate deviation percentage
             deviation_pct = ((price - current_price) / current_price) * 100
 
+            # AC4: for STOP-shaped orders, compute the safety-floor band
+            # around market and refuse to return a price inside it. If the
+            # PERCENT_PRICE band fits entirely inside the safety-floor band
+            # (e.g. filter is ±5% and floor is 6%), refuse any adjustment.
+            if is_stop:
+                floor_lo = current_price * (1 - min_safe_distance_pct / 100.0)
+                floor_hi = current_price * (1 + min_safe_distance_pct / 100.0)
+                # Above-market stop (e.g. short SL): must be >= floor_hi
+                # Below-market stop (e.g. long SL): must be <= floor_lo
+                if price > current_price:
+                    # Above-market: adjusted ceiling under filter is max_price;
+                    # safety floor is floor_hi. Feasible iff max_price >= floor_hi.
+                    if max_price < floor_hi:
+                        reason = (
+                            f"sl_unreachable_within_filter: requested ${price:.2f} "
+                            f"({deviation_pct:+.2f}%) cannot satisfy both PERCENT_PRICE "
+                            f"(max {(multiplier_up - 1) * 100:+.2f}%) and safety floor "
+                            f"({min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                            f"market=${current_price:.2f}"
+                        )
+                        logger.error(reason)
+                        return (False, None, reason)
+                elif price < current_price:
+                    if min_price > floor_lo:
+                        reason = (
+                            f"sl_unreachable_within_filter: requested ${price:.2f} "
+                            f"({deviation_pct:+.2f}%) cannot satisfy both PERCENT_PRICE "
+                            f"(min {(multiplier_down - 1) * 100:+.2f}%) and safety floor "
+                            f"({-min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                            f"market=${current_price:.2f}"
+                        )
+                        logger.error(reason)
+                        return (False, None, reason)
+
             # Check if adjustment is needed
             if price < min_price:
                 # Price too low - adjust to minimum with safety margin
                 adjusted_price = min_price
+                # AC4: for STOP-shaped orders, also respect the safety floor
+                # — clip to the floor edge whose direction matches the price.
+                if is_stop and adjusted_price > current_price * (
+                    1 - min_safe_distance_pct / 100.0
+                ):
+                    adjusted_price = current_price * (1 - min_safe_distance_pct / 100.0)
                 adjustment_msg = (
                     f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
                     f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
@@ -811,6 +879,10 @@ class BinanceFuturesExchange:
             elif price > max_price:
                 # Price too high - adjust to maximum with safety margin
                 adjusted_price = max_price
+                if is_stop and adjusted_price < current_price * (
+                    1 + min_safe_distance_pct / 100.0
+                ):
+                    adjusted_price = current_price * (1 + min_safe_distance_pct / 100.0)
                 adjustment_msg = (
                     f"🔧 ADJUSTED {symbol} {order_type} price from ${price:.2f} ({deviation_pct:+.2f}%) "
                     f"to ${adjusted_price:.2f} ({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
@@ -819,6 +891,31 @@ class BinanceFuturesExchange:
                 )
                 logger.warning(adjustment_msg)
                 return (True, adjusted_price, adjustment_msg)
+
+            # Price is within filter — for stops, also verify it clears the safety floor.
+            if is_stop:
+                if price > current_price and price < current_price * (
+                    1 + min_safe_distance_pct / 100.0
+                ):
+                    reason = (
+                        f"sl_within_safety_floor: requested ${price:.2f} "
+                        f"({deviation_pct:+.2f}%) is inside the safety floor "
+                        f"({min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                        f"market=${current_price:.2f}"
+                    )
+                    logger.error(reason)
+                    return (False, None, reason)
+                if price < current_price and price > current_price * (
+                    1 - min_safe_distance_pct / 100.0
+                ):
+                    reason = (
+                        f"sl_within_safety_floor: requested ${price:.2f} "
+                        f"({deviation_pct:+.2f}%) is inside the safety floor "
+                        f"({-min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                        f"market=${current_price:.2f}"
+                    )
+                    logger.error(reason)
+                    return (False, None, reason)
 
             # Price is valid - no adjustment needed
             logger.info(

@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     max_portfolio_exposure_pct: float = 0.8  # 80%
     risk_management_enabled: bool = True
 
+    # AC4 of #424 (2026-05-30 OCO incident): minimum stop-loss distance
+    # from the live market, in percent. If an adjusted SL would land
+    # within this band of market, the PERCENT_PRICE adjuster refuses to
+    # return a price — the dispatcher then emits a structured rejection
+    # instead of placing a guaranteed-to-trigger stop. Default 6.0%
+    # covers typical Binance Futures 4h candle moves (4-5% on alts) plus
+    # headroom; can be tightened/relaxed per-deploy via env var.
+    te_min_sl_distance_pct: float = 6.0
+
     # Redis Configuration (for caching)
     redis_url: str | None = None
     redis_password: str | None = None

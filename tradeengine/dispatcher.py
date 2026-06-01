@@ -16,6 +16,7 @@ from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
+    atomic_rollback_failed_total,
     order_execution_latency_seconds,
     order_failures_total,
     orders_executed_by_type,
@@ -24,6 +25,7 @@ from tradeengine.metrics import (
 )
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
+from tradeengine.services.alert_publisher import alert_publisher
 from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
     execution_event_publisher,
@@ -2320,70 +2322,89 @@ class Dispatcher:
                         self.logger.error(
                             f"[CRITICAL] OCO placement failed. Initiating atomic rollback for symbol {order.symbol}: {e}"
                         )
-                        # Atomic Rollback: Close the position immediately using a MARKET order
+                        # Atomic Rollback (AC2 / RC#2 of #424): close the position immediately
+                        # via a MARKET reduceOnly order. When local state is incomplete
+                        # (no position_id, filled_qty<=0) we fall back to Binance positionRisk
+                        # so the position cannot be left unhedged on the exchange.
+                        rollback_reason = "atomic_rollback_oco_failure"
+                        rollback_position_id = getattr(order, "position_id", None)
+                        filled_qty: float = 0.0
                         try:
-                            # Use filled amount from result if available, otherwise order amount
-                            # CRITICAL FIX: Prioritize non-zero order.amount if result.amount is zero
+                            # Prefer the executed amount from result; fall back to the order
+                            # amount when result.amount is missing or zero.
                             result_qty = result.get("amount", 0.0)
                             if isinstance(result_qty, str):
                                 try:
                                     result_qty = float(result_qty)
                                 except (ValueError, TypeError):
                                     result_qty = 0.0
+                            filled_qty = (
+                                float(result_qty)
+                                if result_qty and result_qty > 0
+                                else float(order.amount or 0.0)
+                            )
 
-                            filled_qty = result_qty if result_qty > 0 else order.amount
-
-                            # Guard: Ensure filled_qty > 0 before initiating rollback
-                            if not filled_qty or filled_qty <= 0:
-                                self.logger.warning(
-                                    f"⚠️ Skipping atomic rollback for {order.symbol}: "
-                                    f"calculated filled_qty is {filled_qty}"
+                            if filled_qty <= 0:
+                                # RC#2: re-derive from Binance positionRisk before skipping —
+                                # the exchange is ground truth, the local result dict is not.
+                                derived_qty = await self._fetch_binance_position_qty(
+                                    order.symbol, order.position_side
                                 )
-                                result["status"] = "rolled_back_skipped"
-                                # Maintain consistent error enrichment so callers see the OCO failure reason
-                                result["error"] = f"Risk management failure: {e}"
-                                # Provide a more specific reason for why rollback was skipped
-                                result["rollback_skipped_reason"] = (
-                                    f"non_positive_filled_qty: {filled_qty}"
-                                )
-                                return result
-
-                            rollback_position_id = getattr(order, "position_id", None)
-                            if rollback_position_id:
-                                rollback_result = (
-                                    await self.close_position_with_cleanup(
-                                        position_id=rollback_position_id,
-                                        symbol=order.symbol,
-                                        position_side=order.position_side,
-                                        quantity=filled_qty,
-                                        reason="atomic_rollback_oco_failure",
+                                if derived_qty > 0:
+                                    self.logger.warning(
+                                        f"⚠️ filled_qty non-positive ({filled_qty}); derived "
+                                        f"rollback qty {derived_qty} from Binance positionRisk for {order.symbol}"
                                     )
-                                )
-                                self.logger.info(
-                                    f"✅ Atomic rollback successful for {order.symbol}"
-                                )
-
-                                # Log critical event to audit trail
-                                if audit_logger.enabled:
-                                    audit_logger.log_trade(
-                                        {
-                                            "event": "atomic_rollback",
-                                            "symbol": order.symbol,
-                                            "position_id": rollback_position_id,
-                                            "reason": "risk_management_failure",
-                                            "error": str(e),
-                                            "rollback_result": rollback_result,
-                                        }
+                                    filled_qty = derived_qty
+                                else:
+                                    self.logger.warning(
+                                        f"⚠️ Skipping atomic rollback for {order.symbol}: "
+                                        f"filled_qty={filled_qty} and Binance reports zero position"
                                     )
+                                    result["status"] = "rolled_back_skipped"
+                                    result["error"] = f"Risk management failure: {e}"
+                                    result["rollback_skipped_reason"] = (
+                                        f"non_positive_filled_qty_and_binance_zero: local={filled_qty}"
+                                    )
+                                    return result
 
-                                # Return result with rolled_back status
-                                result["status"] = "rolled_back"
-                            else:
-                                self.logger.warning(
-                                    f"⚠️ Skipping position-based atomic rollback for {order.symbol}: "
-                                    "no position_id set on order"
+                            # RC#2: close_position_with_cleanup reaches the exchange via
+                            # (symbol, position_side, quantity); position_id is only used
+                            # for OCO-cancel + local position-record cleanup, both of which
+                            # short-circuit cleanly when it is absent.
+                            rollback_result = await self.close_position_with_cleanup(
+                                position_id=rollback_position_id or "",
+                                symbol=order.symbol,
+                                position_side=order.position_side,
+                                quantity=filled_qty,
+                                reason=rollback_reason,
+                            )
+                            self.logger.info(
+                                f"✅ Atomic rollback successful for {order.symbol}"
+                            )
+
+                            # Log critical event to audit trail
+                            if audit_logger.enabled:
+                                audit_logger.log_trade(
+                                    {
+                                        "event": "atomic_rollback",
+                                        "symbol": order.symbol,
+                                        "position_id": rollback_position_id,
+                                        "reason": "risk_management_failure",
+                                        "error": str(e),
+                                        "rollback_result": rollback_result,
+                                    }
                                 )
-                                result["status"] = "rolled_back_partial"
+
+                            # rolled_back: full path with position_id (OCO + record cleared).
+                            # rolled_back_partial: position closed on Binance but no local
+                            # position record existed — surfaces the missing-link so ops
+                            # can reconcile without leaving the position open.
+                            result["status"] = (
+                                "rolled_back"
+                                if rollback_position_id
+                                else "rolled_back_partial"
+                            )
 
                         except Exception as rollback_error:
                             self.logger.error(
@@ -2391,6 +2412,39 @@ class Dispatcher:
                             )
                             result["status"] = "rollback_failed"
                             result["rollback_error"] = str(rollback_error)
+
+                            # RC#2: surface to ops via metric + NATS alert so the
+                            # unhedged-on-Binance state is observable. Both wrapped in
+                            # try/except — the alert path must never break the caller.
+                            reason_label = type(rollback_error).__name__
+                            try:
+                                atomic_rollback_failed_total.labels(
+                                    symbol=order.symbol,
+                                    reason=reason_label,
+                                ).inc()
+                            except Exception:
+                                self.logger.debug(
+                                    "atomic_rollback_failed metric inc failed",
+                                    exc_info=True,
+                                )
+                            try:
+                                await alert_publisher.publish(
+                                    alert_name=f"rollback_failed.{order.symbol}",
+                                    severity="critical",
+                                    payload={
+                                        "symbol": order.symbol,
+                                        "position_side": order.position_side,
+                                        "filled_qty": filled_qty,
+                                        "rollback_reason": rollback_reason,
+                                        "rollback_error": str(rollback_error),
+                                        "oco_failure_error": str(e),
+                                    },
+                                )
+                            except Exception:
+                                self.logger.debug(
+                                    "rollback_failed alert publish failed",
+                                    exc_info=True,
+                                )
 
                         # Return result with appropriate error status
                         result["error"] = f"Risk management failure: {e}"
@@ -3723,6 +3777,46 @@ class Dispatcher:
         except Exception as e:
             self.logger.error(f"Failed to place take profit order: {e}", exc_info=True)
             raise
+
+    async def _fetch_binance_position_qty(
+        self, symbol: str, position_side: str | None
+    ) -> float:
+        """Return |positionAmt| for (symbol, position_side) from Binance.
+
+        Best-effort: returns 0.0 when the exchange has no get_position_info,
+        the call raises, or the position is absent. Never raises into the
+        caller — this is invoked from the rollback fallback where the
+        observable contract is "give me a number; zero means skip".
+        """
+        if self.exchange is None or not hasattr(self.exchange, "get_position_info"):
+            return 0.0
+        try:
+            raw = await self.exchange.get_position_info()
+        except Exception:
+            self.logger.warning(
+                "get_position_info() failed during atomic-rollback fallback",
+                exc_info=True,
+            )
+            return 0.0
+        if not raw:
+            return 0.0
+        target_side = (position_side or "").upper()
+        for pos in raw:
+            if pos.get("symbol") != symbol:
+                continue
+            side = str(pos.get("positionSide", "BOTH")).upper()
+            # Hedge mode emits LONG/SHORT — only consider the matching leg.
+            # ONE-WAY mode returns BOTH; in that case we accept the row and
+            # trust the sign of positionAmt to reflect actual direction.
+            if side in ("LONG", "SHORT") and target_side and side != target_side:
+                continue
+            try:
+                qty = abs(float(pos.get("positionAmt", 0)))
+            except (TypeError, ValueError):
+                continue
+            if qty > 0:
+                return qty
+        return 0.0
 
     async def close_position_with_cleanup(
         self,

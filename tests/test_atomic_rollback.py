@@ -110,6 +110,192 @@ async def test_oco_timeout_causes_rollback(dispatcher):
 
 
 @pytest.mark.asyncio
+async def test_rollback_falls_back_when_position_id_none(dispatcher):
+    """
+    AC2/H2 of #424: when order.position_id is None, the rollback path MUST
+    still issue a MARKET reduceOnly close via close_position_with_cleanup
+    using (symbol, position_side, quantity). Pre-fix, this branch
+    early-returned 'rolled_back_partial' WITHOUT touching Binance — the
+    164× cascade in the 2026-05-30 incident.
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        order_id="test_order_h2_1",
+        position_id=None,  # ← the bug
+        position_side="LONG",
+        simulate=False,
+    )
+
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        return_value={"status": "success", "position_closed": True}
+    )
+
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.create_strategy_position = AsyncMock(return_value=None)
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    dispatcher.close_position_with_cleanup.assert_called_once()
+    _, kwargs = dispatcher.close_position_with_cleanup.call_args
+    assert kwargs["symbol"] == "BTCUSDT"
+    assert kwargs["position_side"] == "LONG"
+    assert kwargs["quantity"] == 0.001
+    # 'partial' label is retained to flag that no local position record
+    # existed — but the Binance position WAS closed.
+    assert result["status"] == "rolled_back_partial"
+
+
+@pytest.mark.asyncio
+async def test_rollback_refetches_qty_from_binance_when_filled_zero(dispatcher):
+    """
+    AC2/H2: when filled_qty<=0, the rollback path MUST re-derive the
+    position from Binance positionRisk before skipping. Only skip when
+    Binance also reports zero.
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.0,
+        order_id="test_order_h2_2",
+        position_id="pos_h2_2",
+        position_side="LONG",
+        simulate=False,
+    )
+
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+    # result.amount is also 0 → fallback to Binance MUST trigger
+    dispatcher.exchange.execute = AsyncMock(
+        return_value={
+            "status": "filled",
+            "order_id": "entry_order_zero",
+            "fill_price": 50000.0,
+            "amount": 0.0,
+        }
+    )
+    dispatcher.exchange.get_position_info = AsyncMock(
+        return_value=[
+            {"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "0.5"},
+            {"symbol": "ETHUSDT", "positionSide": "LONG", "positionAmt": "1.0"},
+        ]
+    )
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        return_value={"status": "success", "position_closed": True}
+    )
+
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.create_strategy_position = AsyncMock(return_value="strat_pos_h2_2")
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    dispatcher.close_position_with_cleanup.assert_called_once()
+    _, kwargs = dispatcher.close_position_with_cleanup.call_args
+    # Quantity MUST come from Binance positionRisk, not the zero local state
+    assert kwargs["quantity"] == 0.5
+    assert result["status"] == "rolled_back"
+
+
+@pytest.mark.asyncio
+async def test_rollback_skipped_only_when_binance_also_zero(dispatcher):
+    """
+    AC2/H2: when local filled_qty<=0 AND Binance positionRisk reports zero
+    for the same (symbol, position_side), the SKIP branch is the correct
+    outcome — there is no position to roll back.
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.0,
+        order_id="test_order_h2_3",
+        position_id="pos_h2_3",
+        position_side="LONG",
+        simulate=False,
+    )
+
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+    dispatcher.exchange.execute = AsyncMock(
+        return_value={
+            "status": "filled",
+            "order_id": "entry_order_zero",
+            "fill_price": 50000.0,
+            "amount": 0.0,
+        }
+    )
+    # Binance also reports zero — skip is correct
+    dispatcher.exchange.get_position_info = AsyncMock(return_value=[])
+    dispatcher.close_position_with_cleanup = AsyncMock()
+
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.create_strategy_position = AsyncMock(return_value="strat_pos_h2_3")
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    dispatcher.close_position_with_cleanup.assert_not_called()
+    assert result["status"] == "rolled_back_skipped"
+    assert "binance_zero" in result.get("rollback_skipped_reason", "")
+
+
+@pytest.mark.asyncio
+async def test_rollback_failed_emits_alert_and_counter(dispatcher):
+    """
+    AC2: when the rollback path itself fails, the dispatcher MUST emit
+    alerts.tradeengine.rollback_failed.<symbol> and increment
+    petrosa_tradeengine_atomic_rollback_failed_total{symbol,reason} so
+    ops can see the unhedged-position state even when the order-result
+    return value is consumed silently.
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        order_id="test_order_h2_4",
+        position_id="pos_h2_4",
+        position_side="LONG",
+        simulate=False,
+    )
+
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        side_effect=RuntimeError("Binance reduceOnly rejected")
+    )
+
+    with (
+        patch("tradeengine.dispatcher.alert_publisher") as mock_publisher,
+        patch("tradeengine.dispatcher.atomic_rollback_failed_total") as mock_counter,
+        patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm,
+    ):
+        mock_publisher.publish = AsyncMock(return_value=True)
+        mock_spm.create_strategy_position = AsyncMock(return_value="strat_pos_h2_4")
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    assert result["status"] == "rollback_failed"
+    assert "Binance reduceOnly rejected" in result["rollback_error"]
+
+    mock_counter.labels.assert_called_with(symbol="BTCUSDT", reason="RuntimeError")
+    mock_counter.labels.return_value.inc.assert_called_once()
+
+    mock_publisher.publish.assert_awaited_once()
+    _, pub_kwargs = mock_publisher.publish.call_args
+    assert pub_kwargs["alert_name"] == "rollback_failed.BTCUSDT"
+    assert pub_kwargs["severity"] == "critical"
+    payload = pub_kwargs["payload"]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["rollback_reason"] == "atomic_rollback_oco_failure"
+    assert "Binance reduceOnly rejected" in payload["rollback_error"]
+
+
+@pytest.mark.asyncio
 async def test_rollback_failure_is_handled(dispatcher):
     """
     Test that if close_position_with_cleanup itself fails during rollback,

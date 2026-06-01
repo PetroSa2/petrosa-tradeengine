@@ -143,11 +143,17 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
     ):
         final_result = await dispatcher._execute_order_with_consensus(order)
 
-    # 5. Verify rollback was skipped
+    # 5. Verify rollback was skipped (AC2/RC#2 of #424: only after the
+    # Binance positionRisk fallback also reports zero — see
+    # dispatcher._fetch_binance_position_qty).
     dispatcher.close_position_with_cleanup.assert_not_called()
     assert final_result["status"] == "rolled_back_skipped"
     assert "Risk management failure" in final_result["error"]
-    assert final_result["rollback_skipped_reason"] == "non_positive_filled_qty: 0.0"
+    assert (
+        final_result["rollback_skipped_reason"]
+        == "non_positive_filled_qty_and_binance_zero: local=0.0"
+    )
     dispatcher.logger.warning.assert_any_call(
-        "⚠️ Skipping atomic rollback for BTCUSDT: calculated filled_qty is 0.0"
+        "⚠️ Skipping atomic rollback for BTCUSDT: "
+        "filled_qty=0.0 and Binance reports zero position"
     )

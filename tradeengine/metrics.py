@@ -151,6 +151,16 @@ oco_orphan_leg_total = Counter(
     ["symbol", "side", "leg"],
 )
 
+# #426 (RC#2 of #424): the atomic-rollback path itself failed — the
+# OCO-failure cleanup could not close the position on Binance, so the
+# position remains unhedged. Paired with the
+# alerts.tradeengine.rollback_failed.<symbol> NATS alert.
+atomic_rollback_failed_total = Counter(
+    "petrosa_tradeengine_atomic_rollback_failed_total",
+    "Atomic-rollback failures during OCO-failure cleanup (position left unhedged)",
+    ["symbol", "reason"],
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================

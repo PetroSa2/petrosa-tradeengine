@@ -56,9 +56,13 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
         side_effect=Exception("OCO placement failed")
     )
 
-    # 4. Mock close_position_with_cleanup to capture the quantity passed to it
+    # 4. Mock close_position_with_cleanup to capture the quantity passed to it.
+    # AC2 (#426): the rollback path now requires position_closed=True in the
+    # return dict — close_position_with_cleanup catches its internal exchange
+    # errors and returns position_closed=False instead of raising, so the
+    # rollback path inspects the dict to detect real-world failures.
     dispatcher.close_position_with_cleanup = AsyncMock(
-        return_value={"status": "success"}
+        return_value={"status": "success", "position_closed": True}
     )
 
     # 5. Call the method that contains the rollback logic
@@ -143,11 +147,17 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
     ):
         final_result = await dispatcher._execute_order_with_consensus(order)
 
-    # 5. Verify rollback was skipped
+    # 5. Verify rollback was skipped (AC2/RC#2 of #424: only after the
+    # Binance positionRisk fallback also reports zero — see
+    # dispatcher._fetch_binance_position_qty).
     dispatcher.close_position_with_cleanup.assert_not_called()
     assert final_result["status"] == "rolled_back_skipped"
     assert "Risk management failure" in final_result["error"]
-    assert final_result["rollback_skipped_reason"] == "non_positive_filled_qty: 0.0"
+    assert (
+        final_result["rollback_skipped_reason"]
+        == "non_positive_filled_qty_and_binance_zero: local=0.0"
+    )
     dispatcher.logger.warning.assert_any_call(
-        "⚠️ Skipping atomic rollback for BTCUSDT: calculated filled_qty is 0.0"
+        "⚠️ Skipping atomic rollback for BTCUSDT: "
+        "filled_qty=0.0 and Binance reports zero position"
     )

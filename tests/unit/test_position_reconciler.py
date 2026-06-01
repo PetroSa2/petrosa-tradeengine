@@ -12,6 +12,7 @@ from tradeengine.position_reconciler import (
     _index_binance_positions,
     _normalise_side,
     detect_divergences,
+    detect_unhedged_positions,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,9 +28,63 @@ def _local_pos(symbol: str, side: str, qty: float) -> dict:
     return {"symbol": symbol, "position_side": side, "quantity": qty}
 
 
-def _make_reconciler(binance_raw: list, local_positions: dict) -> PositionReconciler:
+def _fully_hedged_orders(symbol: str) -> list[dict]:
+    """Return a reduceOnly SL+TP pair for both LONG and SHORT sides.
+
+    Used as the default ``get_open_algo_orders`` response so existing
+    pre-AC5 tests don't surface ``unhedged`` divergences they don't
+    care about. Tests targeting AC5 pass explicit orders via
+    ``open_algo_orders``."""
+    return [
+        {
+            "symbol": symbol,
+            "positionSide": "LONG",
+            "type": "STOP_MARKET",
+            "reduceOnly": True,
+        },
+        {
+            "symbol": symbol,
+            "positionSide": "LONG",
+            "type": "TAKE_PROFIT_MARKET",
+            "reduceOnly": True,
+        },
+        {
+            "symbol": symbol,
+            "positionSide": "SHORT",
+            "type": "STOP_MARKET",
+            "reduceOnly": True,
+        },
+        {
+            "symbol": symbol,
+            "positionSide": "SHORT",
+            "type": "TAKE_PROFIT_MARKET",
+            "reduceOnly": True,
+        },
+    ]
+
+
+def _make_reconciler(
+    binance_raw: list,
+    local_positions: dict,
+    open_algo_orders: dict | None = None,
+) -> PositionReconciler:
+    """Build a PositionReconciler with mocked exchange + position manager.
+
+    ``open_algo_orders``: optional ``{symbol: list[order]}`` to override
+    the per-symbol algo-orders response. When omitted, every symbol is
+    returned fully-hedged (reduceOnly SL+TP for both sides) so pre-AC5
+    tests don't trip the new unhedged-divergence path.
+    """
     exchange = MagicMock()
     exchange.get_position_info = AsyncMock(return_value=binance_raw)
+
+    async def _algo_orders_for(symbol: str | None = None) -> list[dict]:
+        if open_algo_orders is not None:
+            return open_algo_orders.get(symbol or "", [])
+        return _fully_hedged_orders(symbol or "")
+
+    exchange.get_open_algo_orders = AsyncMock(side_effect=_algo_orders_for)
+
     pm = MagicMock()
     pm.get_positions = MagicMock(return_value=local_positions)
     return PositionReconciler(
@@ -282,3 +337,217 @@ async def test_health_check_unhealthy_after_divergence():
     result = await reconciler.health_check()
     assert result["status"] == "unhealthy"
     assert result["divergence_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# AC5 of #424 — unhedged-position divergence
+# ---------------------------------------------------------------------------
+
+
+def test_detect_unhedged_returns_empty_when_both_sl_and_tp_present():
+    """AC5: a Binance position with reduceOnly SL+TP on the matching
+    positionSide is hedged — no divergence."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "LONG", "type": "STOP_MARKET", "reduceOnly": True},
+            {"positionSide": "LONG", "type": "TAKE_PROFIT_MARKET", "reduceOnly": True},
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert divergences == []
+
+
+def test_detect_unhedged_flags_position_with_no_orders():
+    """AC5 / H5 of #424: a Binance position with NO open orders is the
+    incident-reproduction case — must flag as unhedged."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.5),
+    }
+    orders_by_symbol: dict = {"BTCUSDT": []}
+
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+
+    assert len(divergences) == 1
+    d = divergences[0]
+    assert d["category"] == "unhedged"
+    assert d["symbol"] == "BTCUSDT"
+    assert d["side"] == "LONG"
+    assert d["binance_qty"] == 1.5
+    assert d["sl_present"] is False
+    assert d["tp_present"] is False
+
+
+def test_detect_unhedged_flags_position_with_only_sl():
+    """AC5: SL-only is still unhedged — emit a divergence indicating
+    which leg is missing."""
+    binance_positions = {
+        ("BTCUSDT", "SHORT"): _binance_pos("BTCUSDT", "SHORT", -0.8),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "SHORT", "type": "STOP_MARKET", "reduceOnly": True},
+        ],
+    }
+
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+
+    assert len(divergences) == 1
+    d = divergences[0]
+    assert d["category"] == "unhedged"
+    assert d["sl_present"] is True
+    assert d["tp_present"] is False
+
+
+def test_detect_unhedged_ignores_orders_on_wrong_side():
+    """AC5: in hedge mode, SL+TP on SHORT do not hedge a LONG position."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "SHORT", "type": "STOP_MARKET", "reduceOnly": True},
+            {"positionSide": "SHORT", "type": "TAKE_PROFIT_MARKET", "reduceOnly": True},
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert len(divergences) == 1
+    assert divergences[0]["sl_present"] is False
+    assert divergences[0]["tp_present"] is False
+
+
+def test_detect_unhedged_accepts_both_positionside_orders_one_way_mode():
+    """AC5: one-way mode uses positionSide='BOTH' — must hedge any side."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "BOTH", "type": "STOP_MARKET", "reduceOnly": True},
+            {"positionSide": "BOTH", "type": "TAKE_PROFIT_MARKET", "reduceOnly": True},
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert divergences == []
+
+
+def test_detect_unhedged_ignores_non_reduce_only_orders():
+    """AC5: only reduceOnly (or closePosition=true) orders protect the
+    position — a non-reduceOnly STOP is an entry/reversal, not a hedge."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "LONG", "type": "STOP_MARKET", "reduceOnly": False},
+            {
+                "positionSide": "LONG",
+                "type": "TAKE_PROFIT_MARKET",
+                "reduceOnly": False,
+            },
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert len(divergences) == 1
+    assert divergences[0]["sl_present"] is False
+    assert divergences[0]["tp_present"] is False
+
+
+def test_detect_unhedged_accepts_closeposition_in_place_of_reduceonly():
+    """AC5: Binance returns ``closePosition=true`` for sweep-everything
+    SL/TP — that protects the position equivalently to ``reduceOnly``."""
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "LONG", "type": "STOP_MARKET", "closePosition": True},
+            {
+                "positionSide": "LONG",
+                "type": "TAKE_PROFIT_MARKET",
+                "closePosition": True,
+            },
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert divergences == []
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_appends_unhedged_divergences():
+    """AC5 integration: reconcile_once calls get_open_algo_orders per
+    symbol and appends unhedged divergences alongside the existing
+    untracked/ghost/mutation categories."""
+    binance_raw = [_binance_pos("BTCUSDT", "LONG", 1.0)]
+    local = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 1.0)}
+    # No open orders on Binance → position is unhedged
+    reconciler = _make_reconciler(binance_raw, local, open_algo_orders={"BTCUSDT": []})
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch(
+            "tradeengine.position_reconciler.reconciliation_divergences_total"
+        ) as mock_counter,
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    categories = [d["category"] for d in divergences]
+    assert "unhedged" in categories
+    # The metric MUST be incremented with the unhedged label so the
+    # tradeengine-unhedged-position-detected alert rule can fire.
+    mock_counter.labels.assert_any_call(category="unhedged", symbol="BTCUSDT")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_no_unhedged_when_orders_match():
+    """AC5: when reduceOnly SL+TP are present for each open position,
+    no unhedged divergence is added."""
+    binance_raw = [_binance_pos("BTCUSDT", "LONG", 1.0)]
+    local = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 1.0)}
+    reconciler = _make_reconciler(
+        binance_raw,
+        local,
+        open_algo_orders={
+            "BTCUSDT": [
+                {"positionSide": "LONG", "type": "STOP_MARKET", "reduceOnly": True},
+                {
+                    "positionSide": "LONG",
+                    "type": "TAKE_PROFIT_MARKET",
+                    "reduceOnly": True,
+                },
+            ],
+        },
+    )
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    assert all(d["category"] != "unhedged" for d in divergences)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_unhedged_check_fails_open_on_order_fetch_error():
+    """AC5: when get_open_algo_orders raises for a symbol, treat it as
+    "no orders found" → position flagged unhedged (fail-conservative).
+    Failing silently would mask real incidents."""
+    binance_raw = [_binance_pos("BTCUSDT", "LONG", 1.0)]
+    local = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 1.0)}
+    reconciler = _make_reconciler(binance_raw, local)
+    reconciler._exchange.get_open_algo_orders = AsyncMock(
+        side_effect=RuntimeError("Binance API timeout")
+    )
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    categories = [d["category"] for d in divergences]
+    assert "unhedged" in categories

@@ -56,9 +56,13 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
         side_effect=Exception("OCO placement failed")
     )
 
-    # 4. Mock close_position_with_cleanup to capture the quantity passed to it
+    # 4. Mock close_position_with_cleanup to capture the quantity passed to it.
+    # AC2 (#426): the rollback path now requires position_closed=True in the
+    # return dict — close_position_with_cleanup catches its internal exchange
+    # errors and returns position_closed=False instead of raising, so the
+    # rollback path inspects the dict to detect real-world failures.
     dispatcher.close_position_with_cleanup = AsyncMock(
-        return_value={"status": "success"}
+        return_value={"status": "success", "position_closed": True}
     )
 
     # 5. Call the method that contains the rollback logic

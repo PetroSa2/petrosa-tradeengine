@@ -55,9 +55,11 @@ async def test_oco_failure_causes_rollback(dispatcher):
         side_effect=Exception("OCO Placement Failed")
     )
 
-    # Mock close_position_with_cleanup
+    # Mock close_position_with_cleanup — mirror the real return shape:
+    # position_closed=True signals the exchange-side close actually
+    # succeeded (per its docstring at dispatcher.py:close_position_with_cleanup).
     dispatcher.close_position_with_cleanup = AsyncMock(
-        return_value={"status": "success"}
+        return_value={"status": "success", "position_closed": True}
     )
 
     # Mock strategy_position_manager
@@ -92,9 +94,10 @@ async def test_oco_timeout_causes_rollback(dispatcher):
     # Mock _place_risk_management_orders to timeout
     dispatcher._place_risk_management_orders = AsyncMock(side_effect=TimeoutError())
 
-    # Mock close_position_with_cleanup
+    # Mock close_position_with_cleanup — position_closed=True mirrors the
+    # real return shape and is now required for the rollback success path.
     dispatcher.close_position_with_cleanup = AsyncMock(
-        return_value={"status": "success"}
+        return_value={"status": "success", "position_closed": True}
     )
 
     # Mock strategy_position_manager
@@ -293,6 +296,83 @@ async def test_rollback_failed_emits_alert_and_counter(dispatcher):
     assert payload["symbol"] == "BTCUSDT"
     assert payload["rollback_reason"] == "atomic_rollback_oco_failure"
     assert "Binance reduceOnly rejected" in payload["rollback_error"]
+
+
+@pytest.mark.asyncio
+async def test_rollback_failed_when_close_returns_position_closed_false(dispatcher):
+    """
+    Copilot review of #434: ``close_position_with_cleanup`` catches the
+    exchange execute() exception internally and returns
+    ``{"status": "failed", "position_closed": False}`` without raising.
+    The rollback path MUST treat that as a failure — otherwise the
+    position stays open on Binance while we log "rollback successful".
+    """
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        order_id="test_order_h2_returns_false",
+        position_id="pos_returns_false",
+        position_side="LONG",
+        simulate=False,
+    )
+
+    dispatcher._place_risk_management_orders = AsyncMock(
+        side_effect=Exception("OCO Placement Failed")
+    )
+    # Real-shape return for the failure mode: no raise, but position_closed=False.
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        return_value={
+            "position_closed": False,
+            "oco_cancelled": False,
+            "close_result": None,
+            "status": "failed",
+            "error": "Binance execute() returned status=REJECTED",
+        }
+    )
+
+    with (
+        patch("tradeengine.dispatcher.alert_publisher") as mock_publisher,
+        patch("tradeengine.dispatcher.atomic_rollback_failed_total") as mock_counter,
+        patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm,
+    ):
+        mock_publisher.publish = AsyncMock(return_value=True)
+        mock_spm.create_strategy_position = AsyncMock(
+            return_value="strat_pos_returns_false"
+        )
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    assert result["status"] == "rollback_failed"
+    assert "did not close position" in result["rollback_error"]
+    mock_counter.labels.assert_called_with(symbol="BTCUSDT", reason="RuntimeError")
+    mock_counter.labels.return_value.inc.assert_called_once()
+    mock_publisher.publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_binance_position_qty_one_way_mode_respects_sign(dispatcher):
+    """
+    Copilot review of #434: in one-way mode Binance returns
+    ``positionSide="BOTH"`` for every position. A LONG rollback request
+    must NOT match a BOTH row whose ``positionAmt`` is negative (= the
+    account is actually short) — otherwise close_position_with_cleanup
+    would send a sell reduceOnly on the wrong direction.
+    """
+    dispatcher.exchange.get_position_info = AsyncMock(
+        return_value=[
+            # ONE-WAY mode: a single BOTH row, negative => account is SHORT.
+            {"symbol": "BTCUSDT", "positionSide": "BOTH", "positionAmt": "-0.3"},
+        ]
+    )
+
+    # LONG target: must NOT match the SHORT BOTH row → returns 0.0
+    qty_long = await dispatcher._fetch_binance_position_qty("BTCUSDT", "LONG")
+    assert qty_long == 0.0
+
+    # SHORT target: matches the BOTH row → returns abs(positionAmt)
+    qty_short = await dispatcher._fetch_binance_position_qty("BTCUSDT", "SHORT")
+    assert qty_short == 0.3
 
 
 @pytest.mark.asyncio

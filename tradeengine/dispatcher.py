@@ -2379,6 +2379,28 @@ class Dispatcher:
                                 quantity=filled_qty,
                                 reason=rollback_reason,
                             )
+                            # close_position_with_cleanup catches internal exch errors
+                            # and returns status="failed"/"error" instead of raising —
+                            # so we MUST inspect the return value, otherwise a real
+                            # Binance failure would be reported as a successful rollback
+                            # while the position stays open (defeats AC2 entirely).
+                            if not rollback_result or not rollback_result.get(
+                                "position_closed"
+                            ):
+                                rollback_status = (
+                                    rollback_result.get("status", "unknown")
+                                    if rollback_result
+                                    else "no_result"
+                                )
+                                close_err = (
+                                    rollback_result.get("error", "")
+                                    if rollback_result
+                                    else ""
+                                )
+                                raise RuntimeError(
+                                    f"close_position_with_cleanup did not close position "
+                                    f"(status={rollback_status}, error={close_err!r})"
+                                )
                             self.logger.info(
                                 f"✅ Atomic rollback successful for {order.symbol}"
                             )
@@ -3805,15 +3827,25 @@ class Dispatcher:
             if pos.get("symbol") != symbol:
                 continue
             side = str(pos.get("positionSide", "BOTH")).upper()
-            # Hedge mode emits LONG/SHORT — only consider the matching leg.
-            # ONE-WAY mode returns BOTH; in that case we accept the row and
-            # trust the sign of positionAmt to reflect actual direction.
-            if side in ("LONG", "SHORT") and target_side and side != target_side:
-                continue
             try:
-                qty = abs(float(pos.get("positionAmt", 0)))
+                raw_amt = float(pos.get("positionAmt", 0))
             except (TypeError, ValueError):
                 continue
+            # ONE-WAY mode returns positionSide="BOTH"; derive the effective
+            # side from the sign of positionAmt (matches position_reconciler's
+            # _normalise_side). A LONG rollback against a BOTH row with
+            # negative positionAmt would otherwise send a sell reduceOnly on
+            # the wrong direction.
+            if side == "BOTH":
+                if raw_amt == 0:
+                    continue
+                effective_side = "LONG" if raw_amt > 0 else "SHORT"
+                if target_side and effective_side != target_side:
+                    continue
+            elif side in ("LONG", "SHORT"):
+                if target_side and side != target_side:
+                    continue
+            qty = abs(raw_amt)
             if qty > 0:
                 return qty
         return 0.0

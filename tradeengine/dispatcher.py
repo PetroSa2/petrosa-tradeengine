@@ -3493,6 +3493,31 @@ class Dispatcher:
                     ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
                         order.symbol, order.stop_loss, "STOP_LOSS"
                     )
+                    # AC4 of #424: adjuster returns (False, None, reason) when
+                    # the requested SL cannot satisfy both PERCENT_PRICE and
+                    # the safety floor (e.g. SL would land within 6% of
+                    # market). Emit a structured rejection and SKIP the SL
+                    # placement so we don't ship a guaranteed-to-trigger stop.
+                    if adjusted_price is None:
+                        self.logger.error(
+                            f"⛔ STOP LOSS REFUSED for {order.symbol}: {adjustment_msg}"
+                        )
+                        order.mark_rejected(
+                            source="validation",
+                            reason="sl_unreachable_within_filter",
+                        )
+                        await self._emit_execution_event_from_order(
+                            order,
+                            {"status": "rejected", "error": adjustment_msg},
+                            event_type="rejected",
+                            reason="sl_unreachable_within_filter",
+                        )
+                        return {
+                            "status": "rejected",
+                            "reason": "sl_unreachable_within_filter",
+                            "rejection_source": "validation",
+                            "error": adjustment_msg,
+                        }
                     if is_adjusted:
                         self.logger.warning(
                             f"🔧 STOP LOSS PRICE ADJUSTED: {adjustment_msg}"
@@ -3626,7 +3651,17 @@ class Dispatcher:
                     ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
                         order.symbol, order.take_profit, "TAKE_PROFIT"
                     )
-                    if is_adjusted:
+                    # AC4 of #424: the safety-floor refusal path also returns
+                    # (False, None, reason). TPs don't trigger the safety
+                    # floor by default (the floor is STOP-shaped only), but
+                    # the new return shape requires handling None here too;
+                    # skip TP placement in that case rather than crash.
+                    if adjusted_price is None:
+                        self.logger.error(
+                            f"⛔ TAKE PROFIT REFUSED for {order.symbol}: {adjustment_msg}"
+                        )
+                        adjusted_take_profit = None
+                    elif is_adjusted:
                         self.logger.warning(
                             f"🔧 TAKE PROFIT PRICE ADJUSTED: {adjustment_msg}"
                         )

@@ -128,6 +128,12 @@ class TestDistributedLockHealthCheck:
         lock.heartbeat_interval = 10
         lock.settings = MagicMock()
         lock.settings.mongodb_uri = "mongodb+srv://user:hunter2@mongo.host/petrosa"
+        # Lazy-reconnect bookkeeping (issue #442) — must be set here because
+        # this test bypasses ``__init__`` via ``__new__``.
+        lock._init_failure_count = 0
+        lock._last_init_attempt_at = None
+        lock._init_backoff_seconds = 1.0
+        lock._last_init_error = None
 
         with (
             patch(

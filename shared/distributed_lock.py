@@ -13,11 +13,37 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pymongo.errors
+from prometheus_client import Counter
 
 from shared.config import Settings
 from shared.constants import UTC, get_mongodb_connection_string, redact_uri
 
 logger = logging.getLogger(__name__)
+
+
+lock_init_failed_total = Counter(
+    "tradeengine_lock_init_failed_total",
+    "Total MongoDB init failures in the distributed lock manager (boot + lazy reconnect).",
+)
+lock_acquire_unavailable_total = Counter(
+    "tradeengine_lock_acquire_unavailable_total",
+    "Total acquire_lock/release_lock calls dropped because MongoDB was unavailable.",
+    ["operation"],
+)
+lock_reconnect_attempts_total = Counter(
+    "tradeengine_lock_reconnect_attempts_total",
+    "Total lazy-reconnect attempts initiated against MongoDB after a prior failure.",
+)
+lock_reconnect_success_total = Counter(
+    "tradeengine_lock_reconnect_success_total",
+    "Total lazy-reconnect attempts that restored MongoDB connectivity.",
+)
+
+
+# Lazy-reconnect cooldown bounds (seconds). The schedule is exponential up to the cap
+# so a long Atlas outage doesn't translate into one Mongo handshake per signal.
+LOCK_RECONNECT_MIN_BACKOFF_SECONDS = 1.0
+LOCK_RECONNECT_MAX_BACKOFF_SECONDS = 30.0
 
 
 class DistributedLockManager:
@@ -34,17 +60,34 @@ class DistributedLockManager:
         self.settings = Settings()
         self.mongodb_client: Any = None
         self.mongodb_db: Any = None
+        # Lazy-reconnect state. Backoff is bounded so any momentary Mongo
+        # unavailability heals without a pod restart (issue #442).
+        self._init_lock: asyncio.Lock = asyncio.Lock()
+        self._init_backoff_seconds: float = LOCK_RECONNECT_MIN_BACKOFF_SECONDS
+        self._init_failure_count: int = 0
+        self._last_init_attempt_at: datetime | None = None
+        self._last_init_error: str | None = None
+        self._alert_emitted_for_current_outage: bool = False
 
     async def initialize(self) -> None:
         """Initialize distributed lock manager with MongoDB"""
         try:
-            # Initialize MongoDB connection
-            await self._initialize_mongodb()
+            # Initialize MongoDB connection. Failure is non-fatal: the manager
+            # survives in a degraded state and acquire_lock/release_lock will
+            # lazily attempt to reconnect (issue #442 AC3).
+            try:
+                await self._initialize_mongodb()
+            except Exception as init_exc:
+                logger.error(
+                    "Distributed lock manager booted with MongoDB unavailable "
+                    "(will lazy-reconnect): %s",
+                    init_exc,
+                )
 
             # Start cleanup task for expired locks
             self.lock_cleanup_task = asyncio.create_task(self._cleanup_expired_locks())
 
-            # Try to become leader
+            # Try to become leader (no-op if Mongo not connected yet — heals on reconnect)
             await self._try_become_leader()
 
             logger.info(f"Distributed lock manager initialized for pod {self.pod_id}")
@@ -110,18 +153,119 @@ class DistributedLockManager:
             )
             logger.info("Unique index on distributed_locks.lock_name confirmed")
 
+            # Reset reconnect/backoff state on successful init.
+            self._init_backoff_seconds = LOCK_RECONNECT_MIN_BACKOFF_SECONDS
+            self._init_failure_count = 0
+            self._last_init_error = None
+            self._alert_emitted_for_current_outage = False
+
         except Exception as e:
             logger.error(f"Failed to initialize MongoDB for distributed locks: {e}")
             self.mongodb_client = None
             self.mongodb_db = None
+            self._init_failure_count += 1
+            self._last_init_error = repr(e)
+            lock_init_failed_total.inc()
             raise
+
+    async def _ensure_mongodb_connected(self) -> bool:
+        """Best-effort lazy reconnect to MongoDB (issue #442 AC1).
+
+        Returns ``True`` when ``mongodb_db`` is connected after the call (either
+        because it was already connected or the reconnect succeeded), ``False``
+        otherwise. Honours an exponential backoff between attempts so a long
+        Atlas outage doesn't translate into one connection handshake per signal.
+        Never raises.
+        """
+        if self.mongodb_db is not None:
+            return True
+
+        async with self._init_lock:
+            # Double-check after acquiring the lock — another coroutine may
+            # already have reconnected while we were waiting.
+            if self.mongodb_db is not None:
+                return True
+
+            now = datetime.now(UTC)
+            if self._last_init_attempt_at is not None:
+                elapsed = (now - self._last_init_attempt_at).total_seconds()
+                if elapsed < self._init_backoff_seconds:
+                    return False
+
+            self._last_init_attempt_at = now
+            lock_reconnect_attempts_total.inc()
+
+            previous_failure_count = self._init_failure_count
+            try:
+                await self._initialize_mongodb()
+            except Exception:
+                # _initialize_mongodb already logged + bumped the failure counter.
+                # Schedule the next attempt further out so we back off cleanly.
+                self._init_backoff_seconds = min(
+                    self._init_backoff_seconds * 2.0,
+                    LOCK_RECONNECT_MAX_BACKOFF_SECONDS,
+                )
+                if not self._alert_emitted_for_current_outage:
+                    await self._emit_lock_init_failed_alert()
+                    self._alert_emitted_for_current_outage = True
+                return False
+
+            lock_reconnect_success_total.inc()
+            logger.info(
+                "Distributed lock manager reconnected to MongoDB after %d failure(s)",
+                previous_failure_count,
+            )
+            return True
+
+    async def _emit_lock_init_failed_alert(self) -> None:
+        """Publish a one-shot ``alerts.tradeengine.lock_init_failed`` alert.
+
+        Best-effort: any failure in the alert path is swallowed so it cannot
+        break the trading flow further. The lazy import avoids a hard
+        ``shared`` → ``tradeengine`` layer dependency at module load time.
+        """
+        try:
+            from tradeengine.services.alert_publisher import alert_publisher
+
+            await alert_publisher.publish(
+                alert_name="lock_init_failed",
+                severity="high",
+                payload={
+                    "pod_id": self.pod_id,
+                    "init_failure_count": self._init_failure_count,
+                    "last_error": self._last_init_error,
+                    "backoff_seconds": self._init_backoff_seconds,
+                    "reason": (
+                        "Distributed lock manager cannot reach MongoDB. "
+                        "All order placement is gated through this lock; "
+                        "until MongoDB returns, this pod will reject every "
+                        "admitted signal at acquire_lock."
+                    ),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - alert path must never raise
+            logger.warning(
+                "Failed to publish lock_init_failed alert (continuing): %s", exc
+            )
 
     async def acquire_lock(
         self, lock_name: str, timeout_seconds: int | None = None
     ) -> bool:
         """Acquire a distributed lock using MongoDB"""
-        if self.mongodb_db is None:
-            logger.warning("MongoDB not available, lock acquisition will fail")
+        # Lazy reconnect (issue #442 AC1): if Mongo is currently unavailable,
+        # try to restore the connection before short-circuiting. This is what
+        # prevents a transient Mongo blip from permanently halting trading.
+        if self.mongodb_db is None and not await self._ensure_mongodb_connected():
+            lock_acquire_unavailable_total.labels(operation="acquire").inc()
+            logger.warning(
+                "lock_acquire_unavailable lock_name=%s pod_id=%s "
+                "init_failure_count=%d backoff_seconds=%.1f — MongoDB not "
+                "reachable, lock acquisition will fail",
+                lock_name,
+                self.pod_id,
+                self._init_failure_count,
+                self._init_backoff_seconds,
+            )
             return False
 
         timeout = timeout_seconds or self.lock_timeout
@@ -182,7 +326,14 @@ class DistributedLockManager:
 
     async def release_lock(self, lock_name: str) -> bool:
         """Release a distributed lock"""
-        if self.mongodb_db is None:
+        if self.mongodb_db is None and not await self._ensure_mongodb_connected():
+            lock_acquire_unavailable_total.labels(operation="release").inc()
+            logger.warning(
+                "lock_acquire_unavailable lock_name=%s pod_id=%s operation=release "
+                "— MongoDB not reachable, cannot release lock",
+                lock_name,
+                self.pod_id,
+            )
             return False
 
         try:
@@ -378,20 +529,45 @@ class DistributedLockManager:
             return {"status": "error", "error": str(e)}
 
     async def health_check(self) -> dict[str, Any]:
-        """Health check for distributed lock manager"""
-        leader_info = await self.get_leader_info()
+        """Health check for distributed lock manager.
+
+        Per issue #442 AC2: when MongoDB is unavailable, the lock manager is
+        a first-class unhealthy signal — every admitted signal will be
+        rejected at ``acquire_lock`` until reconnect succeeds.
+        """
+        mongodb_connected = self.mongodb_db is not None
+        status = "healthy" if mongodb_connected else "unhealthy"
+
+        leader_info: dict[str, Any]
+        if mongodb_connected:
+            leader_info = await self.get_leader_info()
+        else:
+            leader_info = {
+                "status": "unknown",
+                "error": "MongoDB not available",
+            }
 
         return {
-            "status": "healthy",
+            "status": status,
             "pod_id": self.pod_id,
             "is_leader": self.is_leader,
             "leader_info": leader_info,
-            "mongodb_connected": self.mongodb_db is not None,
+            "mongodb_connected": mongodb_connected,
             "mongodb_uri": redact_uri(
                 self.settings.mongodb_uri or get_mongodb_connection_string()
             ),
             "lock_timeout": self.lock_timeout,
             "heartbeat_interval": self.heartbeat_interval,
+            "reconnect": {
+                "init_failure_count": self._init_failure_count,
+                "last_init_attempt_at": (
+                    self._last_init_attempt_at.isoformat()
+                    if self._last_init_attempt_at is not None
+                    else None
+                ),
+                "backoff_seconds": self._init_backoff_seconds,
+                "last_error": self._last_init_error,
+            },
         }
 
     async def execute_with_lock(

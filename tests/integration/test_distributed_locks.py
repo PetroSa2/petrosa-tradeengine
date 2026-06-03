@@ -7,6 +7,7 @@ in a Kubernetes deployment with multiple replicas.
 
 Related:
     - Issue: https://github.com/PetroSa2/petrosa-tradeengine/issues/177
+    - Issue: https://github.com/PetroSa2/petrosa-tradeengine/issues/442 (lazy reconnect AC3)
     - Parent Issue: https://github.com/PetroSa2/petrosa-tradeengine/issues/173
 """
 
@@ -531,3 +532,96 @@ async def test_second_pod_waits_for_first_pod_lock_release(
             assert lock_released_by_first, (
                 "First pod should release lock after processing"
             )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_admitted_signal_places_order_after_mongo_lazy_reconnect(
+    fake_exchange: FakeExchange,
+    fake_position_manager: FakePositionManager,
+    sample_signal: Signal,
+):
+    """AC3 of #442: simulate MongoDB unavailable at init → available later → an
+    admitted signal results in a placed order (mocked exchange) without restart.
+
+    This exercises the lazy-reconnect path end-to-end: the dispatcher's
+    ``execute_with_lock`` call goes through ``acquire_lock``, which in turn
+    triggers ``_ensure_mongodb_connected``. Before #442 this would have
+    permanently returned ``False`` and no order would ever be placed.
+    """
+
+    from shared.distributed_lock import DistributedLockManager
+    from tradeengine import dispatcher as dispatcher_module
+    from tradeengine.dispatcher import Dispatcher
+
+    mgr = DistributedLockManager()
+
+    # Simulate "Mongo unavailable at init, available later".
+    attempts = {"n": 0}
+
+    distributed_locks_collection = AsyncMock()
+    distributed_locks_collection.create_index = AsyncMock(return_value="lock_name_1")
+    distributed_locks_collection.find_one_and_update = AsyncMock(
+        return_value={"_id": "ok"}
+    )
+    distributed_locks_collection.delete_one = AsyncMock(
+        return_value=AsyncMock(deleted_count=1)
+    )
+
+    fake_db = AsyncMock()
+    fake_db.distributed_locks = distributed_locks_collection
+
+    fake_client = AsyncMock()
+    fake_client.admin = AsyncMock()
+    fake_client.admin.command = AsyncMock(return_value={"ok": 1.0})
+
+    async def fail_then_succeed():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ConnectionError("atlas write-block (transient)")
+        mgr.mongodb_client = fake_client
+        mgr.mongodb_db = fake_db
+        # Mirror the real success-path reset.
+        from shared.distributed_lock import LOCK_RECONNECT_MIN_BACKOFF_SECONDS
+
+        mgr._init_backoff_seconds = LOCK_RECONNECT_MIN_BACKOFF_SECONDS
+        mgr._init_failure_count = 0
+        mgr._last_init_error = None
+        mgr._alert_emitted_for_current_outage = False
+
+    with (
+        patch.object(
+            mgr, "_initialize_mongodb", side_effect=fail_then_succeed, autospec=False
+        ),
+        # Stub the background cleanup loop so the test doesn't leak a task.
+        patch.object(mgr, "_cleanup_expired_locks", new=AsyncMock(return_value=None)),
+        # Swap the dispatcher's module-level lock manager singleton.
+        patch.object(dispatcher_module, "distributed_lock_manager", mgr),
+    ):
+        # Boot the manager — first init fails, but the manager survives
+        # (degraded). No pod restart, no raise (AC3).
+        await mgr.initialize()
+
+        dispatcher = Dispatcher(exchange=fake_exchange)
+        dispatcher.position_manager = fake_position_manager
+
+        # First dispatch hits the cooldown short-circuit (Mongo still "down"
+        # from the dispatcher's perspective) and would skip — but Mongo is
+        # actually back, so by clearing the cooldown we exercise the heal
+        # path that production would hit naturally a few seconds later.
+        mgr._last_init_attempt_at = None
+
+        result = await dispatcher.dispatch(sample_signal)
+
+    # Order placed without restart — the lazy-reconnect path closed the gap.
+    assert len(fake_exchange.executed_orders) == 1, (
+        f"Expected 1 placed order after lazy reconnect, got "
+        f"{len(fake_exchange.executed_orders)}; result={result}"
+    )
+    assert result.get("status") == "executed", (
+        f"Expected 'executed' status after lazy reconnect, got: {result}"
+    )
+    # Manager fully recovered: init failure counter reset to 0 and Mongo
+    # connection restored on the same instance.
+    assert mgr._init_failure_count == 0
+    assert mgr.mongodb_db is fake_db

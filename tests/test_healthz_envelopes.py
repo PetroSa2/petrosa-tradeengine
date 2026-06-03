@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from tradeengine.api import app
 from tradeengine.services.envelope_fetcher import (
@@ -21,9 +20,17 @@ from tradeengine.services.envelope_fetcher import (
 )
 
 
-@pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+# starlette 0.45 + httpx 0.28 are incompatible at ``TestClient`` boot
+# (``Client.__init__() got an unexpected keyword argument 'app'`` —
+# ``app=`` was dropped from httpx in 0.28 and starlette's testclient
+# rewires through ``transport=`` only from 0.46 onwards). Use the
+# transport directly so the tests do not depend on that compatibility
+# layer.
+def _asgi_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -41,14 +48,14 @@ def _resp(status_code: int, body: Any) -> MagicMock:
     return response
 
 
-def test_healthz_envelopes_returns_unconfigured_when_no_fetcher(
-    client: TestClient,
-) -> None:
+@pytest.mark.asyncio
+async def test_healthz_envelopes_returns_unconfigured_when_no_fetcher() -> None:
     """When no fetcher is wired (no DATA_MANAGER_URL effectively), the
     endpoint surfaces ``configured=false`` and an empty envelopes dict.
     Operators reading the dashboard can tell the difference between
     'unconfigured' and 'configured but cache empty'."""
-    response = client.get("/healthz/envelopes")
+    async with _asgi_client() as client:
+        response = await client.get("/healthz/envelopes")
     assert response.status_code == 200
     body = response.json()
     assert body["configured"] is False
@@ -56,7 +63,8 @@ def test_healthz_envelopes_returns_unconfigured_when_no_fetcher(
     assert "timestamp" in body
 
 
-def test_healthz_envelopes_surfaces_cached_entries(client: TestClient) -> None:
+@pytest.mark.asyncio
+async def test_healthz_envelopes_surfaces_cached_entries() -> None:
     """After the fetcher has resolved a strategy_key, the endpoint
     reports envelope_id / version / source / age / freshness — matching
     the cio surface so operators can spot drift across services."""
@@ -87,11 +95,10 @@ def test_healthz_envelopes_surfaces_cached_entries(client: TestClient) -> None:
 
     # Prime the cache by directly invoking the fetcher (the endpoint
     # itself does not trigger a fetch — it surfaces what's already there).
-    import asyncio
+    await fetcher.get_active("strategy:momentum-v3")
 
-    asyncio.run(fetcher.get_active("strategy:momentum-v3"))
-
-    response = client.get("/healthz/envelopes")
+    async with _asgi_client() as client:
+        response = await client.get("/healthz/envelopes")
     assert response.status_code == 200
     body = response.json()
     assert body["configured"] is True

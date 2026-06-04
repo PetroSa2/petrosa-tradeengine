@@ -18,6 +18,7 @@ from prometheus_client import Counter, Gauge
 
 if TYPE_CHECKING:
     from tradeengine.exchange.binance import BinanceFuturesExchange
+    from tradeengine.naked_position_remediator import NakedPositionRemediator
     from tradeengine.position_manager import PositionManager
 
 logger = logging.getLogger(__name__)
@@ -239,10 +240,12 @@ class PositionReconciler:
         exchange: BinanceFuturesExchange,
         position_manager: PositionManager,
         interval_seconds: int = 60,
+        remediator: NakedPositionRemediator | None = None,
     ) -> None:
         self._exchange = exchange
         self._position_manager = position_manager
         self._interval = interval_seconds
+        self._remediator = remediator
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._last_divergence_count: int = 0
 
@@ -318,6 +321,22 @@ class PositionReconciler:
             reconciliation_evaluator_verdict.set(0)
             reconciliation_alert.set(0)
             logger.debug("PositionReconciler: positions clean, no divergences")
+
+        # #445: hand the unhedged subset to the write-mode remediator.
+        # When mode == "off" (default), this is a no-op. The remediator
+        # owns its own metrics/logging; failures here must not poison
+        # the read-only reconciliation pass.
+        if self._remediator is not None:
+            unhedged_only = [d for d in divergences if d.get("category") == "unhedged"]
+            try:
+                await self._remediator.remediate(
+                    unhedged_only, binance_positions=binance_positions
+                )
+            except Exception:
+                logger.exception(
+                    "PositionReconciler: remediator raised — read-only "
+                    "reconciliation pass continues"
+                )
 
         reconciliation_runs_total.labels(result="ok").inc()
         return divergences

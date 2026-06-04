@@ -18,6 +18,17 @@ import pytest
 from tradeengine.dispatcher import OCOManager
 
 
+@pytest.fixture(autouse=True)
+def enable_ac3_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gate is off by default per the ship-off rollout pattern of #445.
+
+    These tests verify the on-state behavior so we flip the env var for
+    the duration of each test. The dispatcher-side fallback elif works
+    regardless of the gate's on/off state — production safety is layered.
+    """
+    monkeypatch.setenv("TE_OCO_AC3_GATE_ENABLED", "1")
+
+
 @pytest.fixture
 def logger() -> logging.Logger:
     return logging.getLogger("test.oco.ac3")

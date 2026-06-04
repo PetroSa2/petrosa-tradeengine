@@ -87,6 +87,20 @@ class Settings(BaseSettings):
     position_reconciliation_enabled: bool = True
     position_reconciliation_interval_seconds: int = 60
 
+    # #445: exchange-authoritative naked-position remediation.
+    # Modes: "off" (default — read-only, no writes), "dry_run" (log
+    # intended actions, no writes), "arm_only" (re-arm protective stops
+    # but never flatten), "arm_or_flatten" (full AC2 — re-arm with
+    # fallback flatten after grace window). Ships "off" so deploy is a
+    # no-op; operator flips after canary.
+    naked_position_remediation_mode: str = "off"
+    # Grace window before fallback flatten kicks in (arm_or_flatten only).
+    naked_position_flatten_grace_sec: int = 60
+    # Fallback SL/TP distances (% from entry) when local strategy record
+    # has no stored stop_loss_price/take_profit_price for a naked position.
+    naked_position_fallback_sl_pct: float = 2.0
+    naked_position_fallback_tp_pct: float = 4.0
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -121,6 +122,49 @@ class OCOManager:
         """
 
         exchange_position_key = f"{symbol}_{position_side}"
+
+        # AC3 of #445: gate placement on exchange-confirmed position state.
+        # Without this, a restart after a Mongo blip or stale local state can
+        # fire reduceOnly/closePosition orders against positions Binance no
+        # longer holds → APIError(-4509) "TIF GTE can only be used with open
+        # positions" loop. Skipping is safer than churning.
+        #
+        # Ships off by default — same pattern as the rest of #445 — because
+        # the freshly-filled-entry race (entry order fills → OCO placement
+        # races positionRisk propagation) can produce a transient "no
+        # position" reading on Binance that would otherwise cause the gate
+        # to skip arming a real position. Operator flips
+        # TE_OCO_AC3_GATE_ENABLED=1 after canary verification.
+        _ac3_gate_enabled = os.getenv("TE_OCO_AC3_GATE_ENABLED", "0") == "1"
+        if (
+            _ac3_gate_enabled
+            and self.dispatcher is not None
+            and hasattr(self.dispatcher, "_fetch_binance_position_qty")
+        ):
+            try:
+                live_qty = await self.dispatcher._fetch_binance_position_qty(
+                    symbol, position_side
+                )
+            except Exception:
+                # Lookup failed — fall through to placement attempt rather
+                # than silently dropping the OCO. _fetch_binance_position_qty
+                # is already best-effort and returns 0.0 on failure, but we
+                # defend against future refactors that could raise here.
+                live_qty = -1.0
+            if 0.0 <= live_qty < 1e-9:
+                self.logger.warning(
+                    "OCO placement skipped: Binance reports no open position "
+                    "for %s %s (AC3 of #445 — prevents -4509 GTE loop)",
+                    symbol,
+                    position_side,
+                )
+                return {
+                    "sl_order_id": None,
+                    "tp_order_id": None,
+                    "status": "skipped_no_position_on_exchange",
+                    "symbol": symbol,
+                    "position_side": position_side,
+                }
 
         # AC-2 (#352): one OCO pair per exchange position. Multiple strategies stacking
         # independent SL/TP pairs on the same position hits the Binance 10-order limit.
@@ -3512,6 +3556,18 @@ class Dispatcher:
                         f"{oco_result.get('active_pairs', 1)} active OCO pair(s). "
                         f"order={strategy_label} added to position without "
                         f"separate risk orders — existing OCO provides coverage."
+                    )
+                elif oco_result.get("status") == "skipped_no_position_on_exchange":
+                    # AC3 of #445: OCOManager pre-check found no position on the
+                    # exchange (rare in normal flow — usually a stale-state /
+                    # post-restart situation). Falling back to individual SL/TP
+                    # orders here would produce the same -4509 GTE loop the gate
+                    # is preventing. Skip the fallback; the protective-order
+                    # request was for a phantom position.
+                    self.logger.warning(
+                        f"OCO placement skipped for {order.symbol}: Binance "
+                        f"reports no open position — skipping individual SL/TP "
+                        f"fallback (AC3 of #445, prevents -4509 churn)"
                     )
                 else:
                     self.logger.error(

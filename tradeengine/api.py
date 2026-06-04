@@ -190,16 +190,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _te_settings.position_reconciliation_enabled
             and not _te_settings.simulation_enabled
         ):
+            # #445: optionally attach the exchange-authoritative naked-position
+            # remediator. Default mode "off" preserves read-only FR65 behavior.
+            _remediator = None
+            try:
+                from tradeengine.naked_position_remediator import (
+                    NakedPositionRemediator,
+                )
+
+                _remediator = NakedPositionRemediator(
+                    exchange=binance_exchange,
+                    position_manager=dispatcher.position_manager,
+                    close_position=dispatcher.close_position_with_cleanup,
+                    mode=_te_settings.naked_position_remediation_mode,
+                    flatten_grace_sec=_te_settings.naked_position_flatten_grace_sec,
+                    fallback_sl_pct=_te_settings.naked_position_fallback_sl_pct,
+                    fallback_tp_pct=_te_settings.naked_position_fallback_tp_pct,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to construct NakedPositionRemediator — "
+                    "continuing with read-only reconciler"
+                )
+                _remediator = None
+
             _reconciler = PositionReconciler(
                 exchange=binance_exchange,
                 position_manager=dispatcher.position_manager,
                 interval_seconds=_te_settings.position_reconciliation_interval_seconds,
+                remediator=_remediator,
             )
             await _reconciler.start()
             app.state.position_reconciler = _reconciler
+            app.state.naked_position_remediator = _remediator
             logger.info(
-                "✅ Position reconciler started (interval=%ss)",
+                "✅ Position reconciler started (interval=%ss, "
+                "naked_remediation_mode=%s)",
                 _te_settings.position_reconciliation_interval_seconds,
+                _te_settings.naked_position_remediation_mode,
             )
         else:
             logger.info(

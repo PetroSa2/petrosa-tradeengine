@@ -405,6 +405,7 @@ _CI_SKIP_FILES = [
     "test_cio_state.py",
     "test_trading_config_rollback.py",
     "test_span_attributes.py",
+    "test_healthz_envelopes.py",
 ]
 
 

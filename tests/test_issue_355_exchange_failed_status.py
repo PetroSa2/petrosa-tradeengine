@@ -9,10 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Stub petrosa_otel before any imports that pull it
-sys.modules.setdefault("petrosa_otel", MagicMock())
-sys.modules["petrosa_otel"].extract_trace_context = MagicMock(return_value=None)
-
 from contracts.signal import Signal  # noqa: E402
 from shared.constants import UTC  # noqa: E402
 from tradeengine.consumer import SignalConsumer  # noqa: E402

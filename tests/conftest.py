@@ -108,6 +108,95 @@ def cleanup_logging_state():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _restore_api_module_isolation():
+    """Guard against sys.modules["petrosa_otel"] replacement leaking into
+    tradeengine.api's module namespace and poisoning app.user_middleware
+    with a non-awaitable MagicMock dispatch function.
+
+    Some test modules replace sys.modules["petrosa_otel"] at collection time;
+    if tradeengine.api is subsequently imported, config_rate_limit_middleware
+    becomes a MagicMock and all TestClient-based tests fail with TypeError at
+    starlette/middleware/base.py. This fixture detects and repairs that
+    poisoned state before each test, then restores the snapshot after.
+    """
+    import importlib
+    from unittest.mock import MagicMock as _MM
+
+    api_mod = sys.modules.get("tradeengine.api")
+    crm = getattr(api_mod, "config_rate_limit_middleware", None) if api_mod else None
+
+    if isinstance(crm, _MM) and api_mod is not None:
+        # Temporarily clear mocked petrosa_otel to load the real one
+        _mocked = {k: v for k, v in sys.modules.items() if k.startswith("petrosa_otel")}
+        for k in _mocked:
+            del sys.modules[k]
+        try:
+            _real_po = importlib.import_module("petrosa_otel")
+            _real_crm = getattr(_real_po, "config_rate_limit_middleware", None)
+        except ImportError:
+            _real_crm = None
+        finally:
+            # Re-install whatever was there so other tests keep their mock state
+            sys.modules.update(_mocked)
+            for k in [
+                k
+                for k in sys.modules
+                if k.startswith("petrosa_otel") and k not in _mocked
+            ]:
+                del sys.modules[k]
+
+        if _real_crm and not isinstance(_real_crm, _MM):
+            from starlette.middleware import Middleware
+            from starlette.middleware.base import BaseHTTPMiddleware
+
+            api_mod.config_rate_limit_middleware = _real_crm
+            api_mod.app.user_middleware = [
+                Middleware(BaseHTTPMiddleware, dispatch=_real_crm)
+                if (
+                    m.cls == BaseHTTPMiddleware
+                    and isinstance(m.kwargs.get("dispatch"), _MM)
+                )
+                else m
+                for m in api_mod.app.user_middleware
+            ]
+            try:
+                api_mod.app.middleware_stack = None
+            except AttributeError:
+                pass
+
+    # Snapshot state (clean if api was poisoned above)
+    saved_po = {k: v for k, v in sys.modules.items() if k.startswith("petrosa_otel")}
+    api_mod = sys.modules.get("tradeengine.api")
+    saved_middleware = list(api_mod.app.user_middleware) if api_mod else None
+    saved_crm = (
+        getattr(api_mod, "config_rate_limit_middleware", None) if api_mod else None
+    )
+    saved_setup = getattr(api_mod, "setup_telemetry", None) if api_mod else None
+
+    yield
+
+    # Restore petrosa_otel sys.modules entries
+    for k in [k for k in sys.modules if k.startswith("petrosa_otel")]:
+        if k in saved_po:
+            sys.modules[k] = saved_po[k]
+        else:
+            del sys.modules[k]
+    for k, v in saved_po.items():
+        sys.modules[k] = v
+
+    # Restore tradeengine.api singletons
+    api_mod = sys.modules.get("tradeengine.api")
+    if api_mod is not None and saved_middleware is not None:
+        api_mod.app.user_middleware = saved_middleware
+        api_mod.config_rate_limit_middleware = saved_crm
+        api_mod.setup_telemetry = saved_setup
+        try:
+            api_mod.app.middleware_stack = None
+        except AttributeError:
+            pass
+
+
 @pytest.fixture()
 def real_petrosa_otel():
     """Temporarily restore the real petrosa_otel module for tests that need it.
@@ -316,6 +405,7 @@ _CI_SKIP_FILES = [
     "test_cio_state.py",
     "test_trading_config_rollback.py",
     "test_span_attributes.py",
+    "test_healthz_envelopes.py",
 ]
 
 

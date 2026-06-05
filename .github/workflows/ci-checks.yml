@@ -29,6 +29,4 @@ jobs:
         --ignore=tests/test_cio_state.py
         --ignore=tests/test_trading_config_rollback.py
         --ignore=tests/test_span_attributes.py
-        --ignore=tests/test_healthz_envelopes.py
-        --ignore=tests/test_readiness.py
     secrets: inherit

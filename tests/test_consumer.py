@@ -2,8 +2,6 @@
 
 import asyncio
 import json
-
-# Mock petrosa_otel before importing consumer
 import sys
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,9 +13,6 @@ from shared.constants import UTC
 # Pre-existing tests used a hardcoded 2025 timestamp; we replace it with a
 # module-level constant that is always fresh (< max_signal_age_seconds).
 _RECENT_TS = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
-
-sys.modules["petrosa_otel"] = MagicMock()
-sys.modules["petrosa_otel"].extract_trace_context = MagicMock(return_value=None)
 
 from contracts.order import TradeOrder  # noqa: E402
 from contracts.signal import Signal  # noqa: E402

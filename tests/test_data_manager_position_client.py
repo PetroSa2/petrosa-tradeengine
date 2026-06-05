@@ -48,7 +48,7 @@ class TestUpdateDailyPnL:
         result = await position_client.update_daily_pnl("2025-10-25", 1500.50)
 
         # Assert
-        assert result is True
+        assert result.ok is True
         position_client.data_manager_client._client.upsert_one.assert_called_once()
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["database"] == "mysql"
@@ -88,7 +88,7 @@ class TestUpdateDailyPnL:
         result = await position_client.update_daily_pnl("2025-10-25", 1500.50)
 
         # Assert
-        assert result is False
+        assert result.ok is False
 
     @pytest.mark.asyncio
     async def test_update_daily_pnl_negative_value(self, position_client):
@@ -102,7 +102,7 @@ class TestUpdateDailyPnL:
         result = await position_client.update_daily_pnl("2025-10-25", -500.75)
 
         # Assert
-        assert result is True
+        assert result.ok is True
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["record"]["daily_pnl"] == -500.75
 
@@ -131,7 +131,7 @@ class TestUpsertPosition:
         result = await position_client.upsert_position(position_data)
 
         # Assert
-        assert result is True
+        assert result.ok is True
         position_client.data_manager_client._client.upsert_one.assert_called_once()
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["database"] == "mysql"
@@ -161,7 +161,7 @@ class TestUpsertPosition:
         result = await position_client.upsert_position(position_data)
 
         # Assert
-        assert result is True
+        assert result.ok is True
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["filter"]["symbol"] == "ETHUSDT"
         assert call_args.kwargs["filter"]["position_side"] == "SHORT"
@@ -184,7 +184,7 @@ class TestUpsertPosition:
         result = await position_client.upsert_position(position_data)
 
         # Assert
-        assert result is True
+        assert result.ok is True
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["filter"]["position_side"] == "LONG"  # Default
 
@@ -207,7 +207,7 @@ class TestUpsertPosition:
         result = await position_client.upsert_position(position_data)
 
         # Assert
-        assert result is False
+        assert result.ok is False
 
 
 class TestDataManagerAPICompatibility:

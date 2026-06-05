@@ -327,3 +327,15 @@ otel_position_persist_failed = meter.create_counter(
     "petrosa_tradeengine_position_persist_failed_total",
     description="Position write failures after retry exhaustion (OTLP dual-export)",
 )
+
+# #451 — DataManager boot probe (dual-export)
+dm_boot_probe_total = Counter(
+    "tradeengine_dm_boot_probe_total",
+    "Boot-time DataManager write-then-read probe results (success or failure)",
+    ["result"],
+)
+
+otel_dm_boot_probe_total = meter.create_counter(
+    "tradeengine_dm_boot_probe_total",
+    description="Boot-time DataManager write-then-read probe results (OTLP dual-export)",
+)

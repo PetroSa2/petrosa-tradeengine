@@ -182,6 +182,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Initializing dispatcher...")
         await dispatcher.initialize()
 
+        # AC1-AC3, AC6 (#451): Run DataManager boot probe — gate /readyz on result
+        try:
+            from tradeengine.services.data_manager_boot_probe import (
+                DataManagerBootProbe,
+            )
+
+            _dm_url = os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:8000")
+            _probe = DataManagerBootProbe(base_url=_dm_url)
+            _probe_result = await _probe.run(pod_name=os.getenv("HOSTNAME", "unknown"))
+            app.state.dm_boot_probe_result = _probe_result
+            if not _probe_result.success:
+                logger.error(
+                    "❌ DataManager boot probe FAILED — failure_mode=%s. "
+                    "Pod readiness is gated until this is resolved.",
+                    _probe_result.failure_mode,
+                )
+            else:
+                logger.info(
+                    "✅ DataManager boot probe passed (probe_id=%s)",
+                    _probe_result.probe_id,
+                )
+        except Exception as _probe_exc:
+            logger.error(
+                "DataManager boot probe raised an unexpected exception: %s", _probe_exc
+            )
+            app.state.dm_boot_probe_result = None
+
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
         from tradeengine.position_reconciler import PositionReconciler
@@ -575,6 +602,14 @@ async def readiness_check() -> dict[str, Any]:
         from shared.constants import validate_mongodb_config
 
         validate_mongodb_config()
+
+        # AC2 (#451): Gate readiness on boot probe result
+        _probe_result = getattr(app.state, "dm_boot_probe_result", None)
+        if _probe_result is not None and not _probe_result.success:
+            raise HTTPException(
+                status_code=503,
+                detail=f"DataManager boot probe failed: {_probe_result.failure_mode}",
+            )
 
         # Timeout aligned with Binance ping sentinel (_PING_TTL=30s)
         # Using 5.0s to allow for network latency while staying well under 30s

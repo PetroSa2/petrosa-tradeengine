@@ -28,11 +28,6 @@ sys.modules["opentelemetry.instrumentation.urllib"] = MagicMock()
 otel_init = MagicMock()
 sys.modules["otel_init"] = otel_init
 
-# Mock petrosa_otel module (used by consumer)
-mock_petrosa_otel = MagicMock()
-mock_petrosa_otel.extract_trace_context = MagicMock(return_value=MagicMock())
-sys.modules["petrosa_otel"] = mock_petrosa_otel
-
 import pytest  # noqa: E402
 
 

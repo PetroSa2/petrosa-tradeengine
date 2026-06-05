@@ -15,6 +15,7 @@ from shared.config import Settings
 from shared.constants import UTC
 from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
+from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
@@ -1400,6 +1401,8 @@ class Dispatcher:
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
 
+        self.user_data_consumer: UserDataStreamConsumer | None = None
+
         # Initialize Heartbeat Monitor for ecosystem fail-safe (AC: Gate behind nats_enabled)
         self.heartbeat_monitor = None
         if self.settings.nats_enabled:
@@ -1483,6 +1486,10 @@ class Dispatcher:
                         f"⚠️ OCO reconciliation failed (non-fatal): {reconcile_err}"
                     )
 
+            if self.exchange and self.exchange.client:
+                self.user_data_consumer = UserDataStreamConsumer(self.exchange)
+                await self.user_data_consumer.start()
+
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"
             )
@@ -1495,6 +1502,8 @@ class Dispatcher:
         try:
             if self.heartbeat_monitor is not None:
                 await self.heartbeat_monitor.stop()
+            if self.user_data_consumer is not None:
+                await self.user_data_consumer.stop()
             await self.order_manager.close()
             await self.position_manager.close()
             await distributed_lock_manager.close()
@@ -1531,6 +1540,12 @@ class Dispatcher:
                     "type": "distributed_lock_manager",
                 }
 
+            exchange_truth_store_health: dict[str, Any] = {"status": "not_started"}
+            if self.user_data_consumer is not None:
+                exchange_truth_store_health = (
+                    await self.user_data_consumer.health_check()
+                )
+
             return {
                 "status": "healthy",
                 "components": {
@@ -1538,6 +1553,7 @@ class Dispatcher:
                     "position_manager": position_manager_health,
                     "signal_aggregator": "active",
                     "distributed_lock_manager": distributed_lock_health,
+                    "exchange_truth_store": exchange_truth_store_health,
                 },
             }
         except Exception as e:

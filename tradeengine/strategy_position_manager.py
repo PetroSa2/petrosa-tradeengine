@@ -27,8 +27,72 @@ from shared.constants import UTC
 
 # Import Data Manager position client
 from shared.mysql_client import position_client
+from shared.retry import PersistResult
+from tradeengine.metrics import (
+    otel_position_persist_failed,
+    position_persist_failed_total,
+)
+from tradeengine.services.alert_publisher import alert_publisher
+from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
+
+
+def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) -> None:
+    """Emit metric + alert + enqueue retry on a failed persist. Never raises."""
+    try:
+        sym = result.symbol or str(position_data.get("symbol", "unknown"))
+        pos_side = str(position_data.get("position_side", "unknown"))
+        position_persist_failed_total.labels(
+            symbol=sym,
+            position_side=pos_side,
+            operation=result.operation,
+            reason=result.reason or "unknown",
+        ).inc()
+        otel_position_persist_failed.add(
+            1,
+            {
+                "symbol": sym,
+                "position_side": pos_side,
+                "operation": result.operation,
+                "reason": result.reason or "unknown",
+            },
+        )
+    except Exception as exc:
+        logger.warning("Metric emission failed for persist_failed: %s", exc)
+
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        sym = result.symbol or str(position_data.get("symbol", "unknown"))
+        loop.create_task(
+            alert_publisher.publish(
+                alert_name=f"persist_failed.{sym}",
+                severity="critical",
+                payload={
+                    "symbol": sym,
+                    "operation": result.operation,
+                    "position_id": result.position_id,
+                    "error": result.error,
+                    "reason": result.reason,
+                },
+            )
+        )
+    except Exception as exc:
+        logger.warning("Alert publish failed for persist_failed: %s", exc)
+
+    try:
+        pw = PendingWrite(
+            operation=result.operation,
+            data=dict(position_data),
+            symbol=result.symbol or str(position_data.get("symbol", "")),
+            position_id=result.position_id,
+            last_error=result.error,
+        )
+        persist_retry_queue.enqueue(pw)
+    except Exception as exc:
+        logger.warning("Enqueue to persist_retry_queue failed: %s", exc)
 
 
 class StrategyPositionManager:
@@ -343,25 +407,37 @@ class StrategyPositionManager:
 
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
         """Persist strategy position to Data Manager"""
-        try:
-            await position_client.create_position(position)
+        result = await position_client.create_position(position)
+        if result.ok:
             logger.debug(
-                f"Persisted strategy position {position['strategy_position_id']} to Data Manager"
+                "Persisted strategy position %s to Data Manager",
+                position.get("strategy_position_id"),
             )
-        except Exception as e:
-            logger.error(f"Failed to persist strategy position: {e}")
+        else:
+            logger.error(
+                "Failed to persist strategy position %s: %s",
+                position.get("strategy_position_id"),
+                result.error,
+            )
+            _on_persist_failure(result, position)
 
     async def _update_strategy_position_closure(
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
         """Update strategy position closure details in Data Manager"""
-        try:
-            await position_client.update_position(strategy_position_id, position)
+        result = await position_client.update_position(strategy_position_id, position)
+        if result.ok:
             logger.debug(
-                f"Updated strategy position closure for {strategy_position_id} via Data Manager"
+                "Updated strategy position closure for %s via Data Manager",
+                strategy_position_id,
             )
-        except Exception as e:
-            logger.error(f"Failed to update strategy position closure: {e}")
+        else:
+            logger.error(
+                "Failed to update strategy position closure %s: %s",
+                strategy_position_id,
+                result.error,
+            )
+            _on_persist_failure(result, position)
 
     async def _update_exchange_position(
         self,
@@ -441,11 +517,15 @@ class StrategyPositionManager:
 
     async def _persist_exchange_position(self, exchange_position_key: str) -> None:
         """Persist exchange position to Data Manager"""
-        try:
-            position = self.exchange_positions[exchange_position_key]
-            await position_client.create_position(position)
-        except Exception as e:
-            logger.error(f"Failed to persist exchange position: {e}")
+        position = self.exchange_positions[exchange_position_key]
+        result = await position_client.create_position(position)
+        if result.failed:
+            logger.error(
+                "Failed to persist exchange position %s: %s",
+                exchange_position_key,
+                result.error,
+            )
+            _on_persist_failure(result, position)
 
     async def _create_contribution(
         self,
@@ -506,7 +586,15 @@ class StrategyPositionManager:
                 "exchange_quantity_after": qty_after,
                 "status": "active",
             }
-            await position_client.create_position(contribution_data)
+            result = await position_client.create_position(contribution_data)
+            if result.failed:
+                logger.error(
+                    "Failed to persist contribution %s for %s: %s",
+                    contribution_id,
+                    symbol,
+                    result.error,
+                )
+                _on_persist_failure(result, contribution_data)
 
         except Exception as e:
             logger.error(f"Error creating contribution: {e}")
@@ -520,19 +608,24 @@ class StrategyPositionManager:
         close_reason: str,
     ) -> None:
         """Close contribution record when strategy position closes"""
-        try:
-            # Update contribution status in Data Manager
-            update_data = {
-                "status": "closed",
-                "exit_time": datetime.now(UTC),
-                "exit_price": exit_price,
-                "contribution_pnl": pnl,
-                "contribution_pnl_pct": pnl_pct,
-                "close_reason": close_reason,
-            }
-            await position_client.update_position(strategy_position_id, update_data)
-        except Exception as e:
-            logger.error(f"Error closing contribution: {e}")
+        update_data = {
+            "status": "closed",
+            "exit_time": datetime.now(UTC),
+            "exit_price": exit_price,
+            "contribution_pnl": pnl,
+            "contribution_pnl_pct": pnl_pct,
+            "close_reason": close_reason,
+        }
+        result = await position_client.update_position(
+            strategy_position_id, update_data
+        )
+        if result.failed:
+            logger.error(
+                "Failed to close contribution %s: %s",
+                strategy_position_id,
+                result.error,
+            )
+            _on_persist_failure(result, update_data)
 
     def get_all_open_strategy_positions(self) -> list[dict[str, Any]]:
         """Return a shallow copy of all in-memory positions with status == 'open'."""

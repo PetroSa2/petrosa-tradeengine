@@ -161,6 +161,14 @@ atomic_rollback_failed_total = Counter(
     ["symbol", "reason"],
 )
 
+# #448 — position write failures after retry exhaustion; paired with the
+# alerts.tradeengine.persist_failed.<symbol> NATS alert.
+position_persist_failed_total = Counter(
+    "petrosa_tradeengine_position_persist_failed_total",
+    "Position write failures after retry exhaustion (position may diverge from Binance state)",
+    ["symbol", "position_side", "operation", "reason"],
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================
@@ -312,4 +320,10 @@ otel_risk_rejections = meter.create_counter(
 otel_risk_checks = meter.create_counter(
     "tradeengine_risk_checks_total",
     description="Total risk checks performed (OTLP dual-export)",
+)
+
+# #448 — position persist failures (OTLP dual-export)
+otel_position_persist_failed = meter.create_counter(
+    "petrosa_tradeengine_position_persist_failed_total",
+    description="Position write failures after retry exhaustion (OTLP dual-export)",
 )

@@ -574,17 +574,23 @@ class TestStrategyPositionManagerBasic:
         self, strategy_position_manager
     ):
         """Test _update_strategy_position_closure error handling"""
+        from shared.retry import PersistResult
+
         with patch(
             "tradeengine.strategy_position_manager.position_client"
         ) as mock_client:
-            mock_client.update_position = AsyncMock(side_effect=Exception("DB error"))
+            mock_client.update_position = AsyncMock(
+                return_value=PersistResult(
+                    ok=False, error="DB error", reason="permanent"
+                )
+            )
 
             position = {
                 "strategy_position_id": "test_123",
                 "status": "closed",
             }
 
-            # Should not raise, just log error
+            # Should not raise — _on_persist_failure handles it internally
             await strategy_position_manager._update_strategy_position_closure(
                 "test_123", position
             )

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 if TYPE_CHECKING:
     from tradeengine.exchange.binance import BinanceFuturesExchange
@@ -36,6 +36,12 @@ exchange_truth_store_events_total = Counter(
     "tradeengine_exchange_truth_store_events_total",
     "Total user-data stream events processed by ExchangeTruthStore",
     ["event_type"],
+)
+
+# AC2 (446-B) — seconds since last WebSocket stream update, set on each REST reconcile pass
+exchange_truth_store_stale_seconds = Gauge(
+    "tradeengine_exchange_truth_store_stale_seconds",
+    "Seconds since the last WebSocket stream update (measured on each REST reconcile pass)",
 )
 
 _LISTEN_KEY_RENEWAL_SECS = 55 * 60  # Binance expires keys at 60 min
@@ -89,6 +95,7 @@ class ExchangeTruthStore:
         # keyed by (symbol, order_id)
         self._open_orders: dict[tuple[str, str], OrderSnapshot] = {}
         self._last_updated: datetime | None = None
+        self._last_rest_sync: datetime | None = None
         self._is_ready: bool = False
 
     @property
@@ -98,6 +105,10 @@ class ExchangeTruthStore:
     @property
     def last_updated(self) -> datetime | None:
         return self._last_updated
+
+    @property
+    def last_rest_sync(self) -> datetime | None:
+        return self._last_rest_sync
 
     def get_positions(self) -> dict[tuple[str, str], PositionSnapshot]:
         return dict(self._positions)
@@ -185,6 +196,47 @@ class ExchangeTruthStore:
                     price=float(o.get("price", 0)),
                 )
             self._last_updated = datetime.now(UTC)
+            self._is_ready = True
+
+    async def update_from_rest(
+        self,
+        positions: list[dict[str, Any]],
+        orders: list[dict[str, Any]],
+    ) -> None:
+        """Overwrite store with REST snapshot from PositionReconciler (AC1 — 446-B).
+
+        Called after each reconcile_once() pass.  REST is authoritative: this
+        snapshot replaces stream-derived state for all currently-known symbols.
+        """
+        async with self._lock:
+            self._positions.clear()
+            for p in positions:
+                symbol = p.get("symbol", "")
+                side = p.get("positionSide", "BOTH").upper()
+                qty = float(p.get("positionAmt", 0))
+                if abs(qty) < 1e-9:
+                    continue
+                self._positions[(symbol, side)] = PositionSnapshot(
+                    symbol=symbol,
+                    side=side,
+                    quantity=qty,
+                    entry_price=float(p.get("entryPrice", 0)),
+                    unrealized_pnl=float(p.get("unrealizedProfit", 0)),
+                )
+            self._open_orders.clear()
+            for o in orders:
+                symbol = o.get("symbol", "")
+                order_id = str(o.get("orderId", o.get("i", "")))
+                self._open_orders[(symbol, order_id)] = OrderSnapshot(
+                    symbol=symbol,
+                    order_id=order_id,
+                    side=o.get("side", o.get("S", "")),
+                    order_type=o.get("type", o.get("o", "")),
+                    status=o.get("status", o.get("X", "")),
+                    quantity=float(o.get("origQty", o.get("q", 0))),
+                    price=float(o.get("price", o.get("p", 0))),
+                )
+            self._last_rest_sync = datetime.now(UTC)
             self._is_ready = True
 
 

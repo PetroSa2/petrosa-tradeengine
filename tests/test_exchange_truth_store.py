@@ -468,3 +468,368 @@ class TestUserDataStreamConsumer:
         assert health["stream_connected"] is True
         assert health["status"] == "healthy"
         assert health["last_updated"] is not None
+
+
+# ---------------------------------------------------------------------------
+# ExchangeTruthStore.update_from_rest (AC1 + AC2 — #446-B)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateFromRest:
+    @pytest.mark.asyncio
+    async def test_update_from_rest_populates_positions(self):
+        store = ExchangeTruthStore()
+        positions = [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.5",
+                "entryPrice": "30000",
+                "unrealizedProfit": "500",
+            }
+        ]
+        await store.update_from_rest(positions, [])
+        snaps = store.get_positions()
+        assert ("BTCUSDT", "LONG") in snaps
+        assert snaps[("BTCUSDT", "LONG")].quantity == 0.5
+        assert snaps[("BTCUSDT", "LONG")].entry_price == 30000.0
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_populates_orders(self):
+        store = ExchangeTruthStore()
+        orders = [
+            {
+                "symbol": "BTCUSDT",
+                "orderId": "9001",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "status": "NEW",
+                "origQty": "0.5",
+                "price": "29000",
+            }
+        ]
+        await store.update_from_rest([], orders)
+        open_orders = store.get_open_orders("BTCUSDT")
+        assert len(open_orders) == 1
+        assert open_orders[0].order_id == "9001"
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_skips_zero_qty_positions(self):
+        store = ExchangeTruthStore()
+        positions = [
+            {"symbol": "ETHUSDT", "positionSide": "LONG", "positionAmt": "0.0"}
+        ]
+        await store.update_from_rest(positions, [])
+        assert store.get_positions() == {}
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_sets_last_rest_sync(self):
+        store = ExchangeTruthStore()
+        assert store.last_rest_sync is None
+        await store.update_from_rest([], [])
+        assert store.last_rest_sync is not None
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_marks_store_ready(self):
+        store = ExchangeTruthStore()
+        assert store.is_ready is False
+        await store.update_from_rest([], [])
+        assert store.is_ready is True
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_overwrites_previous_state(self):
+        store = ExchangeTruthStore()
+        first = [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "1.0",
+                "entryPrice": "30000",
+                "unrealizedProfit": "0",
+            }
+        ]
+        await store.update_from_rest(first, [])
+        assert len(store.get_positions()) == 1
+
+        # Second call with empty list should clear positions
+        await store.update_from_rest([], [])
+        assert store.get_positions() == {}
+
+
+# ---------------------------------------------------------------------------
+# PositionReconciler + ExchangeTruthStore integration (AC3 — #446-B)
+# ---------------------------------------------------------------------------
+
+
+def _make_reconciler_exchange(positions=None, orders=None):
+    exchange = MagicMock()
+    exchange.get_position_info = AsyncMock(return_value=positions or [])
+    exchange.get_open_algo_orders = AsyncMock(return_value=orders or [])
+    return exchange
+
+
+def _make_position_manager(local_positions=None):
+    pm = MagicMock()
+    pm.get_positions = MagicMock(return_value=local_positions or {})
+    return pm
+
+
+class TestPositionReconcilerStoreIntegration:
+    @pytest.mark.asyncio
+    async def test_reconcile_once_calls_update_from_rest(self):
+        """AC3 — reconciler calls update_from_rest after a successful REST fetch."""
+        from tradeengine.position_reconciler import PositionReconciler
+
+        raw_positions = [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.5",
+                "entryPrice": "30000",
+                "unrealizedProfit": "100",
+            }
+        ]
+        exchange = _make_reconciler_exchange(positions=raw_positions)
+        pm = _make_position_manager()
+        store = ExchangeTruthStore()
+        store.update_from_rest = AsyncMock(wraps=store.update_from_rest)
+
+        reconciler = PositionReconciler(
+            exchange=exchange,
+            position_manager=pm,
+            interval_seconds=60,
+            store=store,
+        )
+        await reconciler.reconcile_once()
+
+        store.update_from_rest.assert_awaited_once()
+        call_args = store.update_from_rest.call_args
+        positions_arg = call_args[0][0]
+        assert any(p.get("symbol") == "BTCUSDT" for p in positions_arg)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_once_no_store_does_not_raise(self):
+        """reconcile_once works normally when no store is injected."""
+        from tradeengine.position_reconciler import PositionReconciler
+
+        exchange = _make_reconciler_exchange()
+        pm = _make_position_manager()
+
+        reconciler = PositionReconciler(
+            exchange=exchange,
+            position_manager=pm,
+            interval_seconds=60,
+        )
+        result = await reconciler.reconcile_once()
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_stale_stream_warning_fires(self, caplog):
+        """AC3 — stale-stream warning logs when stream timestamp exceeds 2x interval."""
+        import logging
+        from datetime import UTC, datetime, timedelta
+
+        from tradeengine.position_reconciler import PositionReconciler
+
+        exchange = _make_reconciler_exchange()
+        pm = _make_position_manager()
+        store = ExchangeTruthStore()
+
+        # Simulate a stream update that happened 5 minutes ago on a 60s interval
+        # 5*60 = 300s > 2*60 = 120s → should trigger warning
+        stale_ts = datetime.now(UTC) - timedelta(seconds=300)
+        store._last_updated = stale_ts
+        store._is_ready = True
+
+        reconciler = PositionReconciler(
+            exchange=exchange,
+            position_manager=pm,
+            interval_seconds=60,
+            store=store,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="tradeengine.position_reconciler"):
+            await reconciler.reconcile_once()
+
+        assert any("stale" in record.message.lower() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_stale_stream_warning_not_fired_when_fresh(self, caplog):
+        """No stale warning when stream is recent."""
+        import logging
+        from datetime import UTC, datetime
+
+        from tradeengine.position_reconciler import PositionReconciler
+
+        exchange = _make_reconciler_exchange()
+        pm = _make_position_manager()
+        store = ExchangeTruthStore()
+
+        # Stream updated just now — within 2x interval
+        store._last_updated = datetime.now(UTC)
+        store._is_ready = True
+
+        reconciler = PositionReconciler(
+            exchange=exchange,
+            position_manager=pm,
+            interval_seconds=60,
+            store=store,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="tradeengine.position_reconciler"):
+            await reconciler.reconcile_once()
+
+        stale_warnings = [r for r in caplog.records if "stale" in r.message.lower()]
+        assert stale_warnings == []
+
+
+# ---------------------------------------------------------------------------
+# AC3 (446-B) — PositionReconciler REST-backstop integration
+# ---------------------------------------------------------------------------
+
+
+class TestPositionReconcilerRestBackstop:
+    """AC3 tests for #458: reconciler writes REST snapshot into ExchangeTruthStore."""
+
+    def _make_reconciler_deps(self, positions=None, orders=None, local_positions=None):
+        from tradeengine.position_reconciler import PositionReconciler
+
+        exchange = MagicMock()
+        exchange.get_position_info = AsyncMock(return_value=positions or [])
+        exchange.get_open_algo_orders = AsyncMock(return_value=orders or [])
+
+        pm = MagicMock()
+        pm.get_positions = MagicMock(return_value=local_positions or {})
+
+        store = ExchangeTruthStore()
+        reconciler = PositionReconciler(
+            exchange=exchange,
+            position_manager=pm,
+            interval_seconds=60,
+            store=store,
+        )
+        return reconciler, store, exchange
+
+    @pytest.mark.asyncio
+    async def test_reconcile_once_calls_update_from_rest(self):
+        """AC3a: reconciler calls store.update_from_rest() after a successful REST fetch."""
+        positions = [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.01",
+                "entryPrice": "50000",
+                "unrealizedProfit": "10",
+            }
+        ]
+        orders = [
+            {
+                "symbol": "BTCUSDT",
+                "orderId": "111",
+                "side": "SELL",
+                "type": "STOP_MARKET",
+                "status": "NEW",
+                "origQty": "0.01",
+                "price": "49000",
+                "reduceOnly": True,
+                "positionSide": "LONG",
+            }
+        ]
+        reconciler, store, _ = self._make_reconciler_deps(
+            positions=positions, orders=orders
+        )
+
+        store.update_from_rest = AsyncMock(wraps=store.update_from_rest)
+        await reconciler.reconcile_once()
+
+        store.update_from_rest.assert_awaited_once()
+        call_args = store.update_from_rest.call_args
+        passed_positions = call_args[0][0]
+        assert any(p.get("symbol") == "BTCUSDT" for p in passed_positions)
+
+    @pytest.mark.asyncio
+    async def test_update_from_rest_populates_store(self):
+        """AC3a: update_from_rest overwrites positions and open_orders in the store."""
+        store = ExchangeTruthStore()
+        positions = [
+            {
+                "symbol": "ETHUSDT",
+                "positionSide": "SHORT",
+                "positionAmt": "-0.5",
+                "entryPrice": "3000",
+                "unrealizedProfit": "-5",
+            }
+        ]
+        orders = [
+            {
+                "symbol": "ETHUSDT",
+                "orderId": "999",
+                "side": "BUY",
+                "type": "STOP_MARKET",
+                "status": "NEW",
+                "origQty": "0.5",
+                "price": "3100",
+            }
+        ]
+        await store.update_from_rest(positions, orders)
+
+        assert store.is_ready is True
+        assert store.last_rest_sync is not None
+        snaps = store.get_positions()
+        assert ("ETHUSDT", "SHORT") in snaps
+        assert snaps[("ETHUSDT", "SHORT")].quantity == -0.5
+        eth_orders = store.get_open_orders("ETHUSDT")
+        assert len(eth_orders) == 1
+        assert eth_orders[0].order_id == "999"
+
+    @pytest.mark.asyncio
+    async def test_stale_stream_warning_fires(self, caplog):
+        """AC3b: stale-stream warning fires when stream.last_updated is older than 2×interval."""
+        import logging
+        from datetime import UTC, datetime, timedelta
+
+        reconciler, store, _ = self._make_reconciler_deps()
+        reconciler._interval = 30  # threshold = 60s
+
+        # Force stream last_updated to 120s ago (> 2 * 30 = 60s threshold)
+        store._last_updated = datetime.now(UTC) - timedelta(seconds=120)
+        store._is_ready = True
+
+        with caplog.at_level(logging.WARNING, logger="tradeengine.position_reconciler"):
+            await reconciler.reconcile_once()
+
+        assert any("stale" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_no_stale_warning_when_stream_fresh(self, caplog):
+        """AC3b: no staleness warning when stream is recent."""
+        import logging
+        from datetime import UTC, datetime, timedelta
+
+        reconciler, store, _ = self._make_reconciler_deps()
+        reconciler._interval = 60  # threshold = 120s
+
+        # Stream updated 10s ago — well within threshold
+        store._last_updated = datetime.now(UTC) - timedelta(seconds=10)
+        store._is_ready = True
+
+        with caplog.at_level(logging.WARNING, logger="tradeengine.position_reconciler"):
+            await reconciler.reconcile_once()
+
+        assert not any("stale" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_without_store_does_not_raise(self):
+        """Reconciler with store=None proceeds normally (optional injection)."""
+        from tradeengine.position_reconciler import PositionReconciler
+
+        exchange = MagicMock()
+        exchange.get_position_info = AsyncMock(return_value=[])
+        exchange.get_open_algo_orders = AsyncMock(return_value=[])
+        pm = MagicMock()
+        pm.get_positions = MagicMock(return_value={})
+
+        reconciler = PositionReconciler(exchange=exchange, position_manager=pm)
+        # Must not raise even with no store wired
+        divergences = await reconciler.reconcile_once()
+        assert isinstance(divergences, list)

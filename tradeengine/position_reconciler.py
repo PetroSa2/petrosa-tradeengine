@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from prometheus_client import Counter, Gauge
+
+from tradeengine.exchange_truth_store import (
+    ExchangeTruthStore,
+    exchange_truth_store_stale_seconds,
+)
 
 if TYPE_CHECKING:
     from tradeengine.exchange.binance import BinanceFuturesExchange
@@ -241,11 +247,13 @@ class PositionReconciler:
         position_manager: PositionManager,
         interval_seconds: int = 60,
         remediator: NakedPositionRemediator | None = None,
+        store: ExchangeTruthStore | None = None,
     ) -> None:
         self._exchange = exchange
         self._position_manager = position_manager
         self._interval = interval_seconds
         self._remediator = remediator
+        self._store = store
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._last_divergence_count: int = 0
 
@@ -305,7 +313,7 @@ class PositionReconciler:
         # symbol present in binance_positions and append unhedged
         # divergences to the same list so the existing metric/alert
         # paths surface them uniformly.
-        unhedged = await self._detect_unhedged_for(binance_positions)
+        unhedged, orders_by_symbol = await self._detect_unhedged_for(binance_positions)
         divergences.extend(unhedged)
 
         self._last_divergence_count = len(divergences)
@@ -321,6 +329,28 @@ class PositionReconciler:
             reconciliation_evaluator_verdict.set(0)
             reconciliation_alert.set(0)
             logger.debug("PositionReconciler: positions clean, no divergences")
+
+        # AC1 (446-B) — write REST snapshot into ExchangeTruthStore so the store
+        # stays accurate even when the stream missed events or was briefly down.
+        if self._store is not None:
+            all_orders = [o for orders in orders_by_symbol.values() for o in orders]
+            try:
+                await self._store.update_from_rest(raw, all_orders)
+            except Exception:
+                logger.exception(
+                    "PositionReconciler: store.update_from_rest raised — continuing"
+                )
+            # AC2 (446-B) — log stale-stream warning metric
+            stream_ts = self._store.last_updated
+            if stream_ts is not None:
+                stale_secs = (datetime.now(UTC) - stream_ts).total_seconds()
+                exchange_truth_store_stale_seconds.set(stale_secs)
+                if stale_secs > 2 * self._interval:
+                    logger.warning(
+                        "ExchangeTruthStore stream stale: %.0fs (threshold=%ds)",
+                        stale_secs,
+                        2 * self._interval,
+                    )
 
         # #445: hand the unhedged subset to the write-mode remediator.
         # When mode == "off" (default), this is a no-op. The remediator
@@ -344,13 +374,13 @@ class PositionReconciler:
     async def _detect_unhedged_for(
         self,
         binance_positions: dict[tuple[str, str], dict[str, Any]],
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
         """AC5 helper: fetch open algo orders for each unique symbol and
-        delegate to :func:`detect_unhedged_positions`. Returns [] on
-        empty input or when the exchange call fails (logged); never
-        raises into the caller — reconciliation should keep running."""
+        delegate to :func:`detect_unhedged_positions`. Returns (divergences,
+        orders_by_symbol) so the caller can feed orders into the store.
+        Never raises into the caller — reconciliation should keep running."""
         if not binance_positions:
-            return []
+            return [], {}
         symbols = {symbol for symbol, _ in binance_positions.keys()}
         orders_by_symbol: dict[str, list[dict[str, Any]]] = {}
         for symbol in symbols:
@@ -364,7 +394,9 @@ class PositionReconciler:
                 )
                 orders = []
             orders_by_symbol[symbol] = orders or []
-        return detect_unhedged_positions(binance_positions, orders_by_symbol)
+        return detect_unhedged_positions(
+            binance_positions, orders_by_symbol
+        ), orders_by_symbol
 
     # ------------------------------------------------------------------
     # Alert / evaluator helpers

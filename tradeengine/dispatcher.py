@@ -739,7 +739,11 @@ class OCOManager:
 
         if not open_orders:
             try:
-                std_orders = self.exchange.client.futures_get_open_orders()
+                # #465: offload sync REST to a thread so the event loop stays
+                # responsive for the boot probe scheduled immediately after.
+                std_orders = await asyncio.to_thread(
+                    self.exchange.client.futures_get_open_orders
+                )
                 open_orders = list(std_orders) if std_orders else []
                 self.logger.info(
                     f"[STARTUP] Fallback: fetched {len(open_orders)} standard open orders for OCO reconciliation"
@@ -1455,7 +1459,9 @@ class Dispatcher:
                 "Strategy position manager initialization started in background"
             )
 
-            # PROACTIVE LEVERAGE SETUP
+            # PROACTIVE LEVERAGE SETUP (#465: offload sync REST to a thread so it
+            # yields the event loop between symbols and does not starve the
+            # downstream DataManager boot probe)
             if self.exchange:
                 try:
                     self.logger.info("🔧 SETTING PROACTIVE LEVERAGE (10x)...")
@@ -1463,10 +1469,10 @@ class Dispatcher:
 
                     for symbol in SUPPORTED_SYMBOLS:
                         try:
-                            # Use futures_change_leverage directly from the exchange client
-                            # Adjusting to 10x as a safe default
-                            self.exchange.client.futures_change_leverage(
-                                symbol=symbol, leverage=10
+                            await asyncio.to_thread(
+                                self.exchange.client.futures_change_leverage,
+                                symbol=symbol,
+                                leverage=10,
                             )
                             self.logger.info(f"✅ Leverage set to 10x for {symbol}")
                         except Exception as lev_err:

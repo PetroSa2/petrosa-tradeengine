@@ -18,7 +18,7 @@ from tradeengine.services.data_manager_client import BaseDataManagerClient
 
 logger = logging.getLogger(__name__)
 
-_PROBE_TIMEOUT_SECONDS = 5.0
+_PROBE_TIMEOUT_SECONDS = 20.0
 _PROBE_COLLECTION = "tradeengine_boot_probes"
 _PROBE_DB = "mongodb"
 _TTL_HOURS = 24
@@ -49,7 +49,15 @@ class DataManagerBootProbe:
         self._timeout = timeout
 
     async def run(self, pod_name: str = "unknown") -> BootProbeResult:
-        """Execute the boot probe within a hard 5-second total timeout (AC3)."""
+        """Execute the boot probe within a hard 20-second total timeout (#465 AC1).
+
+        Raised from 5s to 20s because ``dispatcher.initialize()`` can leave the
+        event loop saturated by background tasks (sync Binance REST calls during
+        leverage setup and OCO reconciliation) for several seconds after it
+        returns. Data-manager write+read round-trip is ~300 ms, so 20 s gives
+        ~19.7 s of event-loop slack — enough that any realistic contention
+        clears before the probe coroutine reaches its first ``await``.
+        """
         if not _probe_enabled():
             logger.info("dm_boot_probe.skipped TE_BOOT_PROBE_ENABLED=false")
             return BootProbeResult(success=True)

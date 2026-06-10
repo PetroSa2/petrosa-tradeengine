@@ -164,19 +164,29 @@ async def test_readback_exception_failure(probe: DataManagerBootProbe) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC3: 5-second total timeout
+# #451 AC3 / #465 AC1: hard total timeout still fires when the probe overruns
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_timeout_returns_failure(probe: DataManagerBootProbe) -> None:
-    """Probe must return failure if _run_probe exceeds 5 seconds."""
+    """Probe must return failure if ``_run_probe`` exceeds ``_PROBE_TIMEOUT_SECONDS``.
+
+    The constant is patched to a small value so the test stays fast even
+    after #465 raised the production ceiling to 20 s.
+    """
 
     async def _slow_probe(_probe_id: str) -> BootProbeResult:
-        await asyncio.sleep(10)
+        await asyncio.sleep(1.0)
         return BootProbeResult(success=True)
 
-    with patch.object(probe, "_run_probe", side_effect=_slow_probe):
+    with (
+        patch(
+            "tradeengine.services.data_manager_boot_probe._PROBE_TIMEOUT_SECONDS",
+            0.1,
+        ),
+        patch.object(probe, "_run_probe", side_effect=_slow_probe),
+    ):
         result = await probe.run(pod_name="slow-pod")
 
     assert result.success is False
@@ -233,3 +243,61 @@ async def test_metric_failure_does_not_raise(probe: DataManagerBootProbe) -> Non
     ):
         result = await probe.run(pod_name="metrics-pod")
     assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# #465 AC1+AC3: 20s timeout tolerates event-loop scheduling delay
+# ---------------------------------------------------------------------------
+
+
+def test_probe_timeout_constant_is_twenty_seconds() -> None:
+    """#465 AC1: hard-coded probe timeout is the 20 s ceiling, not the prior 5 s."""
+    from tradeengine.services.data_manager_boot_probe import _PROBE_TIMEOUT_SECONDS
+
+    assert _PROBE_TIMEOUT_SECONDS == 20.0
+
+
+@pytest.mark.asyncio
+async def test_probe_succeeds_under_event_loop_contention(
+    probe: DataManagerBootProbe,
+) -> None:
+    """#465 AC3: a ~6s event-loop scheduling delay no longer trips the timeout.
+
+    Pre-#465 the probe budget was 5 s; any startup-time contention (sync
+    Binance REST calls during leverage setup / OCO reconcile) starved the
+    probe coroutine and produced a spurious ``probe_timeout_after_5.0s``.
+    Post-#465 the budget is 20 s, so a combined ~6 s of asyncio scheduling
+    delay during insert + readback completes well within budget.
+    """
+
+    async def slow_insert(*_args: object, **_kwargs: object) -> dict:
+        await asyncio.sleep(3)
+        return {"inserted_id": "probe-contended", "inserted_count": 1}
+
+    async def slow_query(*_args: object, **_kwargs: object) -> dict:
+        await asyncio.sleep(3)
+        return {
+            "data": [
+                {
+                    "_id": "probe-contended",
+                    "created_at": "2026-06-10T16:00:00Z",
+                }
+            ]
+        }
+
+    client = MagicMock()
+    client.close = AsyncMock(return_value=None)
+    client.insert_one = AsyncMock(side_effect=slow_insert)
+    client.query = AsyncMock(side_effect=slow_query)
+    client.delete = AsyncMock(return_value={"deleted_count": 0})
+
+    with patch(
+        "tradeengine.services.data_manager_boot_probe.BaseDataManagerClient",
+        return_value=client,
+    ):
+        result = await probe.run(pod_name="contended-pod")
+
+    assert result.success is True, (
+        f"expected success under contention, got failure_mode={result.failure_mode}"
+    )
+    assert result.failure_mode is None

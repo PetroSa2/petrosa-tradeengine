@@ -98,8 +98,11 @@ class DataManagerBootProbe:
         probe_id: str,
         created_at: str,
     ) -> BootProbeResult:
-        # AC1: Write sentinel record
-        record = {"_id": probe_id, "created_at": created_at}
+        # AC1: Write sentinel record. `probe_id` is duplicated outside `_id` because
+        # data-manager's MongoDB adapter strips `_id` from query_range results
+        # (mongodb_adapter.query_range line ~174), so the read-back filter must
+        # use a field that survives that strip. Fixes petrosa-tradeengine#468.
+        record = {"_id": probe_id, "probe_id": probe_id, "created_at": created_at}
         try:
             write_result = await client.insert_one(_PROBE_DB, _PROBE_COLLECTION, record)
         except Exception as exc:
@@ -132,7 +135,7 @@ class DataManagerBootProbe:
         # AC1: Read back the sentinel record
         try:
             read_result = await client.query(
-                _PROBE_DB, _PROBE_COLLECTION, filter={"_id": probe_id}, limit=1
+                _PROBE_DB, _PROBE_COLLECTION, filter={"probe_id": probe_id}, limit=1
             )
         except Exception as exc:
             failure_mode = f"readback_exception:{type(exc).__name__}"

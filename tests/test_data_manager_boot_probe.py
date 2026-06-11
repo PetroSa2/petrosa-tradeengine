@@ -301,3 +301,42 @@ async def test_probe_succeeds_under_event_loop_contention(
         f"expected success under contention, got failure_mode={result.failure_mode}"
     )
     assert result.failure_mode is None
+
+
+@pytest.mark.asyncio
+async def test_readback_uses_probe_id_not_id_field(probe: DataManagerBootProbe) -> None:
+    """#468 regression: filter MUST use `probe_id` field (which the data-manager
+    MongoDB adapter preserves), NOT `_id` (which is stripped by
+    mongodb_adapter.query_range before _apply_filter runs).
+
+    Before this fix the probe always reported `readback_empty` in production
+    because every record came back without `_id` and the filter could never
+    match. We assert both halves of the contract here:
+      1. The insert record carries `probe_id` alongside `_id`.
+      2. The query filter keys on `probe_id`, not `_id`.
+    """
+    client = _make_client(
+        insert_one_return={"inserted_id": "probe-468", "inserted_count": 1},
+        query_return={
+            "data": [{"probe_id": "probe-468", "created_at": "2026-06-10T20:00:00Z"}]
+        },
+    )
+
+    result = await probe._probe_with_client(client, "probe-468", "2026-06-10T20:00:00Z")
+
+    assert result.success is True
+
+    insert_kwargs = client.insert_one.call_args
+    inserted_record = (
+        insert_kwargs.args[2]
+        if len(insert_kwargs.args) >= 3
+        else insert_kwargs.kwargs.get("record") or insert_kwargs.args[-1]
+    )
+    assert inserted_record.get("probe_id") == "probe-468", (
+        f"insert record must carry `probe_id`, got {inserted_record!r}"
+    )
+
+    query_kwargs = client.query.call_args.kwargs
+    assert query_kwargs.get("filter") == {"probe_id": "probe-468"}, (
+        f"query filter must key on `probe_id`, got {query_kwargs.get('filter')!r}"
+    )

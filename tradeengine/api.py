@@ -12,7 +12,7 @@ from fastapi.responses import PlainTextResponse
 from opentelemetry import trace
 from pydantic import BaseModel
 
-from shared.constants import UTC, parse_datetime_aware
+from shared.constants import TE_EXCHANGE_TRUTH_STORE_ENABLED, UTC, parse_datetime_aware
 
 # Optional OpenTelemetry imports
 try:
@@ -1421,6 +1421,10 @@ async def get_positions(
         return {
             "status": "success",
             "data": paginated_positions,
+            # AC3 (#459 — 446-C): "source" field indicates the authoritative data source
+            "source": "exchange"
+            if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            else "local",
             "pagination": {
                 "total": total_count,
                 "limit": limit,

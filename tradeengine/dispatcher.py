@@ -1495,6 +1495,15 @@ class Dispatcher:
             if self.exchange and self.exchange.client:
                 self.user_data_consumer = UserDataStreamConsumer(self.exchange)
                 await self.user_data_consumer.start()
+                # AC2/AC4 (#459 — 446-C): inject the live ExchangeTruthStore into
+                # PositionManager and StrategyPositionManager so risk reads can
+                # source from the exchange when TE_EXCHANGE_TRUTH_STORE_ENABLED=on.
+                self.position_manager.exchange_truth_store = (
+                    self.user_data_consumer.store
+                )
+                strategy_position_manager.exchange_truth_store = (
+                    self.user_data_consumer.store
+                )
 
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"

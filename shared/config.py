@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     position_reconciliation_enabled: bool = True
     position_reconciliation_interval_seconds: int = 60
 
+    # AC1 (#459 — 446-C): ExchangeTruthStore read-path feature flag
+    # off = legacy paths unchanged; shadow = log divergence only; on = risk reads from exchange
+    te_exchange_truth_store_enabled: str = "off"
+
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (default — read-only, no writes), "dry_run" (log
     # intended actions, no writes), "arm_only" (re-arm protective stops

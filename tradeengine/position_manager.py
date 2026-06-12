@@ -16,6 +16,7 @@ from shared.constants import (
     MAX_PORTFOLIO_EXPOSURE_PCT,
     MAX_POSITION_SIZE_PCT,
     RISK_MANAGEMENT_ENABLED,
+    TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
     get_mongodb_connection_string,
     redact_uri,
@@ -23,6 +24,7 @@ from shared.constants import (
 
 # Import Data Manager position client
 from shared.mysql_client import position_client
+from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     current_position_size,
     position_commission_usd,
@@ -67,6 +69,9 @@ class PositionManager:
         self.rejection_reason: str | None = (
             None  # Set by check_position_limits on rejection
         )
+        # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
+        # UserDataStreamConsumer starts; None until then.
+        self.exchange_truth_store: ExchangeTruthStore | None = None
 
     async def initialize(self) -> None:
         """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
@@ -1053,8 +1058,23 @@ class PositionManager:
         position_side = "LONG" if order.side == "buy" else "SHORT"
         position_key = (order.symbol, position_side)
 
-        if position_key in self.positions:
-            current_quantity = self.positions[position_key]["quantity"]
+        # AC2 (#459): when flag=on, source existing qty from ExchangeTruthStore.
+        # Local self.positions used as fallback and for off/shadow modes.
+        _use_exchange_qty = (
+            TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            and self.exchange_truth_store is not None
+        )
+        if _use_exchange_qty:
+            _snap = self.exchange_truth_store.get_positions().get(position_key)  # type: ignore[union-attr]
+            current_quantity = _snap.quantity if _snap is not None else 0.0
+            _has_position = _snap is not None
+        else:
+            _has_position = position_key in self.positions
+            current_quantity = (
+                self.positions[position_key]["quantity"] if _has_position else 0.0
+            )
+
+        if _has_position or _use_exchange_qty:
             new_quantity = current_quantity + order.amount
 
             # Get limit from config (symbol-specific or global)
@@ -1063,7 +1083,8 @@ class PositionManager:
             if new_quantity > max_position_size:
                 logger.warning(
                     f"Position size would exceed limit: {order.symbol} {position_side} "
-                    f"current={current_quantity}, new={new_quantity}, max={max_position_size}"
+                    f"current={current_quantity}, new={new_quantity}, max={max_position_size} "
+                    f"(source={'exchange' if _use_exchange_qty else 'local'})"
                 )
                 self.rejection_reason = "absolute_position_size"
                 return False
@@ -1272,11 +1293,34 @@ class PositionManager:
         }
 
     def get_positions(self) -> dict[tuple[str, str], dict[str, Any]]:
-        """Get all current positions
+        """Get all current positions.
 
-        Returns:
-            Dict mapping (symbol, position_side) tuples to position data
+        When TE_EXCHANGE_TRUTH_STORE_ENABLED=on and the store is seeded, returns
+        exchange-authoritative snapshots (AC2/AC3 — #459).  Local self.positions
+        continues to be populated as an audit journal regardless of the flag.
         """
+        if (
+            TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            and self.exchange_truth_store is not None
+        ):
+            snapshots = self.exchange_truth_store.get_positions()
+            return {
+                k: {
+                    "symbol": v.symbol,
+                    "position_side": v.side,
+                    "quantity": v.quantity,
+                    "avg_price": v.entry_price,
+                    "unrealized_pnl": v.unrealized_pnl,
+                    "realized_pnl": 0.0,
+                    "total_cost": 0.0,
+                    "total_value": v.quantity * v.entry_price,
+                    "entry_time": v.updated_at,
+                    "last_update": v.updated_at,
+                    "status": "open",
+                    "source": "exchange",
+                }
+                for k, v in snapshots.items()
+            }
         return self.positions.copy()
 
     def get_position(

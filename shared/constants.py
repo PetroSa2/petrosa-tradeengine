@@ -217,6 +217,14 @@ LLM_REASONING_MODE_ENABLED = (
 )
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
+# AC1 (#459 — 446-C): ExchangeTruthStore read-path feature flag
+# Values: "off" (default) = all read paths unchanged (pure backwards compat)
+#         "shadow" = log divergence between local and exchange state (no behavioral change)
+#         "on" = risk-decision read paths source from ExchangeTruthStore; local DB still populated as audit journal
+TE_EXCHANGE_TRUTH_STORE_ENABLED = os.getenv(
+    "TE_EXCHANGE_TRUTH_STORE_ENABLED", "off"
+).lower()
 BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
 BINANCE_BASE_URL = os.getenv(
     "BINANCE_BASE_URL",

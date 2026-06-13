@@ -73,6 +73,7 @@ class OrderSnapshot:
     status: str
     quantity: float
     price: float
+    position_side: str = "BOTH"
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -157,6 +158,7 @@ class ExchangeTruthStore:
                     status=status,
                     quantity=float(o.get("q", 0)),
                     price=float(o.get("p", 0)),
+                    position_side=o.get("ps", "BOTH").upper(),
                 )
             self._last_updated = datetime.now(UTC)
             self._is_ready = True

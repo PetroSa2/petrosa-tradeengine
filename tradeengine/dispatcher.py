@@ -21,6 +21,7 @@ from tradeengine.metrics import (
     atomic_rollback_failed_total,
     order_execution_latency_seconds,
     order_failures_total,
+    order_placement_skipped_total,
     orders_executed_by_type,
     risk_checks_total,
     risk_rejections_total,
@@ -3334,6 +3335,26 @@ class Dispatcher:
                     "Skipping risk management orders for reduce_only order"
                 )
                 return
+
+            # AC1 (#460): check-before-place — skip if exchange already has a protective order
+            if self.user_data_consumer is not None:
+                _PROTECTIVE_TYPES = frozenset(
+                    {"STOP_MARKET", "STOP", "TAKE_PROFIT_MARKET", "TAKE_PROFIT"}
+                )
+                existing_protective = [
+                    o
+                    for o in self.user_data_consumer.store.get_open_orders(order.symbol)
+                    if o.order_type.upper() in _PROTECTIVE_TYPES
+                ]
+                if existing_protective:
+                    order_placement_skipped_total.labels(reason="already_armed").inc()
+                    self.logger.info(
+                        f"⏭️ Skipping protective order placement for {order.symbol}: "
+                        f"exchange already has {len(existing_protective)} armed protective "
+                        f"order(s) ({[o.order_type for o in existing_protective]}). "
+                        "Skipping to prevent duplicates."
+                    )
+                    return
 
             # Ensure entry_price is a float for OCO math and logging
             # Fallback to order.target_price if fill_price is missing or zero

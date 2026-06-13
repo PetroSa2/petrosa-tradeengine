@@ -245,6 +245,12 @@ order_failures_total = Counter(
     ["symbol", "order_type", "failure_reason", "exchange"],
 )
 
+order_placement_skipped_total = Counter(
+    "tradeengine_order_placement_skipped_total",
+    "Protective order placements skipped because exchange already has an armed order",
+    ["reason"],
+)
+
 # ========================================
 # NATS Heartbeat & Fail-Safe Observability
 # ========================================

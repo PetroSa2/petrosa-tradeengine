@@ -27,6 +27,7 @@ from shared.mysql_client import position_client
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     current_position_size,
+    exchange_truth_shadow_delta_total,
     position_commission_usd,
     position_duration_seconds,
     position_entry_price,
@@ -1298,6 +1299,10 @@ class PositionManager:
         When TE_EXCHANGE_TRUTH_STORE_ENABLED=on and the store is seeded, returns
         exchange-authoritative snapshots (AC2/AC3 — #459).  Local self.positions
         continues to be populated as an audit journal regardless of the flag.
+
+        When TE_EXCHANGE_TRUTH_STORE_ENABLED=shadow, reads BOTH sources, emits
+        tradeengine_exchange_truth_shadow_delta_total on any divergence, and
+        returns local (authority unchanged — AC1 of #461).
         """
         if (
             TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
@@ -1321,6 +1326,53 @@ class PositionManager:
                 }
                 for k, v in snapshots.items()
             }
+
+        # AC1 (#461): shadow mode — compare local vs exchange, emit deltas, return local.
+        if (
+            TE_EXCHANGE_TRUTH_STORE_ENABLED == "shadow"
+            and self.exchange_truth_store is not None
+        ):
+            exchange_snaps = self.exchange_truth_store.get_positions()
+            local_copy = self.positions.copy()
+
+            for key, local_pos in local_copy.items():
+                symbol, side = key
+                exchange_snap = exchange_snaps.get(key)
+                if exchange_snap is None:
+                    exchange_truth_shadow_delta_total.labels(
+                        symbol=symbol, side=side, field="missing_in_exchange"
+                    ).inc()
+                    logger.warning(
+                        "shadow_delta: %s/%s present locally but absent from exchange",
+                        symbol,
+                        side,
+                    )
+                    continue
+                local_qty = float(local_pos.get("quantity", 0))
+                if abs(local_qty - exchange_snap.quantity) > 1e-8:
+                    exchange_truth_shadow_delta_total.labels(
+                        symbol=symbol, side=side, field="quantity"
+                    ).inc()
+                    logger.warning(
+                        "shadow_delta: %s/%s quantity local=%.6f exchange=%.6f",
+                        symbol,
+                        side,
+                        local_qty,
+                        exchange_snap.quantity,
+                    )
+
+            for key in exchange_snaps:
+                if key not in local_copy:
+                    symbol, side = key
+                    exchange_truth_shadow_delta_total.labels(
+                        symbol=symbol, side=side, field="missing_in_local"
+                    ).inc()
+                    logger.warning(
+                        "shadow_delta: %s/%s present on exchange but absent locally",
+                        symbol,
+                        side,
+                    )
+
         return self.positions.copy()
 
     def get_position(

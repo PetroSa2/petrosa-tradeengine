@@ -251,6 +251,12 @@ order_placement_skipped_total = Counter(
     ["reason"],
 )
 
+exchange_truth_shadow_delta_total = Counter(
+    "tradeengine_exchange_truth_shadow_delta_total",
+    "Divergences detected between local registry and ExchangeTruthStore in shadow mode",
+    ["symbol", "side", "field"],
+)
+
 # ========================================
 # NATS Heartbeat & Fail-Safe Observability
 # ========================================

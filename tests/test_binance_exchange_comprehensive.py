@@ -898,14 +898,12 @@ class TestFallbackLogic:
 
         result = await binance_exchange.cancel_order("BTCUSDT", 12345)
         assert result is not None
-        # Should have called _request_futures_api with force_params=True so that
-        # DELETE parameters go in the query string (not the request body)
+        # params= ensures DELETE parameters go in the query string, not the request body
         binance_exchange.client._request_futures_api.assert_called_once_with(
             "delete",
             "algoOrder",
             signed=True,
-            force_params=True,
-            data={"symbol": "BTCUSDT", "algoId": 12345},
+            params={"symbol": "BTCUSDT", "algoId": 12345},
         )
 
     @pytest.mark.asyncio

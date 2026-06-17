@@ -1240,8 +1240,7 @@ class BinanceFuturesExchange:
                         "delete",
                         "algoOrder",
                         signed=True,
-                        force_params=True,
-                        data={"symbol": symbol, "algoId": order_id},
+                        params={"symbol": symbol, "algoId": order_id},
                     )
                     canceled_order_id = result.get("algoId")
                     status = "CANCELED"

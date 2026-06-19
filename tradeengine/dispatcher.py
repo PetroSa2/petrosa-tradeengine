@@ -191,6 +191,47 @@ class OCOManager:
             f"take_profit_price={take_profit_price}, entry_price={entry_price}"
         )
 
+        # Defense-in-depth (#479): when the caller has provided an explicit
+        # entry_price, refuse to ship a known-wrong-side leg. The dispatcher
+        # direction validator at _place_risk_management_orders should already
+        # have corrected wrong-side prices before reaching here — this is the
+        # belt to its braces. We intentionally do NOT fall back to fetching
+        # current market price here because doing so re-triggers on test
+        # mocks where _get_current_price returns a MagicMock float-coerced
+        # to 1.0; the dispatcher already does the market fallback upstream.
+        ref_for_check = entry_price if (entry_price and entry_price > 0) else None
+        if ref_for_check and ref_for_check > 0 and position_side in ("LONG", "SHORT"):
+            sl_wrong = (
+                position_side == "LONG" and stop_loss_price >= ref_for_check
+            ) or (position_side == "SHORT" and stop_loss_price <= ref_for_check)
+            tp_wrong = (
+                position_side == "LONG" and take_profit_price <= ref_for_check
+            ) or (position_side == "SHORT" and take_profit_price >= ref_for_check)
+            if sl_wrong or tp_wrong:
+                self.logger.error(
+                    "OCO REFUSED: %s %s direction inversion detected "
+                    "(ref=%s, SL=%s wrong=%s, TP=%s wrong=%s). Refusing to "
+                    "ship — upstream caller must correct before resubmitting.",
+                    symbol,
+                    position_side,
+                    ref_for_check,
+                    stop_loss_price,
+                    sl_wrong,
+                    take_profit_price,
+                    tp_wrong,
+                )
+                return {
+                    "status": "rejected",
+                    "error": "direction_inversion",
+                    "symbol": symbol,
+                    "position_side": position_side,
+                    "reference_price": ref_for_check,
+                    "stop_loss_price": stop_loss_price,
+                    "take_profit_price": take_profit_price,
+                    "sl_wrong_side": sl_wrong,
+                    "tp_wrong_side": tp_wrong,
+                }
+
         # Determine order sides based on position side
         if position_side == "LONG":
             sl_side = OrderSide.SELL
@@ -3440,35 +3481,90 @@ class Dispatcher:
                     f"Calculated take_profit price: {order.take_profit} from {order.take_profit_pct * 100}%"
                 )
 
-            # SL DIRECTION VALIDATION: Ensure stop-loss is on the correct side of entry
-            # SHORT: SL must be ABOVE entry (STOP_MARKET BUY triggers when price rises)
-            # LONG:  SL must be BELOW entry (STOP_MARKET SELL triggers when price falls)
-            if order.stop_loss and order.stop_loss > 0 and entry_price > 0:
-                is_short = order.side == "sell"
-                sl_direction_wrong = (is_short and order.stop_loss <= entry_price) or (
-                    not is_short and order.stop_loss >= entry_price
+            # SL/TP DIRECTION VALIDATION (#479): always enforce position-side-correct
+            # protective price BEFORE OCO placement. Three robustness gaps the
+            # 2026-06-18 BNB/LTC/LINK incident exposed:
+            #   1. The old guard required entry_price > 0, but fresh MARKET orders
+            #      return result.fill_price=None and target_price=None — entry_price
+            #      collapses to 0 and every check below it short-circuits.
+            #   2. The old guard used order.side ("buy"/"sell"); position_side is
+            #      the unambiguous source of truth ("LONG"/"SHORT").
+            #   3. The old guard only corrected when stop_loss_pct was provided;
+            #      strategies that send absolute SL with no pct hint slipped through
+            #      with a warning, shipping the wrong-side price to the exchange.
+            position_side_for_check: str | None = None
+            if order.position_side:
+                _ps_raw = str(order.position_side).upper()
+                if _ps_raw in ("LONG", "SHORT"):
+                    position_side_for_check = _ps_raw
+            if position_side_for_check is None:
+                position_side_for_check = (
+                    "SHORT" if (order.side or "").lower() == "sell" else "LONG"
                 )
-                if sl_direction_wrong:
-                    original_sl = order.stop_loss
-                    if order.stop_loss_pct and order.stop_loss_pct > 0:
-                        sl_pct = order.stop_loss_pct
-                        order.stop_loss = (
-                            entry_price * (1 + sl_pct)
-                            if is_short
-                            else entry_price * (1 - sl_pct)
-                        )
+
+            reference_price = entry_price
+            if reference_price <= 0 and self.exchange is not None:
+                try:
+                    reference_price = float(
+                        await self.exchange._get_current_price(order.symbol)
+                    )
+                except Exception as ref_err:
+                    self.logger.warning(
+                        f"⚠️ Could not resolve reference price for "
+                        f"{order.symbol} direction check: {ref_err}"
+                    )
+                    reference_price = 0.0
+
+            if reference_price > 0:
+                from shared.config import Settings
+                from tradeengine.risk.sl_tp_direction import (
+                    correct_protective_price,
+                )
+
+                try:
+                    sl_safety_floor_pct = (
+                        float(Settings().te_min_sl_distance_pct) / 100.0
+                    )
+                except Exception:
+                    sl_safety_floor_pct = 0.06
+
+                if order.stop_loss and order.stop_loss > 0:
+                    sl_corr = correct_protective_price(
+                        kind="SL",
+                        position_side=position_side_for_check,  # type: ignore[arg-type]
+                        requested_price=float(order.stop_loss),
+                        requested_pct=order.stop_loss_pct,
+                        reference_price=reference_price,
+                        min_distance_pct=sl_safety_floor_pct,
+                    )
+                    if sl_corr.was_corrected:
                         self.logger.warning(
-                            f"⚠️ SL DIRECTION FIX: {'SHORT' if is_short else 'LONG'} "
-                            f"stop_loss {original_sl} was on wrong side of entry {entry_price}. "
-                            f"Recalculated to {order.stop_loss} using pct={sl_pct * 100:.1f}%"
+                            f"⚠️ SL DIRECTION FIX ({position_side_for_check}): "
+                            f"{sl_corr.reason}"
                         )
-                    else:
+                        order.stop_loss = sl_corr.price
+
+                if order.take_profit and order.take_profit > 0:
+                    tp_corr = correct_protective_price(
+                        kind="TP",
+                        position_side=position_side_for_check,  # type: ignore[arg-type]
+                        requested_price=float(order.take_profit),
+                        requested_pct=order.take_profit_pct,
+                        reference_price=reference_price,
+                        min_distance_pct=0.0,
+                    )
+                    if tp_corr.was_corrected:
                         self.logger.warning(
-                            f"⚠️ SL DIRECTION WARNING: {'SHORT' if is_short else 'LONG'} "
-                            f"stop_loss {original_sl} is on wrong side of entry {entry_price} "
-                            f"and stop_loss_pct is not set — keeping provided value to avoid "
-                            f"unintended risk changes. Verify signal source."
+                            f"⚠️ TP DIRECTION FIX ({position_side_for_check}): "
+                            f"{tp_corr.reason}"
                         )
+                        order.take_profit = tp_corr.price
+            else:
+                self.logger.warning(
+                    f"⚠️ Skipping SL/TP direction check for {order.symbol}: "
+                    f"no reference price available (entry={entry_price}, "
+                    f"market fetch failed). Risk orders may be wrong-side."
+                )
 
             # Check if both SL and TP are specified for OCO behavior
             if (

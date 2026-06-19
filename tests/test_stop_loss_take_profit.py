@@ -547,7 +547,11 @@ async def test_sl_direction_fix_short_sl_below_entry_is_corrected(
     entry_price = 70900.0
     wrong_sl = 70785.4  # Below entry — wrong for SHORT
     stop_loss_pct = 0.02  # 2%
-    expected_sl = entry_price * (1 + stop_loss_pct)  # 72318.0 — above entry
+    # Per #479: when the strategy pct is below the binance safety floor
+    # (TE_MIN_SL_DISTANCE_PCT, default 6%) the corrected SL is clamped to the
+    # floor so it survives the downstream PERCENT_PRICE+safety-floor check.
+    safety_floor = 0.06
+    expected_sl = entry_price * (1 + max(stop_loss_pct, safety_floor))  # 75154.0
 
     short_order = TradeOrder(
         position_id="test-short-btc",
@@ -600,7 +604,9 @@ async def test_sl_direction_fix_long_sl_above_entry_is_corrected(dispatcher_with
     entry_price = 50000.0
     wrong_sl = 51000.0  # Above entry — wrong for LONG
     stop_loss_pct = 0.02
-    expected_sl = entry_price * (1 - stop_loss_pct)  # 49000.0
+    # Per #479: corrected SL is clamped to safety floor (6%) when pct is below.
+    safety_floor = 0.06
+    expected_sl = entry_price * (1 - max(stop_loss_pct, safety_floor))  # 47000.0
 
     long_order = TradeOrder(
         position_id="test-long-btc",

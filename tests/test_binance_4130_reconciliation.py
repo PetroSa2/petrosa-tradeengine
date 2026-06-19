@@ -15,36 +15,38 @@ exchange truth (/openOrders + /openAlgoOrders) BEFORE retrying:
 - Other Binance error codes are NOT affected (regression guard).
 """
 
-import sys
-from unittest.mock import AsyncMock, MagicMock, Mock
+# `tests/test_binance_exchange_comprehensive.py` does module-level monkey-patching
+# of ``sys.modules["binance"]`` BEFORE importing the production module, which is
+# what binds ``BinanceAPIException`` inside ``tradeengine.exchange.binance``. If
+# two test files each install their own mock class, pytest's alphabetical
+# collection order causes a race: whichever module is collected first binds its
+# class to production, and the other file's tests raise a different class that
+# production's ``except BinanceAPIException`` no longer matches. To avoid the
+# race we import the comprehensive test module FIRST (forcing its mocks to be
+# the canonical ones) and reuse its ``MockBinanceAPIException`` here. This is
+# the cheapest, narrowest fix; the proper solution is to lift the mock setup
+# into ``conftest.py``, but that is out of scope for this ticket.
+from unittest.mock import Mock  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-mock_binance = MagicMock()
-mock_binance.exceptions = MagicMock()
-sys.modules["binance"] = mock_binance
-sys.modules["binance.exceptions"] = mock_binance.exceptions
-mock_binance.enums = MagicMock()
-mock_binance.enums.FUTURE_ORDER_TYPE_STOP = "STOP"
-mock_binance.enums.FUTURE_ORDER_TYPE_STOP_MARKET = "STOP_MARKET"
-mock_binance.enums.FUTURE_ORDER_TYPE_TAKE_PROFIT = "TAKE_PROFIT"
-mock_binance.enums.FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET = "TAKE_PROFIT_MARKET"
-sys.modules["binance.enums"] = mock_binance.enums
-
-
-class _MockBinanceAPIException(Exception):
-    def __init__(self, code: int, message: str = ""):
-        self.code = code
-        self.message = message
-        super().__init__(message or f"code={code}")
-
-
-mock_binance.exceptions.BinanceAPIException = _MockBinanceAPIException
-
-from tradeengine.exchange.binance import BinanceFuturesExchange  # noqa: E402
+import tests.test_binance_exchange_comprehensive as _shared_mocks  # noqa: E402, F401
+from tradeengine.exchange.binance import (
+    BinanceAPIException,  # noqa: E402
+    BinanceFuturesExchange,  # noqa: E402
+)
 from tradeengine.metrics import binance_4130_resolution_total  # noqa: E402
 
-BinanceAPIException = _MockBinanceAPIException
+
+def _make_api_exc(code: int, message: str = "") -> BinanceAPIException:
+    """Build a ``BinanceAPIException`` using the shared mock class signature
+    (response_dict, message). ``e.code`` is force-set defensively so the test
+    contract holds regardless of which mock signature actually wins the
+    sys.modules race at collection time.
+    """
+    exc = BinanceAPIException({"code": code}, message or f"code={code}")
+    exc.code = code
+    return exc
 
 
 def _counter_value(outcome: str, symbol: str) -> float:
@@ -97,7 +99,7 @@ class TestAlreadyProtectedViaOpenOrders:
         }
         exchange.client.futures_get_open_orders = Mock(return_value=[existing])
 
-        func = Mock(side_effect=BinanceAPIException(-4130, "already existing"))
+        func = Mock(side_effect=_make_api_exc(-4130, "already existing"))
 
         result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
 
@@ -127,7 +129,7 @@ class TestAlreadyProtectedViaOpenOrders:
             ]
         )
         result = await exchange._execute_with_retry(
-            Mock(side_effect=BinanceAPIException(-4130, "already existing")),
+            Mock(side_effect=_make_api_exc(-4130, "already existing")),
             **ALGO_PARAMS,
         )
         assert isinstance(result, dict)
@@ -152,7 +154,7 @@ class TestAlreadyProtectedViaAlgoOrders:
         exchange.client.futures_get_open_orders = Mock(return_value=[])
         exchange.client._request_futures_api = Mock(return_value=[algo_order])
 
-        func = Mock(side_effect=BinanceAPIException(-4130, "already existing"))
+        func = Mock(side_effect=_make_api_exc(-4130, "already existing"))
 
         result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
 
@@ -181,9 +183,7 @@ class TestNoMatchFallsThroughToRetry:
 
         baseline_ok = _counter_value("retry_succeeded", "BTCUSDT")
         success = {"algoId": 42, "status": "NEW", "algoStatus": "NEW"}
-        func = Mock(
-            side_effect=[BinanceAPIException(-4130, "already existing"), success]
-        )
+        func = Mock(side_effect=[_make_api_exc(-4130, "already existing"), success])
 
         result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
 
@@ -201,7 +201,7 @@ class TestNoMatchFallsThroughToRetry:
         monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
 
         baseline_fail = _counter_value("retry_failed", "BTCUSDT")
-        func = Mock(side_effect=BinanceAPIException(-4130, "already existing"))
+        func = Mock(side_effect=_make_api_exc(-4130, "already existing"))
 
         with pytest.raises(BinanceAPIException) as excinfo:
             await exchange._execute_with_retry(func, **ALGO_PARAMS)
@@ -235,7 +235,7 @@ class TestConflictingOrderDetected:
         # Eventually succeed on retry so the wrapper exits cleanly.
         func = Mock(
             side_effect=[
-                BinanceAPIException(-4130, "already existing"),
+                _make_api_exc(-4130, "already existing"),
                 {"algoId": 7, "status": "NEW", "algoStatus": "NEW"},
             ]
         )
@@ -257,7 +257,7 @@ class TestUnrelatedErrorsUnchanged:
 
     @pytest.mark.asyncio
     async def test_non_retryable_code_still_raises_immediately(self, exchange):
-        func = Mock(side_effect=BinanceAPIException(-2010, "insufficient balance"))
+        func = Mock(side_effect=_make_api_exc(-2010, "insufficient balance"))
 
         with pytest.raises(BinanceAPIException) as excinfo:
             await exchange._execute_with_retry(func, **ALGO_PARAMS)
@@ -282,7 +282,7 @@ class TestUnrelatedErrorsUnchanged:
 
         func = Mock(
             side_effect=[
-                BinanceAPIException(-4130, "already existing"),
+                _make_api_exc(-4130, "already existing"),
                 {"orderId": 99, "status": "NEW"},
             ]
         )

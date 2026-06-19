@@ -289,6 +289,18 @@ exchange_truth_shadow_delta_total = Counter(
     ["symbol", "side", "field"],
 )
 
+# Per #483: outcome of -4130 ("already existing") retry reconciliation against
+# /openOrders + /openAlgoOrders truth. Outcomes:
+#   - already_protected: matching closePosition stop/TP found → no retry, early success.
+#   - retry_succeeded:   no match found → fell through to backoff retry → succeeded.
+#   - retry_failed:      no match found → fell through to backoff retry → all attempts failed.
+#   - conflicting_order: a non-matching order occupies the slot; logged for investigation.
+binance_4130_resolution_total = Counter(
+    "tradeengine_binance_4130_resolution_total",
+    "Outcome of -4130 'already existing' retry reconciliation against /openOrders + /openAlgoOrders truth",
+    ["outcome", "symbol"],
+)
+
 # ========================================
 # NATS Heartbeat & Fail-Safe Observability
 # ========================================

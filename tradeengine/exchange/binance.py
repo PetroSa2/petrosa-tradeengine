@@ -616,9 +616,126 @@ class BinanceFuturesExchange:
         )
         return cast(dict[str, Any], result)
 
+    async def _reconcile_4130_against_truth(
+        self,
+        symbol: str,
+        side: str,
+        position_side: Any,
+        order_type: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Reconcile a -4130 'already existing' error against exchange truth.
+
+        Per #483, before retrying a -4130 the exchange layer asks Binance whether the
+        protective order it complained about actually exists. AC1 reads
+        ``GET /fapi/v1/openOrders`` and AC3 also reads ``GET /openAlgoOrders`` because
+        CONDITIONAL closePosition algo orders do not appear in the standard
+        ``/openOrders`` list and are the most likely source of the "phantom existing"
+        order observed in the 2026-06-18 testnet evidence.
+
+        Outcomes:
+
+        - ``already_protected``: a closePosition order of the same kind (stop vs TP)
+          on the same ``(symbol, side, positionSide)`` already exists. The new
+          placement is redundant; the caller should treat the existing order as the
+          resolution.
+        - ``conflicting_order_detected``: a different protective order is in the slot
+          Binance is guarding (wrong kind, wrong ``positionSide``, or
+          ``closePosition=False`` partial close on the same side). The caller should
+          log the conflicting ``clientOrderId`` and fall through to backoff retry.
+        - ``none_found``: no protective order is present. The -4130 was phantom (most
+          likely eventual-consistency lag against a fill/cancel). The caller should
+          retry with the existing backoff.
+        """
+
+        def _classify_kind(t: Any) -> str:
+            tu = str(t or "").upper()
+            if tu in ("STOP_MARKET", "STOP"):
+                return "stop"
+            if tu in ("TAKE_PROFIT_MARKET", "TAKE_PROFIT"):
+                return "tp"
+            return "other"
+
+        placement_kind = _classify_kind(order_type)
+
+        def _is_close_position(o: dict[str, Any]) -> bool:
+            v = o.get("closePosition")
+            return v in (True, "true", "True")
+
+        side_upper = str(side or "").upper()
+
+        def _matches_direction(o: dict[str, Any]) -> bool:
+            if str(o.get("side", "")).upper() != side_upper:
+                return False
+            # Hedge mode: positionSide is set on both placement and the response.
+            if position_side is not None:
+                return (
+                    str(o.get("positionSide", "")).upper() == str(position_side).upper()
+                )
+            # One-way mode: response uses "BOTH" (or is empty).
+            ps = str(o.get("positionSide", "")).upper()
+            return ps in ("", "BOTH")
+
+        matches: list[dict[str, Any]] = []
+        conflicts: list[dict[str, Any]] = []
+
+        if self.client is None:
+            return "none_found", None
+
+        # AC1: standard open orders.
+        try:
+            std_orders = self.client.futures_get_open_orders(symbol=symbol) or []
+        except Exception as exc:
+            logger.warning(f"4130 reconcile: futures_get_open_orders failed: {exc}")
+            std_orders = []
+
+        # AC3: algo orders (CONDITIONAL closePosition stops/TPs live here).
+        try:
+            algo_orders = await self.get_open_algo_orders(symbol=symbol) or []
+        except Exception as exc:
+            logger.warning(f"4130 reconcile: get_open_algo_orders failed: {exc}")
+            algo_orders = []
+
+        symbol_upper = str(symbol or "").upper()
+
+        for o in list(std_orders) + list(algo_orders):
+            if str(o.get("symbol", "")).upper() != symbol_upper:
+                continue
+            kind = _classify_kind(o.get("type"))
+            if kind == "other":
+                continue
+            if not _is_close_position(o):
+                # Same kind on same direction but reduceOnly partial — still
+                # occupies the slot from Binance's perspective.
+                if kind == placement_kind and _matches_direction(o):
+                    conflicts.append(o)
+                continue
+            if kind == placement_kind and _matches_direction(o):
+                matches.append(o)
+            else:
+                conflicts.append(o)
+
+        if matches:
+            return "already_protected", matches[0]
+        if conflicts:
+            return "conflicting_order_detected", conflicts[0]
+        return "none_found", None
+
     async def _execute_with_retry(self, func: Any, **kwargs: Any) -> Any:
-        """Execute function with retry logic"""
+        """Execute function with retry logic.
+
+        Per #483: when the underlying ``func`` is the algo-order placement endpoint
+        (identified by the ``closePosition=True`` parameter) and Binance reports
+        ``-4130`` ('already existing'), reconcile against exchange truth
+        (``/openOrders`` + ``/openAlgoOrders``) BEFORE retrying. If a matching
+        ``closePosition`` stop/TP already exists, treat the call as success —
+        skipping a naive retry that would just hit the same conflict.
+        """
         last_exception: Exception | None = None
+        # Per #483: track -4130 across attempts so the terminal counter can tag
+        # retry_succeeded vs retry_failed.
+        saw_4130 = False
+        is_algo_order = kwargs.get("closePosition") in (True, "true", "True")
+        symbol_for_metric = str(kwargs.get("symbol") or "unknown")
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
@@ -632,6 +749,19 @@ class BinanceFuturesExchange:
                 ):
                     headers = getattr(self.client.response, "headers", {})
                     await self.rate_monitor.update_from_headers(headers)
+
+                if saw_4130:
+                    try:
+                        from tradeengine.metrics import (
+                            binance_4130_resolution_total,
+                        )
+
+                        binance_4130_resolution_total.labels(
+                            outcome="retry_succeeded",
+                            symbol=symbol_for_metric,
+                        ).inc()
+                    except Exception:  # pragma: no cover - metrics never crash hot path
+                        pass
 
                 return result
             except BinanceAPIException as e:
@@ -655,6 +785,83 @@ class BinanceFuturesExchange:
                         f"This error cannot be fixed by retrying."
                     )
                     raise
+
+                # Per #483: -4130 on an algo-order placement -> reconcile against
+                # truth (/openOrders + /openAlgoOrders) BEFORE retrying.
+                if e.code == -4130 and is_algo_order:
+                    saw_4130 = True
+                    try:
+                        outcome, payload = await self._reconcile_4130_against_truth(
+                            symbol=str(kwargs.get("symbol", "")),
+                            side=str(kwargs.get("side", "")),
+                            position_side=kwargs.get("positionSide"),
+                            order_type=str(kwargs.get("type", "")),
+                        )
+                    except Exception as reconcile_exc:
+                        logger.warning(
+                            "-4130 reconciliation failed (continuing with normal "
+                            f"retry): {reconcile_exc}"
+                        )
+                        outcome, payload = "none_found", None
+
+                    if outcome == "already_protected" and payload is not None:
+                        existing_id = (
+                            payload.get("algoId")
+                            or payload.get("orderId")
+                            or payload.get("clientOrderId")
+                        )
+                        logger.info(
+                            "4130_already_protected: matching closePosition order "
+                            f"already exists for {kwargs.get('symbol')} "
+                            f"{kwargs.get('positionSide') or kwargs.get('side')} "
+                            f"(id={existing_id}); skipping retry."
+                        )
+                        try:
+                            from tradeengine.metrics import (
+                                binance_4130_resolution_total,
+                            )
+
+                            binance_4130_resolution_total.labels(
+                                outcome="already_protected",
+                                symbol=symbol_for_metric,
+                            ).inc()
+                        except Exception:  # pragma: no cover
+                            pass
+                        # Mirror the algo-order POST response shape so downstream
+                        # isinstance(result, dict) + id extraction continue to work.
+                        return {
+                            "algoId": existing_id,
+                            "orderId": existing_id,
+                            "status": "ALREADY_EXISTS",
+                            "algoStatus": "ALREADY_EXISTS",
+                            "reconciled": True,
+                            "matched_order": payload,
+                        }
+
+                    if outcome == "conflicting_order_detected" and payload is not None:
+                        conflicting_client_id = payload.get(
+                            "clientOrderId"
+                        ) or payload.get("clientAlgoId")
+                        logger.warning(
+                            "conflicting_order_detected: -4130 received but truth "
+                            "shows a non-matching order on "
+                            f"{kwargs.get('symbol')} "
+                            f"{kwargs.get('positionSide') or kwargs.get('side')}; "
+                            f"conflicting_clientOrderId={conflicting_client_id}. "
+                            "Falling through to normal retry."
+                        )
+                        try:
+                            from tradeengine.metrics import (
+                                binance_4130_resolution_total,
+                            )
+
+                            binance_4130_resolution_total.labels(
+                                outcome="conflicting_order",
+                                symbol=symbol_for_metric,
+                            ).inc()
+                        except Exception:  # pragma: no cover
+                            pass
+
                 last_exception = e
             except Exception as e:
                 last_exception = e
@@ -666,6 +873,17 @@ class BinanceFuturesExchange:
                     f"{wait_time}s: {last_exception}"
                 )
                 await asyncio.sleep(wait_time)
+
+        if saw_4130:
+            try:
+                from tradeengine.metrics import binance_4130_resolution_total
+
+                binance_4130_resolution_total.labels(
+                    outcome="retry_failed",
+                    symbol=symbol_for_metric,
+                ).inc()
+            except Exception:  # pragma: no cover
+                pass
 
         if last_exception is None:
             raise RuntimeError("No exception captured during retry")

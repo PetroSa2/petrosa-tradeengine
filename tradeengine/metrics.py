@@ -142,13 +142,17 @@ active_oco_pairs_per_position = Gauge(
     ["symbol", "position_side", "exchange"],
 )
 
-# #425 (RC#1 of #424): orphan leg from partial OCO failure that could not be cancelled.
-# Incremented when one leg posts, the counterpart fails, and the surviving-leg cancel
-# attempt itself errors — i.e., the position remains unhedged on Binance.
+# #425 (RC#1 of #424) + #482 AC2: orphan leg from partial OCO failure.
+# Incremented every time one leg posts and the counterpart fails. The
+# cancel_outcome label distinguishes between (a) we cancelled the orphan
+# cleanly (cancel_outcome="success") and (b) the surviving-leg cancel itself
+# errored so the position remains unhedged on Binance (cancel_outcome="failed").
+# Operators alert on the failed bucket; success-bucket counts are visibility
+# into how often the OCO path is non-atomic at the exchange.
 oco_orphan_leg_total = Counter(
     "petrosa_tradeengine_oco_orphan_leg_total",
-    "OCO partial-failure events where the surviving leg could not be cancelled",
-    ["symbol", "side", "leg"],
+    "OCO partial-failure events split by surviving-leg cancel outcome",
+    ["symbol", "side", "leg", "cancel_outcome"],
 )
 
 # #426 (RC#2 of #424): the atomic-rollback path itself failed — the

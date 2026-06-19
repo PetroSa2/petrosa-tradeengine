@@ -169,6 +169,34 @@ position_persist_failed_total = Counter(
     ["symbol", "position_side", "operation", "reason"],
 )
 
+# #480 — StrategyPositionManager ghost evictions. A strategy position is a
+# "ghost" when StrategyPositionManager has it open but no matching position
+# exists in the ExchangeTruthStore. The reconciler removes ghosts older than
+# the min-age threshold and increments this counter per eviction.
+strategy_position_ghost_evicted_total = Counter(
+    "petrosa_tradeengine_strategy_position_ghost_evicted_total",
+    "Strategy positions evicted as ghosts (no matching exchange position)",
+    ["symbol", "side", "reason"],
+)
+
+# #480 — Strategy-layer reconciliation runs. Result label:
+# "ok"                      — pass completed (eviction count is on the ghost counter)
+# "error"                   — exception during pass
+# "skipped_store_not_ready" — ExchangeTruthStore not ready yet (post-boot grace)
+strategy_position_reconcile_runs_total = Counter(
+    "petrosa_tradeengine_strategy_position_reconcile_runs_total",
+    "Strategy-layer reconciliation runs",
+    ["result"],
+)
+
+# #480 — current number of strategy positions with no matching exchange
+# position (pre-eviction view, refreshed each pass). Useful for alerting when
+# ghosts accumulate faster than the reconciler can age them out.
+strategy_position_ghost_gauge = Gauge(
+    "petrosa_tradeengine_strategy_position_ghost_count",
+    "Current count of strategy positions with no matching exchange position",
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================

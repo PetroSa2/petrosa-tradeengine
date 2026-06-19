@@ -38,6 +38,10 @@ def _mocks(memory=None, mysql=None, exchange_raises=False, binance_open_ids=None
     spm = MagicMock()
     spm.get_all_open_strategy_positions.return_value = memory or []
     spm.close_strategy_position = AsyncMock()
+    # AC3 of #480: when remediation captures a real algo-id, it
+    # propagates back via set_strategy_position_orders.  Tests mock it
+    # so propagation is observable without touching real validation.
+    spm.set_strategy_position_orders = AsyncMock()
 
     pc = MagicMock()
     pc.get_open_positions = AsyncMock(return_value=mysql or [])
@@ -46,7 +50,13 @@ def _mocks(memory=None, mysql=None, exchange_raises=False, binance_open_ids=None
     if exchange_raises:
         exc.execute = AsyncMock(side_effect=Exception("exchange error"))
     else:
-        exc.execute = AsyncMock(return_value={"order_id": "mock-order-id"})
+        # AC3 of #480: remediation now requires the exchange response to
+        # carry a real Binance algo-order ID (13+ digits) before declaring
+        # sl/tp placement successful.  The default mock returns a real-
+        # shaped id so success-path tests keep their original semantics;
+        # the dedicated null-response test below shows the atomicity
+        # contract in action.
+        exc.execute = AsyncMock(return_value={"order_id": "1398104567890999"})
     # AC3 of #424: stops-health now verifies stored sl/tp ids against
     # the on-Binance open-order set; tests must seed this explicitly so
     # the verified-healthy path can be exercised.
@@ -351,3 +361,107 @@ async def test_set_strategy_position_orders_validates_via_pydantic():
             sl_order_id="2022.6338",
         )
     assert "Binance algo-order ID" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# AC3 of #480 — Atomic boolean+order_id contract in remediation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ac3_480_remediation_with_null_order_id_does_not_lie():
+    """AC3 of #480: if exchange.execute() succeeds but returns no real
+    algo-id (the 2026-06-18 testnet symptom), the response must NOT
+    claim has_sl_order=true while sl_order_id stays null.  Atomic
+    contract: boolean and id are set together or not at all."""
+    pos = _pos(
+        sl_order_id=None,
+        tp_order_id=None,
+        stop_loss_price=45000.0,
+        take_profit_price=55000.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    # Override execute to return success-status but null order_id, which
+    # is the exact failure mode the production logs surfaced.
+    exc.execute = AsyncMock(return_value={"order_id": None, "status": "NEW"})
+
+    resp = await check_position_stops(spm, pc, exc, pub)
+
+    p = resp.positions[0]
+    # The position must NOT be reported as protected — both sides
+    # remained null, so the booleans must be false and remediation must
+    # have escalated to force-close.
+    assert p.has_sl_order is False
+    assert p.has_tp_order is False
+    assert p.sl_order_id is None
+    assert p.tp_order_id is None
+    assert p.remediation_outcome == "position_closed"
+    spm.close_strategy_position.assert_called_once()
+    # The strategy-position setter must NOT have been called with null
+    # ids — the atomic contract is "set together or not at all".
+    spm.set_strategy_position_orders.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ac3_480_remediation_with_real_id_propagates_atomically():
+    """AC3 of #480: when remediation captures a real algo-id, the
+    response must reflect (has_sl_order=True AND sl_order_id=<that id>)
+    AND the id must be propagated back to the StrategyPositionManager
+    so the next cycle is idempotent."""
+    pos = _pos(
+        sl_order_id=None, tp_order_id="1398104567890999", stop_loss_price=45000.0
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos], binance_open_ids={"1398104567890999"})
+    exc.execute = AsyncMock(return_value={"order_id": "1398111122223333"})
+
+    resp = await check_position_stops(spm, pc, exc, pub)
+
+    p = resp.positions[0]
+    # AC3 atomic contract — both must be set in lockstep
+    assert p.has_sl_order is True
+    assert p.sl_order_id == "1398111122223333"
+    assert p.remediation_outcome == "sl_placed"
+    # Setter must have been called to propagate the captured id.
+    spm.set_strategy_position_orders.assert_awaited_once()
+    kwargs = spm.set_strategy_position_orders.call_args.kwargs
+    assert kwargs["strategy_position_id"] == "pos-1"
+    assert kwargs["sl_order_id"] == "1398111122223333"
+
+
+@pytest.mark.asyncio
+async def test_ac3_480_atomicity_preserved_even_if_setter_raises():
+    """AC3 of #480: a manager-side failure mid-remediation must NOT
+    create a (has_sl_order=True, sl_order_id=null) inconsistency.  The
+    response variables are mirrored from the captured id BEFORE the
+    setter is invoked so a setter exception is observability-only."""
+    pos = _pos(
+        sl_order_id=None,
+        tp_order_id=None,
+        stop_loss_price=45000.0,
+        take_profit_price=55000.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    # Return distinct real-shaped ids so we can verify which one ended
+    # up in the response.
+    sl_id = "1398111122220001"
+    tp_id = "1398111122220002"
+    exc.execute = AsyncMock(
+        side_effect=[
+            {"order_id": sl_id},
+            {"order_id": tp_id},
+        ]
+    )
+    spm.set_strategy_position_orders = AsyncMock(
+        side_effect=RuntimeError("manager exploded")
+    )
+
+    resp = await check_position_stops(spm, pc, exc, pub)
+
+    p = resp.positions[0]
+    assert p.has_sl_order is True
+    assert p.has_tp_order is True
+    # Even though the setter raised, the response carries the captured
+    # ids — atomicity holds end-to-end.
+    assert p.sl_order_id == sl_id
+    assert p.tp_order_id == tp_id
+    assert p.remediation_outcome == "both_placed"

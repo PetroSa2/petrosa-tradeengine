@@ -37,6 +37,7 @@ from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
 from tradeengine.strategy_position_manager import strategy_position_manager
+from tradeengine.strategy_position_reconciler import StrategyPositionReconciler
 
 # Prometheus metrics for signal flow tracking
 signals_received = Counter(
@@ -1448,6 +1449,9 @@ class Dispatcher:
         self.order_to_strategy_position: dict[str, str] = {}
 
         self.user_data_consumer: UserDataStreamConsumer | None = None
+        # #480 — periodic ghost-position eviction for the strategy-layer
+        # tracker.  Started after user_data_consumer wires the truth store.
+        self.strategy_position_reconciler: StrategyPositionReconciler | None = None
 
         # Initialize Heartbeat Monitor for ecosystem fail-safe (AC: Gate behind nats_enabled)
         self.heartbeat_monitor = None
@@ -1547,6 +1551,25 @@ class Dispatcher:
                     self.user_data_consumer.store
                 )
 
+                # #480 — start the strategy-layer ghost reconciler now that
+                # the truth store is available.  AC1 runs an immediate pass
+                # inside start() so any positions left over from a previous
+                # boot get reconciled before the dispatcher accepts work.
+                self.strategy_position_reconciler = StrategyPositionReconciler(
+                    strategy_pos_manager=strategy_position_manager,
+                    store=self.user_data_consumer.store,
+                )
+                try:
+                    await self.strategy_position_reconciler.start()
+                except Exception as recon_err:
+                    # Reconciler is a safety net — never block startup if
+                    # the first pass hiccups (e.g. truth store still warming
+                    # up).  The periodic loop will pick up on the next tick.
+                    self.logger.warning(
+                        "StrategyPositionReconciler start failed (non-fatal): %s",
+                        recon_err,
+                    )
+
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"
             )
@@ -1559,6 +1582,8 @@ class Dispatcher:
         try:
             if self.heartbeat_monitor is not None:
                 await self.heartbeat_monitor.stop()
+            if self.strategy_position_reconciler is not None:
+                await self.strategy_position_reconciler.stop()
             if self.user_data_consumer is not None:
                 await self.user_data_consumer.stop()
             await self.order_manager.close()

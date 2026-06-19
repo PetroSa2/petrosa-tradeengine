@@ -125,15 +125,21 @@ async def test_both_legs_fail_does_not_call_cancel(
 async def test_orphan_counter_increments_when_cancel_raises(
     logger: logging.Logger,
 ) -> None:
-    """When the cancel itself raises, ``oco_orphan_leg_total`` MUST tick."""
+    """When the cancel itself raises, ``oco_orphan_leg_total{cancel_outcome=failed}`` MUST tick."""
     from tradeengine.metrics import oco_orphan_leg_total
 
     exch = _make_exchange(sl_ok=True, tp_ok=False)
     exch.client._request_futures_api.side_effect = RuntimeError("binance down")
     oco = OCOManager(exchange=exch, logger=logger)
 
-    sample = oco_orphan_leg_total.labels(symbol="BCHUSDT", side="LONG", leg="SL")
-    before = sample._value.get()
+    failed_sample = oco_orphan_leg_total.labels(
+        symbol="BCHUSDT", side="LONG", leg="SL", cancel_outcome="failed"
+    )
+    success_sample = oco_orphan_leg_total.labels(
+        symbol="BCHUSDT", side="LONG", leg="SL", cancel_outcome="success"
+    )
+    before_failed = failed_sample._value.get()
+    before_success = success_sample._value.get()
     result = await oco.place_oco_orders(
         position_id="ac1-cancel-failed",
         symbol="BCHUSDT",
@@ -142,7 +148,50 @@ async def test_orphan_counter_increments_when_cancel_raises(
         stop_loss_price=300.0,
         take_profit_price=310.0,
     )
-    after = sample._value.get()
+    after_failed = failed_sample._value.get()
+    after_success = success_sample._value.get()
 
     assert result["status"] == "failed"
-    assert after - before == 1.0
+    assert after_failed - before_failed == 1.0
+    # success bucket must NOT tick when cancel raised
+    assert after_success - before_success == 0.0
+
+
+@pytest.mark.asyncio
+async def test_orphan_counter_increments_when_cancel_succeeds(
+    logger: logging.Logger,
+) -> None:
+    """#482 AC2: cancel_outcome="success" bucket ticks when cancel goes through cleanly."""
+    from tradeengine.metrics import oco_orphan_leg_total
+
+    exch = _make_exchange(sl_ok=False, tp_ok=True)
+    oco = OCOManager(exchange=exch, logger=logger)
+
+    success_sample = oco_orphan_leg_total.labels(
+        symbol="ETHUSDT", side="SHORT", leg="TP", cancel_outcome="success"
+    )
+    failed_sample = oco_orphan_leg_total.labels(
+        symbol="ETHUSDT", side="SHORT", leg="TP", cancel_outcome="failed"
+    )
+    before_success = success_sample._value.get()
+    before_failed = failed_sample._value.get()
+    result = await oco.place_oco_orders(
+        position_id="ac2-cancel-success",
+        symbol="ETHUSDT",
+        position_side="SHORT",
+        quantity=0.22,
+        stop_loss_price=2500.0,
+        take_profit_price=2400.0,
+    )
+    after_success = success_sample._value.get()
+    after_failed = failed_sample._value.get()
+
+    assert result["status"] == "failed"
+    # surviving TP leg was cancelled cleanly → success bucket ticks
+    assert after_success - before_success == 1.0
+    # failed bucket must NOT tick when cancel went through
+    assert after_failed - before_failed == 0.0
+    # And the cancel call itself was issued with the right algoId
+    assert exch.client._request_futures_api.call_count == 1
+    call = exch.client._request_futures_api.call_args
+    assert call.kwargs["data"]["algoId"] == "1000000091274546"

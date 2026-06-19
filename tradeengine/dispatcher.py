@@ -389,6 +389,8 @@ class OCOManager:
                         f"(algoId={surviving_id}) but counterparty failed for "
                         f"{symbol} {position_side}. Cancelling surviving leg."
                     )
+                    from tradeengine.metrics import oco_orphan_leg_total
+
                     try:
                         self.exchange.client._request_futures_api(
                             "delete",
@@ -401,16 +403,28 @@ class OCOManager:
                             f"✅ Cancelled orphan {leg_label} algoId={surviving_id} "
                             f"for {symbol} {position_side}"
                         )
+                        # #482 AC2: every partial-OCO event ticks the counter so
+                        # operators can see how often the path is non-atomic at
+                        # the exchange, not just the unrecoverable subset.
+                        oco_orphan_leg_total.labels(
+                            symbol=symbol,
+                            side=position_side,
+                            leg=leg_label,
+                            cancel_outcome="success",
+                        ).inc()
                     except Exception as cancel_err:
-                        from tradeengine.metrics import oco_orphan_leg_total
-
                         self.logger.error(
                             f"❌ FAILED to cancel orphan {leg_label} "
                             f"algoId={surviving_id} for {symbol} {position_side}: "
                             f"{cancel_err}"
                         )
+                        # #482 AC2: cancel_outcome="failed" is the alert bucket
+                        # — surviving leg still on Binance, position unhedged.
                         oco_orphan_leg_total.labels(
-                            symbol=symbol, side=position_side, leg=leg_label
+                            symbol=symbol,
+                            side=position_side,
+                            leg=leg_label,
+                            cancel_outcome="failed",
                         ).inc()
 
                 self.logger.error("❌ FAILED TO PLACE OCO ORDERS")

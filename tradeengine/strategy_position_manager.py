@@ -638,6 +638,48 @@ class StrategyPositionManager:
             if pos.get("status") == "open"
         ]
 
+    async def evict_ghost_position(
+        self, strategy_position_id: str, reason: str = "no_exchange_position"
+    ) -> bool:
+        """Evict a strategy position that has no matching exchange position (#480).
+
+        Unlike ``close_strategy_position``, this does NOT touch the aggregated
+        exchange_position record because the underlying exchange position
+        never existed (or was already closed externally). The in-memory row
+        is removed and Data Manager is updated with ``status="closed_externally"``
+        so the audit journal still shows what happened.
+
+        Returns True if the position was found and evicted, False otherwise.
+        Never raises — eviction errors are logged but must not break the
+        reconcile loop.
+        """
+        position = self.strategy_positions.get(strategy_position_id)
+        if position is None:
+            return False
+
+        position["status"] = "closed_externally"
+        position["exit_time"] = datetime.now(UTC)
+        position["close_reason"] = reason
+
+        try:
+            await self._update_strategy_position_closure(strategy_position_id, position)
+        except Exception as exc:
+            logger.error(
+                "evict_ghost_position: Data Manager update failed for %s: %s",
+                strategy_position_id,
+                exc,
+            )
+
+        self.strategy_positions.pop(strategy_position_id, None)
+        logger.info(
+            "Evicted ghost strategy position %s (%s %s) — reason=%s",
+            strategy_position_id,
+            position.get("symbol"),
+            position.get("side"),
+            reason,
+        )
+        return True
+
     def get_strategy_position(self, strategy_position_id: str) -> dict[str, Any] | None:
         """Get strategy position by ID"""
         return self.strategy_positions.get(strategy_position_id)

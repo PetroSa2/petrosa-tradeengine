@@ -281,11 +281,18 @@ async def check_position_stops(
         close_needed = False
         sl_placed_now = False
         tp_placed_now = False
+        new_sl_order_id: str | None = None
+        new_tp_order_id: str | None = None
 
+        # AC3 of #480: remediation must be atomic.  `sl_placed_now=True` may
+        # only be set when the exchange response actually carries a real
+        # Binance algo-order ID — otherwise the stops-health endpoint will
+        # claim `has_sl_order=true` while `sl_order_id` stays null, which is
+        # what the 2026-06-18 testnet diagnosis surfaced.  Same for TP.
         if not has_sl:
             if stop_loss_price is not None:
                 try:
-                    await exchange.execute(
+                    sl_result = await exchange.execute(
                         TradeOrder(
                             type="stop",
                             symbol=symbol,
@@ -295,7 +302,27 @@ async def check_position_stops(
                             position_side=position_side,
                         )
                     )
-                    sl_placed_now = True
+                    candidate_sl_id = (
+                        (sl_result or {}).get("order_id")
+                        if isinstance(sl_result, dict)
+                        else None
+                    )
+                    if _is_real_algo_id(candidate_sl_id):
+                        sl_placed_now = True
+                        new_sl_order_id = str(candidate_sl_id)
+                    else:
+                        logger.error(
+                            "SL placement for %s returned no real algo-id; "
+                            "result_status=%s order_id=%r — treating as failure",
+                            spid,
+                            (
+                                (sl_result or {}).get("status")
+                                if isinstance(sl_result, dict)
+                                else None
+                            ),
+                            candidate_sl_id,
+                        )
+                        close_needed = True
                 except Exception as exc:
                     logger.error("SL placement failed for %s: %s", spid, exc)
                     close_needed = True
@@ -305,7 +332,7 @@ async def check_position_stops(
         if not close_needed and not has_tp:
             if take_profit_price is not None:
                 try:
-                    await exchange.execute(
+                    tp_result = await exchange.execute(
                         TradeOrder(
                             type="take_profit",
                             symbol=symbol,
@@ -315,12 +342,60 @@ async def check_position_stops(
                             position_side=position_side,
                         )
                     )
-                    tp_placed_now = True
+                    candidate_tp_id = (
+                        (tp_result or {}).get("order_id")
+                        if isinstance(tp_result, dict)
+                        else None
+                    )
+                    if _is_real_algo_id(candidate_tp_id):
+                        tp_placed_now = True
+                        new_tp_order_id = str(candidate_tp_id)
+                    else:
+                        logger.error(
+                            "TP placement for %s returned no real algo-id; "
+                            "result_status=%s order_id=%r — treating as failure",
+                            spid,
+                            (
+                                (tp_result or {}).get("status")
+                                if isinstance(tp_result, dict)
+                                else None
+                            ),
+                            candidate_tp_id,
+                        )
+                        close_needed = True
                 except Exception as exc:
                     logger.error("TP placement failed for %s: %s", spid, exc)
                     close_needed = True
             else:
                 close_needed = True
+
+        # AC3 of #480: atomic boolean+id contract.  Once a real algo-id is
+        # captured locally, mirror it into the response variables BEFORE
+        # touching the manager — that way a manager exception cannot leave
+        # the response with has_sl_order=True and sl_order_id=null.  The
+        # manager call below is best-effort; even if it fails, the local
+        # variables already hold a consistent (boolean, id) pair.
+        if new_sl_order_id:
+            sl_order_id = new_sl_order_id
+        if new_tp_order_id:
+            tp_order_id = new_tp_order_id
+
+        if (new_sl_order_id or new_tp_order_id) and hasattr(
+            strategy_pos_manager, "set_strategy_position_orders"
+        ):
+            try:
+                await strategy_pos_manager.set_strategy_position_orders(
+                    strategy_position_id=spid,
+                    sl_order_id=new_sl_order_id,
+                    tp_order_id=new_tp_order_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to propagate remediation order IDs back to "
+                    "strategy_position %s: %s",
+                    spid,
+                    exc,
+                )
 
         if close_needed:
             outcome = "position_closed"

@@ -883,6 +883,9 @@ class OCOManager:
                     "quantity": float(sl_o.get("quantity", sl_o.get("origQty", 0))),
                     "sl_order_id": sl_id,
                     "tp_order_id": None,
+                    # #490: record algo-ness at scan time so the cancel path
+                    # routes by source (/openAlgoOrders) not by id length.
+                    "sl_is_algo": "algoId" in sl_o,
                     "symbol": sym,
                     "position_side": pos_side,
                     "status": "active",
@@ -908,6 +911,9 @@ class OCOManager:
                     "quantity": float(tp_o.get("quantity", tp_o.get("origQty", 0))),
                     "sl_order_id": None,
                     "tp_order_id": tp_id,
+                    # #490: record algo-ness at scan time so the cancel path
+                    # routes by source (/openAlgoOrders) not by id length.
+                    "tp_is_algo": "algoId" in tp_o,
                     "symbol": sym,
                     "position_side": pos_side,
                     "status": "active",
@@ -1064,6 +1070,53 @@ class OCOManager:
                     f"❌ Deferred OCO placement failed for {symbol} (entry {entry_id}): {e}"
                 )
 
+    async def _cancel_orphaned_order(
+        self, symbol: str, order_id: str, is_algo: bool
+    ) -> None:
+        """Cancel a single orphaned reconciled order, routing algo vs standard.
+
+        Per #490: orphaned closePosition TP/SL orders discovered at startup are
+        algo orders (disjoint from ``/openOrders``, #483) and MUST be cancelled
+        via ``cancel_algo_order`` (``algoId``) — never ``cancel_order``
+        (``orderId``), which returns ``APIError(-1102)``. Whether the order is an
+        algo order is recorded at scan time (``sl_is_algo``/``tp_is_algo``); we
+        never re-classify by id length. A ``-4029`` ("order does not exist")
+        means it was already cancelled out-of-band — INFO, not ERROR (AC6).
+        """
+        from tradeengine.metrics import orphan_algo_cancel_total
+
+        try:
+            if is_algo:
+                await self.exchange.cancel_algo_order(symbol, order_id)
+            else:
+                # NOTE: cancel_order signature is (symbol, order_id). The legacy
+                # call here passed them swapped, which is what actually produced
+                # the -1102 in production (orderId received a symbol string).
+                await self.exchange.cancel_order(symbol, order_id)
+            self.logger.info(f"🗑️  Cancelled orphaned order {order_id} for {symbol}")
+            if is_algo:
+                orphan_algo_cancel_total.labels(
+                    outcome="succeeded", symbol=symbol
+                ).inc()
+        except Exception as cancel_err:
+            code = getattr(cancel_err, "code", None)
+            if is_algo and code == -4029:
+                self.logger.info(
+                    f"Orphaned algo order {order_id} for {symbol} already "
+                    f"cancelled (-4029); nothing to do"
+                )
+                orphan_algo_cancel_total.labels(
+                    outcome="not_found_4029", symbol=symbol
+                ).inc()
+            else:
+                self.logger.warning(
+                    f"Failed to cancel orphaned order {order_id}: {cancel_err}"
+                )
+                if is_algo:
+                    orphan_algo_cancel_total.labels(
+                        outcome="failed_other", symbol=symbol
+                    ).inc()
+
     async def _monitor_orders(self) -> None:
         """
         Monitor active orders for fills and trigger OCO logic
@@ -1117,16 +1170,18 @@ class OCOManager:
                         # Cancel whichever order still exists and mark completed.
                         if oco_info.get("orphaned"):
                             live_id = sl_order_id or tp_order_id
+                            # #490: route by the side that actually carries the
+                            # live order, using the algo-ness recorded at scan
+                            # time — never re-classify by id length.
+                            live_is_algo = (
+                                oco_info.get("sl_is_algo")
+                                if sl_order_id
+                                else oco_info.get("tp_is_algo")
+                            )
                             if live_id and live_id in open_order_ids:
-                                try:
-                                    await self.exchange.cancel_order(live_id, symbol)
-                                    self.logger.info(
-                                        f"🗑️  Cancelled orphaned order {live_id} for {symbol}"
-                                    )
-                                except Exception as _cancel_err:
-                                    self.logger.warning(
-                                        f"Failed to cancel orphaned order {live_id}: {_cancel_err}"
-                                    )
+                                await self._cancel_orphaned_order(
+                                    symbol, live_id, bool(live_is_algo)
+                                )
                             oco_info["status"] = "completed"
                             continue
 
@@ -1369,7 +1424,11 @@ class OCOManager:
             )
 
             try:
-                await self.exchange.cancel_order(other_order_id, symbol)
+                # #490: cancel_order signature is (symbol, order_id) — the args
+                # were swapped here, the same defect that produced -1102 on the
+                # orphan path. Algo orders fall through to the algo-cancel
+                # fallback inside cancel_order (triggered on -2011/-4132).
+                await self.exchange.cancel_order(symbol, other_order_id)
                 self.logger.info(f"✅ Cancelled paired order: {other_order_id}")
             except Exception as e:
                 self.logger.warning(

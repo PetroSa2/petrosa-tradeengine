@@ -1475,6 +1475,42 @@ class BinanceFuturesExchange:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             raise
 
+    async def cancel_algo_order(
+        self, symbol: str, algo_id: int | str
+    ) -> dict[str, Any]:
+        """Cancel an algo order (conditional closePosition SL/TP) by ``algoId``.
+
+        Binance Futures keeps algo orders in a list disjoint from ``/openOrders``
+        (see ``get_open_algo_orders`` / #483). They must be cancelled with
+        ``algoId`` against the Algo Order DELETE endpoint, NOT ``orderId`` against
+        ``/order`` — the latter returns ``APIError(-1102)``. The orphan-scan
+        already knows an order is an algo order at scan time (#490), so callers
+        route here directly instead of round-tripping through ``cancel_order``.
+
+        Uses ``params=`` (query string), mirroring the proven #475 fallback in
+        ``cancel_order``; passing the params via ``data=`` (body) re-introduces
+        the -1102 bug for DELETE requests.
+        """
+        if not self.initialized:
+            await self.initialize()
+
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+
+        result = self.client._request_futures_api(
+            "delete",
+            "algoOrder",
+            signed=True,
+            params={"symbol": symbol, "algoId": algo_id},
+        )
+        result = result or {}
+        return {
+            "order_id": result.get("algoId", algo_id),
+            "status": "CANCELED",
+            "symbol": result.get("symbol", symbol),
+            "timestamp": int(time.time() * 1000),
+        }
+
     async def get_order_status(self, symbol: str, order_id: int) -> dict[str, Any]:
         """Get order status"""
         if not self.initialized:

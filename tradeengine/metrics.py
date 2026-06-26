@@ -301,6 +301,20 @@ binance_4130_resolution_total = Counter(
     ["outcome", "symbol"],
 )
 
+# Per #490: outcome of startup orphaned algo-order (closePosition TP/SL)
+# cancellation. Orphans are discovered via /openAlgoOrders (disjoint from
+# /openOrders, #483) and must be cancelled with algoId, not orderId (the
+# latter yields APIError(-1102)). Outcomes:
+#   - succeeded:       algo order cancelled via the Algo Order DELETE endpoint.
+#   - not_found_4029:  -4029 "order does not exist" → already cancelled
+#                      out-of-band; treated as success, logged INFO not ERROR.
+#   - failed_other:    any other failure (network, signature, unexpected code).
+orphan_algo_cancel_total = Counter(
+    "tradeengine_orphan_algo_cancel_total",
+    "Outcome of startup orphaned algo-order (closePosition TP/SL) cancellation",
+    ["outcome", "symbol"],
+)
+
 # ========================================
 # NATS Heartbeat & Fail-Safe Observability
 # ========================================

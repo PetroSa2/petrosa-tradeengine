@@ -1487,9 +1487,11 @@ class BinanceFuturesExchange:
         already knows an order is an algo order at scan time (#490), so callers
         route here directly instead of round-tripping through ``cancel_order``.
 
-        Uses ``params=`` (query string), mirroring the proven #475 fallback in
-        ``cancel_order``; passing the params via ``data=`` (body) re-introduces
-        the -1102 bug for DELETE requests.
+        Uses ``force_params=True`` + ``data=``, mirroring the proven
+        ``OCOManager.cancel_oco_pair`` path (#334). python-binance's ``_request``
+        only forwards DELETE params as a query string under ``force_params=True``;
+        passing ``params=`` (without ``data=``) raises ``KeyError('data')`` inside
+        ``_get_request_kwargs`` — observed in production on v1.2.17-r147 (#490).
         """
         if not self.initialized:
             await self.initialize()
@@ -1501,7 +1503,8 @@ class BinanceFuturesExchange:
             "delete",
             "algoOrder",
             signed=True,
-            params={"symbol": symbol, "algoId": algo_id},
+            force_params=True,
+            data={"symbol": symbol, "algoId": algo_id},
         )
         result = result or {}
         return {

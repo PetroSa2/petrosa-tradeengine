@@ -110,3 +110,35 @@ class TestOrphanScanRecordsAlgoNess:
         assert orphan["tp_is_algo"] is True
         assert orphan["sl_order_id"] is None
         assert str(orphan["tp_order_id"]) == "1000000110444048"
+
+
+class TestCancelAlgoOrderCallShape:
+    """The real cancel_algo_order must hit the algo DELETE endpoint correctly.
+
+    Regression for the v1.2.17-r147 production failure (#490): the first fix
+    used ``params=``, which raises ``KeyError('data')`` inside python-binance's
+    ``_request``. The working shape — proven by ``cancel_oco_pair`` (#334) — is
+    ``force_params=True`` + ``data=``. This test exercises the real method (no
+    mock of cancel_algo_order itself) and FAILS on the params= version.
+    """
+
+    @pytest.mark.asyncio
+    async def test_uses_force_params_and_data(self):
+        from tradeengine.exchange.binance import BinanceFuturesExchange
+
+        exchange = BinanceFuturesExchange()
+        exchange.initialized = True
+        exchange.client = MagicMock()
+        exchange.client._request_futures_api = MagicMock(
+            return_value={"algoId": 1000000110444048, "symbol": "LINKUSDT"}
+        )
+
+        await exchange.cancel_algo_order("LINKUSDT", 1000000110444048)
+
+        exchange.client._request_futures_api.assert_called_once_with(
+            "delete",
+            "algoOrder",
+            signed=True,
+            force_params=True,
+            data={"symbol": "LINKUSDT", "algoId": 1000000110444048},
+        )

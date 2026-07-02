@@ -19,12 +19,14 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamC
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
+    dispatcher_thrash_circuit_open_total,
     order_execution_latency_seconds,
     order_failures_total,
     order_placement_skipped_total,
     orders_executed_by_type,
     risk_checks_total,
     risk_rejections_total,
+    strategy_close_blocked_no_exchange_position_total,
 )
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
@@ -37,7 +39,11 @@ from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
 from tradeengine.strategy_position_manager import strategy_position_manager
-from tradeengine.strategy_position_reconciler import StrategyPositionReconciler
+from tradeengine.strategy_position_reconciler import (
+    StrategyPositionReconciler,
+    _has_matching_exchange_position,
+)
+from tradeengine.thrash_guard import ThrashCircuitBreaker
 
 # Prometheus metrics for signal flow tracking
 signals_received = Counter(
@@ -1525,6 +1531,14 @@ class Dispatcher:
         # #480 — periodic ghost-position eviction for the strategy-layer
         # tracker.  Started after user_data_consumer wires the truth store.
         self.strategy_position_reconciler: StrategyPositionReconciler | None = None
+
+        # #481 AC5 — open/close thrash circuit-breaker. Per-symbol sliding
+        # window that blocks un-audited close emissions once they exceed
+        # TE_THRASH_MAX_CYCLES within TE_THRASH_WINDOW_MINUTES (defaults 2/10).
+        self.thrash_breaker = ThrashCircuitBreaker(
+            max_cycles=int(os.getenv("TE_THRASH_MAX_CYCLES", "2")),
+            window_minutes=int(os.getenv("TE_THRASH_WINDOW_MINUTES", "10")),
+        )
 
         # Initialize Heartbeat Monitor for ecosystem fail-safe (AC: Gate behind nats_enabled)
         self.heartbeat_monitor = None
@@ -4213,6 +4227,30 @@ class Dispatcher:
                 return qty
         return 0.0
 
+    async def _exchange_position_presence(
+        self, symbol: str, position_side: str
+    ) -> bool | None:
+        """Best-effort answer to "does the exchange hold this position?".
+
+        Returns ``True`` when a matching ``(symbol, position_side)`` position
+        exists, ``False`` when the authoritative ExchangeTruthStore is ready
+        and confidently reports its absence, and ``None`` when the answer is
+        unknown (store not ready / not wired) — in which case callers must NOT
+        block, to avoid skipping a legitimate close (#481 AC3).
+
+        Only the truth store yields a definitive ``False``: the REST helper
+        ``_fetch_binance_position_qty`` returns ``0.0`` for both "absent" and
+        "lookup failed", so a REST zero is treated as unknown here rather than
+        risk suppressing a real close on a transient API error.
+        """
+        store = getattr(getattr(self, "user_data_consumer", None), "store", None)
+        if store is not None and getattr(store, "is_ready", False):
+            positions = store.get_positions()
+            return _has_matching_exchange_position(
+                {"symbol": symbol, "side": position_side}, positions
+            )
+        return None
+
     async def close_position_with_cleanup(
         self,
         position_id: str,
@@ -4220,6 +4258,7 @@ class Dispatcher:
         position_side: str,
         quantity: float,
         reason: str = "manual",
+        cio_audited: bool = False,
     ) -> dict[str, Any]:
         """
         Close a position and clean up all associated SL/TP orders (OCO cleanup)
@@ -4251,6 +4290,57 @@ class Dispatcher:
                     self.logger.info("✅ OCO ORDERS CANCELLED SUCCESSFULLY")
                 else:
                     self.logger.warning("⚠️  FAILED TO CANCEL OCO ORDERS")
+
+            # Step 1b (#481 AC3): do not emit a close order for a position the
+            # exchange no longer holds. The 2026-06-18 thrash loop fired
+            # reduceOnly closes against ghost strategy positions with no
+            # exchange counterpart. Stale OCO legs are still cancelled above
+            # (harmless cleanup); only the wasteful MARKET close is suppressed.
+            if os.getenv("TE_CLOSE_GUARD_ENABLED", "1") == "1":
+                presence = await self._exchange_position_presence(symbol, position_side)
+                if presence is False:
+                    self.logger.warning(
+                        "⛔ CLOSE BLOCKED (#481 AC3): exchange reports no open "
+                        "%s position for %s — refusing to emit reduceOnly close "
+                        "(reason=%s). Ghost strategy row will be evicted by the "
+                        "#480 reconciler.",
+                        position_side,
+                        symbol,
+                        reason,
+                    )
+                    strategy_close_blocked_no_exchange_position_total.labels(
+                        symbol=symbol, side=position_side
+                    ).inc()
+                    return {
+                        "position_closed": False,
+                        "oco_cancelled": oco_cancelled,
+                        "close_result": None,
+                        "status": "skipped_no_exchange_position",
+                    }
+
+            # Step 1c (#481 AC5): fail-safe thrash circuit-breaker. Block a
+            # close when un-audited closes on this symbol have exceeded the
+            # per-window cap (default 2 in 10 min). Audited closes (a close
+            # tied to a CIO decision) never trip or get blocked by the breaker.
+            if not cio_audited and self.thrash_breaker.should_block(symbol):
+                self.logger.error(
+                    "🛑 THRASH CIRCUIT OPEN (#481 AC5): %s exceeded %d un-audited "
+                    "close(s) within %d min — blocking further churn "
+                    "(reason=%s).",
+                    symbol,
+                    self.thrash_breaker.max_cycles,
+                    self.thrash_breaker.window_minutes,
+                    reason,
+                )
+                dispatcher_thrash_circuit_open_total.labels(symbol=symbol).inc()
+                return {
+                    "position_closed": False,
+                    "oco_cancelled": oco_cancelled,
+                    "close_result": None,
+                    "status": "skipped_thrash_circuit_open",
+                }
+            # Record the allowed close so it counts toward the window.
+            self.thrash_breaker.record_close(symbol, cio_audited=cio_audited)
 
             # Step 2: Close the position
             position_closed = False

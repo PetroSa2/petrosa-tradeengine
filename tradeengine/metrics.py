@@ -201,6 +201,30 @@ strategy_position_ghost_gauge = Gauge(
     "Current count of strategy positions with no matching exchange position",
 )
 
+# #481 AC3 — close-order emission blocked because the exchange has no matching
+# position. The 2026-06-18 testnet thrash loop fired reduceOnly closes against
+# ghost strategy positions with no exchange counterpart. This is the
+# emission-time guard (defense-in-depth to the #480 reconciler that evicts the
+# ghost rows out-of-band): before firing a MARKET reduceOnly close,
+# close_position_with_cleanup consults the ExchangeTruthStore and skips when it
+# confidently reports no matching (symbol, side) position.
+strategy_close_blocked_no_exchange_position_total = Counter(
+    "petrosa_tradeengine_strategy_close_blocked_no_exchange_position_total",
+    "Close-order emissions blocked because no matching exchange position exists",
+    ["symbol", "side"],
+)
+
+# #481 AC5 — thrash circuit-breaker openings. Fail-safe rate limit: no more than
+# N (default 2) close emissions on the same symbol within M (default 10) minutes
+# lacking a CIO-decision audit trail. When the threshold is crossed the breaker
+# opens and further un-audited closes on that symbol are blocked until the
+# window clears, ticking this counter each time it blocks.
+dispatcher_thrash_circuit_open_total = Counter(
+    "petrosa_tradeengine_dispatcher_thrash_circuit_open_total",
+    "Close emissions blocked by the open/close thrash circuit-breaker",
+    ["symbol"],
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================

@@ -400,6 +400,63 @@
             "unit": "short"
           }
         }
+      },
+      {
+        "title": "Stops-Health: Violations vs Alarms Delivered (#484)",
+        "type": "timeseries",
+        "gridPos": { "x": 0, "y": 36, "w": 12, "h": 8 },
+        "description": "Every stops-health violation must raise an operator alarm. 'violations' = alarms emitted + suppressed; 'alarms delivered' = alarms actually published to the NATS alerts.> path. A persistent gap between the two means alarms are being silenced — see the companion 'Silenced Alarms' stat panel.",
+        "targets": [
+          {
+            "expr": "sum(increase(petrosa_tradeengine_stops_health_alarm_emitted_total[5m])) + sum(increase(petrosa_tradeengine_stops_health_alarm_suppressed_total[5m]))",
+            "legendFormat": "violations",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(increase(petrosa_tradeengine_stops_health_alarm_emitted_total[5m]))",
+            "legendFormat": "alarms delivered",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "title": "Stops-Health Silenced Alarms (gap, #484)",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 36, "w": 12, "h": 8 },
+        "description": "Alarms raised for a stops-health violation but NOT delivered to NATS — i.e. violation_count > 0 while alarms are not reaching operators. Any non-zero value is highlighted red: this is the exact silent-alarm condition (violations>0, alarms=0) that #484 fixed.",
+        "targets": [
+          {
+            "expr": "sum by (reason) (increase(petrosa_tradeengine_stops_health_alarm_suppressed_total[1h]))",
+            "legendFormat": "{{reason}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": null, "color": "green" },
+                { "value": 1, "color": "red" }
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"]
+          },
+          "orientation": "auto",
+          "textMode": "auto",
+          "colorMode": "background"
+        }
       }
     ],
     "templating": {

@@ -465,3 +465,194 @@ async def test_ac3_480_atomicity_preserved_even_if_setter_raises():
     assert p.sl_order_id == sl_id
     assert p.tp_order_id == tp_id
     assert p.remediation_outcome == "both_placed"
+
+
+# ---------------------------------------------------------------------------
+# #484 — stops-health alarm path must fire on EVERY violation, regardless of
+# what remediation later claims. The 2026-06-18 testnet diagnosis surfaced
+# violation_count=12 with alarms_emitted=0 because alarms only fired on the
+# force-close branch. Alarms now route through the alerts.tradeengine.> NATS
+# path (AlertsConsumer -> Telegram, petrosa_k8s#810).
+# ---------------------------------------------------------------------------
+
+
+def _alert(delivered: bool = True):
+    """A stand-in alert publisher matching AlertPublisher.publish's kwargs."""
+    a = MagicMock()
+    a.publish = AsyncMock(return_value=delivered)
+    return a
+
+
+@pytest.mark.asyncio
+async def test_ac5_484_single_null_sl_emits_exactly_one_alarm():
+    """AC5: seed 1 position with a null SL order_id, hit stops-health, and
+    assert exactly one alarm is emitted on the alerts.> path."""
+    pos = _pos(
+        sl_order_id=None, tp_order_id="1398104567890124", stop_loss_price=45000.0
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.violation_count == 1
+    assert resp.alarms_emitted == 1
+    alert.publish.assert_awaited_once()
+    kwargs = alert.publish.call_args.kwargs
+    # AC2: alert_name maps to the alerts.tradeengine.stops_health_violation subject
+    assert kwargs["alert_name"] == "stops_health_violation"
+    assert kwargs["severity"] == "critical"
+    assert kwargs["payload"]["reason"] == "missing_sl"
+    assert kwargs["payload"]["strategy_position_id"] == "pos-1"
+
+
+@pytest.mark.asyncio
+async def test_ac1_484_alarm_fires_even_when_remediation_reports_both_placed():
+    """AC1: the exact production shape — positions missing BOTH stops while
+    remediation "succeeds" (both_placed). Before #484 alarms_emitted stayed 0;
+    now every violation raises an alarm regardless of remediation_outcome."""
+    positions = [
+        _pos(
+            spid=f"pos-{i}",
+            sl_order_id=None,
+            tp_order_id=None,
+            stop_loss_price=45000.0,
+            take_profit_price=55000.0,
+        )
+        for i in range(3)
+    ]
+    spm, pc, exc, pub = _mocks(memory=positions)
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.violation_count == 3
+    assert resp.alarms_emitted == 3
+    assert all(p.remediation_outcome == "both_placed" for p in resp.positions)
+    assert alert.publish.await_count == 3
+    assert all(
+        c.kwargs["payload"]["reason"] == "both" for c in alert.publish.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_ac1_484_force_close_path_emits_single_alarm():
+    """AC1: the force-close path (missing SL, no stop_loss_price) must raise
+    exactly one alarm — not double-counted — and still publish the legacy
+    force-close execution event for backward compatibility."""
+    pos = _pos(sl_order_id=None, tp_order_id="1398104567890124", stop_loss_price=None)
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.positions[0].remediation_outcome == "position_closed"
+    assert resp.alarms_emitted == 1
+    alert.publish.assert_awaited_once()
+    # Backward compat: the force-close execution event is still published.
+    pub.publish.assert_called_once()
+    assert (
+        pub.publish.call_args.kwargs["event_type"] == "position_force_closed_no_stops"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ac1_484_stale_order_id_divergence_alarms_with_reason():
+    """AC1: a stored-id divergence (real-shape IDs not live on Binance) must
+    alarm with reason=stale_order_id."""
+    real_sl = "1398104567890123"
+    real_tp = "1398104567890124"
+    pos = _pos(
+        sl_order_id=real_sl,
+        tp_order_id=real_tp,
+        stop_loss_price=45000.0,
+        take_profit_price=55000.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos], binance_open_ids={"9999999999999"})
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.alarms_emitted == 1
+    assert len(resp.divergences) == 1
+    alert.publish.assert_awaited_once()
+    assert alert.publish.call_args.kwargs["payload"]["reason"] == "stale_order_id"
+
+
+@pytest.mark.asyncio
+async def test_ac3_484_emitted_counter_increments_on_delivery():
+    """AC3: stops_health_alarm_emitted_total{reason} increments when the
+    alarm is delivered to NATS."""
+    from prometheus_client import REGISTRY
+
+    name = "petrosa_tradeengine_stops_health_alarm_emitted_total"
+    before = REGISTRY.get_sample_value(name, {"reason": "missing_sl"}) or 0.0
+
+    pos = _pos(
+        sl_order_id=None, tp_order_id="1398104567890124", stop_loss_price=45000.0
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    await check_position_stops(spm, pc, exc, pub, alert_pub=_alert(delivered=True))
+
+    after = REGISTRY.get_sample_value(name, {"reason": "missing_sl"}) or 0.0
+    assert after - before == 1.0
+
+
+@pytest.mark.asyncio
+async def test_ac3_484_suppressed_counter_increments_when_not_delivered():
+    """AC3: stops_health_alarm_suppressed_total{reason} increments when the
+    alarm is raised but NOT delivered (NATS disabled/unavailable) — the
+    silencing is operator-visible. The alarm is still counted as raised so the
+    AC1 invariant (violations>0 => alarms_emitted>0) holds."""
+    from prometheus_client import REGISTRY
+
+    name = "petrosa_tradeengine_stops_health_alarm_suppressed_total"
+    before = REGISTRY.get_sample_value(name, {"reason": "both"}) or 0.0
+
+    pos = _pos(
+        sl_order_id=None,
+        tp_order_id=None,
+        stop_loss_price=45000.0,
+        take_profit_price=55000.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    resp = await check_position_stops(
+        spm, pc, exc, pub, alert_pub=_alert(delivered=False)
+    )
+
+    after = REGISTRY.get_sample_value(name, {"reason": "both"}) or 0.0
+    assert after - before == 1.0
+    assert resp.alarms_emitted == 1
+
+
+@pytest.mark.asyncio
+async def test_484_no_alarm_emitted_when_all_healthy():
+    """No violation => no alarm published and alarms_emitted stays 0."""
+    real_sl = "1398104567890123"
+    real_tp = "1398104567890124"
+    pos = _pos(sl_order_id=real_sl, tp_order_id=real_tp)
+    spm, pc, exc, pub = _mocks(memory=[pos], binance_open_ids={real_sl, real_tp})
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.violation_count == 0
+    assert resp.alarms_emitted == 0
+    alert.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_484_alarm_publish_exception_never_breaks_endpoint():
+    """The alarm path is best-effort: a publisher that raises must not break
+    the endpoint, and the violation is counted as suppressed."""
+    pos = _pos(
+        sl_order_id=None, tp_order_id="1398104567890124", stop_loss_price=45000.0
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+    alert = MagicMock()
+    alert.publish = AsyncMock(side_effect=RuntimeError("nats exploded"))
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.violation_count == 1
+    assert resp.alarms_emitted == 1

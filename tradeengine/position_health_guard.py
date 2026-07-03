@@ -7,6 +7,11 @@ from pydantic import BaseModel, field_validator
 
 from contracts.order import TradeOrder
 from shared.constants import UTC
+from tradeengine.metrics import (
+    stops_health_alarm_emitted_total,
+    stops_health_alarm_suppressed_total,
+)
+from tradeengine.services.alert_publisher import alert_publisher
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +111,12 @@ async def check_position_stops(
     position_client: Any,
     exchange: Any,
     event_publisher: Any,
+    alert_pub: Any | None = None,
 ) -> PositionStopsHealthResponse:
+    # #484: alarms route through the alerts.tradeengine.> NATS path
+    # (AlertsConsumer -> Telegram, petrosa_k8s#810). Default to the module
+    # singleton; injectable so tests can assert emission without NATS.
+    publisher = alert_pub if alert_pub is not None else alert_publisher
     try:
         memory_positions: list[dict[str, Any]] = (
             strategy_pos_manager.get_all_open_strategy_positions()
@@ -188,6 +198,10 @@ async def check_position_stops(
         has_tp = tp_order_id is not None
         src = source_map.get(spid, "memory")
         symbol_for_pos = pos.get("symbol", "unknown")
+        # #484: track whether this violation is a stored-id divergence
+        # (stored order id not live on Binance / not a real algo id) so the
+        # alarm reason is "stale_order_id" rather than a plain missing_*.
+        is_divergence = False
 
         if has_sl and has_tp:
             # AC3 of #424: verify on Binance before declaring healthy.
@@ -229,6 +243,7 @@ async def check_position_stops(
 
             # Verification ran AND the stored IDs are not both present on
             # Binance — record a divergence and fall through to remediation.
+            is_divergence = True
             divergences.append(
                 StopsDivergence(
                     strategy_position_id=spid,
@@ -266,6 +281,53 @@ async def check_position_stops(
             pstatus = "missing_sl"
         else:
             pstatus = "missing_tp"
+
+        # AC1/AC2/AC3 of #484: every violation raises exactly one operator
+        # alarm on the alerts.tradeengine.> NATS path, BEFORE (and independent
+        # of) remediation. The 2026-06-18 testnet diagnosis (violation_count=12,
+        # alarms_emitted=0) happened because alarms only fired on the
+        # force-close branch, so a "successful"/lying remediation silenced the
+        # alert. The alarm fires off the ground-truth missing/stale state.
+        if is_divergence:
+            alarm_reason = "stale_order_id"
+        elif pstatus == "missing_both":
+            alarm_reason = "both"
+        elif pstatus == "missing_sl":
+            alarm_reason = "missing_sl"
+        else:
+            alarm_reason = "missing_tp"
+
+        try:
+            alarm_delivered = await publisher.publish(
+                alert_name="stops_health_violation",
+                severity="critical",
+                payload={
+                    "strategy_position_id": spid,
+                    "symbol": symbol_for_pos,
+                    "side": pos.get("side", "unknown"),
+                    "reason": alarm_reason,
+                    "status": pstatus,
+                    "sl_order_id": (
+                        str(sl_order_id) if sl_order_id is not None else None
+                    ),
+                    "tp_order_id": (
+                        str(tp_order_id) if tp_order_id is not None else None
+                    ),
+                },
+            )
+        except Exception as exc:
+            # The alarm path is best-effort and must never break the endpoint.
+            logger.error("stops-health alarm publish raised for %s: %s", spid, exc)
+            alarm_delivered = False
+
+        # AC1: an alarm is RAISED for every violation regardless of delivery,
+        # so alarms_emitted > 0 whenever violation_count > 0. The emitted vs
+        # suppressed counters (AC3) split raised alarms by NATS delivery.
+        alarms_emitted += 1
+        if alarm_delivered:
+            stops_health_alarm_emitted_total.labels(reason=alarm_reason).inc()
+        else:
+            stops_health_alarm_suppressed_total.labels(reason=alarm_reason).inc()
 
         symbol = pos.get("symbol", "unknown")
         position_side = pos.get("side", "LONG")
@@ -416,7 +478,10 @@ async def check_position_stops(
                     spid,
                     strategy_id,
                 )
-                alarms_emitted += 1
+                # #484: alarms_emitted is now incremented once per violation
+                # (above, at detection) regardless of remediation outcome, so
+                # the force-close branch no longer counts a second alarm. The
+                # force-close execution event below remains for backward compat.
             except Exception as exc:
                 logger.error("Failed to close position %s: %s", spid, exc)
                 outcome = "close_failed"

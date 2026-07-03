@@ -225,6 +225,30 @@ dispatcher_thrash_circuit_open_total = Counter(
     ["symbol"],
 )
 
+# #484 — stops-health violation alarms. The 2026-06-18 testnet diagnosis showed
+# violation_count=12 with alarms_emitted=0: alarms only fired on the force-close
+# branch, so a "successful" (or lying) remediation silenced the operator-facing
+# alert. Every violation now raises exactly one alarm on the
+# alerts.tradeengine.> NATS path (AlertsConsumer -> Telegram, petrosa_k8s#810)
+# regardless of remediation_outcome. reason: missing_sl|missing_tp|both|stale_order_id.
+#   - emitted:    alarm published successfully to NATS (delivered).
+#   - suppressed: alarm raised but NOT delivered (NATS disabled/unavailable) so
+#                 the silencing is operator-visible instead of a silent drop.
+# emitted + suppressed partition every violation, so a dashboard can derive
+# violation_count = sum(emitted)+sum(suppressed) and the gap = suppressed with
+# zero emitted. Prometheus-only, consistent with the #480/#481 counters above.
+stops_health_alarm_emitted_total = Counter(
+    "petrosa_tradeengine_stops_health_alarm_emitted_total",
+    "Stops-health violation alarms delivered to the NATS alerts.> path",
+    ["reason"],
+)
+
+stops_health_alarm_suppressed_total = Counter(
+    "petrosa_tradeengine_stops_health_alarm_suppressed_total",
+    "Stops-health violation alarms raised but not delivered (NATS disabled/unavailable)",
+    ["reason"],
+)
+
 # ========================================
 # Business Metrics for Trade Execution Monitoring
 # ========================================

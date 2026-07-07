@@ -60,7 +60,13 @@ class TestUpdateDailyPnL:
 
     @pytest.mark.asyncio
     async def test_update_daily_pnl_uses_timezone_aware_datetime(self, position_client):
-        """Test that update_daily_pnl uses timezone-aware datetime"""
+        """Test that update_daily_pnl stores updated_at as an ISO-8601 string.
+
+        After the fix for petrosa-tradeengine#495 (datetime not JSON serializable),
+        updated_at is pre-converted to an ISO-8601 string before being stored
+        so that the httpx transport layer never encounters a raw datetime object.
+        The string must include timezone offset information (+00:00 or similar).
+        """
         # Arrange
         position_client.data_manager_client._client.upsert_one = AsyncMock(
             return_value={"upserted_id": "test_id"}
@@ -72,9 +78,13 @@ class TestUpdateDailyPnL:
         # Assert
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         updated_at = call_args.kwargs["record"]["updated_at"]
-        # Verify it's a datetime object with timezone info
-        assert isinstance(updated_at, datetime)
-        assert updated_at.tzinfo is not None
+        # Verify it's an ISO-8601 string (not a raw datetime — #495 fix)
+        assert isinstance(updated_at, str), (
+            "updated_at must be a pre-serialized ISO-8601 string, not a raw datetime"
+        )
+        # Must be parseable as ISO-8601 and carry timezone info
+        parsed = datetime.fromisoformat(updated_at)
+        assert parsed.tzinfo is not None, "updated_at string must encode timezone info"
 
     @pytest.mark.asyncio
     async def test_update_daily_pnl_failure(self, position_client):

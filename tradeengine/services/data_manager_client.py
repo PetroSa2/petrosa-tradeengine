@@ -11,10 +11,11 @@ endpoints with bounded retry-with-backoff.
 """
 
 import asyncio
+import json
 import logging
 import os
 import random
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 import httpx
@@ -23,6 +24,26 @@ from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfi
 from shared.constants import UTC
 
 logger = logging.getLogger(__name__)
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON serializer for objects not serializable by default json module.
+
+    Converts datetime/date objects to ISO-8601 strings so they can be sent
+    over the wire via httpx's json= parameter (which uses stdlib json.dumps
+    internally).  Fixes the 'Object of type datetime is not JSON serializable'
+    error seen at ~3.5/min on the live pod (petrosa-tradeengine#495).
+    """
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _serialize_for_http(body: Any) -> Any:
+    """Round-trip body through json.dumps/_json_default so httpx never sees a datetime."""
+    if body is None:
+        return None
+    return json.loads(json.dumps(body, default=_json_default))
 
 
 class APIError(Exception):
@@ -112,6 +133,11 @@ class BaseDataManagerClient:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Issue an HTTP request with bounded retry-with-backoff."""
+        # Pre-serialize datetime/date objects to ISO-8601 strings so that
+        # httpx's internal json.dumps never encounters them.
+        # Fixes petrosa-tradeengine#495 ('Object of type datetime is not JSON
+        # serializable' at ~3.5/min on the live pod).
+        json_body = _serialize_for_http(json_body)
         client = await self._get_client()
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
@@ -401,7 +427,7 @@ class DataManagerClient:
         """Set global trading configuration."""
         try:
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(UTC)
+            config_dict["updated_at"] = datetime.now(UTC).isoformat()
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -467,7 +493,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(UTC)
+            config_dict["updated_at"] = datetime.now(UTC).isoformat()
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -537,7 +563,7 @@ class DataManagerClient:
                 return False
 
             config_dict = config.model_dump(exclude={"id"})
-            config_dict["updated_at"] = datetime.now(UTC)
+            config_dict["updated_at"] = datetime.now(UTC).isoformat()
 
             result = await self._client.upsert_one(
                 database="mongodb",
@@ -659,7 +685,7 @@ class DataManagerClient:
         """Set leverage status for symbol."""
         try:
             status_dict = status.model_dump(exclude={"id"})
-            status_dict["updated_at"] = datetime.now(UTC)
+            status_dict["updated_at"] = datetime.now(UTC).isoformat()
 
             result = await self._client.upsert_one(
                 database="mongodb",

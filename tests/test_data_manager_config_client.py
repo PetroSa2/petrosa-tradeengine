@@ -76,7 +76,12 @@ class TestSetGlobalConfig:
 
     @pytest.mark.asyncio
     async def test_set_global_config_updates_timestamp(self, data_manager_client):
-        """Test that set_global_config adds updated_at timestamp"""
+        """Test that set_global_config adds updated_at as an ISO-8601 string.
+
+        After the fix for petrosa-tradeengine#495 (datetime not JSON serializable),
+        updated_at is pre-converted to an ISO-8601 string so the httpx transport
+        never encounters a raw datetime object.
+        """
         # Arrange
         config = TradingConfig(parameters={"enabled": True}, created_by="test_agent")
 
@@ -87,7 +92,13 @@ class TestSetGlobalConfig:
         call_args = data_manager_client._client.upsert_one.call_args
         record = call_args.kwargs["record"]
         assert "updated_at" in record
-        assert isinstance(record["updated_at"], datetime)
+        # Must be a pre-serialized ISO-8601 string, not a raw datetime (#495 fix)
+        assert isinstance(record["updated_at"], str), (
+            "updated_at must be a pre-serialized ISO-8601 string, not a raw datetime"
+        )
+        # Must parse as valid ISO-8601
+        parsed = datetime.fromisoformat(record["updated_at"])
+        assert parsed is not None
 
     @pytest.mark.asyncio
     async def test_set_global_config_excludes_id(self, data_manager_client):

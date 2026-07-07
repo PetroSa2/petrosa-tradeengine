@@ -68,6 +68,38 @@ def mock_audit_logger():
             yield
 
 
+@pytest.fixture(autouse=True)
+def mock_strategy_position_data_manager():
+    """Mock data-manager HTTP client used by StrategyPositionManager.
+
+    Without this mock, strategy position persistence makes real HTTP calls to
+    data-manager (which is not running in unit/integration test environments).
+    Before the fix for #495 these calls failed with a TypeError on datetime
+    serialization before reaching the network; after the fix they fail with a
+    ConnectionError.  The ConnectionError triggers retry backoff (1.7s) which
+    corrupts the timing-sensitive TTL assertions in this test module.
+
+    Mocking the transport layer (not the high-level client) prevents any
+    network calls while leaving the in-memory business logic intact.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"status": "ok", "data": []}
+
+    async def _fake_request(*args, **kwargs):
+        return mock_response
+
+    with patch(
+        "tradeengine.services.data_manager_client.BaseDataManagerClient._retry_request",
+        new_callable=lambda: lambda self: AsyncMock(
+            return_value={"status": "ok", "data": []}
+        ),
+    ):
+        yield
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_duplicate_signal_rejected(dispatcher_with_fakes):

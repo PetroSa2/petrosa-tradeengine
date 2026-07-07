@@ -144,9 +144,15 @@ class AuditLogger:
                         ),
                         {
                             "timestamp": audit_record["timestamp"],
-                            "order_data": json.dumps(audit_record["order_data"]),
-                            "result_data": json.dumps(audit_record["result_data"]),
-                            "signal_meta": json.dumps(audit_record["signal_meta"]),
+                            "order_data": json.dumps(
+                                audit_record["order_data"], default=str
+                            ),
+                            "result_data": json.dumps(
+                                audit_record["result_data"], default=str
+                            ),
+                            "signal_meta": json.dumps(
+                                audit_record["signal_meta"], default=str
+                            ),
                         },
                     )
                     await session.commit()

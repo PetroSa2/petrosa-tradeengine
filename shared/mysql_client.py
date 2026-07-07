@@ -288,7 +288,7 @@ class DataManagerPositionClient:
                 record={
                     "date": date,
                     "daily_pnl": daily_pnl,
-                    "updated_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             )
             logger.info(

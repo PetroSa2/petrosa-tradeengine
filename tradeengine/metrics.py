@@ -225,6 +225,17 @@ dispatcher_thrash_circuit_open_total = Counter(
     ["symbol"],
 )
 
+# #497 — current OCO orphan count: positions on Binance that lack the full
+# stop/target pair (i.e. unhedged). The pre-existing
+# `tradeengine-oco-pair-orphan` Grafana alert fires on
+# ``sum(petrosa_tradeengine_oco_orphan_count) > 0`` but the metric was absent
+# from Grafana Cloud (no OTel export). Gauge so it can go back to 0 when the
+# orphan is resolved.
+oco_orphan_count = Gauge(
+    "petrosa_tradeengine_oco_orphan_count",
+    "Current number of OCO orphans: positions on Binance that lack their full stop/target pair",
+)
+
 # #484 — stops-health violation alarms. The 2026-06-18 testnet diagnosis showed
 # violation_count=12 with alarms_emitted=0: alarms only fired on the force-close
 # branch, so a "successful" (or lying) remediation silenced the operator-facing
@@ -456,4 +467,21 @@ dm_boot_probe_total = Counter(
 otel_dm_boot_probe_total = meter.create_counter(
     "tradeengine_dm_boot_probe_total",
     description="Boot-time DataManager write-then-read probe results (OTLP dual-export)",
+)
+
+# #497 — OCO orphan metrics (OTLP dual-export so Grafana Cloud alert fires)
+# oco_orphan_leg_total: partial OCO failure events by surviving-leg cancel outcome.
+# Mirrors the prometheus_client counter above; .add() is called alongside .inc()
+# at the two sites in dispatcher.py.
+otel_oco_orphan_leg = meter.create_counter(
+    "petrosa_tradeengine_oco_orphan_leg_total",
+    description="OCO partial-failure events split by surviving-leg cancel outcome (OTLP dual-export)",
+)
+
+# oco_orphan_count: current gauge of unhedged positions (the pre-existing
+# `tradeengine-oco-pair-orphan` alert fires on this). Uses an UpDownCounter
+# (OTel equivalent of a Gauge) so it can decrement when orphans are resolved.
+otel_oco_orphan_count = meter.create_up_down_counter(
+    "petrosa_tradeengine_oco_orphan_count",
+    description="Current number of OCO orphans: positions lacking their full stop/target pair (OTLP dual-export)",
 )

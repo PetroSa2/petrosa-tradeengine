@@ -395,7 +395,11 @@ class OCOManager:
                         f"(algoId={surviving_id}) but counterparty failed for "
                         f"{symbol} {position_side}. Cancelling surviving leg."
                     )
-                    from tradeengine.metrics import oco_orphan_leg_total
+                    from tradeengine.metrics import (
+                        oco_orphan_leg_total,
+                        otel_oco_orphan_count,
+                        otel_oco_orphan_leg,
+                    )
 
                     try:
                         self.exchange.client._request_futures_api(
@@ -418,6 +422,16 @@ class OCOManager:
                             leg=leg_label,
                             cancel_outcome="success",
                         ).inc()
+                        # #497: OTel dual-export so Grafana Cloud alert fires
+                        otel_oco_orphan_leg.add(
+                            1,
+                            {
+                                "symbol": symbol,
+                                "side": position_side,
+                                "leg": leg_label,
+                                "cancel_outcome": "success",
+                            },
+                        )
                     except Exception as cancel_err:
                         self.logger.error(
                             f"❌ FAILED to cancel orphan {leg_label} "
@@ -432,6 +446,19 @@ class OCOManager:
                             leg=leg_label,
                             cancel_outcome="failed",
                         ).inc()
+                        # #497: OTel dual-export (failed bucket = page-worthy)
+                        otel_oco_orphan_leg.add(
+                            1,
+                            {
+                                "symbol": symbol,
+                                "side": position_side,
+                                "leg": leg_label,
+                                "cancel_outcome": "failed",
+                            },
+                        )
+                        # Track the unhedged orphan in the count gauge so the
+                        # pre-existing `tradeengine-oco-pair-orphan` alert fires.
+                        otel_oco_orphan_count.add(1)
 
                 self.logger.error("❌ FAILED TO PLACE OCO ORDERS")
                 self.logger.error(f"  SL Result: {sl_result}")

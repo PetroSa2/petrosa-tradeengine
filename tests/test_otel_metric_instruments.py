@@ -1,5 +1,6 @@
 """Per #415: verify the OTel SDK metric instruments are registered alongside
 the existing prometheus_client instruments in tradeengine/metrics.py (dual-export).
+Per #497: verify OCO orphan metrics are also dual-exported (OTel + prometheus_client).
 """
 
 from opentelemetry.metrics import Counter, Histogram, UpDownCounter
@@ -58,3 +59,27 @@ class TestPrometheusDualExportPreserved:
 
     def test_prometheus_gauge_preserved(self):
         assert isinstance(metrics.total_realized_pnl_usd, PromGauge)
+
+
+class TestOCOOrphanDualExport:
+    """#497 — OCO orphan metrics must be dual-exported (prometheus_client + OTel OTLP).
+
+    AC1: petrosa_tradeengine_oco_orphan_leg_total flows via OTLP.
+    AC2: petrosa_tradeengine_oco_orphan_count flows via OTLP.
+    """
+
+    def test_otel_oco_orphan_leg_is_counter(self):
+        """otel_oco_orphan_leg must be an OTel Counter registered on the shared meter."""
+        assert isinstance(metrics.otel_oco_orphan_leg, Counter)
+
+    def test_otel_oco_orphan_count_is_up_down_counter(self):
+        """otel_oco_orphan_count must be an OTel UpDownCounter (supports decrement)."""
+        assert isinstance(metrics.otel_oco_orphan_count, UpDownCounter)
+
+    def test_prometheus_oco_orphan_leg_preserved(self):
+        """prometheus_client oco_orphan_leg_total must still exist (dual-export)."""
+        assert isinstance(metrics.oco_orphan_leg_total, PromCounter)
+
+    def test_prometheus_oco_orphan_count_exists(self):
+        """prometheus_client oco_orphan_count Gauge must now exist (AC2 of #497)."""
+        assert isinstance(metrics.oco_orphan_count, PromGauge)

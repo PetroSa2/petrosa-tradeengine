@@ -195,3 +195,116 @@ async def test_orphan_counter_increments_when_cancel_succeeds(
     assert exch.client._request_futures_api.call_count == 1
     call = exch.client._request_futures_api.call_args
     assert call.kwargs["data"]["algoId"] == "1000000091274546"
+
+
+# ---------------------------------------------------------------------------
+# #497 — OTel dual-export wiring tests
+# Verify that otel_oco_orphan_leg.add() is invoked alongside the prometheus
+# counter at both cancel outcomes so Grafana Cloud can fire on the metric.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_otel_oco_orphan_leg_called_on_cancel_success(
+    logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#497 AC1: when cancel succeeds, otel_oco_orphan_leg.add(success) is called."""
+    import tradeengine.metrics as _metrics
+
+    calls: list[tuple[int, dict]] = []
+    original_add = _metrics.otel_oco_orphan_leg.add
+
+    def _capture_add(amount: int, attrs: dict | None = None) -> None:
+        calls.append((amount, attrs or {}))
+        original_add(amount, attrs)
+
+    monkeypatch.setattr(_metrics.otel_oco_orphan_leg, "add", _capture_add)
+
+    exch = _make_exchange(sl_ok=False, tp_ok=True)
+    oco = OCOManager(exchange=exch, logger=logger)
+    result = await oco.place_oco_orders(
+        position_id="497-otel-success",
+        symbol="SOLUSDT",
+        position_side="LONG",
+        quantity=1.0,
+        stop_loss_price=100.0,
+        take_profit_price=110.0,
+    )
+
+    assert result["status"] == "failed"
+    assert len(calls) == 1
+    amount, attrs = calls[0]
+    assert amount == 1
+    assert attrs["cancel_outcome"] == "success"
+    assert attrs["symbol"] == "SOLUSDT"
+
+
+@pytest.mark.asyncio
+async def test_otel_oco_orphan_leg_called_on_cancel_failed(
+    logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#497 AC1: when cancel fails, otel_oco_orphan_leg.add(failed) is called."""
+    import tradeengine.metrics as _metrics
+
+    calls: list[tuple[int, dict]] = []
+    original_add = _metrics.otel_oco_orphan_leg.add
+
+    def _capture_add(amount: int, attrs: dict | None = None) -> None:
+        calls.append((amount, attrs or {}))
+        original_add(amount, attrs)
+
+    monkeypatch.setattr(_metrics.otel_oco_orphan_leg, "add", _capture_add)
+
+    exch = _make_exchange(sl_ok=True, tp_ok=False)
+    exch.client._request_futures_api.side_effect = RuntimeError("binance down")
+    oco = OCOManager(exchange=exch, logger=logger)
+    result = await oco.place_oco_orders(
+        position_id="497-otel-failed",
+        symbol="SOLUSDT",
+        position_side="SHORT",
+        quantity=1.0,
+        stop_loss_price=110.0,
+        take_profit_price=100.0,
+    )
+
+    assert result["status"] == "failed"
+    assert len(calls) == 1
+    amount, attrs = calls[0]
+    assert amount == 1
+    assert attrs["cancel_outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_otel_oco_orphan_count_incremented_on_cancel_failed(
+    logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#497 AC2: when cancel fails (unhedged orphan), otel_oco_orphan_count.add(1)."""
+    import tradeengine.metrics as _metrics
+
+    count_calls: list[int] = []
+    original_add = _metrics.otel_oco_orphan_count.add
+
+    def _capture_add(amount: int, attrs: dict | None = None) -> None:
+        count_calls.append(amount)
+        original_add(amount, attrs)
+
+    monkeypatch.setattr(_metrics.otel_oco_orphan_count, "add", _capture_add)
+
+    exch = _make_exchange(sl_ok=True, tp_ok=False)
+    exch.client._request_futures_api.side_effect = RuntimeError("binance down")
+    oco = OCOManager(exchange=exch, logger=logger)
+    result = await oco.place_oco_orders(
+        position_id="497-otel-count",
+        symbol="BNBUSDT",
+        position_side="LONG",
+        quantity=0.5,
+        stop_loss_price=500.0,
+        take_profit_price=550.0,
+    )
+
+    assert result["status"] == "failed"
+    # Exactly one unhedged orphan was left → count must be incremented once.
+    assert count_calls == [1]

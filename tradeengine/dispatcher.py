@@ -3491,6 +3491,51 @@ class Dispatcher:
             result["error"] = f"defer_oco_until_filled raised: {defer_err}"
             return result
 
+    async def _reanchor_entry_price_if_stale(
+        self, symbol: str, entry_price: float
+    ) -> float:
+        """Re-anchor a stale entry/reference price to live market (#501 AC2).
+
+        Returns the live market price when ``entry_price`` deviates beyond the
+        symbol's PERCENT_PRICE band; otherwise returns ``entry_price`` unchanged.
+        Any resolution failure is non-fatal — the original ``entry_price`` is
+        preserved so this guard can never make the fill path worse.
+        """
+        if entry_price <= 0 or self.exchange is None:
+            return entry_price
+        try:
+            live_price = float(await self.exchange._get_current_price(symbol))
+        except Exception as ref_err:  # pragma: no cover - defensive
+            self.logger.warning(
+                f"⚠️ #501 re-anchor: could not resolve live price for "
+                f"{symbol}: {ref_err}. Keeping entry_price {entry_price}."
+            )
+            return entry_price
+        if live_price <= 0:
+            return entry_price
+
+        # Resolve the PERCENT_PRICE band; default to ±10% if unavailable.
+        mult_up, mult_down = 1.10, 0.90
+        try:
+            band = self.exchange.get_percent_price_filter(symbol)
+            mult_up = float(band.get("multiplierUp", mult_up))
+            mult_down = float(band.get("multiplierDown", mult_down))
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+        upper = live_price * mult_up
+        lower = live_price * mult_down
+        if entry_price > upper or entry_price < lower:
+            deviation_pct = abs(entry_price - live_price) / live_price * 100.0
+            self.logger.warning(
+                f"⚠️ #501 STALE ANCHOR: entry_price {entry_price} for {symbol} "
+                f"deviates {deviation_pct:.2f}% from live market {live_price} "
+                f"(band {lower:.6f}–{upper:.6f}). Re-anchoring SL/TP reference "
+                f"to live market price."
+            )
+            return live_price
+        return entry_price
+
     async def _place_risk_management_orders(
         self, order: TradeOrder, result: dict[str, Any]
     ) -> None:
@@ -3562,6 +3607,18 @@ class Dispatcher:
                     f"⚠️ Could not cast entry_price '{entry_price_raw}' to float"
                 )
                 entry_price = 0.0
+
+            # #501 AC2: re-anchor a STALE reference price to live market.
+            # The old code only fell back to live market when entry_price <= 0.
+            # A non-zero-but-stale signal price (order.target_price =
+            # signal.current_price) would still be preferred, so all downstream
+            # SL/TP percentages were computed off a suspect anchor. Force the
+            # live-market fallback whenever the resolved entry_price deviates
+            # beyond the symbol's PERCENT_PRICE band from the current market.
+            if entry_price > 0 and self.exchange is not None:
+                entry_price = await self._reanchor_entry_price_if_stale(
+                    order.symbol, entry_price
+                )
 
             # MIN SL DISTANCE FLOOR: enforce a minimum safe distance against
             # premature stop-outs from strategy anomalies or micro-volatility.

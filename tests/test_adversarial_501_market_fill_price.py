@@ -22,6 +22,8 @@ xfail(strict) → red now, flips loud when #501 lands.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from contracts.order import OrderStatus, TradeOrder
@@ -88,11 +90,8 @@ class TestMarketFillPrice:
         assert out["amount"] == pytest.approx(0.22)
         assert out["total_value"] == pytest.approx(49.34)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#501: fill_price uses result['price']=0 for MARKET; must use VWAP from fills",
-    )
     def test_market_fill_price_is_vwap_not_zero(self) -> None:
+        """#501 (fixed): MARKET fill_price is the VWAP from fills, never 0."""
         out = _format(_binance_market_response(), _market_order())
         fp = out["fill_price"]
         assert fp not in (None, 0, "0", "0.00000000"), (
@@ -100,10 +99,67 @@ class TestMarketFillPrice:
         )
         assert float(fp) == pytest.approx(49.34 / 0.22, rel=1e-4)  # VWAP ≈ 224.27
 
-    def test_current_behavior_fill_price_is_zeroish(self) -> None:
-        """Documents the bug as-is: fill_price is falsy for MARKET orders."""
-        out = _format(_binance_market_response(), _market_order())
-        fp = out["fill_price"]
-        assert (fp is None) or (float(fp) == 0.0), (
-            "If this fails, #501 may already be fixed — remove the xfail above"
-        )
+    def test_market_fill_price_from_cumquote_when_no_fills(self) -> None:
+        """#501: fall back to cumQuote/executedQty when fills[] is absent."""
+        resp = _binance_market_response()
+        resp.pop("fills")
+        out = _format(resp, _market_order())
+        assert float(out["fill_price"]) == pytest.approx(49.34 / 0.22, rel=1e-4)
+
+    def test_limit_fill_price_uses_price_no_regression(self) -> None:
+        """AC4: LIMIT orders with a real price and no fills keep using price."""
+        limit_resp = {
+            "orderId": 987654321,
+            "symbol": "BCHUSDT",
+            "status": "NEW",
+            "type": "LIMIT",
+            "side": "BUY",
+            "price": "220.50",
+            "executedQty": "0",
+            "cumQuote": "0",
+            "fills": [],
+        }
+        out = _format(limit_resp, _market_order())
+        assert float(out["fill_price"]) == pytest.approx(220.50)
+
+
+def _dispatcher_with_price(live_price: float, band_up=1.05, band_down=0.95):
+    """Build a bare Dispatcher whose exchange returns a fixed live price + band."""
+    from tradeengine.dispatcher import Dispatcher
+
+    d = Dispatcher()
+    d.exchange = MagicMock()
+    d.exchange._get_current_price = AsyncMock(return_value=live_price)
+    d.exchange.get_percent_price_filter = MagicMock(
+        return_value={
+            "multiplierUp": str(band_up),
+            "multiplierDown": str(band_down),
+            "avgPriceMins": 5,
+        }
+    )
+    return d
+
+
+class TestReanchorStaleEntryPrice:
+    """#501 AC2/AC3: stale-but-nonzero anchors re-anchor to live market."""
+
+    @pytest.mark.asyncio
+    async def test_stale_anchor_reanchored_to_live(self) -> None:
+        # BCH market ≈ 223.66 but anchor 454 (~2x) is far outside the ±5% band.
+        d = _dispatcher_with_price(223.66)
+        out = await d._reanchor_entry_price_if_stale("BCHUSDT", 454.66)
+        assert out == pytest.approx(223.66)
+
+    @pytest.mark.asyncio
+    async def test_in_band_anchor_preserved(self) -> None:
+        # A legit fill 224.27 vs market 223.66 is inside the band — untouched.
+        d = _dispatcher_with_price(223.66)
+        out = await d._reanchor_entry_price_if_stale("BCHUSDT", 224.27)
+        assert out == pytest.approx(224.27)
+
+    @pytest.mark.asyncio
+    async def test_live_price_failure_preserves_entry(self) -> None:
+        d = _dispatcher_with_price(223.66)
+        d.exchange._get_current_price = AsyncMock(side_effect=RuntimeError("boom"))
+        out = await d._reanchor_entry_price_if_stale("BCHUSDT", 454.66)
+        assert out == pytest.approx(454.66)

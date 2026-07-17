@@ -1352,13 +1352,28 @@ class BinanceFuturesExchange:
         status = result.get("status") or result.get("algoStatus", "NEW")
         order_type = result.get("type") or result.get("orderType")
 
+        # #501: derive the true fill price for MARKET orders.
+        # A Binance FUTURES MARKET response returns price="0.00000000" and carries
+        # the real fill in fills[] (or cumQuote/executedQty). Using result["price"]
+        # here collapses fill_price to 0, so the dispatcher falls back to the
+        # unvalidated signal.current_price as the SL/TP reference anchor and every
+        # protective order is computed off a possibly-stale number.
+        # Precedence (most authoritative first):
+        #   1. VWAP from fills[]              = total_quote_qty / total_qty
+        #   2. cumQuote / executedQty         (same VWAP when fills[] is absent)
+        #   3. avgPrice                       (Binance's own average fill)
+        #   4. price / triggerPrice           (LIMIT / stop legs — unchanged, AC4)
+        fill_price = self._resolve_fill_price(
+            result, total_quote_qty=total_quote_qty, total_qty=total_qty
+        )
+
         return {
             "order_id": str(order_id) if order_id else None,
             "status": status,
             "side": result.get("side"),
             "type": order_type,
             "amount": total_qty or order.amount,
-            "fill_price": result.get("price") or result.get("triggerPrice"),
+            "fill_price": fill_price,
             "total_value": total_quote_qty,
             "fees": self._calculate_fees(fills),
             "timestamp": result.get("transactTime"),
@@ -1366,6 +1381,51 @@ class BinanceFuturesExchange:
             "fills": fills,
             "original_order": order.model_dump(),
         }
+
+    @staticmethod
+    def _resolve_fill_price(
+        result: dict[str, Any],
+        *,
+        total_quote_qty: float,
+        total_qty: float,
+    ) -> float | None:
+        """Resolve the effective fill price for an execution result (#501).
+
+        For MARKET orders Binance returns ``price="0.00000000"`` and reports the
+        real fill in ``fills[]`` / ``cumQuote``+``executedQty``. Prefer the
+        volume-weighted average fill; fall back to Binance's ``avgPrice``; and
+        only then to ``price``/``triggerPrice`` for LIMIT and stop legs whose
+        ``price`` field is legitimately populated (AC4 — no LIMIT regression).
+        """
+
+        def _pos(val: Any) -> float | None:
+            try:
+                f = float(val)
+            except (ValueError, TypeError):
+                return None
+            return f if f > 0 else None
+
+        # 1. VWAP from aggregated fills[].
+        if total_qty > 0 and total_quote_qty > 0:
+            return total_quote_qty / total_qty
+
+        # 2. cumQuote / executedQty (VWAP when fills[] is absent but totals are on
+        #    the top-level response).
+        cum_quote = _pos(result.get("cumQuote"))
+        executed_qty = _pos(result.get("executedQty"))
+        if cum_quote is not None and executed_qty is not None:
+            return cum_quote / executed_qty
+
+        # 3. Binance's own average fill price.
+        avg_price = _pos(result.get("avgPrice"))
+        if avg_price is not None:
+            return avg_price
+
+        # 4. LIMIT / stop legs: price / triggerPrice (legacy behavior, unchanged).
+        price = _pos(result.get("price"))
+        if price is not None:
+            return price
+        return _pos(result.get("triggerPrice"))
 
     def _format_error_result(self, error: str, order: TradeOrder) -> dict[str, Any]:
         """Format error result"""

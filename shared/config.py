@@ -92,12 +92,20 @@ class Settings(BaseSettings):
     te_exchange_truth_store_enabled: str = "off"
 
     # #445: exchange-authoritative naked-position remediation.
-    # Modes: "off" (default — read-only, no writes), "dry_run" (log
-    # intended actions, no writes), "arm_only" (re-arm protective stops
-    # but never flatten), "arm_or_flatten" (full AC2 — re-arm with
-    # fallback flatten after grace window). Ships "off" so deploy is a
-    # no-op; operator flips after canary.
-    naked_position_remediation_mode: str = "off"
+    # Modes: "off" (read-only, no writes — detection-only), "dry_run"
+    # (log intended actions, no writes), "arm_only" (re-arm protective
+    # stops but never flatten), "arm_or_flatten" (full AC2 — re-arm with
+    # fallback flatten after grace window).
+    # #500: default is "dry_run" (NOT "off"). A fresh deploy that
+    # silently ran "off" only incremented the detection counter and took
+    # no corrective write action — a "watchdog that never enforces" (see
+    # the 2026-07-16 naked-position incident). "dry_run" preserves the
+    # no-write safety of "off" for a first boot while making the
+    # remediator's intended actions observable in logs, so a missing
+    # TE_NAKED_POSITION_REMEDIATION_MODE env can never leave the fleet
+    # detection-only-and-blind. Operator promotes dry_run → arm_only →
+    # arm_or_flatten after canary validation.
+    naked_position_remediation_mode: str = "dry_run"
     # Grace window before fallback flatten kicks in (arm_or_flatten only).
     naked_position_flatten_grace_sec: int = 60
     # Fallback SL/TP distances (% from entry) when local strategy record

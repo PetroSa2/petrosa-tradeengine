@@ -229,7 +229,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     exchange=binance_exchange,
                     position_manager=dispatcher.position_manager,
                     close_position=dispatcher.close_position_with_cleanup,
-                    mode=_te_settings.naked_position_remediation_mode,
+                    # Settings stores the mode as a free-form str; the
+                    # remediator's _coerce_mode() validates/normalizes it (and
+                    # falls back to "off" on garbage), so passing str is safe.
+                    mode=_te_settings.naked_position_remediation_mode,  # type: ignore[arg-type]
                     flatten_grace_sec=_te_settings.naked_position_flatten_grace_sec,
                     fallback_sl_pct=_te_settings.naked_position_fallback_sl_pct,
                     fallback_tp_pct=_te_settings.naked_position_fallback_tp_pct,
@@ -250,12 +253,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await _reconciler.start()
             app.state.position_reconciler = _reconciler
             app.state.naked_position_remediator = _remediator
+
+            # #500: surface the EFFECTIVE remediation mode prominently and
+            # export it as a metric so operators can alert when the watchdog
+            # is detection-only. Use the remediator's coerced .mode (falls
+            # back to "off" on a garbage env) rather than the raw setting so
+            # the log/metric reflect reality. A fresh deploy with an unset
+            # TE_NAKED_POSITION_REMEDIATION_MODE now defaults to "dry_run".
+            _effective_mode = (
+                _remediator.mode
+                if _remediator is not None
+                else _te_settings.naked_position_remediation_mode
+            )
+            from tradeengine.metrics import set_naked_position_remediation_mode
+
+            set_naked_position_remediation_mode(_effective_mode)
             logger.info(
                 "✅ Position reconciler started (interval=%ss, "
                 "naked_remediation_mode=%s)",
                 _te_settings.position_reconciliation_interval_seconds,
-                _te_settings.naked_position_remediation_mode,
+                _effective_mode,
             )
+            if str(_effective_mode).lower() == "off":
+                # Detection-only: watchdog will count naked positions but never
+                # re-arm or flatten. This should never happen on a default
+                # deploy after #500 — flag it loudly for the operator.
+                logger.warning(
+                    "⚠️ Naked-position remediation mode is 'off' — the watchdog "
+                    "DETECTS naked positions but takes NO corrective action "
+                    "(no re-arm, no flatten). Set "
+                    "TE_NAKED_POSITION_REMEDIATION_MODE to dry_run/arm_only/"
+                    "arm_or_flatten to enable enforcement (#500)."
+                )
         else:
             logger.info(
                 "⚠️ Position reconciler disabled (simulation=%s, enabled=%s)",

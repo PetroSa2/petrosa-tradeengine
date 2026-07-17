@@ -463,6 +463,42 @@ class OCOManager:
                 self.logger.error("❌ FAILED TO PLACE OCO ORDERS")
                 self.logger.error(f"  SL Result: {sl_result}")
                 self.logger.error(f"  TP Result: {tp_result}")
+
+                # #504 (inverse of #482): a PARTIAL OCO failure means one leg
+                # posted and was then atomically cancelled above to avoid the
+                # -4509 orphan loop (#425/#482 — we deliberately keep that
+                # cancel). The consequence is that the position is now FULLY
+                # NAKED: entry filled, both protective legs gone. Previously
+                # this returned an opaque {"status": "failed"} that the caller
+                # (_place_risk_management_orders) treated identically to a
+                # benign rejection, silently falling back to individual-order
+                # placement with the SAME uncorrected prices — and when those
+                # also failed (the 2026-07-16 -2021 storm) the position was
+                # left naked with NO escalation. We now surface an explicit,
+                # actionable naked/escalation signal so the caller hands off to
+                # the exchange-authoritative naked-position remediator (re-arm
+                # with corrected pricing, or flatten after the grace window)
+                # instead of going silently unprotected.
+                if surviving_leg is not None:
+                    leg_label, surviving_id = surviving_leg
+                    self.logger.error(
+                        "🚨 POSITION NAKED after partial OCO failure for "
+                        f"{symbol} {position_side}: {leg_label} leg was posted "
+                        f"then cancelled (algoId={surviving_id}); no protection "
+                        "remains. Flagging for remediation (re-arm/flatten)."
+                    )
+                    return {
+                        "status": "failed",
+                        "position_naked": True,
+                        "requires_remediation": True,
+                        "escalate": True,
+                        "reason": "partial_oco_failure_surviving_leg_cancelled",
+                        "symbol": symbol,
+                        "position_side": position_side,
+                        "cancelled_leg": leg_label,
+                        "cancelled_algo_id": surviving_id,
+                    }
+
                 return {"status": "failed"}
 
         except Exception as e:
@@ -3913,6 +3949,38 @@ class Dispatcher:
                         f"reports no open position — skipping individual SL/TP "
                         f"fallback (AC3 of #445, prevents -4509 churn)"
                     )
+                elif oco_result.get("position_naked") or oco_result.get(
+                    "requires_remediation"
+                ):
+                    # #504 (inverse of #482): partial OCO failure — one leg
+                    # posted then was atomically cancelled, leaving the
+                    # position fully naked. Blindly falling back to
+                    # _place_individual_risk_orders here retries BOTH legs with
+                    # the SAME uncorrected prices (the exact loop that produced
+                    # the 2026-07-16 -2021 storm and ended every time with a
+                    # naked position). Instead we STOP the same-price retry and
+                    # hand off to the exchange-authoritative naked-position
+                    # remediator, whose periodic loop iterates Binance
+                    # positionRisk directly (independent of local state) and
+                    # will re-arm with corrected pricing or flatten after the
+                    # grace window. We do NOT mark the position closed — the
+                    # position is open and unprotected, and stops-health must
+                    # reflect that reality (AC3) rather than a false
+                    # position_closed.
+                    self.logger.error(
+                        "🚨 NAKED POSITION (partial OCO failure) for "
+                        f"{order.symbol} {oco_result.get('position_side')}: "
+                        "skipping same-price individual-order retry; handing "
+                        "off to naked-position remediator for re-arm/flatten "
+                        f"(#504). oco_result={oco_result}"
+                    )
+                    # Intentionally do NOT record risk-order IDs (there are
+                    # none) and do NOT mark the position closed. The position
+                    # is open and unprotected; leaving it without SL/TP order
+                    # IDs is what lets /positions/stops-health report it as
+                    # naked (AC3) instead of a false position_closed. The
+                    # exchange-authoritative remediator's periodic loop takes
+                    # it from here.
                 else:
                     self.logger.error(
                         f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result} - falling back to individual orders"

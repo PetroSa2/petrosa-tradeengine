@@ -448,6 +448,34 @@ class BinanceFuturesExchange:
 
         if order.stop_loss is None:
             raise ValueError("Stop loss price required for stop orders")
+
+        # #503: the OCO STOP_MARKET leg previously shipped triggerPrice verbatim
+        # with NO PERCENT_PRICE validation (only the stop-LIMIT sibling clamped).
+        # An out-of-band SL (e.g. XLM 14.8% away when the filter allows ±5%) was
+        # rejected by Binance with -2021 and contributed to naked positions. Run
+        # the trigger through the same validate/adjust path used elsewhere: an
+        # adjustable price is clamped into the band; an infeasible one is refused
+        # cleanly (never shipped) so partial-OCO handling can take over.
+        trigger_price = order.stop_loss
+        (
+            is_adjusted,
+            adjusted_price,
+            adjust_msg,
+        ) = await self.validate_and_adjust_price_for_percent_filter(
+            order.symbol, trigger_price, "STOP_MARKET"
+        )
+        if adjusted_price is None:
+            raise ValueError(
+                f"oco_stop_percent_filter_reject: {adjust_msg or 'trigger price out of band'}"
+            )
+        if is_adjusted:
+            logger.warning(
+                f"#503 OCO STOP clamp: {order.symbol} trigger "
+                f"{trigger_price} -> {adjusted_price} to satisfy PERCENT_PRICE. "
+                f"{adjust_msg}"
+            )
+        trigger_price = adjusted_price
+
         # AC-3 (#352): use closePosition=true so Binance auto-sweeps the order when the
         # position closes. quantity + reduceOnly=true do NOT auto-cancel CONDITIONAL algo
         # orders — they accumulate indefinitely as orphans.
@@ -458,7 +486,7 @@ class BinanceFuturesExchange:
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
             "closePosition": True,
             "triggerPrice": self._format_price(
-                order.symbol, order.stop_loss
+                order.symbol, trigger_price
             ),  # Note: triggerPrice, not stopPrice
             "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
             "priceProtect": True,  # Enable price protection for stop orders

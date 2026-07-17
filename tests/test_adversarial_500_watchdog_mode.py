@@ -140,13 +140,14 @@ class TestUnknownModeFailsSafe:
 
 
 class TestProdConfigSafety:
-    """The #500 fix requirement: prod must not silently run 'off'."""
+    """The #500 fix requirement: prod must not silently run 'off'.
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#500: default remediation mode is 'off' — a fresh deploy is "
-        "silently non-enforcing. Fix should default to at least 'dry_run'.",
-    )
+    Previously this was an ``xfail(strict=True)`` red-first guard (PR #506).
+    The #500 fix flips ``shared/config.py`` default from ``off`` → ``dry_run``,
+    so the assertion now passes: a fresh deploy with an unset
+    ``TE_NAKED_POSITION_REMEDIATION_MODE`` is never silently detection-only.
+    """
+
     def test_default_mode_is_not_silently_off(self) -> None:
         from shared.config import Settings
 
@@ -155,3 +156,61 @@ class TestProdConfigSafety:
             "Default naked_position_remediation_mode is 'off' — deploys run "
             "detection-only with no enforcement (#500)"
         )
+
+    def test_default_mode_is_dry_run(self) -> None:
+        """#500 AC: the safe default is exactly 'dry_run' — no writes on a
+        fresh boot, but intended actions are logged/observable (not blind)."""
+        from shared.config import Settings
+
+        assert str(Settings().naked_position_remediation_mode).lower() == "dry_run"
+
+
+class TestRemediationModeMetric:
+    """#500 AC2: effective mode is exported as a metric for alerting."""
+
+    def _series(self) -> dict[str, float]:
+        from tradeengine.metrics import (
+            _NAKED_REMEDIATION_MODES,
+            naked_position_remediation_mode_status,
+        )
+
+        return {
+            m: naked_position_remediation_mode_status.labels(mode=m)._value.get()
+            for m in _NAKED_REMEDIATION_MODES
+        }
+
+    def test_active_mode_is_one_others_zero(self) -> None:
+        from tradeengine.metrics import set_naked_position_remediation_mode
+
+        set_naked_position_remediation_mode("arm_or_flatten")
+        series = self._series()
+        assert series["arm_or_flatten"] == 1
+        assert series["off"] == 0
+        assert series["dry_run"] == 0
+        assert series["arm_only"] == 0
+
+    def test_mode_transition_clears_previous(self) -> None:
+        from tradeengine.metrics import set_naked_position_remediation_mode
+
+        set_naked_position_remediation_mode("arm_only")
+        set_naked_position_remediation_mode("dry_run")
+        series = self._series()
+        assert series["dry_run"] == 1
+        # Previous mode must be cleared — no stale `1`.
+        assert series["arm_only"] == 0
+
+    def test_off_mode_surfaces_for_alerting(self) -> None:
+        from tradeengine.metrics import set_naked_position_remediation_mode
+
+        set_naked_position_remediation_mode("off")
+        # The alert `{mode="off"} == 1` must fire on detection-only.
+        assert self._series()["off"] == 1
+
+    def test_unknown_mode_coerces_to_off(self) -> None:
+        from tradeengine.metrics import set_naked_position_remediation_mode
+
+        set_naked_position_remediation_mode("garbage")
+        series = self._series()
+        # Misconfigured env surfaces as unsafe 'off', never silently absent.
+        assert series["off"] == 1
+        assert sum(series.values()) == 1

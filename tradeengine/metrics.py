@@ -389,6 +389,44 @@ restricted_mode_status = Gauge(
     "Binary status of RESTRICTED_MODE (1 = Restricted, 0 = Normal)",
 )
 
+# #500 — effective naked-position remediation mode, exported as a labeled gauge
+# so operators can alert when the watchdog is running detection-only ("off").
+# Exactly one series is set to 1 (the active mode); all other mode series are 0.
+# The 2026-07-16 incident showed the remediator silently ran "off" in prod
+# (TE_NAKED_POSITION_REMEDIATION_MODE unset) — detecting naked positions but
+# never re-arming/flattening. This metric makes the effective mode first-class
+# and drives the `tradeengine-naked-remediation-off` alert.
+#   arm_or_flatten enforcement:  ...{mode="arm_or_flatten"} == 1
+#   detection-only (unsafe):     ...{mode="off"} == 1
+naked_position_remediation_mode_status = Gauge(
+    "tradeengine_naked_position_remediation_mode_status",
+    "Effective naked-position remediation mode (1 = active mode; one series per "
+    "mode set to 1, others 0). Alert when {mode='off'} == 1.",
+    ["mode"],
+)
+
+# All recognized modes — used to zero out inactive series so a mode transition
+# does not leave a stale `1` on the previous mode label.
+_NAKED_REMEDIATION_MODES = ("off", "dry_run", "arm_only", "arm_or_flatten")
+
+
+def set_naked_position_remediation_mode(mode: str) -> None:
+    """Set the effective naked-position remediation mode gauge (#500).
+
+    Sets the active mode's series to 1 and every other known mode's series to 0
+    so alerting on ``{mode="off"} == 1`` is unambiguous. Unknown/garbage modes
+    are coerced to ``off`` (matching NakedPositionRemediator._coerce_mode) so a
+    misconfigured env still surfaces as the unsafe detection-only state rather
+    than silently disappearing.
+    """
+    normalized = (mode or "off").lower().strip()
+    if normalized not in _NAKED_REMEDIATION_MODES:
+        normalized = "off"
+    for known in _NAKED_REMEDIATION_MODES:
+        naked_position_remediation_mode_status.labels(mode=known).set(
+            1 if known == normalized else 0
+        )
+
 
 # ============================================================
 # OTel SDK instruments (dual-export — OTLP push to Grafana Alloy)

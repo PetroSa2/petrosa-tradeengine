@@ -136,15 +136,24 @@ class TestHelpers:
             _spos("a", side="SHORT"), {("BTCUSDT", "BOTH"): snap}
         )
 
-    def test_one_way_mode_wrong_direction_is_ghost(self) -> None:
+    def test_one_way_mode_short_matches_positive_snapshot(self) -> None:
+        # #505: previously this shape (SHORT strategy row vs. a BOTH snapshot
+        # carrying a POSITIVE quantity) was treated as a ghost, on the
+        # assumption that live Binance always signs a SHORT negatively. The
+        # 2026-07-16 incident disproved that: live positionRisk returned a real
+        # SHORT with positionAmt=+9470.2. In one-way mode a symbol has at most
+        # one net position, so any non-zero (symbol, "BOTH") snapshot IS that
+        # position; the strategy row's explicit side is authoritative and the
+        # snapshot must NOT be mis-classified as a ghost (which risks evicting a
+        # live, real position). Safety-first: match, do not evict.
         snap = PositionSnapshot(
             symbol="BTCUSDT",
             side="BOTH",
-            quantity=0.5,
+            quantity=0.5,  # positive — the #505 sign hazard
             entry_price=50_000,
             unrealized_pnl=0,
         )
-        assert not _has_matching_exchange_position(
+        assert _has_matching_exchange_position(
             _spos("a", side="SHORT"), {("BTCUSDT", "BOTH"): snap}
         )
 

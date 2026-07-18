@@ -83,8 +83,16 @@ def _has_matching_exchange_position(
     counterpart.
 
     Hedge mode keys are ``(symbol, "LONG")`` / ``(symbol, "SHORT")`` and
-    match directly.  One-way mode keys are ``(symbol, "BOTH")`` with a
-    signed quantity — positive amount = LONG, negative = SHORT.
+    match directly.  One-way mode keys are ``(symbol, "BOTH")``.
+
+    #505: the one-way branch previously inferred direction from the *sign* of
+    the snapshot quantity (``positive = LONG, negative = SHORT``). Live Binance
+    ``positionRisk`` during the 2026-07-16 incident returned a SHORT with a
+    *positive* ``positionAmt`` (9470.2), so a real short failed the
+    ``snap.quantity < 0`` test and was mis-classified as a ghost — putting it at
+    risk of eviction. The strategy row's explicit ``side`` is authoritative, so
+    a single one-way snapshot with a non-zero magnitude matches the strategy's
+    declared side regardless of the sign the live data happens to carry.
     """
     symbol = strategy_position.get("symbol")
     side = str(strategy_position.get("side", "")).upper()
@@ -100,11 +108,11 @@ def _has_matching_exchange_position(
     snap = exchange_positions.get((symbol, "BOTH"))
     if snap is None:
         return False
-    if side == "LONG" and snap.quantity > 0:
-        return True
-    if side == "SHORT" and snap.quantity < 0:
-        return True
-    return False
+    # One-way (BOTH) mode: a symbol has at most one net position, so any
+    # non-zero magnitude under the (symbol, "BOTH") key is *that* position.
+    # Trust the strategy row's explicit side rather than the snapshot sign,
+    # which live data (see #505) has been observed to violate for SHORTs.
+    return snap.quantity != 0
 
 
 class StrategyPositionReconciler:

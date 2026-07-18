@@ -153,6 +153,23 @@ class StrategyPositionManager:
             entry_quantity = float(execution_result.get("amount", signal.quantity))
             entry_order_id = execution_result.get("order_id")
 
+            # #505: SHORT positions were stored with an unsigned (positive)
+            # ``entry_quantity`` while ``side`` was tracked separately, so a
+            # SHORT could be recorded as ``side="SHORT", entry_quantity=+9470.2``.
+            # Consumers that infer direction from the *sign* of the quantity
+            # (one-way / BOTH-mode reconcilers) then mis-classified live shorts.
+            #
+            # ``entry_quantity`` stays UNSIGNED on purpose — it is passed as the
+            # Binance order ``amount=`` in the close/reduce paths
+            # (position_health_guard, _update_exchange_position, _create_contribution)
+            # which require a positive magnitude. Instead we store an explicit,
+            # documented ``signed_quantity`` alongside it so any sign-based
+            # inference has a single, consistent source of truth:
+            #   LONG  -> +magnitude
+            #   SHORT -> -magnitude
+            _magnitude = abs(float(entry_quantity))
+            signed_quantity = -_magnitude if position_side == "SHORT" else _magnitude
+
             # Calculate TP/SL prices
             take_profit_price = None
             stop_loss_price = None
@@ -192,6 +209,9 @@ class StrategyPositionManager:
                 "symbol": signal.symbol,
                 "side": position_side,
                 "entry_quantity": entry_quantity,
+                # #505: signed convention (LONG>0, SHORT<0) for safe sign-based
+                # inference; ``entry_quantity`` remains unsigned for order amounts.
+                "signed_quantity": signed_quantity,
                 "entry_price": entry_price,
                 "entry_time": datetime.now(UTC),
                 "entry_order_id": entry_order_id,

@@ -22,8 +22,6 @@ data violates. xfail(strict) for the hazards that require the fix.
 
 from __future__ import annotations
 
-import pytest
-
 from tradeengine.exchange_truth_store import PositionSnapshot
 from tradeengine.strategy_position_reconciler import _has_matching_exchange_position
 
@@ -65,11 +63,6 @@ class TestOneWayModeSignHazard:
         }
         assert _has_matching_exchange_position(_short_strategy_row(), ex) is True
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#505: one-way SHORT with positive qty (as live Binance returned) "
-        "fails to match → real position mis-evicted as ghost",
-    )
     def test_oneway_short_with_positive_qty_still_matches(self) -> None:
         """The incident hazard: a real short presented with positive qty in a
         BOTH snapshot must NOT be treated as absent (ghost)."""
@@ -106,11 +99,6 @@ class TestStorageSignConvention:
         # No negation / sign application on the SHORT branch today.
         assert "-entry_quantity" not in src and "abs(entry_quantity)" not in src
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#505: entry_quantity stored unsigned; a signed convention (SHORT<0) "
-        "or explicit side-only inference must be applied so BOTH-mode matching is safe",
-    )
     def test_storage_applies_signed_convention_for_short(self) -> None:
         """Post-fix: the storage path must encode SHORT with a negative signed
         quantity (or otherwise guarantee sign-consistent inference)."""

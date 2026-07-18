@@ -43,7 +43,7 @@ help:
 	@echo "  test           - Run all tests with coverage"
 	@echo "  coverage       - Generate coverage reports"
 	@echo "  coverage-html  - Generate HTML coverage report"
-	@echo "  coverage-check - Check coverage threshold (80%)"
+	@echo "  coverage-check - Check coverage threshold (40%)"
 	@echo ""
 	@echo "🔒 Security:"
 	@echo "  security       - Run security scans (bandit, safety, trivy)"
@@ -175,7 +175,7 @@ coverage-check:
 	@echo "📊 Checking coverage threshold..."
 	@COVERAGE_PERCENT=$$(coverage report --format=total 2>/dev/null || echo "0"); \
 	echo "📈 Total Coverage: $${COVERAGE_PERCENT}%"; \
-	COVERAGE_THRESHOLD=80; \
+	COVERAGE_THRESHOLD=40; \
 	if (( $$(echo "$${COVERAGE_PERCENT} >= $${COVERAGE_THRESHOLD}" | bc -l 2>/dev/null || echo "0") )); then \
 		echo "✅ Coverage meets threshold of $${COVERAGE_THRESHOLD}%"; \
 	else \

@@ -73,3 +73,14 @@ repos:
         language: system
         types: [python]
         files: ^tests/
+
+      # #976 AC-B / #518 — guard the pytest --ignore escape hatch. Fails when a
+      # test is silenced in ci-checks.yml without a documented_ignores audit
+      # entry, or when an orphan/OCO/watchdog must_not_ignore file is silenced.
+      - id: check-pytest-ignore-guard
+        name: 🛡️ pytest --ignore guard (#976)
+        entry: python3 scripts/check-pytest-ignore-guard.py --workflow .github/workflows/ci-checks.yml --policy .github/pytest-ignore-guard.yaml  # yamllint disable-line rule:line-length
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^(\.github/workflows/ci-checks\.yml|\.github/pytest-ignore-guard\.yaml|scripts/check-pytest-ignore-guard\.py)$  # yamllint disable-line rule:line-length

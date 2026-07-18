@@ -20,7 +20,7 @@ jobs:
       image-name: 'yurisa2/petrosa-tradeengine'
       python-version: '3.11'
       skip-docker-build: true
-      coverage-threshold: '20'
+      coverage-threshold: '40'
       pytest-extra-args: >-  # yamllint disable-line rule:line-length
         --ignore=tests/test_api.py
         --ignore=tests/test_api_config_routes_comprehensive.py

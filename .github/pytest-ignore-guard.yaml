@@ -1,0 +1,51 @@
+---
+# pytest --ignore guard policy (#976 AC-B / tradeengine #518)
+#
+# Consumed by scripts/check-pytest-ignore-guard.py, which is wired into
+# pre-commit (see .pre-commit-config.yaml, hook id: check-pytest-ignore-guard)
+# and hard-fails when:
+#   * a test file appears in ci-checks.yml's --ignore list without a
+#     documented_ignores audit-trail entry (reason + tracking issue), or
+#   * a must_not_ignore (orphan/OCO/watchdog regression-net) file is silenced.
+#
+# The tool is owned by petrosa_k8s (scripts/check-pytest-ignore-guard.py) and
+# vendored here per the ticket-filing convention (code lands in the
+# implementing repo). Keep the vendored copy in sync via
+# petrosa_k8s/scripts/sync-tooling.py.
+
+# Audit trail — every file currently in ci-checks.yml `--ignore` needs an entry
+# (reason + tracking issue). These 7 are the files silenced as of #518.
+# Tracking issue for un-ignoring them: PetroSa2/petrosa-tradeengine#970.
+documented_ignores:
+  tests/test_api.py: >-
+    FastAPI TestClient/httpx fixture incompatibility under CI; tracked in #970
+  tests/test_api_config_routes_comprehensive.py: >-
+    API config route suite depends on the test_api.py TestClient fixture;
+    tracked in #970
+  tests/test_api_config_validation.py: >-
+    API config validation shares the TestClient fixture regression;
+    tracked in #970
+  tests/test_api_filter_routes.py: >-
+    API filter route suite shares the TestClient fixture regression;
+    tracked in #970
+  tests/test_cio_state.py: >-
+    CIO state suite needs external CIO service state unavailable in CI;
+    tracked in #970
+  tests/test_trading_config_rollback.py: >-
+    Trading-config rollback suite depends on a live config store;
+    tracked in #970
+  tests/test_span_attributes.py: >-
+    OTel span-attribute assertions flake under the CI exporter;
+    tracked in #970
+
+# AC-B / AC-D — orphan/OCO/watchdog suites must ALWAYS run. Adding any of these
+# to ci-checks.yml `--ignore` hard-fails the guard (exit 1). Canonical
+# orphan-regression net (see #514 and epic PetroSa2/petrosa_k8s#970 Phase-1).
+must_not_ignore:
+  - tests/test_adversarial_504_partial_oco_naked.py
+  - tests/unit/test_naked_position_remediator.py
+  - tests/test_orphan_algo_cancel.py
+  - tests/unit/test_position_reconciler.py
+  - tests/test_adversarial_500_watchdog_mode.py
+  - tests/test_watchdog_gaps.py
+  - tests/test_oco_orders.py

@@ -42,7 +42,10 @@ exclude_lines =
     @(abc\.)?abstractmethod
 
 # Coverage thresholds
-fail_under = 80
+# Reconciled to the #976 canonical CI-enforced floor (40) so local `coverage
+# report` and CI (ci-checks.yml coverage-threshold / pyproject cov-fail-under)
+# agree. Do not silently drop below 40.
+fail_under = 40
 show_missing = True
 skip_covered = False
 

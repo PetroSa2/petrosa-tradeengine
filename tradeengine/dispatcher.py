@@ -20,10 +20,12 @@ from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
     dispatcher_thrash_circuit_open_total,
+    oco_pair_age_seconds,
     order_execution_latency_seconds,
     order_failures_total,
     order_placement_skipped_total,
     orders_executed_by_type,
+    otel_oco_pair_age_seconds,
     risk_checks_total,
     risk_rejections_total,
     strategy_close_blocked_no_exchange_position_total,
@@ -1186,6 +1188,40 @@ class OCOManager:
                         outcome="failed_other", symbol=symbol
                     ).inc()
 
+    @staticmethod
+    def _coerce_created_at(value: Any, fallback: float) -> float:
+        """#972: return an epoch-seconds float for an OCO pair's created_at.
+
+        Production code stores ``time.time()`` (a float), but tests and any
+        future serialization path may present an int or an ISO-8601 string.
+        Anything unparseable falls back to ``fallback`` (yielding age ~0)
+        rather than raising and aborting the monitor cycle.
+        """
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                # Accept trailing 'Z' as UTC.
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt.timestamp()
+            except ValueError:
+                return fallback
+        return fallback
+
+    def _remove_oco_pair_age_series(self, symbol: str, position_side: str) -> None:
+        """#972: drop the oco_pair_age_seconds series for a completed pair.
+
+        prometheus_client raises KeyError if the (symbol, position_side) label
+        set was never observed; that is benign here (the series may have already
+        been removed on a prior cycle) so we swallow it. The OTel synchronous
+        gauge has no per-series removal API — it simply stops receiving points
+        for a label set, which the SDK ages out — so nothing to do there.
+        """
+        try:
+            oco_pair_age_seconds.remove(symbol, position_side)
+        except KeyError:
+            pass
+
     async def _monitor_orders(self) -> None:
         """
         Monitor active orders for fills and trigger OCO logic
@@ -1220,6 +1256,37 @@ class OCOManager:
                     symbol = oco_list[0]["symbol"] if oco_list else None
                     if not symbol:
                         continue
+
+                    # #972: publish OCO pair age (seconds since the pair entered
+                    # active_oco_pairs). Set every cycle for each active pair so a
+                    # stuck/stale pair (>300s) is visible in Grafana. Dual-export
+                    # (prometheus + OTel) per the #415/#497 pattern. Guarded so a
+                    # malformed created_at can never abort the monitor cycle.
+                    _now = time.time()
+                    for _oco in oco_list:
+                        if _oco.get("status") != "active":
+                            continue
+                        try:
+                            _created = self._coerce_created_at(
+                                _oco.get("created_at"), _now
+                            )
+                            _age = _now - _created
+                            oco_pair_age_seconds.labels(
+                                symbol=_oco["symbol"],
+                                position_side=_oco["position_side"],
+                            ).set(_age)
+                            otel_oco_pair_age_seconds.set(
+                                _age,
+                                {
+                                    "symbol": _oco["symbol"],
+                                    "position_side": _oco["position_side"],
+                                },
+                            )
+                        except Exception as _age_err:  # pragma: no cover - defensive
+                            self.logger.debug(
+                                "oco_pair_age_seconds update skipped for "
+                                f"{_oco.get('symbol')} {_oco.get('position_side')}: {_age_err}"
+                            )
 
                     # Query all open orders for this symbol once
                     # Use the robust combined list (Standard + Algo) to avoid ghost orders
@@ -1340,12 +1407,24 @@ class OCOManager:
 
                 # Clean up completed OCO pairs
                 for exchange_position_key in list(self.active_oco_pairs.keys()):
-                    # Filter out completed pairs
+                    # #972: drop the age gauge series for pairs leaving the active
+                    # set (completed/cancelled/externally-closed) so they don't
+                    # report a frozen age forever. Remove the (symbol,
+                    # position_side) series when no active pair remains for it.
                     active_pairs = [
                         oco
                         for oco in self.active_oco_pairs[exchange_position_key]
                         if oco["status"] == "active"
                     ]
+                    _active_label_pairs = {
+                        (oco["symbol"], oco["position_side"]) for oco in active_pairs
+                    }
+                    for _oco in self.active_oco_pairs[exchange_position_key]:
+                        _label_pair = (_oco["symbol"], _oco["position_side"])
+                        if _oco["status"] != "active" and (
+                            _label_pair not in _active_label_pairs
+                        ):
+                            self._remove_oco_pair_age_series(*_label_pair)
 
                     if active_pairs:
                         self.active_oco_pairs[exchange_position_key] = active_pairs

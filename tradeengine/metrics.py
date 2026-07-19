@@ -236,6 +236,19 @@ oco_orphan_count = Gauge(
     "Current number of OCO orphans: positions on Binance that lack their full stop/target pair",
 )
 
+# #972 — OCO pair age: seconds since an OCO pair entered ``active_oco_pairs``.
+# An OCO pair that stays active for a long time (>300s) signals a stuck monitor
+# loop, a silently-failed cancellation, or a race. The gauge is set every
+# ``_monitor_orders`` cycle (2s cadence) and the (symbol, position_side) series
+# is removed when the pair completes/cancels so a stale pair never reports a
+# frozen-but-climbing age. Dual-exported (see ``otel_oco_pair_age_seconds``
+# below, per #415/#497) so the Grafana Cloud OTLP datasource sees it too.
+oco_pair_age_seconds = Gauge(
+    "petrosa_tradeengine_oco_pair_age_seconds",
+    "Age in seconds of each active OCO pair (time since it entered active_oco_pairs)",
+    ["symbol", "position_side"],
+)
+
 # #484 — stops-health violation alarms. The 2026-06-18 testnet diagnosis showed
 # violation_count=12 with alarms_emitted=0: alarms only fired on the force-close
 # branch, so a "successful" (or lying) remediation silenced the operator-facing
@@ -522,4 +535,13 @@ otel_oco_orphan_leg = meter.create_counter(
 otel_oco_orphan_count = meter.create_up_down_counter(
     "petrosa_tradeengine_oco_orphan_count",
     description="Current number of OCO orphans: positions lacking their full stop/target pair (OTLP dual-export)",
+)
+
+# #972 — OCO pair age (OTLP dual-export). Synchronous gauge; .set() is called
+# alongside the prometheus_client Gauge each _monitor_orders cycle. Mirrors the
+# prometheus metric name for cross-system correlation in Grafana.
+otel_oco_pair_age_seconds = meter.create_gauge(
+    "petrosa_tradeengine_oco_pair_age_seconds",
+    description="Age in seconds of each active OCO pair (time since it entered active_oco_pairs) (OTLP dual-export)",
+    unit="s",
 )

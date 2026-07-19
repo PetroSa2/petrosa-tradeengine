@@ -293,6 +293,53 @@ async def test_reconcile_once_does_not_modify_state():
 
 
 # ---------------------------------------------------------------------------
+# AC1 (#514): MongoDB-blip untracked-divergence regression
+#
+# Scenario: a MongoDB blip clears local PositionManager state while
+# Binance/ExchangeTruthStore still holds the position. reconcile_once()
+# must surface this as an *untracked* divergence so #970's monitoring net
+# can alert. Existing test_reconcile_once_divergence_unhealthy_verdict only
+# asserted len==1 + verdict flags; it never pinned the divergence category
+# through the async reconcile_once() path, nor the read-only contract for
+# this exact shape. Per PR #506/#505, the reconciler is deliberately
+# read-only — the ticket's originally-proposed "re-add to local tracking"
+# assertion contradicts that design and is intentionally NOT implemented;
+# recovery is owned by the remediator, not the reconciler.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_mongodb_blip_emits_untracked_divergence():
+    """AC1: local state cleared (Mongo blip), Binance still holds position.
+
+    reconcile_once() must emit exactly one ``untracked`` divergence naming
+    the surviving Binance position, and must NOT write it back to the local
+    tracker (read-only contract — recovery belongs to the remediator).
+    """
+    # Binance still shows the position; local PositionManager is empty
+    # (simulating the MongoDB blip that wiped local tracking).
+    binance_raw = [_binance_pos("ETHUSDT", "LONG", 3.0)]
+    local: dict = {}
+    reconciler = _make_reconciler(binance_raw, local)
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    untracked = [d for d in divergences if d["category"] == "untracked"]
+    assert len(untracked) == 1, f"expected one untracked divergence, got {divergences}"
+    assert untracked[0]["symbol"] == "ETHUSDT"
+    assert untracked[0]["side"] == "LONG"
+
+    # Read-only contract: the blip is reported, never silently re-added to
+    # the local tracker by the reconciler.
+    reconciler._position_manager.update_position = MagicMock()
+    reconciler._position_manager.update_position.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Exchange error handling
 # ---------------------------------------------------------------------------
 

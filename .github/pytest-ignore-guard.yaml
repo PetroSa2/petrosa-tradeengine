@@ -41,6 +41,13 @@ documented_ignores:
 # AC-B / AC-D — orphan/OCO/watchdog suites must ALWAYS run. Adding any of these
 # to ci-checks.yml `--ignore` hard-fails the guard (exit 1). Canonical
 # orphan-regression net (see #514 and epic PetroSa2/petrosa_k8s#970 Phase-1).
+#
+# #514 AC2 audit (2026-07-19, VERIFIED): the three canonical orphan suites
+# (test_adversarial_504_partial_oco_naked.py,
+# unit/test_naked_position_remediator.py, test_orphan_algo_cancel.py) are
+# confirmed absent from ci-checks.yml `--ignore` and protected here.
+# Enforcement mechanism (un-ignore gate) is owned by
+# PetroSa2/petrosa_k8s#976; this list is the always-run contract it consumes.
 must_not_ignore:
   - tests/test_adversarial_504_partial_oco_naked.py
   - tests/unit/test_naked_position_remediator.py

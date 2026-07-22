@@ -110,7 +110,18 @@ class Settings(BaseSettings):
     naked_position_flatten_grace_sec: int = 60
     # Fallback SL/TP distances (% from entry) when local strategy record
     # has no stored stop_loss_price/take_profit_price for a naked position.
-    naked_position_fallback_sl_pct: float = 2.0
+    #
+    # CRITICAL (2026-07-20 second-wave OCO-orphan incident): the SL fallback
+    # MUST clear te_min_sl_distance_pct (the safety floor, default 6.0%).
+    # A fallback below the floor is un-armable — the price-adjuster in
+    # BinanceFuturesExchange.execute() returns (False, None, reason) for any
+    # STOP inside the floor, the re-arm raises, and arm_or_flatten degrades to
+    # "flatten everything after the grace window". The old 2.0% value was
+    # hardwired to lose that fight. Keep this >= te_min_sl_distance_pct with a
+    # small margin so the re-armed stop lands just outside the floor.
+    # TP is not floor-constrained (TPs may sit near market), so its fallback
+    # is unchanged.
+    naked_position_fallback_sl_pct: float = 6.5
     naked_position_fallback_tp_pct: float = 4.0
 
     model_config = {

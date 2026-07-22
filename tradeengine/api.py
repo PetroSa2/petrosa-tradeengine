@@ -236,6 +236,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     flatten_grace_sec=_te_settings.naked_position_flatten_grace_sec,
                     fallback_sl_pct=_te_settings.naked_position_fallback_sl_pct,
                     fallback_tp_pct=_te_settings.naked_position_fallback_tp_pct,
+                    # Pass the safety floor so the remediator widens any
+                    # too-tight stored SL out to a placeable distance instead
+                    # of re-arming with a guaranteed-to-fail price (#second-wave
+                    # OCO-orphan: 2.4% strategy SL vs 6% floor deadlock).
+                    min_sl_distance_pct=_te_settings.te_min_sl_distance_pct,
                 )
             except Exception:
                 logger.exception(

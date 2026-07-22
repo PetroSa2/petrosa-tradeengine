@@ -70,6 +70,9 @@ def _make_remediator(
     exchange_execute_raises: bool = False,
     close_return: dict | None = None,
     close_raises: bool = False,
+    fallback_sl_pct: float = 2.0,
+    fallback_tp_pct: float = 4.0,
+    min_sl_distance_pct: float = 0.0,
 ) -> tuple[NakedPositionRemediator, MagicMock, MagicMock, AsyncMock, _FakeClock]:
     exchange = MagicMock()
     if exchange_execute_raises:
@@ -94,6 +97,9 @@ def _make_remediator(
         close_position=close_cb,
         mode=mode,  # type: ignore[arg-type]
         flatten_grace_sec=grace_sec,
+        fallback_sl_pct=fallback_sl_pct,
+        fallback_tp_pct=fallback_tp_pct,
+        min_sl_distance_pct=min_sl_distance_pct,
         clock=clock,
     )
     return remediator, exchange, pm, close_cb, clock
@@ -336,6 +342,80 @@ def test_derive_returns_none_for_missing_entry_price() -> None:
         "BTCUSDT", "LONG", {("BTCUSDT", "LONG"): {"entryPrice": 0}}
     )
     assert sl is None and tp is None
+
+
+# ---------------------------------------------------------------------------
+# Second-wave OCO-orphan fix: SL clamped to safety floor (C1 + C2)
+# ---------------------------------------------------------------------------
+
+
+def test_derive_widens_too_tight_stored_long_sl_to_floor() -> None:
+    """C2: a stored LONG SL tighter than the floor is widened out.
+
+    entry=100, floor=6% → LONG SL must be <= 94.0. A stored 97.6 (2.4%)
+    is un-armable, so it is widened down to 94.0.
+    """
+    r, _, _, _, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=6.0)
+    positions = _binance_positions("BTCUSDT", "LONG", 100.0)
+    positions[("BTCUSDT", "LONG")]["stop_loss_price"] = 97.6
+    r._position_manager.get_positions = MagicMock(
+        return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 97.6}}
+    )
+    sl, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
+    assert sl == pytest.approx(94.0)  # widened to floor, not left at 97.6
+
+
+def test_derive_widens_too_tight_stored_short_sl_to_floor() -> None:
+    """C2: a stored SHORT SL tighter than the floor is widened up.
+
+    entry=100, floor=6% → SHORT SL must be >= 106.0. A stored 102.4 (2.4%)
+    is un-armable, so it is widened up to 106.0.
+    """
+    r, _, _, _, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=6.0)
+    positions = _binance_positions("BTCUSDT", "SHORT", 100.0)
+    r._position_manager.get_positions = MagicMock(
+        return_value={("BTCUSDT", "SHORT"): {"stop_loss_price": 102.4}}
+    )
+    sl, _ = r._derive_protective_prices("BTCUSDT", "SHORT", positions)
+    assert sl == pytest.approx(106.0)
+
+
+def test_derive_leaves_compliant_stored_sl_untouched() -> None:
+    """A stored SL already outside the floor is preserved (strategy intent)."""
+    r, _, _, _, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=6.0)
+    positions = _binance_positions("BTCUSDT", "LONG", 100.0)
+    r._position_manager.get_positions = MagicMock(
+        return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 90.0}}  # 10% away
+    )
+    sl, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
+    assert sl == pytest.approx(90.0)
+
+
+def test_derive_fallback_sl_clears_floor_when_configured() -> None:
+    """C1: a fallback SL below the floor is widened out to the floor.
+
+    With the old 2% fallback and a 6% floor, the fallback SL (98.0 LONG)
+    is un-armable; the clamp widens it to 94.0.
+    """
+    r, _, _, _, _ = _make_remediator(
+        mode="arm_only", fallback_sl_pct=2.0, min_sl_distance_pct=6.0
+    )
+    sl, _ = r._derive_protective_prices(
+        "BTCUSDT", "LONG", _binance_positions("BTCUSDT", "LONG", 100.0)
+    )
+    assert sl == pytest.approx(94.0)
+
+
+def test_derive_no_clamp_when_floor_disabled() -> None:
+    """min_sl_distance_pct=0 disables the clamp (legacy behaviour)."""
+    r, _, _, _, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=0.0)
+    r._position_manager.get_positions = MagicMock(
+        return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 99.0}}
+    )
+    sl, _ = r._derive_protective_prices(
+        "BTCUSDT", "LONG", _binance_positions("BTCUSDT", "LONG", 100.0)
+    )
+    assert sl == pytest.approx(99.0)  # left tight, not widened
 
 
 # ---------------------------------------------------------------------------

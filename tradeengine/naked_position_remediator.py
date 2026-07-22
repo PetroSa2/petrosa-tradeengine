@@ -97,6 +97,7 @@ class NakedPositionRemediator:
         flatten_grace_sec: int = 60,
         fallback_sl_pct: float = 2.0,
         fallback_tp_pct: float = 4.0,
+        min_sl_distance_pct: float = 6.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._exchange = exchange
@@ -106,6 +107,12 @@ class NakedPositionRemediator:
         self._flatten_grace_sec = max(int(flatten_grace_sec), 0)
         self._fallback_sl_pct = float(fallback_sl_pct)
         self._fallback_tp_pct = float(fallback_tp_pct)
+        # The exchange safety floor (te_min_sl_distance_pct). A stored
+        # strategy SL tighter than this is un-armable — the price-adjuster
+        # rejects it — so _derive_protective_prices widens it out to the
+        # floor rather than handing the re-arm a guaranteed-to-fail price
+        # (2026-07-20 second-wave OCO-orphan incident).
+        self._min_sl_distance_pct = float(min_sl_distance_pct)
         self._clock = clock
         # (symbol, side) -> first-seen monotonic timestamp
         self._first_seen: dict[tuple[str, str], float] = {}
@@ -398,6 +405,13 @@ class NakedPositionRemediator:
         intent. Fallback exists because the whole point of #445 is that
         local state may be stale or missing — the exchange position is
         the ground truth.
+
+        Second-wave OCO-orphan fix (2026-07-20): a stored strategy SL that
+        is tighter than the exchange safety floor (te_min_sl_distance_pct)
+        is un-armable — the price-adjuster rejects it and the re-arm fails,
+        degrading arm_or_flatten to flatten-everything. When we know the
+        entry price, any SL inside the floor band is WIDENED out to the
+        floor so the re-arm can actually place. TP is not floor-constrained.
         """
         sl_price: float | None = None
         tp_price: float | None = None
@@ -421,9 +435,8 @@ class NakedPositionRemediator:
             except (TypeError, ValueError):
                 pass
 
-        if sl_price is not None and tp_price is not None:
-            return sl_price, tp_price
-
+        # Resolve entry price unconditionally — needed both for the fallback
+        # legs AND to clamp a too-tight stored SL out to the safety floor.
         entry_price: float | None = None
         if binance_positions:
             bp = binance_positions.get((symbol, side))
@@ -433,9 +446,12 @@ class NakedPositionRemediator:
                 except (TypeError, ValueError):
                     entry_price = None
 
+        # Without an entry price we cannot compute the floor band or the
+        # fallback — return whatever local values we have (legacy behaviour).
         if entry_price is None or entry_price <= 0:
             return sl_price, tp_price
 
+        # Fill missing legs from the entry-anchored fallback.
         if sl_price is None:
             if side == "LONG":
                 sl_price = entry_price * (1.0 - self._fallback_sl_pct / 100.0)
@@ -446,6 +462,41 @@ class NakedPositionRemediator:
                 tp_price = entry_price * (1.0 + self._fallback_tp_pct / 100.0)
             else:
                 tp_price = entry_price * (1.0 - self._fallback_tp_pct / 100.0)
+
+        # Clamp a too-tight SL (stored OR fallback) out to the safety floor.
+        # LONG SL is below entry: it must be <= entry * (1 - floor).
+        # SHORT SL is above entry: it must be >= entry * (1 + floor).
+        if sl_price is not None and self._min_sl_distance_pct > 0:
+            floor = self._min_sl_distance_pct / 100.0
+            if side == "LONG":
+                floor_price = entry_price * (1.0 - floor)
+                if sl_price > floor_price:
+                    logger.warning(
+                        "NakedPositionRemediator: widening too-tight LONG SL "
+                        "%s/%s from %s to floor %s (entry=%s, floor=%.2f%%)",
+                        symbol,
+                        side,
+                        sl_price,
+                        floor_price,
+                        entry_price,
+                        self._min_sl_distance_pct,
+                    )
+                    sl_price = floor_price
+            else:
+                floor_price = entry_price * (1.0 + floor)
+                if sl_price < floor_price:
+                    logger.warning(
+                        "NakedPositionRemediator: widening too-tight SHORT SL "
+                        "%s/%s from %s to floor %s (entry=%s, floor=%.2f%%)",
+                        symbol,
+                        side,
+                        sl_price,
+                        floor_price,
+                        entry_price,
+                        self._min_sl_distance_pct,
+                    )
+                    sl_price = floor_price
+
         return sl_price, tp_price
 
     def _resolve_position_id(self, symbol: str, side: str) -> str:

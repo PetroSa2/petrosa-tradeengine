@@ -102,7 +102,16 @@ async def test_emit_from_order_covers_all_lifecycle_events(
     dispatcher, event_type, reason
 ):
     order = _build_order(strategy_id="momentum_v2", decision_id="dec-MOM")
-    result = {"order_id": "binance-7777", "status": event_type, "amount": 0.005}
+    result = {
+        "order_id": "binance-7777",
+        "status": event_type,
+        "amount": 0.005,
+        "fill_price": 50123.45,
+        "fees": 0.0123,
+        "fee_asset": "USDT",
+        "timestamp": 1716163200123,
+        "fills": [{"commission": "0.0123", "commissionAsset": "USDT"}],
+    }
 
     with patch("tradeengine.dispatcher.execution_event_publisher") as pub:
         pub.publish = AsyncMock(return_value=True)
@@ -124,6 +133,15 @@ async def test_emit_from_order_covers_all_lifecycle_events(
     assert kw["extra"]["symbol"] == "BTCUSDT"
     assert kw["extra"]["side"] == "buy"
     assert kw["extra"]["qty"] == 0.01
+    assert kw["extra"]["fill_qty"] == 0.005
+    assert kw["extra"]["fill_quantity"] == 0.005
+    assert kw["extra"]["fill_price"] == 50123.45
+    assert kw["extra"]["price"] == 50123.45
+    assert kw["extra"]["fee"] == 0.0123
+    assert kw["extra"]["fee_asset"] == "USDT"
+    assert kw["extra"]["fill_time"] == "2024-05-20T00:00:00.123000+00:00"
+    if event_type in ("filled", "partial_fill"):
+        assert "pnl" in kw["extra"]
 
 
 @pytest.mark.asyncio
@@ -163,3 +181,34 @@ async def test_emit_strips_unknown_fields_from_signal_decision_id(dispatcher):
             signal, event_type="rejected", reason="restricted_mode"
         )
     assert pub.publish.await_args.kwargs["decision_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_emit_from_order_includes_fill_audit_fields(dispatcher):
+    """#529: filled extras must carry price/qty/time/fee for the trade audit trail."""
+    order = _build_order()
+    result = {
+        "order_id": "binance-9999",
+        "status": "filled",
+        "amount": 0.02,
+        "fill_price": 61000.5,
+        "fees": 0.05,
+        "fee_asset": "BNB",
+        "timestamp": "2026-05-18T12:00:01+00:00",
+        "pnl": 12.5,
+    }
+    with patch("tradeengine.dispatcher.execution_event_publisher") as pub:
+        pub.publish = AsyncMock(return_value=True)
+        await dispatcher._emit_execution_event_from_order(
+            order, result, event_type="filled", reason="binance_filled"
+        )
+    extra = pub.publish.await_args.kwargs["extra"]
+    assert extra["fill_price"] == 61000.5
+    assert extra["fill_quantity"] == 0.02
+    assert extra["fill_qty"] == 0.02
+    assert extra["fill_time"] == "2026-05-18T12:00:01+00:00"
+    assert extra["fee"] == 0.05
+    assert extra["fee_asset"] == "BNB"
+    assert extra["pnl"] == 12.5
+    assert extra["symbol"] == "BTCUSDT"
+    assert extra["side"] == "buy"

@@ -143,6 +143,7 @@ class TradeSimulator:
             "average_price": round(fill_price, 2),
             "total_value": round(order.amount * fill_price, 2),
             "fees": round(order.amount * fill_price * 0.001, 4),  # 0.1% fees
+            "fee_asset": "USDT",
             "timestamp": datetime.now(UTC).isoformat(),
             "simulated": True,
             "fills": self._generate_fills(order, fill_price),

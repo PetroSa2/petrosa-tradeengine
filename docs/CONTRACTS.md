@@ -24,3 +24,26 @@ A valid organic trade signal must include the following mandatory fields at a mi
 *   `strategy` (str): Human-readable name of the strategy.
 
 Failure to provide all required fields will result in a Pydantic validation error, and the signal will be discarded.
+
+## Execution Event Contract (`execution.events`)
+
+The engine publishes order-lifecycle events to NATS (`execution.events.*`); `petrosa-data-manager`
+persists them to the `execution_events` collection, which is the system's trade audit trail.
+
+Every event carries `decision_id`, `strategy_id`, `order_id`, `event_type`
+(`placed` / `filled` / `partial_fill` / `rejected`), `timestamp`, `symbol`, `side` and `qty`.
+
+Fill events (`filled`, `partial_fill`) additionally carry the audit fields below, emitted from
+`Dispatcher._emit_execution_event_from_order`:
+
+| Field | Source | Notes |
+| --- | --- | --- |
+| `fill_price` | exchange `fill_price` / `average_price` | mirrored to `price` — data-manager's PnL calculator reads that key |
+| `fill_quantity` | exchange `amount` / `filled` | mirrored to `fill_qty` for backwards compatibility |
+| `fill_time` | exchange `fill_time` / `timestamp` | normalised to a UTC ISO-8601 string; Binance ms-epoch `transactTime` is converted |
+| `fee` | exchange `fees` | absolute fee amount |
+| `fee_asset` | exchange `fee_asset`, else first `fills[].commissionAsset` | e.g. `BNB`, `USDT` |
+| `pnl` | exchange `pnl` | emitted as explicit `null` on fills when the exchange does not report it, so consumers can distinguish "unknown" from "omitted" |
+
+Fields are omitted (rather than sent as `null`) when the exchange does not report them, except
+`pnl` on fill events as noted above. Consumers must treat every audit field as optional.

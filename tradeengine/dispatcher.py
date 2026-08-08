@@ -2934,9 +2934,42 @@ class Dispatcher:
         order_id = str(exchange_order_id or order.order_id or "")
 
         fill_qty = None
+        fill_price = None
+        fee = None
+        fee_asset = None
+        fill_time: str | None = None
+        pnl = None
         if isinstance(result, dict):
             # Binance fills carry total filled qty; partial_fill needs this to be meaningful.
             fill_qty = result.get("amount") or result.get("filled") or None
+            fill_price = result.get("fill_price") or result.get("average_price")
+            fee = result.get("fees")
+            fee_asset = result.get("fee_asset")
+            if fee_asset is None:
+                fills = result.get("fills") or []
+                if isinstance(fills, list):
+                    for fill in fills:
+                        if isinstance(fill, dict) and fill.get("commissionAsset"):
+                            fee_asset = fill.get("commissionAsset")
+                            break
+            raw_fill_time = result.get("fill_time") or result.get("timestamp")
+            if raw_fill_time is not None:
+                if isinstance(raw_fill_time, datetime):
+                    ts = (
+                        raw_fill_time
+                        if raw_fill_time.tzinfo
+                        else raw_fill_time.replace(tzinfo=UTC)
+                    )
+                    fill_time = ts.astimezone(UTC).isoformat()
+                elif isinstance(raw_fill_time, int | float):
+                    # Binance transactTime is ms epoch; simulator may emit ISO already.
+                    epoch = float(raw_fill_time)
+                    if epoch > 1e12:
+                        epoch /= 1000.0
+                    fill_time = datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+                else:
+                    fill_time = str(raw_fill_time)
+            pnl = result.get("pnl")
 
         extra: dict[str, Any] = {
             "symbol": order.symbol,
@@ -2945,6 +2978,22 @@ class Dispatcher:
         }
         if fill_qty is not None:
             extra["fill_qty"] = fill_qty
+            extra["fill_quantity"] = fill_qty
+        if fill_price is not None:
+            extra["fill_price"] = fill_price
+            # PnL calculator in data-manager reads `price`; keep both keys in sync.
+            extra["price"] = fill_price
+        if fill_time is not None:
+            extra["fill_time"] = fill_time
+        if fee is not None:
+            extra["fee"] = fee
+        if fee_asset is not None:
+            extra["fee_asset"] = fee_asset
+        if pnl is not None:
+            extra["pnl"] = pnl
+        elif event_type in ("filled", "partial_fill"):
+            # Explicit null so audit consumers can distinguish "unknown" from omitted.
+            extra["pnl"] = None
         if order.rejection_source is not None:
             extra["rejection_source"] = order.rejection_source
             extra["rejection_reason"] = order.rejection_reason

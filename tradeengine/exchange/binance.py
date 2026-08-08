@@ -1404,6 +1404,7 @@ class BinanceFuturesExchange:
             "fill_price": fill_price,
             "total_value": total_quote_qty,
             "fees": self._calculate_fees(fills),
+            "fee_asset": self._resolve_fee_asset(fills),
             "timestamp": result.get("transactTime"),
             "simulated": False,
             "fills": fills,
@@ -1473,6 +1474,15 @@ class BinanceFuturesExchange:
             if "commission" in fill:
                 total_fees += float(fill["commission"])
         return total_fees
+
+    @staticmethod
+    def _resolve_fee_asset(fills: list[dict[str, Any]]) -> str | None:
+        """Return the commission asset from the first fill that reports one."""
+        for fill in fills:
+            asset = fill.get("commissionAsset")
+            if asset:
+                return str(asset)
+        return None
 
     async def get_account_info(self) -> dict[str, Any]:
         """Get account information"""

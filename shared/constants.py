@@ -248,6 +248,19 @@ BINANCE_WS_URL = os.getenv(
 )
 BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT", "10"))
 BINANCE_RETRY_ATTEMPTS = int(os.getenv("BINANCE_RETRY_ATTEMPTS", "3"))
+
+# #532 (H4 of #977): bounded retry for the OCO surviving-leg cancellation in
+# cancel_other_order(). Retries only transient/retryable errors; terminal states
+# (-2011 already closed / -2013 does not exist) are never retried. Setting
+# OCO_CANCEL_RETRY_ATTEMPTS=1 restores the pre-#532 single-attempt behaviour
+# (documented rollback lever). Backoff is capped exponential:
+# min(base * multiplier**attempt, cap).
+OCO_CANCEL_RETRY_ATTEMPTS = int(os.getenv("OCO_CANCEL_RETRY_ATTEMPTS", "3"))
+OCO_CANCEL_RETRY_BASE_DELAY = float(os.getenv("OCO_CANCEL_RETRY_BASE_DELAY", "0.5"))
+OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER = float(
+    os.getenv("OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER", "2.0")
+)
+OCO_CANCEL_RETRY_MAX_DELAY = float(os.getenv("OCO_CANCEL_RETRY_MAX_DELAY", "4.0"))
 PROMETHEUS_ENABLED = os.getenv("PROMETHEUS_ENABLED", "true").lower() == "true"
 PROMETHEUS_PORT = int(os.getenv("PROMETHEUS_PORT", "9090"))
 PROMETHEUS_PATH = os.getenv("PROMETHEUS_PATH", "/metrics")

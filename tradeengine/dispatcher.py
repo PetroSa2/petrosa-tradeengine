@@ -12,7 +12,13 @@ from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
 from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
 from shared.config import Settings
-from shared.constants import UTC
+from shared.constants import (
+    OCO_CANCEL_RETRY_ATTEMPTS,
+    OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER,
+    OCO_CANCEL_RETRY_BASE_DELAY,
+    OCO_CANCEL_RETRY_MAX_DELAY,
+    UTC,
+)
 from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
@@ -20,6 +26,7 @@ from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
     dispatcher_thrash_circuit_open_total,
+    oco_cancel_retry_exhausted_total,
     oco_pair_age_seconds,
     order_execution_latency_seconds,
     order_failures_total,
@@ -733,37 +740,36 @@ class OCOManager:
             )
             return True, close_reason
 
-        try:
-            # Cancel the other order
-            cancel_result = self.exchange.client.futures_cancel_order(
-                symbol=oco_info["symbol"], orderId=order_to_cancel
-            )
-
-            if cancel_result:
-                self.logger.info(
-                    f"Order cancelled successfully: order_type={cancel_type}, "
-                    f"order_id={order_to_cancel}"
+        # #532 (H4 of #977): bounded retry with capped exponential backoff around
+        # the surviving-leg cancellation. A single transient network blip or a
+        # momentary Binance -1xxx used to leave the surviving leg live and the
+        # OCO pair tracking dropped — re-creating the orphan-leg incident class.
+        # Retry ONLY transient failures; terminal states (-2011 already
+        # closed / -2013 does not exist) are treated as an idempotent no-op
+        # success and never retried (respects #504 no same-price spin: we do not
+        # loop on a leg that is genuinely gone). Setting OCO_CANCEL_RETRY_ATTEMPTS=1
+        # restores the pre-#532 single-attempt behaviour (rollback lever).
+        max_attempts = max(1, OCO_CANCEL_RETRY_ATTEMPTS)
+        last_error_label = "unknown"
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # Cancel the other order. NOTE: futures_cancel_order is the
+                # standard-order path used for SL/TP legs here; algo-order
+                # cancels go through the algoOrder endpoint elsewhere (#490 /
+                # -1102 — do NOT route algo cancels through /order).
+                cancel_result = self.exchange.client.futures_cancel_order(
+                    symbol=oco_info["symbol"], orderId=order_to_cancel
                 )
-                # Update status in the correct location
-                if found_key and found_key in self.active_oco_pairs:
-                    # Find and update the matching OCO pair in the list
-                    for oco in self.active_oco_pairs[found_key]:
-                        if (
-                            oco.get("sl_order_id") == sl_order_id
-                            or oco.get("tp_order_id") == tp_order_id
-                        ):
-                            oco["status"] = "completed"
-                            oco["close_reason"] = close_reason
-                            break
-                elif position_id in self.active_oco_pairs:
-                    # Backward compatibility
-                    if isinstance(self.active_oco_pairs[position_id], dict):
-                        self.active_oco_pairs[position_id]["status"] = "completed"
-                        self.active_oco_pairs[position_id]["close_reason"] = (
-                            close_reason
-                        )
-                    elif isinstance(self.active_oco_pairs[position_id], list):
-                        for oco in self.active_oco_pairs[position_id]:
+
+                if cancel_result:
+                    self.logger.info(
+                        f"Order cancelled successfully: order_type={cancel_type}, "
+                        f"order_id={order_to_cancel} (attempt {attempt}/{max_attempts})"
+                    )
+                    # Update status in the correct location
+                    if found_key and found_key in self.active_oco_pairs:
+                        # Find and update the matching OCO pair in the list
+                        for oco in self.active_oco_pairs[found_key]:
                             if (
                                 oco.get("sl_order_id") == sl_order_id
                                 or oco.get("tp_order_id") == tp_order_id
@@ -771,35 +777,112 @@ class OCOManager:
                                 oco["status"] = "completed"
                                 oco["close_reason"] = close_reason
                                 break
-                return True, close_reason
-            else:
-                self.logger.error(f"❌ FAILED TO CANCEL {cancel_type} ORDER")
-                return False, close_reason
+                    elif position_id in self.active_oco_pairs:
+                        # Backward compatibility
+                        if isinstance(self.active_oco_pairs[position_id], dict):
+                            self.active_oco_pairs[position_id]["status"] = "completed"
+                            self.active_oco_pairs[position_id]["close_reason"] = (
+                                close_reason
+                            )
+                        elif isinstance(self.active_oco_pairs[position_id], list):
+                            for oco in self.active_oco_pairs[position_id]:
+                                if (
+                                    oco.get("sl_order_id") == sl_order_id
+                                    or oco.get("tp_order_id") == tp_order_id
+                                ):
+                                    oco["status"] = "completed"
+                                    oco["close_reason"] = close_reason
+                                    break
+                    return True, close_reason
 
-        except Exception as e:
-            # Handle cases where order is already cancelled or filled (common in OCO races)
-            if "code=-2011" in str(e) or "Unknown order sent" in str(e):
-                self.logger.warning(
-                    f"⚠️ {cancel_type} order already closed or unknown (likely filled/cancelled): {e}"
+                # Falsy result from the client — transient (empty response /
+                # ambiguous). Retry within budget.
+                last_error_label = "empty_response"
+                self.logger.error(
+                    f"❌ FAILED TO CANCEL {cancel_type} ORDER "
+                    f"(attempt {attempt}/{max_attempts}, empty response)"
                 )
-                self._mark_oco_completed(
-                    found_key, position_id, sl_order_id, tp_order_id, close_reason
-                )
-                return True, close_reason
 
-            # Handle ghost order: order was filled/cancelled externally (e.g. after pod restart)
-            if "code=-2013" in str(e) or "Order does not exist" in str(e):
-                self.logger.info(
-                    f"INFO: Order externally closed, cleaning up local state: "
-                    f"position={position_id}, cancel_type={cancel_type}, error={e}"
-                )
-                self._mark_oco_completed(
-                    found_key, position_id, sl_order_id, tp_order_id, close_reason
-                )
-                return True, close_reason
+            except Exception as e:
+                # Terminal: order already cancelled/filled or unknown. Idempotent
+                # no-op — a retry after the leg actually cancelled must NOT error.
+                if "code=-2011" in str(e) or "Unknown order sent" in str(e):
+                    self.logger.warning(
+                        f"⚠️ {cancel_type} order already closed or unknown "
+                        f"(likely filled/cancelled): {e}"
+                    )
+                    self._mark_oco_completed(
+                        found_key, position_id, sl_order_id, tp_order_id, close_reason
+                    )
+                    return True, close_reason
 
-            self.logger.error(f"❌ ERROR CANCELLING {cancel_type} ORDER: {e}")
-            return False, close_reason
+                # Terminal: ghost order filled/cancelled externally (e.g. after
+                # pod restart). Also idempotent no-op success.
+                if "code=-2013" in str(e) or "Order does not exist" in str(e):
+                    self.logger.info(
+                        f"INFO: Order externally closed, cleaning up local state: "
+                        f"position={position_id}, cancel_type={cancel_type}, error={e}"
+                    )
+                    self._mark_oco_completed(
+                        found_key, position_id, sl_order_id, tp_order_id, close_reason
+                    )
+                    return True, close_reason
+
+                # Transient (network blip, momentary -1xxx, timeout). Retry.
+                last_error_label = type(e).__name__
+                self.logger.error(
+                    f"❌ ERROR CANCELLING {cancel_type} ORDER "
+                    f"(attempt {attempt}/{max_attempts}): {e}"
+                )
+
+            # Backoff before the next attempt (skip the sleep after the final try).
+            if attempt < max_attempts:
+                delay = min(
+                    OCO_CANCEL_RETRY_BASE_DELAY
+                    * (OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER ** (attempt - 1)),
+                    OCO_CANCEL_RETRY_MAX_DELAY,
+                )
+                await asyncio.sleep(delay)
+
+        # Retry budget exhausted. Do NOT drop the pair — keep it tracked so the
+        # next monitor poll retries and the orphan is observable. Increment the
+        # failure metric and fire a NATS alert (both best-effort; the alert path
+        # must never break the caller).
+        self.logger.error(
+            f"❌ OCO surviving-leg cancel EXHAUSTED after {max_attempts} attempts: "
+            f"order_type={cancel_type}, order_id={order_to_cancel}, "
+            f"symbol={oco_info['symbol']}, last_error={last_error_label}. "
+            f"Pair remains tracked for the next poll."
+        )
+        try:
+            oco_cancel_retry_exhausted_total.labels(
+                symbol=oco_info["symbol"],
+                reason=last_error_label,
+            ).inc()
+        except Exception:
+            self.logger.debug(
+                "oco_cancel_retry_exhausted metric inc failed", exc_info=True
+            )
+        try:
+            await alert_publisher.publish(
+                alert_name=f"oco_cancel_retry_exhausted.{oco_info['symbol']}",
+                severity="critical",
+                payload={
+                    "symbol": oco_info["symbol"],
+                    "position_side": position_side,
+                    "position_id": position_id,
+                    "cancel_type": cancel_type,
+                    "order_to_cancel": order_to_cancel,
+                    "attempts": max_attempts,
+                    "last_error": last_error_label,
+                    "close_reason": close_reason,
+                },
+            )
+        except Exception:
+            self.logger.debug(
+                "oco_cancel_retry_exhausted alert publish failed", exc_info=True
+            )
+        return False, close_reason
 
     def _mark_oco_completed(
         self,

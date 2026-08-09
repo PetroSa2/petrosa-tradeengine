@@ -155,6 +155,20 @@ oco_orphan_leg_total = Counter(
     ["symbol", "side", "leg", "cancel_outcome"],
 )
 
+# #532 (H4 of #977): surviving-leg cancellation retried past its bounded budget.
+# cancel_other_order() now retries transient failures with capped exponential
+# backoff; when the budget is exhausted the OCO pair is kept tracked (never
+# silently dropped) and this counter increments once per exhaustion. Paired with
+# the alerts.tradeengine.oco_cancel_retry_exhausted.<symbol> NATS alert so ops
+# can act on the still-orphaned surviving leg. The reason label carries the last
+# error class encountered (e.g. "ConnectionError", "timeout").
+oco_cancel_retry_exhausted_total = Counter(
+    "petrosa_tradeengine_oco_cancel_retry_exhausted_total",
+    "Surviving-leg cancellations that exhausted the bounded retry budget "
+    "(pair remains tracked; leg may still be live on Binance)",
+    ["symbol", "reason"],
+)
+
 # #426 (RC#2 of #424): the atomic-rollback path itself failed — the
 # OCO-failure cleanup could not close the position on Binance, so the
 # position remains unhedged. Paired with the

@@ -1770,8 +1770,16 @@ class Dispatcher:
         if self.settings.nats_enabled:
             from shared.constants import NATS_URL
 
+            # tradeengine#533: enable restricted-mode persistence when the
+            # feature flag is on. The MongoDB handle is resolved lazily from the
+            # already-booted distributed_lock_manager at start() time.
+            persist_enabled = str(
+                getattr(self.settings, "te_heartbeat_persist_enabled", "off")
+            ).strip().lower() not in ("", "off", "false", "0")
             self.heartbeat_monitor = HeartbeatMonitor(
-                nats_url=NATS_URL, subject=self.settings.nats_topic_heartbeat
+                nats_url=NATS_URL,
+                subject=self.settings.nats_topic_heartbeat,
+                persist_enabled=persist_enabled,
             )
 
     async def initialize(self) -> None:

@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     # off = legacy paths unchanged; shadow = log divergence only; on = risk reads from exchange
     te_exchange_truth_store_enabled: str = "off"
 
+    # tradeengine#533 (H5 of #977): persist HeartbeatMonitor.restricted_mode
+    # across process restarts. "off" keeps the legacy in-memory-only behavior;
+    # "on" durably records restricted-mode transitions to MongoDB and restores
+    # them at boot (unverifiable state fails closed -> restricted). Default
+    # "off" preserves existing behavior until the operator promotes it.
+    te_heartbeat_persist_enabled: str = "off"
+
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (read-only, no writes — detection-only), "dry_run"
     # (log intended actions, no writes), "arm_only" (re-arm protective

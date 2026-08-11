@@ -113,66 +113,180 @@ class TestAC1HeartbeatRestrictedOnNatsDown:
 # ---------------------------------------------------------------------------
 
 
-class TestAC2HeartbeatStateLostOnRestart:
-    """AC2 — restricted-mode state is in-memory only. A fresh instance
-    (simulating a pod restart) starts in NORMAL mode, forgetting that the
-    previous instance had tripped into RESTRICTED_MODE.
+class _FakeCollection:
+    """Minimal async stand-in for a motor collection backed by a dict.
 
-    This is a **known weakness**: a crash-looping pod could repeatedly reset
-    itself back to normal and resume trading despite a persistent heartbeat
-    outage.
+    Supports the two operations HeartbeatMonitor uses: ``update_one`` (with
+    ``$set`` + ``upsert``) and ``find_one`` by ``_id``. Optionally raises to
+    simulate an unreadable / unreachable store (fail-safe path).
+    """
 
-    # TODO(#970): restricted-mode should be persisted (or re-derived from a
-    #  durable heartbeat timestamp) so a restart cannot silently drop the
-    #  fail-safe. Until then this test locks in the current behavior.
+    def __init__(self, store: dict, *, raise_on_read: bool = False) -> None:
+        self._store = store
+        self._raise_on_read = raise_on_read
+
+    async def update_one(self, filt, update, upsert=False):  # noqa: ANN001
+        doc = self._store.setdefault(filt["_id"], {"_id": filt["_id"]})
+        doc.update(update["$set"])
+
+    async def find_one(self, filt):  # noqa: ANN001
+        if self._raise_on_read:
+            raise RuntimeError("simulated MongoDB read failure")
+        return self._store.get(filt["_id"])
+
+
+class _FakeDB:
+    """Async db handle returning a shared _FakeCollection per name."""
+
+    def __init__(self, *, raise_on_read: bool = False) -> None:
+        self._store: dict = {}
+        self._raise_on_read = raise_on_read
+        self._cols: dict = {}
+
+    def __getitem__(self, name):  # noqa: ANN001
+        if name not in self._cols:
+            self._cols[name] = _FakeCollection(
+                self._store, raise_on_read=self._raise_on_read
+            )
+        return self._cols[name]
+
+
+class TestAC2HeartbeatStateRestoredOnRestart:
+    """AC2 (tradeengine#533 / H5 of #977) — restricted-mode state is now
+    **persisted** to a durable store and **restored on restart**.
+
+    Previously this class documented the in-memory-only weakness (state lost on
+    restart). H5 hardens it: when persistence is enabled a fresh instance
+    (simulating a pod restart) restores the last-known restricted state instead
+    of resetting to NORMAL, and an unverifiable state fails **closed**.
     """
 
     @pytest.mark.asyncio
-    async def test_fresh_instance_starts_in_normal_mode(self) -> None:
+    async def test_restart_restores_restricted_state(self) -> None:
+        db = _FakeDB()
         with patch("nats.connect", new_callable=AsyncMock):
             first = HeartbeatMonitor(
-                nats_url="nats://localhost:4222", subject="cio.heartbeat"
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
             )
             await first._enter_restricted_mode()
             assert first.is_restricted() is True
             await first.stop()
 
-            # Simulate a restart: a brand-new instance with no shared state.
+            # Simulate a restart: a brand-new instance sharing the durable store.
             fresh = HeartbeatMonitor(
-                nats_url="nats://localhost:4222", subject="cio.heartbeat"
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
             )
-            # The fresh instance forgot the prior restricted state.
+            await fresh.start()
+            # The fresh instance RESTORED the prior restricted state.
+            assert fresh.restricted_mode is True
+            assert fresh.is_restricted() is True
+            # AC: gauge reflects restored state immediately on boot.
+            assert _gauge_value(restricted_mode_status) == 1
+            await fresh.stop()
+
+    @pytest.mark.asyncio
+    async def test_boot_fails_closed_when_state_unverifiable(self) -> None:
+        # Store raises on read -> state cannot be verified -> fail closed.
+        db = _FakeDB(raise_on_read=True)
+        with patch("nats.connect", new_callable=AsyncMock):
+            monitor = HeartbeatMonitor(
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
+            )
+            await monitor.start()
+            assert monitor.restricted_mode is True
+            assert monitor.is_restricted() is True
+            assert _gauge_value(restricted_mode_status) == 1
+            await monitor.stop()
+
+    @pytest.mark.asyncio
+    async def test_boot_fails_closed_when_no_state_handle(self) -> None:
+        # No handle resolvable -> unverifiable -> fail closed.
+        with patch("nats.connect", new_callable=AsyncMock):
+            monitor = HeartbeatMonitor(
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=None,
+            )
+            with patch.object(
+                monitor, "_resolve_state_db", new_callable=AsyncMock, return_value=None
+            ):
+                await monitor.start()
+            assert monitor.restricted_mode is True
+            assert _gauge_value(restricted_mode_status) == 1
+            await monitor.stop()
+
+    @pytest.mark.asyncio
+    async def test_fresh_boot_no_prior_state_starts_normal(self) -> None:
+        # Empty store, readable -> genuine first boot -> NORMAL.
+        db = _FakeDB()
+        with patch("nats.connect", new_callable=AsyncMock):
+            monitor = HeartbeatMonitor(
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
+            )
+            await monitor.start()
+            assert monitor.restricted_mode is False
+            assert _gauge_value(restricted_mode_status) == 0
+            await monitor.stop()
+
+    @pytest.mark.asyncio
+    async def test_persistence_disabled_keeps_legacy_in_memory_behavior(self) -> None:
+        # Flag off -> legacy behavior: a fresh instance forgets prior state.
+        with patch("nats.connect", new_callable=AsyncMock):
+            first = HeartbeatMonitor(
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=False,
+            )
+            await first._enter_restricted_mode()
+            assert first.is_restricted() is True
+            await first.stop()
+
+            fresh = HeartbeatMonitor(
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=False,
+            )
             assert fresh.restricted_mode is False
             assert fresh.is_restricted() is False
             assert fresh.consecutive_heartbeats == 0
             await fresh.stop()
 
     @pytest.mark.asyncio
-    async def test_fresh_instance_resets_restricted_metric_to_zero(self) -> None:
+    async def test_recovery_persists_normal_state(self) -> None:
+        # Exiting restricted mode persists NORMAL so a later restart stays NORMAL.
+        db = _FakeDB()
         with patch("nats.connect", new_callable=AsyncMock):
             first = HeartbeatMonitor(
-                nats_url="nats://localhost:4222", subject="cio.heartbeat"
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
             )
             await first._enter_restricted_mode()
-            assert _gauge_value(restricted_mode_status) == 1
+            await first._exit_restricted_mode()
             await first.stop()
 
-            # A fresh instance leaving restricted mode publishes 0.
-            # NB: restricted_mode_status is a process-global singleton gauge, so
-            # a fresh instance does not *automatically* reset it — the loop /
-            # exit path does. We exercise the exit path a fresh instance would
-            # take when it observes healthy heartbeats.
-            # TODO(#970): the global gauge is shared across instances; on a real
-            #  restart the metric reflects whatever the *last* instance set until
-            #  the new loop runs. Persisted state would make this deterministic.
             fresh = HeartbeatMonitor(
-                nats_url="nats://localhost:4222", subject="cio.heartbeat"
+                nats_url="nats://localhost:4222",
+                subject="cio.heartbeat",
+                persist_enabled=True,
+                state_db=db,
             )
+            await fresh.start()
             assert fresh.restricted_mode is False
-            await fresh._exit_restricted_mode()  # no-op on state, but publishes 0
-            # Force the normal-mode publish path a fresh healthy instance takes.
-            fresh.restricted_mode = False
-            restricted_mode_status.set(0)
             assert _gauge_value(restricted_mode_status) == 0
             await fresh.stop()
 

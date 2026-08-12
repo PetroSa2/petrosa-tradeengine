@@ -98,6 +98,18 @@ class Settings(BaseSettings):
     # "off" preserves existing behavior until the operator promotes it.
     te_heartbeat_persist_enabled: str = "off"
 
+    # tradeengine#529: backfill exchange-sourced fill audit fields (commission,
+    # commissionAsset, realizedPnl) for FILLED Binance USDⓈ-M Futures orders.
+    # The synchronous futures_create_order response omits the per-trade fills[]
+    # array (unlike Spot), so fee/fee_asset/pnl are unavailable when the
+    # execution.events fill event is emitted. When enabled, the exchange makes a
+    # best-effort GET /fapi/v1/userTrades (futures_account_trades) call for the
+    # filled order and folds the real values into the emitted audit event. The
+    # call is best-effort — any failure is swallowed and the order path is never
+    # affected. Set TE_FILL_AUDIT_ENRICHMENT_ENABLED=false to disable the extra
+    # per-fill REST call per deploy.
+    te_fill_audit_enrichment_enabled: bool = True
+
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (read-only, no writes — detection-only), "dry_run"
     # (log intended actions, no writes), "arm_only" (re-arm protective

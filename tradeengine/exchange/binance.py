@@ -251,6 +251,13 @@ class BinanceFuturesExchange:
             else:
                 raise ValueError(f"Unsupported order type: {order.type}")
 
+            # #529: backfill exchange-sourced fill audit (fee/fee_asset/pnl) for
+            # FILLED Futures orders whose create_order response omits fills[].
+            from shared.config import settings
+
+            if settings.te_fill_audit_enrichment_enabled:
+                await self._enrich_fill_audit(result, order)
+
             # Format and return result
             return self._format_execution_result(result, order)
 
@@ -1405,6 +1412,10 @@ class BinanceFuturesExchange:
             "total_value": total_quote_qty,
             "fees": self._calculate_fees(fills),
             "fee_asset": self._resolve_fee_asset(fills),
+            # #529: realized PnL sourced from userTrades (see _enrich_fill_audit);
+            # None when unavailable so the audit consumer can distinguish
+            # "unknown" from a genuine zero.
+            "pnl": result.get("pnl"),
             "timestamp": result.get("transactTime"),
             "simulated": False,
             "fills": fills,
@@ -1483,6 +1494,122 @@ class BinanceFuturesExchange:
             if asset:
                 return str(asset)
         return None
+
+    async def _enrich_fill_audit(
+        self, result: dict[str, Any], order: TradeOrder
+    ) -> None:
+        """#529: Backfill exchange-sourced fill audit fields on a FILLED order.
+
+        Binance USDⓈ-M Futures ``futures_create_order`` responses do NOT carry
+        the per-trade ``fills[]`` array that Spot returns, so ``commission``,
+        ``commissionAsset`` and ``realizedPnl`` are unavailable at the moment the
+        ``execution.events`` fill event is emitted. Without them every live
+        futures fill records ``fee=0`` / no ``fee_asset`` / ``pnl=null`` in the
+        trade audit trail.
+
+        This helper fetches the order's trades from ``GET /fapi/v1/userTrades``
+        (``futures_account_trades``), folds them into ``result['fills']`` so the
+        existing fee / fill-price helpers resolve real values, and sets
+        ``result['pnl']`` from the summed ``realizedPnl``.
+
+        Best-effort by contract: the order has already executed on the exchange,
+        so any failure here is swallowed (logged at warning) and leaves
+        ``result`` untouched — audit enrichment must never raise into the trade
+        path (``execute`` would otherwise convert a genuine fill into an error
+        result).
+        """
+        if not isinstance(result, dict):
+            return
+
+        # Only FILLED / PARTIALLY_FILLED orders have trades to fetch. Protective
+        # legs (status NEW) and rejections have nothing to enrich.
+        status = str(result.get("status") or result.get("algoStatus") or "").upper()
+        if status not in ("FILLED", "PARTIALLY_FILLED"):
+            return
+
+        # Respect any per-trade detail the response already carried (spot-shaped
+        # testnet payloads, the simulator, or a future API change).
+        existing_fills = result.get("fills")
+        if isinstance(existing_fills, list) and existing_fills:
+            return
+
+        order_id = result.get("orderId") or result.get("algoId")
+        symbol = result.get("symbol") or order.symbol
+        if not order_id or not symbol or self.client is None:
+            return
+
+        try:
+            order_id_int = int(order_id)
+        except (TypeError, ValueError):
+            # Non-numeric ids (algo orders) aren't queryable via userTrades.
+            return
+
+        try:
+            loop = asyncio.get_event_loop()
+            trades = await loop.run_in_executor(
+                None,
+                lambda: self.client.futures_account_trades(  # type: ignore[union-attr]
+                    symbol=symbol, orderId=order_id_int
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "fill-audit: userTrades fetch failed for %s order %s; emitting "
+                "fill event without exchange-sourced fee/pnl",
+                symbol,
+                order_id,
+                exc_info=True,
+            )
+            return
+
+        if not isinstance(trades, list) or not trades:
+            return
+
+        synthetic_fills: list[dict[str, Any]] = []
+        realized_pnl = 0.0
+        saw_pnl = False
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            price = trade.get("price")
+            qty = trade.get("qty")
+            if price is None or qty is None:
+                continue
+            quote_qty = trade.get("quoteQty")
+            if quote_qty is None:
+                try:
+                    quote_qty = str(float(price) * float(qty))
+                except (TypeError, ValueError):
+                    continue
+            # Keep the shape compatible with _format_execution_result /
+            # _calculate_fees / _resolve_fee_asset. Commission keys are only
+            # included when present so the fee summation never sees ``None``.
+            fill_entry: dict[str, Any] = {
+                "price": price,
+                "qty": qty,
+                "quoteQty": quote_qty,
+                "tradeId": trade.get("id"),
+            }
+            commission = trade.get("commission")
+            if commission is not None:
+                fill_entry["commission"] = commission
+            commission_asset = trade.get("commissionAsset")
+            if commission_asset is not None:
+                fill_entry["commissionAsset"] = commission_asset
+            synthetic_fills.append(fill_entry)
+
+            realized = trade.get("realizedPnl")
+            if realized is not None:
+                try:
+                    realized_pnl += float(realized)
+                    saw_pnl = True
+                except (TypeError, ValueError):
+                    pass
+
+        if synthetic_fills:
+            result["fills"] = synthetic_fills
+        if saw_pnl:
+            result["pnl"] = realized_pnl
 
     async def get_account_info(self) -> dict[str, Any]:
         """Get account information"""

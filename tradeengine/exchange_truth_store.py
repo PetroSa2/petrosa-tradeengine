@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -90,7 +91,10 @@ class ExchangeTruthStore:
     stream task holds the lock.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        on_fill: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> None:
         self._lock = asyncio.Lock()
         self._positions: dict[tuple[str, str], PositionSnapshot] = {}
         # keyed by (symbol, order_id)
@@ -98,6 +102,17 @@ class ExchangeTruthStore:
         self._last_updated: datetime | None = None
         self._last_rest_sync: datetime | None = None
         self._is_ready: bool = False
+        # #531: optional async callback invoked with the raw Binance order
+        # object (the `o` payload) whenever an ORDER_TRADE_UPDATE reports a
+        # FILLED status. Used by the dispatcher to publish a `filled`
+        # execution event for entry fills — the highest-fidelity fill signal.
+        self._on_fill = on_fill
+
+    def set_on_fill(
+        self, on_fill: Callable[[dict[str, Any]], Awaitable[None]] | None
+    ) -> None:
+        """Register (or clear) the FILLED-order callback (#531)."""
+        self._on_fill = on_fill
 
     @property
     def is_ready(self) -> bool:
@@ -162,6 +177,18 @@ class ExchangeTruthStore:
                 )
             self._last_updated = datetime.now(UTC)
             self._is_ready = True
+
+        # #531: fire the fill callback OUTSIDE the lock so the publisher's NATS
+        # I/O never blocks the store's critical section. Best-effort — a
+        # callback failure must not disturb truth-store bookkeeping.
+        if status == "FILLED" and self._on_fill is not None:
+            try:
+                await self._on_fill(o)
+            except Exception:
+                logger.exception(
+                    "ExchangeTruthStore on_fill callback failed for order %s",
+                    order_id,
+                )
 
     async def seed_from_rest(
         self,
@@ -262,9 +289,14 @@ class UserDataStreamConsumer:
         self,
         exchange: BinanceFuturesExchange,
         store: ExchangeTruthStore | None = None,
+        on_fill: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._exchange = exchange
-        self.store = store or ExchangeTruthStore()
+        # #531: propagate the fill callback into the store so entry fills
+        # arriving on ORDER_TRADE_UPDATE publish a `filled` execution event.
+        self.store = store or ExchangeTruthStore(on_fill=on_fill)
+        if store is not None and on_fill is not None:
+            self.store.set_on_fill(on_fill)
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._renewal_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._listen_key: str | None = None

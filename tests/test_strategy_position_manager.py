@@ -819,3 +819,112 @@ class TestStrategyPositionManagerBasic:
 
             await strategy_position_manager._persist_exchange_position("BTCUSDT_LONG")
             mock_client.create_position.assert_called_once()
+
+
+class TestDecisionIdThreading531:
+    """#531: decision_id must be persisted at open and surfaced on close so
+    the OCO/close path can publish a `filled` event the data-manager consumer
+    accepts (empty decision_id events are dropped)."""
+
+    def _signal(self, decision_id):
+        return Signal(
+            signal_id="sig-531",
+            strategy_id="rsi_reversal",
+            symbol="BTCUSDT",
+            action="buy",
+            price=50000.0,
+            current_price=50000.0,
+            quantity=0.001,
+            confidence=0.85,
+            timeframe="1h",
+            take_profit=52000.0,
+            stop_loss=48000.0,
+            source="petrosa-cio",
+            strategy="rsi_reversal",
+            order_type="market",
+            time_in_force=TimeInForce.GTC,
+            decision_id=decision_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_decision_id_persisted_at_open(self, strategy_position_manager):
+        order = TradeOrder(
+            symbol="BTCUSDT",
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            amount=0.001,
+            target_price=50000.0,
+        )
+        exec_result = {
+            "status": "new",  # #531: real Binance create-order status
+            "order_id": "binance-entry-1",
+            "fill_price": 50000.0,
+            "amount": 0.001,
+        }
+        with patch("shared.mysql_client.position_client") as mock_client:
+            mock_client.create_position = AsyncMock()
+            pid = await strategy_position_manager.create_strategy_position(
+                signal=self._signal("dec-OPEN"),
+                order=order,
+                execution_result=exec_result,
+            )
+        pos = strategy_position_manager.get_strategy_position(pid)
+        assert pos["decision_id"] == "dec-OPEN"
+        assert str(pos["entry_order_id"]) == "binance-entry-1"
+
+    @pytest.mark.asyncio
+    async def test_close_returns_decision_id(self, strategy_position_manager):
+        pid = str(uuid.uuid4())
+        strategy_position_manager.strategy_positions[pid] = {
+            "strategy_position_id": pid,
+            "strategy_id": "rsi_reversal",
+            "decision_id": "dec-CLOSE",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_quantity": 0.01,
+            "entry_price": 50000.0,
+            "exchange_position_key": "BTCUSDT_LONG",
+        }
+        with (
+            patch.object(
+                strategy_position_manager,
+                "_update_strategy_position_closure",
+                AsyncMock(),
+            ),
+            patch.object(strategy_position_manager, "_close_contribution", AsyncMock()),
+            patch.object(
+                strategy_position_manager, "_reduce_exchange_position", AsyncMock()
+            ),
+        ):
+            result = await strategy_position_manager.close_strategy_position(
+                strategy_position_id=pid,
+                exit_price=51000.0,
+                exit_quantity=0.01,
+                close_reason="take_profit",
+                exit_order_id="binance-exit-1",
+            )
+        assert result["decision_id"] == "dec-CLOSE"
+        assert result["realized_pnl"] == pytest.approx((51000.0 - 50000.0) * 0.01)
+
+    def test_lookup_by_entry_order_id(self, strategy_position_manager):
+        pid = str(uuid.uuid4())
+        strategy_position_manager.strategy_positions[pid] = {
+            "strategy_position_id": pid,
+            "strategy_id": "rsi_reversal",
+            "decision_id": "dec-LOOKUP",
+            "entry_order_id": "283194212",  # stored as string
+        }
+        # WS delivers order id as int — lookup must match across types.
+        found = strategy_position_manager.get_strategy_position_by_entry_order_id(
+            "283194212"
+        )
+        assert found is not None
+        assert found["decision_id"] == "dec-LOOKUP"
+        assert (
+            strategy_position_manager.get_strategy_position_by_entry_order_id("nope")
+            is None
+        )
+        assert (
+            strategy_position_manager.get_strategy_position_by_entry_order_id("")
+            is None
+        )

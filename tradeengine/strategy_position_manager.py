@@ -206,6 +206,11 @@ class StrategyPositionManager:
                 "strategy_position_id": strategy_position_id,
                 "strategy_id": signal.strategy_id,
                 "signal_id": signal.signal_id or signal.id,
+                # #531: persist decision_id at open so the OCO/close path can
+                # publish a `filled` execution event the data-manager consumer
+                # will accept (events with an empty decision_id are dropped at
+                # data_manager/models/execution_event.py:88).
+                "decision_id": signal.decision_id,
                 "symbol": signal.symbol,
                 "side": position_side,
                 "entry_quantity": entry_quantity,
@@ -379,6 +384,9 @@ class StrategyPositionManager:
             return {
                 "strategy_position_id": strategy_position_id,
                 "strategy_id": position["strategy_id"],
+                # #531: surface decision_id so the OCO close path can publish a
+                # `filled` execution event the data-manager consumer accepts.
+                "decision_id": position.get("decision_id"),
                 "symbol": position["symbol"],
                 "side": position["side"],
                 "close_reason": close_reason,
@@ -703,6 +711,24 @@ class StrategyPositionManager:
     def get_strategy_position(self, strategy_position_id: str) -> dict[str, Any] | None:
         """Get strategy position by ID"""
         return self.strategy_positions.get(strategy_position_id)
+
+    def get_strategy_position_by_entry_order_id(
+        self, entry_order_id: str
+    ) -> dict[str, Any] | None:
+        """Find a strategy position by its entry order id (#531).
+
+        Used by the user-data-stream fill path to recover strategy_id and
+        decision_id for an entry fill, since the raw ORDER_TRADE_UPDATE event
+        carries neither. Order ids are compared as strings because Binance
+        returns them as ints on the stream but they are stored as strings.
+        """
+        if not entry_order_id:
+            return None
+        target = str(entry_order_id)
+        for pos in self.strategy_positions.values():
+            if str(pos.get("entry_order_id")) == target:
+                return pos
+        return None
 
     def get_strategy_positions_by_strategy(
         self, strategy_id: str

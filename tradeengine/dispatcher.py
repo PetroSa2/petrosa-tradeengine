@@ -1635,7 +1635,7 @@ class OCOManager:
                 if strategy_pos:
                     strategy_id = strategy_pos.get("strategy_id", "unknown")
 
-                await strategy_position_manager.close_strategy_position(
+                closure = await strategy_position_manager.close_strategy_position(
                     strategy_position_id=strategy_position_id,
                     exit_price=exit_price,
                     exit_quantity=filled_quantity,
@@ -1645,6 +1645,21 @@ class OCOManager:
 
                 self.logger.info(
                     f"✅ Strategy position {strategy_position_id} ({strategy_id}) closed: {close_reason}, P&L: ${pnl:,.2f}"
+                )
+
+                # #531: publish a `filled` execution event for the OCO exit.
+                # This is the only place with the real exit fill (price, qty,
+                # PnL) fetched from futures_get_order. Best-effort: a NATS or
+                # publisher failure must never propagate into the close path.
+                await self._emit_oco_exit_filled_event(
+                    closure=closure or {},
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    exit_price=exit_price,
+                    filled_quantity=filled_quantity,
+                    pnl=pnl,
+                    filled_order_id=filled_order_id,
+                    close_reason=close_reason,
                 )
 
             # Step 4: Cancel the paired order (TP if SL filled, SL if TP filled)
@@ -1712,6 +1727,67 @@ class OCOManager:
                 f"❌ Error closing position {position_id}: {e}", exc_info=True
             )
             raise
+
+    async def _emit_oco_exit_filled_event(
+        self,
+        *,
+        closure: dict[str, Any],
+        strategy_id: str,
+        symbol: str,
+        exit_price: float,
+        filled_quantity: float,
+        pnl: float,
+        filled_order_id: str,
+        close_reason: str,
+    ) -> None:
+        """Publish a `filled` execution event for a completed OCO exit (#531).
+
+        The OCO close path is one of the two async producers that actually
+        know a fill happened (the other being the user-data stream). Prior to
+        #531 it computed exit price/qty/PnL and emitted Prometheus metrics but
+        never published an execution event, so ``execution_events`` recorded
+        zero fills in production.
+
+        Best-effort: any failure is swallowed. A NATS or publisher error must
+        never propagate into the position-close path.
+        """
+        try:
+            decision_id = closure.get("decision_id")
+            if not decision_id:
+                # The data-manager consumer drops events with an empty
+                # decision_id (execution_event.py:88). Without it the event
+                # would be silently discarded; log so the gap is visible.
+                self.logger.warning(
+                    "#531: OCO exit for %s (%s) has no decision_id on the "
+                    "strategy position — `filled` event will be dropped by the "
+                    "data-manager consumer. Ensure decision_id is persisted at "
+                    "position open.",
+                    closure.get("strategy_position_id"),
+                    strategy_id,
+                )
+            await execution_event_publisher.publish(
+                event_type="filled",
+                strategy_id=strategy_id,
+                order_id=str(filled_order_id or ""),
+                reason=f"oco_exit_{close_reason}",
+                decision_id=decision_id,
+                extra={
+                    "symbol": symbol,
+                    "side": closure.get("side"),
+                    "fill_price": exit_price,
+                    "price": exit_price,
+                    "fill_quantity": filled_quantity,
+                    "fill_qty": filled_quantity,
+                    "pnl": pnl,
+                    "close_reason": close_reason,
+                },
+            )
+        except Exception as emit_err:
+            self.logger.warning(
+                "#531: failed to publish OCO-exit `filled` event for %s: %s",
+                strategy_id,
+                emit_err,
+            )
 
 
 class Dispatcher:
@@ -1859,7 +1935,13 @@ class Dispatcher:
                     )
 
             if self.exchange and self.exchange.client:
-                self.user_data_consumer = UserDataStreamConsumer(self.exchange)
+                # #531: wire the entry-fill callback so ORDER_TRADE_UPDATE
+                # FILLED events on the user-data stream publish a `filled`
+                # execution event. This is the general fix that captures entry
+                # fills (the OCO path only covers SL/TP exits).
+                self.user_data_consumer = UserDataStreamConsumer(
+                    self.exchange, on_fill=self._on_user_data_fill
+                )
                 await self.user_data_consumer.start()
                 # AC2/AC4 (#459 — 446-C): inject the live ExchangeTruthStore into
                 # PositionManager and StrategyPositionManager so risk reads can
@@ -3561,6 +3643,123 @@ class Dispatcher:
                     reason=f"order_execution_exception: {str(e)[:80]}",
                 )
                 return {"status": "error", "error": str(e)}
+
+    async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
+        """Publish a `filled` execution event for an entry fill (#531).
+
+        Invoked by ExchangeTruthStore when an ORDER_TRADE_UPDATE reports a
+        FILLED status. The raw Binance `o` payload carries neither strategy_id
+        nor decision_id, so they are recovered from the strategy position that
+        owns this entry order id. SL/TP exit fills are handled separately by
+        the OCO close path (``_emit_oco_exit_filled_event``) and are skipped
+        here when reduce_only is set, to avoid a duplicate `filled` event.
+
+        Best-effort: never raises into the truth-store callback.
+        """
+        try:
+            symbol = order_obj.get("s", "")
+            order_id = str(order_obj.get("i", ""))
+            side = order_obj.get("S", "")
+            is_reduce_only = bool(order_obj.get("R", False))
+            order_type = order_obj.get("o", "")
+
+            # SL/TP exits are reduce-only and/or STOP/TAKE_PROFIT order types;
+            # the OCO close path already emits their `filled` event. Skip here
+            # so a single exit does not produce two `filled` events.
+            if is_reduce_only or order_type in (
+                "STOP_MARKET",
+                "TAKE_PROFIT_MARKET",
+                "STOP",
+                "TAKE_PROFIT",
+            ):
+                self.logger.debug(
+                    "#531: skipping user-data fill for reduce-only/SL-TP order "
+                    "%s (%s) — OCO path owns its filled event",
+                    order_id,
+                    order_type,
+                )
+                return
+
+            # Recover strategy_id + decision_id from the owning strategy position.
+            from tradeengine.strategy_position_manager import (
+                strategy_position_manager,
+            )
+
+            strategy_id = "unknown"
+            decision_id: str | None = None
+            position = None
+            if strategy_position_manager is not None:
+                position = (
+                    strategy_position_manager.get_strategy_position_by_entry_order_id(
+                        order_id
+                    )
+                )
+            if position:
+                strategy_id = position.get("strategy_id", "unknown")
+                decision_id = position.get("decision_id")
+
+            if not decision_id:
+                self.logger.warning(
+                    "#531: entry fill for order %s (%s) has no decision_id — the "
+                    "`filled` event will be dropped by the data-manager consumer.",
+                    order_id,
+                    strategy_id,
+                )
+
+            # Binance ORDER_TRADE_UPDATE fill fields:
+            #   L = last filled price, z = cumulative filled qty,
+            #   n = commission, N = commission asset, rp = realized pnl,
+            #   T = transaction time (ms epoch).
+            def _to_float(v: Any) -> float | None:
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            fill_price = _to_float(order_obj.get("L")) or _to_float(order_obj.get("ap"))
+            fill_qty = _to_float(order_obj.get("z")) or _to_float(order_obj.get("q"))
+            fee = _to_float(order_obj.get("n"))
+            fee_asset = order_obj.get("N")
+            pnl = _to_float(order_obj.get("rp"))
+            fill_time = None
+            raw_ts = order_obj.get("T")
+            if isinstance(raw_ts, int | float):
+                epoch = float(raw_ts)
+                if epoch > 1e12:
+                    epoch /= 1000.0
+                fill_time = datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+            extra: dict[str, Any] = {
+                "symbol": symbol,
+                "side": side,
+            }
+            if fill_price is not None:
+                extra["fill_price"] = fill_price
+                extra["price"] = fill_price
+            if fill_qty is not None:
+                extra["fill_quantity"] = fill_qty
+                extra["fill_qty"] = fill_qty
+            if fee is not None:
+                extra["fee"] = fee
+            if fee_asset is not None:
+                extra["fee_asset"] = fee_asset
+            if fill_time is not None:
+                extra["fill_time"] = fill_time
+            extra["pnl"] = pnl  # entry fills usually have rp=0; keep explicit
+
+            await execution_event_publisher.publish(
+                event_type="filled",
+                strategy_id=strategy_id,
+                order_id=order_id,
+                reason="user_data_stream_fill",
+                decision_id=decision_id,
+                extra=extra,
+            )
+        except Exception as emit_err:
+            self.logger.warning(
+                "#531: failed to publish user-data `filled` event: %s",
+                emit_err,
+            )
 
     def get_cio_state(self, symbol: str) -> dict[str, Any]:
         """

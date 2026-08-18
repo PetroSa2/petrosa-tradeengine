@@ -11,7 +11,7 @@ from prometheus_client import Counter, Histogram
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
 from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
-from shared.config import Settings
+from shared.config import Settings, settings
 from shared.constants import (
     OCO_CANCEL_RETRY_ATTEMPTS,
     OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER,
@@ -110,6 +110,39 @@ class OCOManager:
         self.pending_entries: dict[str, dict[str, Any]] = {}
         self.monitoring_task: asyncio.Task[Any] | None = None
         self.monitoring_active = False
+        # #534 (H6 of #977): WS-driven OCO completion nudge. Set by the
+        # user-data-stream fill callback when a FILLED SL/TP leg belongs to a
+        # tracked OCO pair, so _monitor_orders wakes early instead of waiting
+        # the full 2s poll interval. The poll still performs all cancel/close
+        # decisions — this event only shortens latency (poll is the backstop).
+        self._oco_wake_event: asyncio.Event = asyncio.Event()
+
+    def notify_oco_leg_fill(self, symbol: str, order_id: str) -> None:
+        """#534 (H6 of #977): wake _monitor_orders when a FILLED SL/TP leg
+        observed on the user-data stream belongs to a tracked OCO pair.
+
+        Only sets the wake event when ``order_id`` matches an SL or TP order of
+        an active pair for ``symbol`` — a fill for an unrelated order does not
+        shorten the poll interval. Setting an already-set event is a no-op, and
+        the poll remains the authoritative decision-maker, so this is safe to
+        call for every leg fill (idempotent, never cancels/closes directly).
+        """
+        for oco_list in self.active_oco_pairs.values():
+            for oco in oco_list:
+                if oco.get("symbol") != symbol:
+                    continue
+                if order_id in (
+                    str(oco.get("sl_order_id", "")),
+                    str(oco.get("tp_order_id", "")),
+                ):
+                    self._oco_wake_event.set()
+                    self.logger.info(
+                        "#534: WS ORDER_TRADE_UPDATE fill on OCO leg %s (%s) "
+                        "— nudging monitor to re-poll immediately",
+                        order_id,
+                        symbol,
+                    )
+                    return
 
     async def place_oco_orders(
         self,
@@ -1515,8 +1548,20 @@ class OCOManager:
                         # No active pairs left, remove the key
                         del self.active_oco_pairs[exchange_position_key]
 
-                # Wait before next check
-                await asyncio.sleep(2)  # Check every 2 seconds
+                # Wait before next check. #534: when the WS-wake flag is on,
+                # sleep is interruptible — a FILLED SL/TP leg observed on the
+                # user-data stream sets _oco_wake_event and we re-poll at once
+                # (bounded by the same 2s ceiling as a backstop). When off,
+                # behaviour is identical to the original fixed 2s poll.
+                if settings.te_oco_ws_wake_enabled:
+                    try:
+                        await asyncio.wait_for(self._oco_wake_event.wait(), timeout=2)
+                    except TimeoutError:
+                        pass
+                    finally:
+                        self._oco_wake_event.clear()
+                else:
+                    await asyncio.sleep(2)  # Check every 2 seconds
 
             except Exception as e:
                 self.logger.error(f"❌ ERROR IN ORDER MONITORING: {e}")
@@ -3672,6 +3717,20 @@ class Dispatcher:
                 "STOP",
                 "TAKE_PROFIT",
             ):
+                # #534 (H6 of #977): a FILLED SL/TP leg is the exact signal the
+                # 2s poll waits for. When the WS-wake flag is on, nudge the
+                # OCO monitor so it re-polls immediately instead of waiting up
+                # to 2s. The poll still owns the cancel/close decision, so this
+                # only shortens latency and cannot double-cancel. Best-effort.
+                if settings.te_oco_ws_wake_enabled:
+                    try:
+                        self.oco_manager.notify_oco_leg_fill(symbol, order_id)
+                    except Exception as wake_err:
+                        self.logger.debug(
+                            "#534: OCO wake nudge failed for %s: %s",
+                            order_id,
+                            wake_err,
+                        )
                 self.logger.debug(
                     "#531: skipping user-data fill for reduce-only/SL-TP order "
                     "%s (%s) — OCO path owns its filled event",
@@ -4166,7 +4225,6 @@ class Dispatcher:
                     reference_price = 0.0
 
             if reference_price > 0:
-                from shared.config import Settings
                 from tradeengine.risk.sl_tp_direction import (
                     correct_protective_price,
                 )

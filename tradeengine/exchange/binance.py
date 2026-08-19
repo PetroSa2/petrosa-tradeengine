@@ -32,6 +32,15 @@ from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
 
+# #543: Binance rejects closePosition=true conditional (STOP_MARKET /
+# TAKE_PROFIT_MARKET / STOP / TAKE_PROFIT) orders whose TIF resolves to the
+# bare "GTE" server default with APIError -4509 ("TIF GTE can only be used with
+# open positions"). The valid value for close-all protective legs is GTE_GTC,
+# which also makes Binance auto-cancel the sibling leg when the position closes
+# (preventing the -4130 duplicate-closePosition storm). python-binance's enums
+# do not expose this value, so it is defined here.
+TIME_IN_FORCE_GTE_GTC = "GTE_GTC"
+
 
 class BinanceFuturesExchange:
     """Binance Futures exchange client for executing trades"""
@@ -376,7 +385,7 @@ class BinanceFuturesExchange:
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
 
-        params = {
+        params: dict[str, Any] = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_MARKET,
@@ -420,7 +429,7 @@ class BinanceFuturesExchange:
         if not is_valid:
             raise ValueError(error_msg)
 
-        params = {
+        params: dict[str, Any] = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_LIMIT,
@@ -486,11 +495,14 @@ class BinanceFuturesExchange:
         # AC-3 (#352): use closePosition=true so Binance auto-sweeps the order when the
         # position closes. quantity + reduceOnly=true do NOT auto-cancel CONDITIONAL algo
         # orders — they accumulate indefinitely as orphans.
-        params = {
+        params: dict[str, Any] = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP_MARKET,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+            # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
+            # server default to bare GTE, which Binance rejects with -4509.
+            "timeInForce": TIME_IN_FORCE_GTE_GTC,
             "closePosition": True,
             "triggerPrice": self._format_price(
                 order.symbol, trigger_price
@@ -533,7 +545,9 @@ class BinanceFuturesExchange:
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_STOP,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
+            # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
+            # TIF resolves to server-side GTE and is rejected with -4509.
+            "timeInForce": TIME_IN_FORCE_GTE_GTC,
             "closePosition": True,
             "price": self._format_price(order.symbol, order.target_price),
             "triggerPrice": self._format_price(
@@ -562,11 +576,14 @@ class BinanceFuturesExchange:
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
         # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
-        params = {
+        params: dict[str, Any] = {
             "symbol": order.symbol,
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+            # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
+            # server default to bare GTE, which Binance rejects with -4509.
+            "timeInForce": TIME_IN_FORCE_GTE_GTC,
             "closePosition": True,
             "triggerPrice": self._format_price(
                 order.symbol, order.take_profit
@@ -611,7 +628,9 @@ class BinanceFuturesExchange:
             "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
             "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
             "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            "timeInForce": order.time_in_force or TIME_IN_FORCE_GTC,
+            # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
+            # TIF resolves to server-side GTE and is rejected with -4509.
+            "timeInForce": TIME_IN_FORCE_GTE_GTC,
             "closePosition": True,
             "price": self._format_price(order.symbol, order.target_price),
             "triggerPrice": self._format_price(

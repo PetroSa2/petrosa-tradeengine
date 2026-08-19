@@ -223,6 +223,114 @@ class TestAC3ClosePositionFlag:
 
 
 # ---------------------------------------------------------------------------
+# #543: closePosition legs MUST send timeInForce=GTE_GTC
+#
+# Binance rejects closePosition=true conditional orders whose TIF resolves to
+# the bare server-side "GTE" default with APIError -4509 ("TIF GTE can only be
+# used with open positions"). The valid value is GTE_GTC, which also lets
+# Binance auto-cancel the sibling leg (preventing the -4130 duplicate storm).
+# ---------------------------------------------------------------------------
+
+
+class TestIssue543GteGtcTimeInForce:
+    """All four closePosition algo builders must send timeInForce=GTE_GTC."""
+
+    def _make_binance(self):
+        from tradeengine.exchange.binance import BinanceFuturesExchange
+
+        exchange = BinanceFuturesExchange.__new__(BinanceFuturesExchange)
+        exchange.client = MagicMock()
+        exchange._symbol_info_cache = {}
+        exchange._format_quantity = lambda sym, qty: str(round(qty, 3))
+        exchange._format_price = lambda sym, price: str(round(price, 2))
+        exchange._execute_with_retry = AsyncMock(
+            return_value={"algoId": "123", "status": "NEW"}
+        )
+        exchange.validate_price_within_percent_filter = AsyncMock(
+            return_value=(True, None)
+        )
+        exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+            return_value=(False, 48000.0, None)
+        )
+        return exchange
+
+    @pytest.mark.asyncio
+    async def test_stop_market_sends_gte_gtc(self):
+        exchange = self._make_binance()
+        order = _make_order()
+        order.stop_loss = 48000.0
+        order.position_side = None
+
+        await exchange._execute_stop_order(order)
+
+        flat = exchange._execute_with_retry.call_args[1]
+        assert flat.get("timeInForce") == "GTE_GTC", (
+            "STOP_MARKET closePosition leg must send GTE_GTC (not bare GTE) — #543"
+        )
+
+    @pytest.mark.asyncio
+    async def test_take_profit_market_sends_gte_gtc(self):
+        exchange = self._make_binance()
+        order = _make_order()
+        order.take_profit = 52000.0
+        order.position_side = None
+
+        await exchange._execute_take_profit_order(order)
+
+        flat = exchange._execute_with_retry.call_args[1]
+        assert flat.get("timeInForce") == "GTE_GTC", (
+            "TAKE_PROFIT_MARKET closePosition leg must send GTE_GTC — #543"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stop_limit_sends_gte_gtc(self):
+        exchange = self._make_binance()
+        order = _make_order()
+        order.stop_loss = 48000.0
+        order.target_price = 47900.0
+        order.position_side = None
+
+        await exchange._execute_stop_limit_order(order)
+
+        flat = exchange._execute_with_retry.call_args[1]
+        assert flat.get("timeInForce") == "GTE_GTC", (
+            "STOP (limit) closePosition leg must send GTE_GTC — #543"
+        )
+
+    @pytest.mark.asyncio
+    async def test_take_profit_limit_sends_gte_gtc(self):
+        exchange = self._make_binance()
+        order = _make_order()
+        order.take_profit = 52000.0
+        order.target_price = 52100.0
+        order.position_side = None
+
+        await exchange._execute_take_profit_limit_order(order)
+
+        flat = exchange._execute_with_retry.call_args[1]
+        assert flat.get("timeInForce") == "GTE_GTC", (
+            "TAKE_PROFIT (limit) closePosition leg must send GTE_GTC — #543"
+        )
+
+    @pytest.mark.asyncio
+    async def test_signal_gtc_tif_does_not_override_close_position_leg(self):
+        """Even when the source order carries a plain GTC TIF, the closePosition
+        legs must still force GTE_GTC — a signal-provided GTC would otherwise
+        resolve to bare GTE server-side and trip -4509."""
+        exchange = self._make_binance()
+        order = _make_order()
+        order.stop_loss = 48000.0
+        order.target_price = 47900.0
+        order.position_side = None
+        order.time_in_force = "GTC"
+
+        await exchange._execute_stop_limit_order(order)
+
+        flat = exchange._execute_with_retry.call_args[1]
+        assert flat.get("timeInForce") == "GTE_GTC"
+
+
+# ---------------------------------------------------------------------------
 # AC-4: reconcile_from_exchange registers orphaned orders individually
 # ---------------------------------------------------------------------------
 

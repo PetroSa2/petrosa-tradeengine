@@ -213,10 +213,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from shared.config import settings as _te_settings
         from tradeengine.position_reconciler import PositionReconciler
 
-        if (
-            _te_settings.position_reconciliation_enabled
-            and not _te_settings.simulation_enabled
-        ):
+        # #540: decouple the watchdog from `simulation_enabled`. The live
+        # deployment sets TE_NAKED_POSITION_REMEDIATION_MODE but leaves
+        # SIMULATION_ENABLED at its True default, so the legacy gate
+        # (`enabled AND not simulation_enabled`) evaluated False and the
+        # reconciler/remediator were never constructed — `arm_only` was a
+        # silent no-op while real orders filled on Binance. A naked-position
+        # safety net must run whenever real orders can be placed. Default
+        # (`position_reconciliation_requires_live_only=False`) starts the
+        # watchdog whenever reconciliation is enabled; set the flag True to
+        # restore the old sim-gated behavior.
+        _reconciliation_enabled = _te_settings.position_reconciliation_enabled
+        _real_trading_active = not _te_settings.simulation_enabled
+        if _te_settings.position_reconciliation_requires_live_only:
+            _should_start_reconciler = _reconciliation_enabled and _real_trading_active
+        else:
+            _should_start_reconciler = _reconciliation_enabled
+
+        if _should_start_reconciler:
             # #445: optionally attach the exchange-authoritative naked-position
             # remediator. Default mode "off" preserves read-only FR65 behavior.
             _remediator = None
@@ -270,14 +284,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 if _remediator is not None
                 else _te_settings.naked_position_remediation_mode
             )
-            from tradeengine.metrics import set_naked_position_remediation_mode
+            from tradeengine.metrics import (
+                set_naked_position_remediation_mode,
+                set_position_reconciler_running,
+            )
 
             set_naked_position_remediation_mode(_effective_mode)
+            # #540: reconciler is running — clear the skip-while-live alert.
+            set_position_reconciler_running(True, skipped_while_live=False)
             logger.info(
                 "✅ Position reconciler started (interval=%ss, "
-                "naked_remediation_mode=%s)",
+                "naked_remediation_mode=%s, simulation_enabled=%s)",
                 _te_settings.position_reconciliation_interval_seconds,
                 _effective_mode,
+                _te_settings.simulation_enabled,
             )
             if str(_effective_mode).lower() == "off":
                 # Detection-only: watchdog will count naked positions but never
@@ -291,11 +311,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     "arm_or_flatten to enable enforcement (#500)."
                 )
         else:
-            logger.info(
-                "⚠️ Position reconciler disabled (simulation=%s, enabled=%s)",
-                _te_settings.simulation_enabled,
-                _te_settings.position_reconciliation_enabled,
+            # #540 AC4: the reconciler is skipped. If real trading is active
+            # (simulation disabled) this is a dangerous misconfiguration — a
+            # naked position can go un-remediated. Surface it loudly and mark
+            # the alertable metric so it is never silent again. The only way
+            # to reach here with real trading active is the opt-in legacy
+            # `position_reconciliation_requires_live_only=True` path combined
+            # with reconciliation being disabled, or reconciliation disabled
+            # outright.
+            from tradeengine.metrics import set_position_reconciler_running
+
+            _skipped_while_live = _real_trading_active and _reconciliation_enabled
+            set_position_reconciler_running(
+                False, skipped_while_live=_skipped_while_live
             )
+            if _skipped_while_live:
+                logger.warning(
+                    "🚨 Position reconciler SKIPPED while real trading is "
+                    "ENABLED (simulation_enabled=False) — naked positions will "
+                    "NOT be remediated. This is the #540 misconfiguration. "
+                    "Review position_reconciliation_requires_live_only=%s and "
+                    "position_reconciliation_enabled=%s.",
+                    _te_settings.position_reconciliation_requires_live_only,
+                    _te_settings.position_reconciliation_enabled,
+                )
+            else:
+                logger.info(
+                    "⚠️ Position reconciler disabled (simulation=%s, enabled=%s, "
+                    "requires_live_only=%s)",
+                    _te_settings.simulation_enabled,
+                    _te_settings.position_reconciliation_enabled,
+                    _te_settings.position_reconciliation_requires_live_only,
+                )
 
         # Initialize and start NATS consumer
         logger.info("Initializing NATS consumer...")

@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # headroom; can be tightened/relaxed per-deploy via env var.
     te_min_sl_distance_pct: float = 6.0
 
+    # #534 (H6 of #977): WS-driven OCO completion nudge. When enabled, a
+    # FILLED ORDER_TRADE_UPDATE on an SL/TP leg that belongs to a tracked OCO
+    # pair wakes the _monitor_orders poll immediately instead of waiting for
+    # the next 2s cycle. The poll remains the authoritative decision-maker and
+    # backstop — WS only shortens detection latency, it never cancels/closes
+    # directly, so there is no double-cancel risk. Default off until validated
+    # on testnet. Rollback: unset TE_OCO_WS_WAKE_ENABLED (or set false).
+    te_oco_ws_wake_enabled: bool = False
+
     # Redis Configuration (for caching)
     redis_url: str | None = None
     redis_password: str | None = None

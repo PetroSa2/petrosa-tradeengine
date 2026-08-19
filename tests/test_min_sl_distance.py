@@ -52,13 +52,18 @@ def _stub_filter(
 
 
 @pytest.mark.asyncio
-async def test_h4_refuses_sl_inside_safety_floor_when_filter_is_tight(exchange):
-    """AC4: when PERCENT_PRICE filter is ±5% and safety floor is 6%, the
-    adjusted SL would be guaranteed to trigger — the adjuster MUST refuse
-    instead of clipping to the boundary. Mirrors the BCHUSDT case from
-    the 2026-05-30 incident (market $303.10, adjusted SL $315.07 = +3.95%)."""
+async def test_541_clamps_sl_to_max_placeable_when_floor_exceeds_filter(exchange):
+    """#541: when the PERCENT_PRICE filter cap (±5%) is TIGHTER than the safety
+    floor (6%), no price satisfies both. Previously the adjuster refused and
+    left the position NAKED (returned (False, None, reason)). It now CLAMPS the
+    SL to the furthest placeable price (just inside the filter) so the position
+    is protected — a slightly-tight stop beats no stop. Verified live on testnet
+    2026-08-19 where every arm attempt was rejected and 20 positions stayed naked.
+
+    Above-market stop (short SL): clamp to max_price = market * multiplierUp *
+    (1 - 1% safety margin)."""
     market = 303.10
-    requested_sl = 442.03  # 45.84% above market — outside ±5% filter
+    requested_sl = 442.03  # +45.84% above market — outside ±5% filter
     _stub_filter(
         exchange, market_price=market, multiplier_up=1.05, multiplier_down=0.95
     )
@@ -74,9 +79,45 @@ async def test_h4_refuses_sl_inside_safety_floor_when_filter_is_tight(exchange):
         min_safe_distance_pct=6.0,
     )
 
-    assert is_adjusted is False
-    assert adjusted_price is None
-    assert "sl_unreachable_within_filter" in msg
+    # NEW behavior: clamp instead of refuse — position protected, not naked.
+    assert is_adjusted is True
+    assert adjusted_price is not None
+    expected_max = market * 1.05 * (1 - 0.01)  # furthest placeable above market
+    assert adjusted_price == pytest.approx(expected_max, rel=1e-6)
+    # Clamped price is inside the ±5% filter (deviation < 5%).
+    dev_pct = (adjusted_price - market) / market * 100
+    assert 0 < dev_pct < 5.0
+    assert "CLAMPED" in msg and "#541" in msg
+
+
+@pytest.mark.asyncio
+async def test_541_clamps_below_market_sl_when_floor_exceeds_filter(exchange):
+    """#541 mirror: below-market stop (long SL) with a tight ±5% filter and 6%
+    floor clamps to min_price (just inside the filter) instead of refusing."""
+    market = 100.0
+    requested_sl = 50.0  # -50% — far outside ±5% filter
+    _stub_filter(
+        exchange, market_price=market, multiplier_up=1.05, multiplier_down=0.95
+    )
+
+    (
+        is_adjusted,
+        adjusted_price,
+        msg,
+    ) = await exchange.validate_and_adjust_price_for_percent_filter(
+        symbol="BTCUSDT",
+        price=requested_sl,
+        order_type="STOP_LOSS",
+        min_safe_distance_pct=6.0,
+    )
+
+    assert is_adjusted is True
+    assert adjusted_price is not None
+    expected_min = market * 0.95 * (1 + 0.01)  # furthest placeable below market
+    assert adjusted_price == pytest.approx(expected_min, rel=1e-6)
+    dev_pct = (adjusted_price - market) / market * 100
+    assert -5.0 < dev_pct < 0
+    assert "CLAMPED" in msg and "#541" in msg
 
 
 @pytest.mark.asyncio

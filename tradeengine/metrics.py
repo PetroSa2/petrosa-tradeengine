@@ -169,6 +169,29 @@ oco_cancel_retry_exhausted_total = Counter(
     ["symbol", "reason"],
 )
 
+# #541: the stop-loss safety floor (te_min_sl_distance_pct) is farther from
+# market than the exchange PERCENT_PRICE filter permits, so no price satisfies
+# both. Rather than refuse the SL and leave the position naked, the price
+# adjuster now CLAMPS the stop to the furthest placeable distance (just inside
+# the filter) and increments this counter. A nonzero rate means the configured
+# floor exceeds the exchange cap for that symbol — operators should reconcile
+# te_min_sl_distance_pct with the symbol's PERCENT_PRICE band.
+sl_floor_filter_clamp_total = Counter(
+    "petrosa_tradeengine_sl_floor_filter_clamp_total",
+    "Stop-loss placements clamped to the exchange PERCENT_PRICE cap because the "
+    "safety floor was unreachable (position protected instead of left naked)",
+    ["symbol"],
+)
+
+
+def record_sl_floor_filter_clamp(symbol: str) -> None:
+    """Increment the #541 SL-clamp counter for a symbol (best-effort)."""
+    try:
+        sl_floor_filter_clamp_total.labels(symbol=symbol).inc()
+    except Exception:
+        pass
+
+
 # #426 (RC#2 of #424): the atomic-rollback path itself failed — the
 # OCO-failure cleanup could not close the position on Binance, so the
 # position remains unhedged. Paired with the

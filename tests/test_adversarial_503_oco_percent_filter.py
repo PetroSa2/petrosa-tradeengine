@@ -107,17 +107,25 @@ class TestOutOfBandTriggerRefused:
             status=OrderStatus.PENDING,
         )
 
-        # AC3: a leg that cannot be made filter-compliant is refused (raises),
-        # not shipped. This SL is 14.8% below market with a ±5% filter and a 6%
-        # safety floor — infeasible — so the correct outcome is a clean refuse.
-        # An in-band-adjustable trigger would instead be clamped and shipped.
-        with pytest.raises(ValueError, match="percent_filter_reject|unreachable"):
-            await exch._execute_stop_order(order)
+        # #541: this SL is 14.8% below market with a ±5% filter and a 6% safety
+        # floor — the floor is FARTHER than the filter allows, so no price
+        # satisfies both. Previously this refused (raised) and left the position
+        # NAKED. It now CLAMPS to the furthest placeable price (just inside the
+        # ±5% filter) and ships that — a slightly-tight stop beats no stop.
+        await exch._execute_stop_order(order)
 
-        # In either outcome, the raw out-of-band trigger must never be shipped.
+        # The raw out-of-band trigger must NEVER be shipped verbatim (#503 intent
+        # preserved) — and what IS shipped must sit inside the ±5% filter (#541).
         shipped = str(captured.get("triggerPrice", ""))
         assert shipped not in ("0.16215", "0.16215000"), (
             f"OCO STOP shipped out-of-band trigger {shipped} verbatim (#503)"
+        )
+        shipped_val = float(captured.get("triggerPrice"))
+        market = 0.19
+        dev_pct = abs(shipped_val - market) / market * 100
+        assert dev_pct < 5.0, (
+            f"#541: shipped SL {shipped_val} ({dev_pct:.2f}%) must be clamped "
+            f"inside the ±5% PERCENT_PRICE filter"
         )
 
     @pytest.mark.asyncio

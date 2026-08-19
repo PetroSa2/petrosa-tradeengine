@@ -86,6 +86,17 @@ class Settings(BaseSettings):
     # Position Reconciliation (FR65)
     position_reconciliation_enabled: bool = True
     position_reconciliation_interval_seconds: int = 60
+    # #540: decouple the naked-position watchdog from `simulation_enabled`.
+    # The boot gate historically required `not simulation_enabled`, but the
+    # live deployment sets TE_NAKED_POSITION_REMEDIATION_MODE while leaving
+    # SIMULATION_ENABLED at its True default — so the reconciler/remediator
+    # were never constructed and `arm_only` was a silent no-op while real
+    # orders filled on Binance (18 naked positions, zero remediation cycles).
+    # A naked-position safety net must run whenever real orders can be
+    # placed, regardless of the sim flag. Default False = start the watchdog
+    # whenever `position_reconciliation_enabled` is True. Set to True to
+    # restore the legacy sim-gated behavior (skip when simulation_enabled).
+    position_reconciliation_requires_live_only: bool = False
 
     # AC1 (#459 — 446-C): ExchangeTruthStore read-path feature flag
     # off = legacy paths unchanged; shadow = log divergence only; on = risk reads from exchange

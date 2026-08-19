@@ -478,6 +478,45 @@ def set_naked_position_remediation_mode(mode: str) -> None:
         )
 
 
+# #540: the naked-position watchdog silently never started in prod because the
+# boot gate required `not simulation_enabled`, while the live deploy left
+# SIMULATION_ENABLED at its True default. `arm_only` (#999) became a no-op:
+# 18 naked positions, zero remediation cycles across the full pod lifetime.
+# These two gauges make the reconciler's *running* state first-class so the
+# skip-while-real-trading misconfig is alertable instead of silent.
+#   healthy:   position_reconciler_running == 1
+#   MISCONFIG: position_reconciler_running == 0 AND
+#              position_reconciler_skipped_while_live == 1  → page the operator
+position_reconciler_running = Gauge(
+    "tradeengine_position_reconciler_running",
+    "1 when the PositionReconciler boot gate started the watchdog, else 0.",
+)
+
+position_reconciler_skipped_while_live = Gauge(
+    "tradeengine_position_reconciler_skipped_while_live",
+    "1 when the reconciler was skipped at boot while real (non-simulation) "
+    "trading is enabled — a naked position can go un-remediated. Alert on == 1.",
+)
+
+
+def set_position_reconciler_running(
+    running: bool, *, skipped_while_live: bool = False
+) -> None:
+    """Record the effective PositionReconciler boot-gate outcome (#540).
+
+    Args:
+        running: True when the reconciler/remediator was actually started.
+        skipped_while_live: True when the reconciler was skipped at boot even
+            though real trading is enabled (simulation disabled). This is the
+            dangerous misconfiguration that made ``arm_only`` a no-op in prod;
+            it drives the ``tradeengine-reconciler-skipped-while-live`` alert.
+    """
+    position_reconciler_running.set(1 if running else 0)
+    position_reconciler_skipped_while_live.set(
+        1 if (not running and skipped_while_live) else 0
+    )
+
+
 # ============================================================
 # OTel SDK instruments (dual-export — OTLP push to Grafana Alloy)
 # ============================================================

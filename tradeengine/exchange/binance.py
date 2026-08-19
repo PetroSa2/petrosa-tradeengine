@@ -1089,26 +1089,66 @@ class BinanceFuturesExchange:
                     # Above-market: adjusted ceiling under filter is max_price;
                     # safety floor is floor_hi. Feasible iff max_price >= floor_hi.
                     if max_price < floor_hi:
-                        reason = (
-                            f"sl_unreachable_within_filter: requested ${price:.2f} "
-                            f"({deviation_pct:+.2f}%) cannot satisfy both PERCENT_PRICE "
-                            f"(max {(multiplier_up - 1) * 100:+.2f}%) and safety floor "
-                            f"({min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                        # #541: the safety floor is FARTHER from market than the
+                        # PERCENT_PRICE filter permits (e.g. floor 6% vs filter
+                        # cap 5%), so NO price satisfies both. Historically this
+                        # refused the SL (returned None) and left the position
+                        # NAKED — strictly worse than an imperfect stop. Clamp to
+                        # the furthest placeable price (just inside the filter) so
+                        # the position is at least protected; the floor's intent
+                        # (#424: avoid stops so tight they trigger on routine
+                        # volatility) is honored best-effort. Emit a warning +
+                        # metric so operators can see the floor/filter conflict.
+                        adjusted_price = max_price
+                        clamp_msg = (
+                            f"⚠️ #541 SL CLAMPED (floor>filter): {symbol} {order_type} "
+                            f"requested ${price:.2f} ({deviation_pct:+.2f}%) exceeds "
+                            f"PERCENT_PRICE cap (max {(multiplier_up - 1) * 100:+.2f}%) "
+                            f"while safety floor is {min_safe_distance_pct:+.2f}%; no "
+                            f"price satisfies both. Clamping to furthest placeable "
+                            f"${adjusted_price:.2f} "
+                            f"({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
+                            f"to protect the position rather than leave it naked; "
                             f"market=${current_price:.2f}"
                         )
-                        logger.error(reason)
-                        return (False, None, reason)
+                        logger.warning(clamp_msg)
+                        try:
+                            from tradeengine.metrics import (
+                                record_sl_floor_filter_clamp,
+                            )
+
+                            record_sl_floor_filter_clamp(symbol)
+                        except Exception:
+                            pass
+                        return (True, adjusted_price, clamp_msg)
                 elif price < current_price:
                     if min_price > floor_lo:
-                        reason = (
-                            f"sl_unreachable_within_filter: requested ${price:.2f} "
-                            f"({deviation_pct:+.2f}%) cannot satisfy both PERCENT_PRICE "
-                            f"(min {(multiplier_down - 1) * 100:+.2f}%) and safety floor "
-                            f"({-min_safe_distance_pct:+.2f}%) for {symbol} {order_type}; "
+                        # #541: mirror of the above-market case for below-market
+                        # stops (e.g. long SL). Clamp to the furthest placeable
+                        # price (min_price, just inside the filter floor) instead
+                        # of refusing and leaving the position naked.
+                        adjusted_price = min_price
+                        clamp_msg = (
+                            f"⚠️ #541 SL CLAMPED (floor>filter): {symbol} {order_type} "
+                            f"requested ${price:.2f} ({deviation_pct:+.2f}%) exceeds "
+                            f"PERCENT_PRICE cap (min {(multiplier_down - 1) * 100:+.2f}%) "
+                            f"while safety floor is {-min_safe_distance_pct:+.2f}%; no "
+                            f"price satisfies both. Clamping to furthest placeable "
+                            f"${adjusted_price:.2f} "
+                            f"({((adjusted_price - current_price) / current_price) * 100:+.2f}%) "
+                            f"to protect the position rather than leave it naked; "
                             f"market=${current_price:.2f}"
                         )
-                        logger.error(reason)
-                        return (False, None, reason)
+                        logger.warning(clamp_msg)
+                        try:
+                            from tradeengine.metrics import (
+                                record_sl_floor_filter_clamp,
+                            )
+
+                            record_sl_floor_filter_clamp(symbol)
+                        except Exception:
+                            pass
+                        return (True, adjusted_price, clamp_msg)
 
             # Check if adjustment is needed
             if price < min_price:

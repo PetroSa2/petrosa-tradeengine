@@ -169,6 +169,29 @@ oco_cancel_retry_exhausted_total = Counter(
     ["symbol", "reason"],
 )
 
+# #541: the stop-loss safety floor (te_min_sl_distance_pct) is farther from
+# market than the exchange PERCENT_PRICE filter permits, so no price satisfies
+# both. Rather than refuse the SL and leave the position naked, the price
+# adjuster now CLAMPS the stop to the furthest placeable distance (just inside
+# the filter) and increments this counter. A nonzero rate means the configured
+# floor exceeds the exchange cap for that symbol — operators should reconcile
+# te_min_sl_distance_pct with the symbol's PERCENT_PRICE band.
+sl_floor_filter_clamp_total = Counter(
+    "petrosa_tradeengine_sl_floor_filter_clamp_total",
+    "Stop-loss placements clamped to the exchange PERCENT_PRICE cap because the "
+    "safety floor was unreachable (position protected instead of left naked)",
+    ["symbol"],
+)
+
+
+def record_sl_floor_filter_clamp(symbol: str) -> None:
+    """Increment the #541 SL-clamp counter for a symbol (best-effort)."""
+    try:
+        sl_floor_filter_clamp_total.labels(symbol=symbol).inc()
+    except Exception:
+        pass
+
+
 # #426 (RC#2 of #424): the atomic-rollback path itself failed — the
 # OCO-failure cleanup could not close the position on Binance, so the
 # position remains unhedged. Paired with the
@@ -453,6 +476,45 @@ def set_naked_position_remediation_mode(mode: str) -> None:
         naked_position_remediation_mode_status.labels(mode=known).set(
             1 if known == normalized else 0
         )
+
+
+# #540: the naked-position watchdog silently never started in prod because the
+# boot gate required `not simulation_enabled`, while the live deploy left
+# SIMULATION_ENABLED at its True default. `arm_only` (#999) became a no-op:
+# 18 naked positions, zero remediation cycles across the full pod lifetime.
+# These two gauges make the reconciler's *running* state first-class so the
+# skip-while-real-trading misconfig is alertable instead of silent.
+#   healthy:   position_reconciler_running == 1
+#   MISCONFIG: position_reconciler_running == 0 AND
+#              position_reconciler_skipped_while_live == 1  → page the operator
+position_reconciler_running = Gauge(
+    "tradeengine_position_reconciler_running",
+    "1 when the PositionReconciler boot gate started the watchdog, else 0.",
+)
+
+position_reconciler_skipped_while_live = Gauge(
+    "tradeengine_position_reconciler_skipped_while_live",
+    "1 when the reconciler was skipped at boot while real (non-simulation) "
+    "trading is enabled — a naked position can go un-remediated. Alert on == 1.",
+)
+
+
+def set_position_reconciler_running(
+    running: bool, *, skipped_while_live: bool = False
+) -> None:
+    """Record the effective PositionReconciler boot-gate outcome (#540).
+
+    Args:
+        running: True when the reconciler/remediator was actually started.
+        skipped_while_live: True when the reconciler was skipped at boot even
+            though real trading is enabled (simulation disabled). This is the
+            dangerous misconfiguration that made ``arm_only`` a no-op in prod;
+            it drives the ``tradeengine-reconciler-skipped-while-live`` alert.
+    """
+    position_reconciler_running.set(1 if running else 0)
+    position_reconciler_skipped_while_live.set(
+        1 if (not running and skipped_while_live) else 0
+    )
 
 
 # ============================================================

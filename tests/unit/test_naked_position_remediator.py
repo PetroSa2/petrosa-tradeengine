@@ -320,7 +320,7 @@ async def test_resolved_key_drops_from_first_seen() -> None:
 
 def test_derive_uses_fallback_for_long_when_no_local_record() -> None:
     r, _, _, _, _ = _make_remediator(mode="arm_only")
-    sl, tp = r._derive_protective_prices(
+    sl, tp, _ = r._derive_protective_prices(
         "BTCUSDT", "LONG", _binance_positions(entry=100.0)
     )
     assert sl == pytest.approx(98.0)  # 100 * (1 - 2%)
@@ -329,7 +329,7 @@ def test_derive_uses_fallback_for_long_when_no_local_record() -> None:
 
 def test_derive_uses_fallback_for_short_when_no_local_record() -> None:
     r, _, _, _, _ = _make_remediator(mode="arm_only")
-    sl, tp = r._derive_protective_prices(
+    sl, tp, _ = r._derive_protective_prices(
         "BTCUSDT", "SHORT", _binance_positions("BTCUSDT", "SHORT", 100.0)
     )
     assert sl == pytest.approx(102.0)  # 100 * (1 + 2%)
@@ -338,7 +338,7 @@ def test_derive_uses_fallback_for_short_when_no_local_record() -> None:
 
 def test_derive_returns_none_for_missing_entry_price() -> None:
     r, _, _, _, _ = _make_remediator(mode="arm_only")
-    sl, tp = r._derive_protective_prices(
+    sl, tp, _ = r._derive_protective_prices(
         "BTCUSDT", "LONG", {("BTCUSDT", "LONG"): {"entryPrice": 0}}
     )
     assert sl is None and tp is None
@@ -361,7 +361,7 @@ def test_derive_widens_too_tight_stored_long_sl_to_floor() -> None:
     r._position_manager.get_positions = MagicMock(
         return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 97.6}}
     )
-    sl, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
+    sl, _, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
     assert sl == pytest.approx(94.0)  # widened to floor, not left at 97.6
 
 
@@ -376,7 +376,7 @@ def test_derive_widens_too_tight_stored_short_sl_to_floor() -> None:
     r._position_manager.get_positions = MagicMock(
         return_value={("BTCUSDT", "SHORT"): {"stop_loss_price": 102.4}}
     )
-    sl, _ = r._derive_protective_prices("BTCUSDT", "SHORT", positions)
+    sl, _, _ = r._derive_protective_prices("BTCUSDT", "SHORT", positions)
     assert sl == pytest.approx(106.0)
 
 
@@ -387,7 +387,7 @@ def test_derive_leaves_compliant_stored_sl_untouched() -> None:
     r._position_manager.get_positions = MagicMock(
         return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 90.0}}  # 10% away
     )
-    sl, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
+    sl, _, _ = r._derive_protective_prices("BTCUSDT", "LONG", positions)
     assert sl == pytest.approx(90.0)
 
 
@@ -400,7 +400,7 @@ def test_derive_fallback_sl_clears_floor_when_configured() -> None:
     r, _, _, _, _ = _make_remediator(
         mode="arm_only", fallback_sl_pct=2.0, min_sl_distance_pct=6.0
     )
-    sl, _ = r._derive_protective_prices(
+    sl, _, _ = r._derive_protective_prices(
         "BTCUSDT", "LONG", _binance_positions("BTCUSDT", "LONG", 100.0)
     )
     assert sl == pytest.approx(94.0)
@@ -412,7 +412,7 @@ def test_derive_no_clamp_when_floor_disabled() -> None:
     r._position_manager.get_positions = MagicMock(
         return_value={("BTCUSDT", "LONG"): {"stop_loss_price": 99.0}}
     )
-    sl, _ = r._derive_protective_prices(
+    sl, _, _ = r._derive_protective_prices(
         "BTCUSDT", "LONG", _binance_positions("BTCUSDT", "LONG", 100.0)
     )
     assert sl == pytest.approx(99.0)  # left tight, not widened
@@ -435,8 +435,78 @@ async def test_empty_divergence_list_is_no_op_in_all_modes() -> None:
             "skipped": 0,
             "failed": 0,
         }
-        ex.execute.assert_not_called()
-        close_cb.assert_not_called()
+    ex.execute.assert_not_called()
+    close_cb.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #551 — market-crossed-entry SL must not re-arm a guaranteed -2021 price.
+# ---------------------------------------------------------------------------
+
+
+def _binance_positions_with_mark(
+    symbol: str, side: str, entry: float, mark: float
+) -> dict[tuple[str, str], dict[str, Any]]:
+    return {
+        (symbol, side): {
+            "symbol": symbol,
+            "positionSide": side,
+            "positionAmt": 1.0 if side == "LONG" else -1.0,
+            "entryPrice": entry,
+            "markPrice": mark,
+        }
+    }
+
+
+def test_derive_reanchors_short_sl_to_correct_side_of_market() -> None:
+    """XLMUSDT SHORT: entry 0.1637, mark risen to 0.171. Entry-floored SL
+    (0.1637*1.06=0.1735) is still BELOW mark → would immediately trigger.
+    Must re-anchor ABOVE mark (0.171*1.06)."""
+    r, _, _, _, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=6.0)
+    positions = _binance_positions_with_mark("XLMUSDT", "SHORT", 0.16370, 0.17100)
+    sl, _tp, must_flatten = r._derive_protective_prices("XLMUSDT", "SHORT", positions)
+    assert must_flatten is False
+    assert sl is not None and sl > 0.17100, "SHORT SL must sit above live mark"
+    assert sl == pytest.approx(0.17100 * (1 + 0.06))
+
+
+def test_derive_signals_flatten_when_no_placeable_stop() -> None:
+    """Pathological floor >= max placeable band → no stop can avoid immediate
+    trigger; must_flatten is signalled instead of manufacturing a dead price."""
+    r, _, _, _, _ = _make_remediator(mode="arm_or_flatten", min_sl_distance_pct=20.0)
+    positions = _binance_positions_with_mark("XLMUSDT", "SHORT", 0.16370, 0.17100)
+    _sl, _tp, must_flatten = r._derive_protective_prices("XLMUSDT", "SHORT", positions)
+    assert must_flatten is True
+
+
+@pytest.mark.asyncio
+async def test_rearm_escalates_to_flatten_when_unplaceable_in_arm_or_flatten() -> None:
+    """When no placeable stop exists, arm_or_flatten flattens instead of
+    re-arming the identical -2021 price (the observed naked-forever loop)."""
+    r, ex, _, close_cb, _ = _make_remediator(
+        mode="arm_or_flatten", grace_sec=9999, min_sl_distance_pct=20.0
+    )
+    positions = _binance_positions_with_mark("XLMUSDT", "SHORT", 0.16370, 0.17100)
+    div = _unhedged_div("XLMUSDT", "SHORT", qty=100.0)
+    # grace not expired (9999s) — normally this is the arm path, but the
+    # unplaceable-stop escalation flattens regardless of grace.
+    counts = await r.remediate([div], positions)
+    close_cb.assert_awaited_once()
+    ex.execute.assert_not_called()  # never ships the guaranteed-dead SL
+    assert counts["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rearm_does_not_retry_dead_price_in_arm_only() -> None:
+    """arm_only cannot flatten, but must still NOT re-arm a guaranteed -2021
+    price — it records a failure so operators see the stuck position."""
+    r, ex, _, close_cb, _ = _make_remediator(mode="arm_only", min_sl_distance_pct=20.0)
+    positions = _binance_positions_with_mark("XLMUSDT", "SHORT", 0.16370, 0.17100)
+    div = _unhedged_div("XLMUSDT", "SHORT", qty=100.0)
+    counts = await r.remediate([div], positions)
+    ex.execute.assert_not_called()
+    close_cb.assert_not_called()
+    assert counts["failed"] == 1
 
 
 @pytest.mark.asyncio

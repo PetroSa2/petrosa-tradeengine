@@ -245,3 +245,143 @@ def correct_protective_price(
         reason=reason,
         original_price=requested_price,
     )
+
+
+@dataclass(frozen=True)
+class MarketSideDecision:
+    """Outcome of validating a stop-loss against the LIVE market price (#551).
+
+    ``correct_protective_price`` guarantees a stop is on the correct side of the
+    ENTRY price. That is necessary but not sufficient: once the market crosses
+    the entry (position underwater), an entry-side-correct stop can sit on the
+    WRONG side of the *current* market — Binance then rejects it with
+    ``APIError(-2021)`` "Order would immediately trigger", the OCO cancels the
+    surviving leg, and the position is left NAKED (XLMUSDT SHORT 2026-08-20).
+
+    A stop must trigger AWAY from the current market in the closing direction:
+      * SHORT SL is a stop-BUY → it must sit ABOVE market.
+      * LONG  SL is a stop-SELL → it must sit BELOW market.
+
+    Attributes:
+        price: The stop price to submit — re-anchored to the correct side of
+            market when the input was market-wrong-side; unchanged otherwise.
+            Meaningless when ``should_flatten`` is True.
+        was_reanchored: True when the input stop was on the wrong side of market
+            (or inside the market-relative safety floor) and got moved out to
+            ``market * (1 ± floor)`` on the correct side.
+        should_flatten: True when no stop can be placed without immediate trigger
+            — the caller must escalate to a reduce-only MARKET flatten instead of
+            shipping a guaranteed -2021 price (or retrying it forever).
+        reason: Short human-readable explanation; "" when no action was needed.
+        original_price: The input stop price prior to any re-anchor.
+    """
+
+    price: float
+    was_reanchored: bool
+    should_flatten: bool
+    reason: str
+    original_price: float
+
+
+def enforce_market_side_stop(
+    *,
+    position_side: PositionSide,
+    stop_price: float,
+    market_price: float,
+    min_distance_pct: float,
+    max_distance_pct: float = MAX_PLAUSIBLE_DISTANCE_PCT,
+) -> MarketSideDecision:
+    """Validate/re-anchor a stop-loss against the LIVE market price (#551).
+
+    This is the market-relative gate that complements the entry-relative
+    ``correct_protective_price``. It catches the market-crossed-entry case where
+    an entry-side-correct stop would immediately trigger against the current
+    market and leave the position naked.
+
+    Invariant enforced (stop must trigger away from market in the close
+    direction):
+      * SHORT SL must be strictly ABOVE ``market * (1 + min_distance_pct)``.
+      * LONG  SL must be strictly BELOW ``market * (1 - min_distance_pct)``.
+
+    Args:
+        position_side: "LONG" or "SHORT".
+        stop_price: The (already entry-direction-corrected) stop price.
+        market_price: Current mark/last price. MUST be > 0 — callers resolve it.
+        min_distance_pct: Minimum |distance| from market (fraction, e.g. 0.06).
+            A stop closer than this to market — or on the wrong side — is
+            re-anchored out to the floor on the correct side.
+        max_distance_pct: If the re-anchored floor stop would still exceed the
+            widest placeable band (PERCENT_PRICE cap ~ this value), no stop can
+            be placed; signal a flatten instead. Defaults to
+            ``MAX_PLAUSIBLE_DISTANCE_PCT``. Since the floor is normally well
+            inside this cap, ``should_flatten`` only fires when the caller has
+            passed a floor >= the cap (pathological config) — the realistic
+            flatten trigger is the caller acting on a subsequent PERCENT_PRICE
+            rejection of the re-anchored price.
+
+    Returns:
+        MarketSideDecision describing the outcome.
+
+    Raises:
+        ValueError: If ``market_price`` is not strictly positive.
+    """
+    if market_price <= 0:
+        raise ValueError(
+            "market_price must be > 0 — callers must resolve a live market price"
+        )
+
+    # +1 => stop must be ABOVE market (SHORT), -1 => BELOW market (LONG).
+    sign = +1 if position_side == "SHORT" else -1
+    floor_edge = market_price * (1 + sign * min_distance_pct)
+
+    # On the correct side AND at/beyond the market-relative floor → leave alone.
+    beyond_floor = (sign > 0 and stop_price >= floor_edge) or (
+        sign < 0 and stop_price <= floor_edge
+    )
+    if beyond_floor:
+        return MarketSideDecision(
+            price=stop_price,
+            was_reanchored=False,
+            should_flatten=False,
+            reason="",
+            original_price=stop_price,
+        )
+
+    # Wrong side of market, or inside the market-relative floor band: the stop
+    # would immediately trigger (-2021). Re-anchor to the safety floor on the
+    # correct side of the LIVE market.
+    reanchored = floor_edge
+
+    # If even the floor stop exceeds the widest placeable band, no stop can be
+    # placed without immediate trigger — escalate to flatten (#551 AC3).
+    if min_distance_pct >= max_distance_pct:
+        reason = (
+            f"{position_side} SL {stop_price:.6f} is wrong-side/inside floor of "
+            f"live market {market_price:.6f}; required floor "
+            f"{min_distance_pct * 100:.2f}% >= max placeable "
+            f"{max_distance_pct * 100:.2f}% — cannot place any stop without "
+            f"immediate trigger; FLATTEN required (#551)"
+        )
+        logger.error("⚠️ market-side stop unplaceable (#551): %s", reason)
+        return MarketSideDecision(
+            price=stop_price,
+            was_reanchored=False,
+            should_flatten=True,
+            reason=reason,
+            original_price=stop_price,
+        )
+
+    reason = (
+        f"{position_side} SL {stop_price:.6f} would immediately trigger against "
+        f"live market {market_price:.6f} (market crossed entry); RE-ANCHORED to "
+        f"correct side of market at {reanchored:.6f} "
+        f"({sign * min_distance_pct * 100:+.2f}% from market) (#551)"
+    )
+    logger.warning("⚠️ market-side SL re-anchor (#551): %s", reason)
+    return MarketSideDecision(
+        price=reanchored,
+        was_reanchored=True,
+        should_flatten=False,
+        reason=reason,
+        original_price=stop_price,
+    )

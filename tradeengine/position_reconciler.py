@@ -167,6 +167,27 @@ def _order_is_reduce_only(order: dict[str, Any]) -> bool:
     return bool(order.get("reduceOnly")) or bool(order.get("closePosition"))
 
 
+def _is_malformed_sign(side: str, position_amt: float) -> bool:
+    """#547: detect an inverted-sign hedge-mode position.
+
+    In hedge mode a ``LONG`` leg must carry a positive ``positionAmt`` and a
+    ``SHORT`` leg a negative one. A ``LONG`` row with ``positionAmt < 0`` (or a
+    ``SHORT`` row with ``positionAmt > 0``) is internally inconsistent: any
+    ``reduceOnly`` protective order derived from the declared side is
+    direction-invalid, so the position can never be armed and — under the old
+    ``abs()``-based detection — stayed flagged ``unhedged`` forever without ever
+    being covered or flattened.
+
+    ``BOTH`` (one-way mode) is never malformed: the sign legitimately encodes
+    direction there, so the caller derives the side from the sign instead.
+    """
+    if side == "LONG":
+        return position_amt < 0
+    if side == "SHORT":
+        return position_amt > 0
+    return False
+
+
 def detect_unhedged_positions(
     binance_positions: dict[tuple[str, str], dict[str, Any]],
     binance_open_orders_by_symbol: dict[str, list[dict[str, Any]]],
@@ -184,6 +205,34 @@ def detect_unhedged_positions(
     divergences: list[dict[str, Any]] = []
 
     for (symbol, side), bp in binance_positions.items():
+        raw_amt = float(bp.get("positionAmt", 0) or 0.0)
+
+        # #547: a sign/side mismatch (LONG amt<0 or SHORT amt>0) is a malformed
+        # hedge-mode state. A reduceOnly SL/TP derived from the declared side is
+        # direction-invalid, so this position can never be armed. Classify it as
+        # `malformed_position` and let the remediator take a safe terminal
+        # action (flatten in arm_or_flatten; CRITICAL alert in arm_only) instead
+        # of silently abs()-ing the sign and looping on `unhedged` forever.
+        if _is_malformed_sign(side, raw_amt):
+            divergences.append(
+                {
+                    "category": "malformed_position",
+                    "symbol": symbol,
+                    "side": side,
+                    "binance_qty": abs(raw_amt),
+                    "raw_position_amt": raw_amt,
+                    "local_qty": 0.0,
+                    "sl_present": False,
+                    "tp_present": False,
+                    "detail": (
+                        f"Malformed hedge-mode position: positionSide={side} "
+                        f"but positionAmt={raw_amt} (sign/side mismatch) — "
+                        f"cannot be armed; requires flatten or alert"
+                    ),
+                }
+            )
+            continue
+
         orders = binance_open_orders_by_symbol.get(symbol, []) or []
         sl_present = False
         tp_present = False
@@ -357,10 +406,17 @@ class PositionReconciler:
         # owns its own metrics/logging; failures here must not poison
         # the read-only reconciliation pass.
         if self._remediator is not None:
-            unhedged_only = [d for d in divergences if d.get("category") == "unhedged"]
+            # #547: malformed_position divergences must also reach the
+            # remediator so it can flatten (arm_or_flatten) or alert (arm_only)
+            # instead of the position staying naked forever.
+            remediable = [
+                d
+                for d in divergences
+                if d.get("category") in ("unhedged", "malformed_position")
+            ]
             try:
                 await self._remediator.remediate(
-                    unhedged_only, binance_positions=binance_positions
+                    remediable, binance_positions=binance_positions
                 )
             except Exception:
                 logger.exception(

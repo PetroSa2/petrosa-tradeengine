@@ -202,9 +202,21 @@ def _make_remediator(mode, exchange, local_positions, clock):
 
 
 def _is_covered(symbol: str, side: str, open_orders) -> bool:
-    """Mirror the exchange truth: hedged iff reduceOnly STOP + TAKE_PROFIT."""
+    """Mirror the exchange truth: hedged iff reduceOnly STOP + TAKE_PROFIT.
+
+    The ``positionAmt`` is signed by side (LONG>0, SHORT<0) to match real
+    Binance ``positionRisk`` semantics; a hardcoded positive amount would
+    trip the #547 malformed-sign detection for SHORT positions.
+    """
+    signed_amt = 1.0 if side == "LONG" else -1.0
     divs = detect_unhedged_positions(
-        {(symbol, side): {"symbol": symbol, "positionSide": side, "positionAmt": 1.0}},
+        {
+            (symbol, side): {
+                "symbol": symbol,
+                "positionSide": side,
+                "positionAmt": signed_amt,
+            }
+        },
         open_orders,
     )
     return len(divs) == 0

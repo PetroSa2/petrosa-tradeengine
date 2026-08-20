@@ -62,6 +62,17 @@ reconcile_lag_seconds = Histogram(
     ["action"],  # action: armed, flattened
 )
 
+# #547: malformed (inverted-sign) positions that can never be armed. Counted
+# separately from naked_position_detected_total so operators can alert on the
+# distinct "position side/sign mismatch" fault rather than lumping it in with
+# ordinary unhedged positions.
+malformed_position_total = Counter(
+    "tradeengine_malformed_position_total",
+    "Malformed hedge-mode positions (LONG with negative amt or SHORT with "
+    "positive amt) observed by the remediator",
+    ["symbol", "side"],
+)
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -116,6 +127,10 @@ class NakedPositionRemediator:
         self._clock = clock
         # (symbol, side) -> first-seen monotonic timestamp
         self._first_seen: dict[tuple[str, str], float] = {}
+        # #547: (symbol, side) keys already CRITICAL-logged as malformed, so
+        # arm_only emits the alert once per detection episode rather than every
+        # reconcile cycle. Cleared when the key is no longer diverging.
+        self._malformed_alerted: set[tuple[str, str]] = set()
 
     @staticmethod
     def _coerce_mode(mode: str) -> RemediationMode:
@@ -151,6 +166,9 @@ class NakedPositionRemediator:
         if not unhedged_divergences:
             # Clean pass — clear first-seen so future detections start fresh.
             self._first_seen.clear()
+            # #547: also reset the malformed alert latch so a later
+            # re-occurrence re-alerts CRITICAL.
+            self._malformed_alerted.clear()
             return counts
 
         now = self._clock()
@@ -166,6 +184,14 @@ class NakedPositionRemediator:
 
             first_seen_at = self._first_seen.setdefault(key, now)
             elapsed = now - first_seen_at
+
+            # #547: a malformed (inverted-sign) position can never be armed —
+            # a reduceOnly SL/TP against a wrong-signed side is direction-
+            # invalid. Route it to a safe terminal action instead of looping.
+            if div.get("category") == "malformed_position":
+                outcome = await self._handle_malformed(div, elapsed, binance_positions)
+                counts[outcome] += 1
+                continue
 
             if self._mode == "off":
                 counts["skipped"] += 1
@@ -203,6 +229,11 @@ class NakedPositionRemediator:
         stale = [k for k in self._first_seen if k not in currently_unhedged]
         for k in stale:
             self._first_seen.pop(k, None)
+        # #547: reset the once-per-episode malformed alert latch for any key
+        # that resolved, so a future re-occurrence alerts CRITICAL again.
+        for k in list(self._malformed_alerted):
+            if k not in currently_unhedged:
+                self._malformed_alerted.discard(k)
 
         return counts
 
@@ -367,8 +398,14 @@ class NakedPositionRemediator:
         self,
         div: dict[str, Any],
         binance_positions: dict[tuple[str, str], dict[str, Any]] | None,
+        reason: str = "naked_position_grace_expired",
     ) -> bool:
-        """Reduce-only MARKET close via dispatcher.close_position_with_cleanup."""
+        """Reduce-only MARKET close via dispatcher.close_position_with_cleanup.
+
+        ``reason`` defaults to the naked-grace-expired label; #547 passes
+        ``"malformed_position"`` so the audit trail distinguishes a flatten
+        triggered by an inverted-sign position from an ordinary grace flatten.
+        """
         symbol = div["symbol"]
         side = div["side"]
         qty = float(div.get("binance_qty") or 0.0)
@@ -379,7 +416,6 @@ class NakedPositionRemediator:
             return False
 
         position_id = self._resolve_position_id(symbol, side)
-        reason = "naked_position_grace_expired"
         try:
             result = await self._close_position(
                 position_id=position_id,
@@ -416,6 +452,79 @@ class NakedPositionRemediator:
             symbol=symbol, side=side, outcome="flattened" if ok else "failed"
         ).inc()
         return ok
+
+    async def _handle_malformed(
+        self,
+        div: dict[str, Any],
+        elapsed: float,
+        binance_positions: dict[tuple[str, str], dict[str, Any]] | None,
+    ) -> str:
+        """#547: safe terminal handling for an inverted-sign position.
+
+        A malformed position (LONG with negative ``positionAmt`` or SHORT with
+        positive) is un-armable: any ``reduceOnly`` protective order derived
+        from the declared side is direction-invalid. Rather than loop forever:
+
+        - ``off`` / ``dry_run``: observe only (``skipped``).
+        - ``arm_only``: increment ``tradeengine_malformed_position_total``, log
+          CRITICAL once per detection episode, and take NO arm action (a
+          guaranteed-to-fail arm every cycle is exactly the bug). Returns
+          ``skipped`` — the position is stuck pending human/mode intervention.
+        - ``arm_or_flatten``: after ``flatten_grace_sec``, flatten reduce-only
+          MARKET with ``reason="malformed_position"``; before grace, alert like
+          arm_only. Returns ``flattened`` / ``failed`` / ``skipped``.
+        """
+        symbol = div["symbol"]
+        side = div["side"]
+        key = (symbol, side)
+
+        if self._mode in ("off", "dry_run"):
+            if self._mode == "dry_run":
+                logger.warning(
+                    "NakedPositionRemediator[dry_run]: would remediate MALFORMED "
+                    "%s/%s raw_amt=%s (sign/side mismatch) first_seen_age=%.1fs",
+                    symbol,
+                    side,
+                    div.get("raw_position_amt"),
+                    elapsed,
+                )
+            return "skipped"
+
+        # arm_only OR arm_or_flatten before grace → alert, never arm.
+        malformed_position_total.labels(symbol=symbol, side=side).inc()
+        if key not in self._malformed_alerted:
+            self._malformed_alerted.add(key)
+            logger.critical(
+                "NakedPositionRemediator: MALFORMED position %s/%s "
+                "raw_positionAmt=%s (positionSide=%s sign mismatch) — cannot be "
+                "armed with a direction-valid reduceOnly SL/TP. mode=%s. %s (#547)",
+                symbol,
+                side,
+                div.get("raw_position_amt"),
+                side,
+                self._mode,
+                (
+                    "Will flatten after grace window."
+                    if self._mode == "arm_or_flatten"
+                    else "arm_only cannot flatten — position is stuck pending "
+                    "operator action or arm_or_flatten mode."
+                ),
+            )
+
+        should_flatten = (
+            self._mode == "arm_or_flatten" and elapsed >= self._flatten_grace_sec
+        )
+        if not should_flatten:
+            # arm_only always, and arm_or_flatten pre-grace: no arm attempt.
+            return "skipped"
+
+        ok = await self._flatten(div, binance_positions, reason="malformed_position")
+        if ok:
+            reconcile_lag_seconds.labels(action="flattened").observe(elapsed)
+            self._first_seen.pop(key, None)
+            self._malformed_alerted.discard(key)
+            return "flattened"
+        return "failed"
 
     # ------------------------------------------------------------------
     # Helpers

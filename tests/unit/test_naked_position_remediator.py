@@ -8,7 +8,7 @@ derivation, and clean-pass first-seen reset.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -519,3 +519,119 @@ async def test_zero_qty_divergence_does_not_arm_or_flatten() -> None:
     assert counts["failed"] == 1
     ex.execute.assert_not_called()
     close_cb.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #547 — malformed (inverted-sign) position routing
+# ---------------------------------------------------------------------------
+
+
+def _malformed_div(
+    symbol: str = "LTCUSDT",
+    side: str = "LONG",
+    qty: float = 0.303,
+    raw_amt: float = -0.303,
+) -> dict[str, Any]:
+    return {
+        "category": "malformed_position",
+        "symbol": symbol,
+        "side": side,
+        "binance_qty": qty,
+        "raw_position_amt": raw_amt,
+        "local_qty": 0.0,
+        "sl_present": False,
+        "tp_present": False,
+        "detail": "test malformed fixture",
+    }
+
+
+@pytest.mark.asyncio
+async def test_malformed_arm_only_never_arms_and_counts_metric() -> None:
+    """AC3: arm_only must NOT emit a guaranteed-to-fail arm for a malformed
+    position; it increments the malformed metric and records skipped."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, ex, _, close_cb, _ = _make_remediator(mode="arm_only")
+    with patch.object(npr, "malformed_position_total") as mock_metric:
+        counts = await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    ex.execute.assert_not_called()  # never attempts a direction-invalid arm
+    close_cb.assert_not_called()  # arm_only cannot flatten
+    assert counts["armed"] == 0
+    assert counts["flattened"] == 0
+    assert counts["skipped"] == 1
+    mock_metric.labels.assert_any_call(symbol="LTCUSDT", side="LONG")
+
+
+@pytest.mark.asyncio
+async def test_malformed_arm_only_alerts_once_per_episode() -> None:
+    """AC3: CRITICAL log fires once per detection episode, not every cycle."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, clock = _make_remediator(mode="arm_only")
+    with patch.object(npr.logger, "critical") as mock_crit:
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        clock.advance(30)
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    assert mock_crit.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_arm_or_flatten_flattens_after_grace() -> None:
+    """AC2: arm_or_flatten flattens a malformed position after grace, calling
+    close_position with reason='malformed_position'."""
+    r, ex, _, close_cb, clock = _make_remediator(mode="arm_or_flatten", grace_sec=60)
+    # Pass 1: pre-grace — alert only, no flatten, no arm.
+    counts1 = await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    assert counts1["flattened"] == 0
+    close_cb.assert_not_called()
+    ex.execute.assert_not_called()
+    # Pass 2: past grace — flatten.
+    clock.advance(61)
+    counts2 = await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    assert counts2["flattened"] == 1
+    close_cb.assert_awaited_once()
+    call = close_cb.await_args
+    assert call.kwargs["symbol"] == "LTCUSDT"
+    assert call.kwargs["position_side"] == "LONG"
+    assert call.kwargs["quantity"] == pytest.approx(0.303)
+    assert call.kwargs["reason"] == "malformed_position"
+    ex.execute.assert_not_called()  # never arms a malformed position
+
+
+@pytest.mark.asyncio
+async def test_malformed_off_and_dry_run_never_write() -> None:
+    """off/dry_run observe only for malformed positions."""
+    for m in ("off", "dry_run"):
+        r, ex, _, close_cb, _ = _make_remediator(mode=m, grace_sec=0)
+        counts = await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        assert counts["skipped"] == 1
+        assert counts["flattened"] == 0
+        ex.execute.assert_not_called()
+        close_cb.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_malformed_short_positive_amt_flattens() -> None:
+    """AC2: SHORT with positive amt is also malformed and flattened."""
+    r, ex, _, close_cb, clock = _make_remediator(mode="arm_or_flatten", grace_sec=0)
+    div = _malformed_div(symbol="BTCUSDT", side="SHORT", qty=0.4, raw_amt=0.4)
+    counts = await r.remediate([div], _binance_positions("BTCUSDT", "SHORT"))
+    assert counts["flattened"] == 1
+    call = close_cb.await_args
+    assert call.kwargs["reason"] == "malformed_position"
+    ex.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_malformed_alert_latch_resets_after_clean_pass() -> None:
+    """AC3: once resolved, a re-occurrence alerts CRITICAL again."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, _ = _make_remediator(mode="arm_only")
+    with patch.object(npr.logger, "critical") as mock_crit:
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        # Clean pass clears state.
+        await r.remediate([], None)
+        # Re-occurs — alerts again.
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    assert mock_crit.call_count == 2

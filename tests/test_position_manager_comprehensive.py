@@ -148,6 +148,43 @@ async def test_create_position_record_with_sl_tp(
         assert call_args["take_profit"] == 52000.0
 
 
+@pytest.mark.asyncio
+async def test_create_position_record_null_fill_price_does_not_raise(
+    position_manager, sample_long_order, caplog
+):
+    """#548: a MARKET order still status=NEW returns fill_price=None
+    explicitly (key present, value null). create_position_record must not
+    raise `float() argument must be a string or a real number, not
+    'NoneType'` and must fall back to order.target_price.
+    """
+    unfilled_result = {
+        "order_id": "binance-order-123",
+        "status": "NEW",
+        "fill_price": None,
+        "total_value": 0,
+        "fees": 0.0,
+        "fee_asset": None,
+        "pnl": None,
+        "timestamp": None,
+        "amount": sample_long_order.amount,
+    }
+
+    with patch(
+        "shared.mysql_client.position_client.create_position", new_callable=AsyncMock
+    ) as mock_create:
+        await position_manager.create_position_record(
+            sample_long_order, unfilled_result
+        )
+
+        assert mock_create.called
+        call_args = mock_create.call_args[0][0]
+        # Falls back to the order's target_price when fill_price is null.
+        assert call_args["entry_price"] == sample_long_order.target_price
+
+    assert "float() argument" not in caplog.text
+    assert "not 'NoneType'" not in caplog.text
+
+
 # ============================================================================
 # Position Update and PnL Calculation Tests
 # ============================================================================
@@ -165,6 +202,40 @@ async def test_update_position_long_opening(
     assert position["quantity"] == 0.001
     assert position["avg_price"] == 50000.0
     assert position["position_side"] == "LONG"
+
+
+@pytest.mark.asyncio
+async def test_update_position_null_fill_price_does_not_raise(
+    position_manager, sample_long_order, caplog
+):
+    """#548: an execution result with fill_price/total_value/pnl/timestamp
+    all explicitly None (Binance MARKET order still status=NEW) must not
+    raise `float() argument must be a string or a real number, not
+    'NoneType'` inside update_position, and must not trip the
+    audit_logger.log_error escalation path with that error.
+    """
+    unfilled_result = {
+        "order_id": "binance-order-123",
+        "status": "NEW",
+        "side": "BUY",
+        "type": "MARKET",
+        "amount": sample_long_order.amount,
+        "fill_price": None,
+        "total_value": 0,
+        "fees": 0.0,
+        "fee_asset": None,
+        "pnl": None,
+        "timestamp": None,
+    }
+
+    await position_manager.update_position(sample_long_order, unfilled_result)
+
+    position = position_manager.get_position("BTCUSDT", "LONG")
+    assert position is not None
+    # Falls back to the order's target_price when fill_price is null.
+    assert position["avg_price"] == sample_long_order.target_price
+    assert "float() argument" not in caplog.text
+    assert "not 'NoneType'" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -351,9 +351,15 @@ class PositionManager:
             position["total_cost"] = float(position.get("total_cost", 0.0))
             position["total_value"] = float(position.get("total_value", 0.0))
 
-            # Get fill price from result and ensure it's a float
-            fill_price = result.get("fill_price", order.target_price or 0)
-            if isinstance(fill_price, str):
+            # Get fill price from result and ensure it's a float.
+            # #548: a MARKET order can return status=NEW with fill_price
+            # explicitly None (Binance hasn't reported the fill yet) — the
+            # key IS present, so dict.get()'s default is never applied.
+            # Treat None the same as "missing" before the string/float coercion.
+            fill_price = result.get("fill_price")
+            if fill_price is None:
+                fill_price = order.target_price or 0
+            elif isinstance(fill_price, str):
                 try:
                     fill_price = (
                         float(fill_price)
@@ -576,9 +582,14 @@ class PositionManager:
                 return
 
             # Extract data from order and result
-            # Ensure fill_price is a float, not a string
-            fill_price = result.get("fill_price", order.target_price or 0)
-            if isinstance(fill_price, str):
+            # Ensure fill_price is a float, not a string.
+            # #548: same None-vs-missing gap as update_position() — a NEW
+            # (unfilled) MARKET order returns fill_price=None explicitly, so
+            # dict.get()'s default does not apply; guard for None first.
+            fill_price = result.get("fill_price")
+            if fill_price is None:
+                fill_price = order.target_price or 0
+            elif isinstance(fill_price, str):
                 try:
                     fill_price = (
                         float(fill_price)

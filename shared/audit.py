@@ -27,7 +27,18 @@ the two.
 import logging
 from typing import Any
 
+from prometheus_client import Counter
+
 from shared.config import Settings
+
+# Per #548 AC3: a failed audit write must be observable, not silently
+# swallowed into a log line. Each AuditLogger.log_* method increments this
+# when its own try/except catches an exception while emitting a record.
+audit_write_failed_total = Counter(
+    "tradeengine_audit_write_failed_total",
+    "Total AuditLogger write failures (exception raised while emitting an audit record)",
+    ["method"],
+)
 
 
 class AuditLogger:
@@ -63,6 +74,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Signal logged: {signal_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_signal").inc()
             self.logger.error(f"Failed to log signal: {e}")
 
     def log_trade(self, trade_data: dict[str, Any]) -> None:
@@ -73,6 +85,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Trade logged: {trade_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_trade").inc()
             self.logger.error(f"Failed to log trade: {e}")
 
     def log_order(self, order_data: dict[str, Any], status: str | None = None) -> None:
@@ -82,6 +95,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Order logged: {order_data}, status: {status}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_order").inc()
             self.logger.error(f"Failed to log order: {e}")
 
     def log_error(
@@ -93,6 +107,7 @@ class AuditLogger:
         try:
             self.logger.error(f"Error logged: {error_data}, context: {context}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_error").inc()
             self.logger.error(f"Failed to log error: {e}")
 
     def log_position(
@@ -104,6 +119,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Position logged: {position_data}, status: {status}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_position").inc()
             self.logger.error(f"Failed to log position: {e}")
 
     def log_event(self, event_type: str, event_data: dict[str, Any]) -> None:
@@ -113,6 +129,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Event [{event_type}] logged: {event_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_event").inc()
             self.logger.error(f"Failed to log event: {e}")
 
     def log_account(self, account_data: dict[str, Any]) -> None:
@@ -123,6 +140,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Account logged: {account_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_account").inc()
             self.logger.error(f"Failed to log account: {e}")
 
     def log_risk(self, risk_data: dict[str, Any]) -> None:
@@ -133,6 +151,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Risk logged: {risk_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_risk").inc()
             self.logger.error(f"Failed to log risk: {e}")
 
     def log_performance(self, performance_data: dict[str, Any]) -> None:
@@ -143,6 +162,7 @@ class AuditLogger:
         try:
             self.logger.info(f"Performance logged: {performance_data}")
         except Exception as e:
+            audit_write_failed_total.labels(method="log_performance").inc()
             self.logger.error(f"Failed to log performance: {e}")
 
 

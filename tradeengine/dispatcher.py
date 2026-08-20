@@ -4267,6 +4267,74 @@ class Dispatcher:
                             f"{tp_corr.reason}"
                         )
                         order.take_profit = tp_corr.price
+
+                # MARKET-SIDE STOP VALIDATION (#551): correct_protective_price
+                # only guarantees the SL is on the correct side of ENTRY. Once
+                # the market crosses entry (position underwater), that same stop
+                # can sit on the WRONG side of the LIVE market → Binance -2021
+                # "immediately trigger" → OCO cancels the surviving leg →
+                # position left NAKED (XLMUSDT SHORT 2026-08-20). Re-anchor the
+                # SL to the correct side of live market, or flatten if no stop
+                # can be placed without immediate trigger.
+                if order.stop_loss and order.stop_loss > 0:
+                    from tradeengine.risk.sl_tp_direction import (
+                        enforce_market_side_stop,
+                    )
+
+                    market_price = 0.0
+                    try:
+                        market_price = float(
+                            await self.exchange._get_current_price(order.symbol)
+                        )
+                    except Exception as mkt_err:
+                        self.logger.warning(
+                            f"⚠️ #551: could not resolve live market for "
+                            f"{order.symbol} market-side SL check: {mkt_err}"
+                        )
+
+                    if market_price > 0:
+                        mkt_decision = enforce_market_side_stop(
+                            position_side=position_side_for_check,  # type: ignore[arg-type]
+                            stop_price=float(order.stop_loss),
+                            market_price=market_price,
+                            min_distance_pct=sl_safety_floor_pct,
+                        )
+                        if mkt_decision.should_flatten:
+                            self.logger.error(
+                                f"🛑 #551 FLATTEN ESCALATION ({position_side_for_check}): "
+                                f"{mkt_decision.reason}. Flattening reduce-only "
+                                f"MARKET instead of shipping a guaranteed -2021 SL."
+                            )
+                            try:
+                                flat_qty = float(
+                                    result.get("amount") or order.amount or 0.0
+                                )
+                            except (TypeError, ValueError):
+                                flat_qty = float(order.amount or 0.0)
+                            if flat_qty > 0:
+                                await self.close_position_with_cleanup(
+                                    position_id=order.position_id or "",
+                                    symbol=order.symbol,
+                                    position_side=order.position_side or "",
+                                    quantity=flat_qty,
+                                    reason="sl_unplaceable_market_crossed_551",
+                                )
+                            else:
+                                self.logger.error(
+                                    f"🛑 #551: cannot flatten {order.symbol} — "
+                                    f"no resolvable quantity (result.amount="
+                                    f"{result.get('amount')}, order.amount="
+                                    f"{order.amount}). Position may be naked."
+                                )
+                            # Do NOT proceed to OCO placement with an
+                            # unplaceable stop.
+                            return
+                        if mkt_decision.was_reanchored:
+                            self.logger.warning(
+                                f"⚠️ SL MARKET-SIDE RE-ANCHOR "
+                                f"({position_side_for_check}): {mkt_decision.reason}"
+                            )
+                            order.stop_loss = mkt_decision.price
             else:
                 self.logger.warning(
                     f"⚠️ Skipping SL/TP direction check for {order.symbol}: "

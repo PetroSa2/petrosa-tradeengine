@@ -254,9 +254,38 @@ class NakedPositionRemediator:
             ).inc()
             return False
 
-        sl_price, tp_price = self._derive_protective_prices(
+        sl_price, tp_price, must_flatten = self._derive_protective_prices(
             symbol, side, binance_positions
         )
+
+        # #551: no placeable stop exists (market crossed entry such that any SL
+        # would immediately trigger). Retrying the same dead price forever is
+        # exactly the observed naked-forever loop — escalate to a reduce-only
+        # MARKET flatten instead, regardless of the grace window, when the mode
+        # permits flattening. In arm_only mode we cannot flatten, so record a
+        # failure so operators see the position is stuck.
+        if must_flatten:
+            if self._mode == "arm_or_flatten":
+                logger.error(
+                    "NakedPositionRemediator: %s/%s has no placeable SL vs live "
+                    "market — escalating to flatten instead of re-arming a "
+                    "guaranteed -2021 price (#551)",
+                    symbol,
+                    side,
+                )
+                return await self._flatten(div, binance_positions)
+            logger.error(
+                "NakedPositionRemediator: %s/%s has no placeable SL vs live "
+                "market but mode=%s cannot flatten — leaving for grace-window "
+                "flatten; NOT re-arming a guaranteed -2021 price (#551)",
+                symbol,
+                side,
+                self._mode,
+            )
+            naked_position_rearmed_total.labels(
+                symbol=symbol, side=side, outcome="failed"
+            ).inc()
+            return False
 
         sl_missing = not div.get("sl_present")
         tp_missing = not div.get("tp_present")
@@ -397,9 +426,9 @@ class NakedPositionRemediator:
         symbol: str,
         side: str,
         binance_positions: dict[tuple[str, str], dict[str, Any]] | None,
-    ) -> tuple[float | None, float | None]:
-        """Return (sl_price, tp_price) using local-strategy values when
-        present, else fall back to ``entryPrice ± fallback_pct``.
+    ) -> tuple[float | None, float | None, bool]:
+        """Return ``(sl_price, tp_price, must_flatten)`` using local-strategy
+        values when present, else fall back to ``entryPrice ± fallback_pct``.
 
         Local strategy values are preferred so re-arm matches strategy
         intent. Fallback exists because the whole point of #445 is that
@@ -412,9 +441,19 @@ class NakedPositionRemediator:
         degrading arm_or_flatten to flatten-everything. When we know the
         entry price, any SL inside the floor band is WIDENED out to the
         floor so the re-arm can actually place. TP is not floor-constrained.
+
+        Market-crossed-entry fix (#551): the entry-anchored SL floor above
+        only guarantees the stop is correct-side of ENTRY. If the market has
+        crossed entry (position underwater), an entry-side-correct SL can sit
+        on the wrong side of the LIVE ``markPrice`` and immediately trigger
+        (-2021) — the re-arm then retries the identical dead price forever.
+        We re-anchor the SL to the correct side of ``markPrice``; when no stop
+        is placeable without immediate trigger the third return value
+        ``must_flatten`` is True so the caller escalates instead of looping.
         """
         sl_price: float | None = None
         tp_price: float | None = None
+        must_flatten = False
 
         try:
             local = self._position_manager.get_positions().get((symbol, side))
@@ -449,7 +488,7 @@ class NakedPositionRemediator:
         # Without an entry price we cannot compute the floor band or the
         # fallback — return whatever local values we have (legacy behaviour).
         if entry_price is None or entry_price <= 0:
-            return sl_price, tp_price
+            return sl_price, tp_price, must_flatten
 
         # Fill missing legs from the entry-anchored fallback.
         if sl_price is None:
@@ -497,7 +536,53 @@ class NakedPositionRemediator:
                     )
                     sl_price = floor_price
 
-        return sl_price, tp_price
+        # Market-crossed-entry gate (#551): the entry-anchored floor above does
+        # not know where the LIVE market is. If the market has crossed entry,
+        # an entry-side-correct SL can be wrong-side of markPrice and trigger
+        # immediately (-2021). Re-anchor to the correct side of markPrice; if no
+        # placeable stop exists, signal a flatten so the caller stops retrying
+        # the identical dead price.
+        mark_price: float | None = None
+        if binance_positions:
+            bp = binance_positions.get((symbol, side))
+            if bp:
+                try:
+                    mark_price = float(bp.get("markPrice") or 0.0) or None
+                except (TypeError, ValueError):
+                    mark_price = None
+
+        if sl_price is not None and mark_price and mark_price > 0:
+            from tradeengine.risk.sl_tp_direction import enforce_market_side_stop
+
+            decision = enforce_market_side_stop(
+                position_side=side,  # type: ignore[arg-type]
+                stop_price=float(sl_price),
+                market_price=mark_price,
+                min_distance_pct=self._min_sl_distance_pct / 100.0,
+            )
+            if decision.should_flatten:
+                logger.error(
+                    "NakedPositionRemediator: %s/%s SL unplaceable vs live "
+                    "market %s — %s; signalling flatten (#551)",
+                    symbol,
+                    side,
+                    mark_price,
+                    decision.reason,
+                )
+                must_flatten = True
+            elif decision.was_reanchored:
+                logger.warning(
+                    "NakedPositionRemediator: re-anchoring %s/%s SL from %s to "
+                    "%s (correct side of live market %s) (#551)",
+                    symbol,
+                    side,
+                    sl_price,
+                    decision.price,
+                    mark_price,
+                )
+                sl_price = decision.price
+
+        return sl_price, tp_price, must_flatten
 
     def _resolve_position_id(self, symbol: str, side: str) -> str:
         """Best-effort: use the local position's id if known, otherwise

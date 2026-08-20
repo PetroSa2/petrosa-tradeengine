@@ -24,6 +24,7 @@
 - [**BUSINESS_METRICS.md**](BUSINESS_METRICS.md) - Trading execution metrics and monitoring.
 - [**ALERTING_SETUP.md**](ALERTING_SETUP.md) - Configuration for trading alerts.
 - [**HEDGE_MODE_POSITION_TRACKING.md**](HEDGE_MODE_POSITION_TRACKING.md) - Managing positions in hedge mode.
+- [**POSITION_STATE_TRUTH_DECISION.md**](POSITION_STATE_TRUTH_DECISION.md) - Mirror vs always-consult decision for position/order truth (#549; root cause of -4130/-4509).
 
 ## 📜 Historical
 - [**Archive Folder**](archive/) - Outdated or issue-specific documentation.

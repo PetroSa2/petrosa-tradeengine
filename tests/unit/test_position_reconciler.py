@@ -10,6 +10,7 @@ import pytest
 from tradeengine.position_reconciler import (
     PositionReconciler,
     _index_binance_positions,
+    _is_malformed_sign,
     _normalise_side,
     detect_divergences,
     detect_unhedged_positions,
@@ -598,3 +599,134 @@ async def test_reconcile_once_unhedged_check_fails_open_on_order_fetch_error():
 
     categories = [d["category"] for d in divergences]
     assert "unhedged" in categories
+
+
+# ---------------------------------------------------------------------------
+# #547 — malformed (inverted-sign) position detection
+# ---------------------------------------------------------------------------
+
+
+def test_is_malformed_sign_long_negative():
+    assert _is_malformed_sign("LONG", -0.303) is True
+
+
+def test_is_malformed_sign_short_positive():
+    assert _is_malformed_sign("SHORT", 2.5) is True
+
+
+def test_is_malformed_sign_well_formed_long():
+    assert _is_malformed_sign("LONG", 0.5) is False
+
+
+def test_is_malformed_sign_well_formed_short():
+    assert _is_malformed_sign("SHORT", -0.5) is False
+
+
+def test_is_malformed_sign_both_never_malformed():
+    # one-way mode: sign legitimately encodes direction
+    assert _is_malformed_sign("BOTH", -1.0) is False
+    assert _is_malformed_sign("BOTH", 1.0) is False
+
+
+def test_detect_unhedged_classifies_long_negative_as_malformed():
+    """AC1: LONG with positionAmt<0 is malformed_position, not unhedged."""
+    binance_positions = {
+        ("LTCUSDT", "LONG"): {
+            "symbol": "LTCUSDT",
+            "positionSide": "LONG",
+            "positionAmt": -0.303,
+            "entryPrice": 46.08,
+        },
+    }
+    divergences = detect_unhedged_positions(binance_positions, {"LTCUSDT": []})
+    assert len(divergences) == 1
+    d = divergences[0]
+    assert d["category"] == "malformed_position"
+    assert d["symbol"] == "LTCUSDT"
+    assert d["side"] == "LONG"
+    assert d["binance_qty"] == pytest.approx(0.303)
+    assert d["raw_position_amt"] == pytest.approx(-0.303)
+
+
+def test_detect_unhedged_classifies_short_positive_as_malformed():
+    """AC1: SHORT with positionAmt>0 is malformed_position, not unhedged."""
+    binance_positions = {
+        ("BTCUSDT", "SHORT"): {
+            "symbol": "BTCUSDT",
+            "positionSide": "SHORT",
+            "positionAmt": 0.4,
+        },
+    }
+    divergences = detect_unhedged_positions(binance_positions, {"BTCUSDT": []})
+    assert len(divergences) == 1
+    assert divergences[0]["category"] == "malformed_position"
+
+
+def test_detect_unhedged_malformed_not_masked_by_hedged_orders():
+    """AC1: a malformed position with a full SL+TP pair is STILL malformed —
+    the sign mismatch takes precedence over the hedged check (the orders are
+    direction-invalid against a wrong-signed side)."""
+    binance_positions = {
+        ("LTCUSDT", "LONG"): {
+            "symbol": "LTCUSDT",
+            "positionSide": "LONG",
+            "positionAmt": -0.303,
+        },
+    }
+    orders_by_symbol = {
+        "LTCUSDT": [
+            {"positionSide": "LONG", "type": "STOP_MARKET", "reduceOnly": True},
+            {"positionSide": "LONG", "type": "TAKE_PROFIT_MARKET", "reduceOnly": True},
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert len(divergences) == 1
+    assert divergences[0]["category"] == "malformed_position"
+
+
+def test_detect_unhedged_well_formed_position_unaffected():
+    """Regression guard: a well-formed LONG (amt>0) with no orders is still
+    plain `unhedged`, not misclassified as malformed."""
+    binance_positions = {
+        ("ETHUSDT", "LONG"): {
+            "symbol": "ETHUSDT",
+            "positionSide": "LONG",
+            "positionAmt": 1.5,
+        },
+    }
+    divergences = detect_unhedged_positions(binance_positions, {"ETHUSDT": []})
+    assert len(divergences) == 1
+    assert divergences[0]["category"] == "unhedged"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_malformed_position_ltcusdt_shape():
+    """AC4 regression: the live LTCUSDT LONG amt=-0.303 shape must surface as a
+    malformed_position divergence through the full async reconcile_once path
+    and never remain silently naked."""
+    binance_raw = [
+        {
+            "symbol": "LTCUSDT",
+            "positionSide": "LONG",
+            "positionAmt": "-0.303",
+            "entryPrice": "46.08",
+            "markPrice": "47.02",
+        },
+    ]
+    local: dict = {}
+    reconciler = _make_reconciler(binance_raw, local, open_algo_orders={"LTCUSDT": []})
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch(
+            "tradeengine.position_reconciler.reconciliation_divergences_total"
+        ) as mock_counter,
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    malformed = [d for d in divergences if d["category"] == "malformed_position"]
+    assert len(malformed) == 1
+    assert malformed[0]["symbol"] == "LTCUSDT"
+    assert malformed[0]["side"] == "LONG"
+    mock_counter.labels.assert_any_call(category="malformed_position", symbol="LTCUSDT")

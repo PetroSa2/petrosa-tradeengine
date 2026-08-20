@@ -144,6 +144,86 @@ class OCOManager:
                     )
                     return
 
+    async def _exchange_has_protective_pair(
+        self, symbol: str, position_side: str
+    ) -> bool:
+        """AC-2 (#550): return True iff Binance already holds a reduceOnly
+        STOP + TAKE_PROFIT protective pair for ``(symbol, position_side)``.
+
+        Queries ``openAlgoOrders`` (protective legs are ``closePosition=True``
+        conditional/algo orders, NOT standard ``openOrders``) and checks that
+        at least one ``STOP_MARKET`` and one ``TAKE_PROFIT_MARKET`` order exist
+        for the given ``positionSide``. This is the exchange-truth counterpart
+        to the process-local ``active_oco_pairs`` dedup guard: it prevents the
+        orphan over-arm that occurs when local state is empty/stale after a
+        restart but the exchange already covers the position.
+
+        Best-effort: any lookup error propagates to the caller, which falls
+        through to placement rather than dropping a real protective pair.
+        """
+        algo_orders = await self.exchange.get_open_algo_orders(symbol)
+        if not algo_orders:
+            return False
+
+        has_stop = False
+        has_take_profit = False
+        for order in algo_orders:
+            # positionSide gate: HEDGE mode yields LONG/SHORT rows; ONE-WAY
+            # yields BOTH. Treat BOTH as matching any requested side so the
+            # gate still dedups one-way accounts.
+            order_side = str(order.get("positionSide", "")).upper()
+            if order_side not in (position_side.upper(), "BOTH", ""):
+                continue
+            order_type = str(order.get("type") or order.get("orderType") or "").upper()
+            if order_type in ("STOP_MARKET", "STOP"):
+                has_stop = True
+            elif order_type in ("TAKE_PROFIT_MARKET", "TAKE_PROFIT"):
+                has_take_profit = True
+            if has_stop and has_take_profit:
+                return True
+
+        return has_stop and has_take_profit
+
+    def _sync_oco_pairs_gauge(self) -> None:
+        """AC (#550): set active_oco_pairs_per_position from the current
+        active_oco_pairs map so the gauge reflects exchange truth (every
+        covered position gets a row) rather than only positions armed by a
+        live placement in this process.
+
+        Emits one gauge sample per (symbol, position_side) that has at least
+        one ``active`` OCO entry, using the count of active entries as the
+        value. Best-effort — a metrics failure must never break reconcile.
+        """
+        try:
+            from tradeengine.metrics import active_oco_pairs_per_position
+        except Exception:
+            return
+        for key, oco_list in self.active_oco_pairs.items():
+            active_entries = [o for o in oco_list if o.get("status") == "active"]
+            if not active_entries:
+                continue
+            symbol = active_entries[0].get("symbol")
+            position_side = active_entries[0].get("position_side")
+            if not symbol or not position_side:
+                # Fall back to parsing the "SYMBOL_SIDE" key.
+                parsed = key.rsplit("_", 1)
+                if len(parsed) == 2:
+                    symbol, position_side = parsed
+            if not symbol or not position_side:
+                continue
+            try:
+                active_oco_pairs_per_position.labels(
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange="binance",
+                ).set(len(active_entries))
+            except Exception:
+                self.logger.debug(
+                    "Failed to emit active_oco_pairs_per_position for %s",
+                    key,
+                    exc_info=True,
+                )
+
     async def place_oco_orders(
         self,
         position_id: str,
@@ -232,6 +312,50 @@ class OCOManager:
                 "exchange_position_key": exchange_position_key,
                 "active_pairs": len(active_pairs),
             }
+
+        # AC-2 (#550): consult Binance truth before placing. The local
+        # active_oco_pairs dedup above trusts process-local state only, which
+        # resets on restart and is fed solely by placement events. After a
+        # restart (or any local/exchange divergence) the local map can be empty
+        # for a position that Binance already covers → the engine re-arms and
+        # immediately cancels the extra legs as orphans (oco_orphan_leg_total).
+        # Query openAlgoOrders for (symbol, positionSide); if a reduceOnly
+        # STOP + TP pair already exists on the exchange, skip placement.
+        #
+        # On by default (unlike the AC3 positionRisk gate) because it only
+        # skips when the exchange *already* holds both protective legs — there
+        # is no freshly-filled-entry race that could make it skip a real
+        # unprotected position. Operator can disable with
+        # TE_OCO_EXCHANGE_TRUTH_DEDUP=0 for rollback.
+        _exchange_truth_dedup = os.getenv("TE_OCO_EXCHANGE_TRUTH_DEDUP", "1") == "1"
+        if _exchange_truth_dedup and hasattr(self.exchange, "get_open_algo_orders"):
+            try:
+                if await self._exchange_has_protective_pair(symbol, position_side):
+                    self.logger.warning(
+                        "⛔ OCO dedup (exchange truth #550): %s already has a "
+                        "reduceOnly STOP+TP pair on Binance (openAlgoOrders). "
+                        "Skipping placement for strategy %s to avoid orphan "
+                        "over-arm.",
+                        exchange_position_key,
+                        strategy_position_id,
+                    )
+                    return {
+                        "status": "skipped_exchange_pair_exists",
+                        "exchange_position_key": exchange_position_key,
+                        "sl_order_id": None,
+                        "tp_order_id": None,
+                        "symbol": symbol,
+                        "position_side": position_side,
+                    }
+            except Exception:
+                # Best-effort: never let an exchange-truth lookup failure block
+                # placement of a real protective pair. Fall through to place.
+                self.logger.debug(
+                    "OCO exchange-truth dedup lookup failed for %s — "
+                    "falling through to placement",
+                    exchange_position_key,
+                    exc_info=True,
+                )
 
         self.logger.info(
             f"Placing OCO orders: symbol={symbol}, position_side={position_side}, "
@@ -1115,6 +1239,15 @@ class OCOManager:
                 )
 
         self.logger.info(f"[STARTUP] Rebuilt {rebuilt} active OCO pairs from Binance")
+
+        # AC (#550): emit active_oco_pairs_per_position for every reconciled
+        # (symbol, position_side) so the gauge reflects exchange truth after a
+        # restart instead of silently undercounting. Without this, the gauge is
+        # only ever set on live placement (place_oco_orders success path), so a
+        # freshly-restarted pod that reconciled N covered positions from Binance
+        # would report zero rows until the next placement — the "under-track
+        # (standing)" symptom in #550.
+        self._sync_oco_pairs_gauge()
 
         # Start monitoring for any reconciled pairs so they are tracked going forward
         if rebuilt > 0 and not self.monitoring_active:

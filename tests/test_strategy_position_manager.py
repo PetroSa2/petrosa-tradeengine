@@ -103,6 +103,42 @@ class TestStrategyPositionManagerBasic:
             assert position["entry_quantity"] == sample_execution_result["amount"]
             assert position["entry_price"] == sample_execution_result["fill_price"]
 
+    @pytest.mark.asyncio
+    async def test_create_strategy_position_null_fill_price_does_not_raise(
+        self, strategy_position_manager, sample_signal, sample_order
+    ):
+        """#557: an unfilled MARKET order returns fill_price explicitly None
+        (key present), so dict.get()'s default never applies and float(None)
+        raised 'float() argument must be a string or a real number, not
+        NoneType' — silently skipping strategy position creation. Must fall
+        back to signal.current_price instead.
+        """
+        unfilled_result = {
+            "status": "NEW",
+            "order_id": "binance-order-557",
+            "fill_price": None,
+            "total_value": 0,
+            "fees": 0.0,
+            "fee_asset": None,
+            "pnl": None,
+            "timestamp": None,
+            "amount": sample_order.amount,
+        }
+
+        with patch("shared.mysql_client.position_client") as mock_client:
+            mock_client.create_position = AsyncMock()
+
+            position_id = await strategy_position_manager.create_strategy_position(
+                signal=sample_signal,
+                order=sample_order,
+                execution_result=unfilled_result,
+            )
+
+        assert position_id is not None
+        position = strategy_position_manager.get_strategy_position(position_id)
+        assert position is not None
+        assert position["entry_price"] == sample_signal.current_price
+
     def test_get_strategy_position(self, strategy_position_manager):
         """Test getting a strategy position"""
         # Manually add a position to test getter

@@ -55,6 +55,7 @@ def dispatcher():
 
     d = Dispatcher.__new__(Dispatcher)
     d.logger = MagicMock()
+    d.exchange_order_id_to_signal = {}
     return d
 
 

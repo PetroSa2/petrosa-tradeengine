@@ -2006,6 +2006,19 @@ class Dispatcher:
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
 
+        # #546: exchange order id -> Signal, registered synchronously the instant
+        # execute_order() returns an exchange order_id — well before
+        # create_strategy_position()'s persistence pipeline (which can take
+        # seconds or time out) populates strategy_positions. The user-data-stream
+        # FILLED event (near-instant WS delivery) races ahead of that slower
+        # REST-driven path and needs strategy_id/decision_id immediately to avoid
+        # publishing a `filled` execution event with decision_id=None, which the
+        # data-manager consumer silently drops. Bounded size via FIFO eviction
+        # in _register_pending_fill_signal(); entries are removed once
+        # consumed by _on_user_data_fill or once create_strategy_position
+        # completes (see _consume_pending_fill_signal()).
+        self.exchange_order_id_to_signal: dict[str, Signal] = {}
+
         self.user_data_consumer: UserDataStreamConsumer | None = None
         # #480 — periodic ghost-position eviction for the strategy-layer
         # tracker.  Started after user_data_consumer wires the truth store.
@@ -2888,6 +2901,15 @@ class Dispatcher:
             # Execute order
             result = await self.execute_order(order)
 
+            # #546: register the exchange order id -> Signal mapping the instant
+            # we have an exchange order_id, synchronously and with no I/O in
+            # between. This runs well before create_strategy_position()'s
+            # persistence pipeline (seconds of latency / 5s timeouts observed
+            # in prod), so the near-instant user-data-stream FILLED callback
+            # (_on_user_data_fill) can resolve strategy_id/decision_id without
+            # racing that slower path. Best-effort: never blocks order flow.
+            self._register_pending_fill_signal(order, result)
+
             # Update position with distributed state management and create position record
             # Market orders return "NEW" status immediately, which is valid for risk management
             self.logger.info(
@@ -2999,6 +3021,11 @@ class Dispatcher:
 
                             # Clean up signal mapping
                             del self.order_to_signal[order.order_id]
+                            # #546: strategy_positions now has this order's
+                            # entry_order_id, so the early exchange_order_id_to_signal
+                            # entry (if the WS fill callback hasn't already
+                            # consumed/popped it) is no longer needed.
+                            self._consume_pending_fill_signal(result)
                         else:
                             self.logger.warning(
                                 f"⚠️  No signal found for order {order.order_id} - skipping strategy position creation"
@@ -3822,6 +3849,52 @@ class Dispatcher:
                 )
                 return {"status": "error", "error": str(e)}
 
+    def _register_pending_fill_signal(
+        self, order: TradeOrder, result: dict[str, Any] | None
+    ) -> None:
+        """Register exchange_order_id -> Signal the instant an exchange
+        order_id is known (#546).
+
+        Synchronous, no I/O — runs immediately after ``execute_order``
+        returns, well before ``create_strategy_position()``'s persistence
+        pipeline (which can take seconds or time out under data-manager
+        load) populates ``strategy_positions``. This lets the near-instant
+        user-data-stream FILLED callback (``_on_user_data_fill``) resolve
+        strategy_id/decision_id without racing that slower path. Best-effort:
+        never raises into the order-execution flow.
+        """
+        try:
+            exch_order_id = result.get("order_id") if isinstance(result, dict) else None
+            pending_signal = self.order_to_signal.get(order.order_id)
+            if not exch_order_id or pending_signal is None:
+                return
+            self.exchange_order_id_to_signal[str(exch_order_id)] = pending_signal
+            # Bounded FIFO eviction: entries are normally consumed (popped) by
+            # _on_user_data_fill within seconds. This cap only guards against
+            # unbounded growth for orders that never fill via the user-data
+            # stream (rejected/cancelled/simulated orders).
+            max_pending = 500
+            while len(self.exchange_order_id_to_signal) > max_pending:
+                self.exchange_order_id_to_signal.pop(
+                    next(iter(self.exchange_order_id_to_signal))
+                )
+        except Exception as reg_err:
+            self.logger.debug(
+                "#546: exchange_order_id_to_signal registration failed for %s: %s",
+                order.order_id,
+                reg_err,
+            )
+
+    def _consume_pending_fill_signal(self, result: dict[str, Any] | None) -> None:
+        """Drop the early exchange_order_id_to_signal entry once
+        create_strategy_position() has populated strategy_positions for this
+        order (#546) — the fast-path map is no longer needed and would
+        otherwise sit until the bounded-retry/FIFO-cap logic clears it.
+        """
+        exch_order_id = result.get("order_id") if isinstance(result, dict) else None
+        if exch_order_id:
+            self.exchange_order_id_to_signal.pop(str(exch_order_id), None)
+
     async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
         """Publish a `filled` execution event for an entry fill (#531).
 
@@ -3872,23 +3945,64 @@ class Dispatcher:
                 )
                 return
 
-            # Recover strategy_id + decision_id from the owning strategy position.
+            # Recover strategy_id + decision_id, preferring the synchronous
+            # exchange_order_id_to_signal map (#546) registered the instant
+            # execute_order() returns — this beats the near-instant WS FILLED
+            # delivery racing ahead of create_strategy_position()'s slower,
+            # I/O-bound persistence pipeline (which populates
+            # strategy_positions only after it completes, and can take
+            # seconds or time out — see #546 root cause). Fall back to the
+            # strategy-position lookup (covers callbacks that fire after
+            # create_strategy_position already finished), then to one short
+            # bounded retry for the residual sub-second window where even the
+            # early map has not landed yet.
             from tradeengine.strategy_position_manager import (
                 strategy_position_manager,
             )
 
+            def _resolve_from_signal_map() -> tuple[str, str | None] | None:
+                sig = self.exchange_order_id_to_signal.pop(order_id, None)
+                if sig is None:
+                    return None
+                return (sig.strategy_id or "unknown", sig.decision_id)
+
+            def _resolve_from_strategy_position() -> tuple[str, str | None] | None:
+                if strategy_position_manager is None:
+                    return None
+                pos = strategy_position_manager.get_strategy_position_by_entry_order_id(
+                    order_id
+                )
+                if not pos:
+                    return None
+                return (pos.get("strategy_id", "unknown"), pos.get("decision_id"))
+
+            def _best_resolution() -> tuple[str, str | None] | None:
+                # Prefer whichever source has a non-None decision_id; a tuple
+                # with decision_id=None is still "truthy" in Python, so a
+                # plain `or` chain would wrongly short-circuit on it.
+                from_signal = _resolve_from_signal_map()
+                if from_signal is not None and from_signal[1] is not None:
+                    return from_signal
+                from_position = _resolve_from_strategy_position()
+                if from_position is not None and from_position[1] is not None:
+                    return from_position
+                return from_signal or from_position
+
             strategy_id = "unknown"
             decision_id: str | None = None
-            position = None
-            if strategy_position_manager is not None:
-                position = (
-                    strategy_position_manager.get_strategy_position_by_entry_order_id(
-                        order_id
-                    )
-                )
-            if position:
-                strategy_id = position.get("strategy_id", "unknown")
-                decision_id = position.get("decision_id")
+            resolved = _best_resolution()
+            if resolved is None or resolved[1] is None:
+                # #546: sub-second residual race — the exchange REST response
+                # (and thus both lookup sources) may not have landed yet even
+                # though the WS FILLED event already arrived. One short,
+                # bounded wait covers this without risking indefinite delay
+                # of a best-effort callback.
+                await asyncio.sleep(0.25)
+                retried = _best_resolution()
+                if retried is not None:
+                    resolved = retried
+            if resolved is not None:
+                strategy_id, decision_id = resolved
 
             if not decision_id:
                 self.logger.warning(

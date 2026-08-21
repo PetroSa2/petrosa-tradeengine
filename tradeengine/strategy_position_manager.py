@@ -146,10 +146,14 @@ class StrategyPositionManager:
             # Determine position side
             position_side = "LONG" if signal.action == "buy" else "SHORT"
 
-            # Extract execution details
-            entry_price = float(
-                execution_result.get("fill_price", signal.current_price)
-            )
+            # Extract execution details.
+            # #557: same None-vs-missing gap as #548 — an unfilled MARKET
+            # order returns fill_price explicitly None (key present), so
+            # dict.get()'s default never applies and float(None) raises.
+            fill_price = execution_result.get("fill_price")
+            if fill_price is None:
+                fill_price = signal.current_price
+            entry_price = float(fill_price)
             entry_quantity = float(execution_result.get("amount", signal.quantity))
             entry_order_id = execution_result.get("order_id")
 

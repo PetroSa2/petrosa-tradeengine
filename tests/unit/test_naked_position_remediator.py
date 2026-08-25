@@ -73,6 +73,8 @@ def _make_remediator(
     fallback_sl_pct: float = 2.0,
     fallback_tp_pct: float = 4.0,
     min_sl_distance_pct: float = 0.0,
+    max_consecutive_arm_failures: int = 5,
+    arm_backoff_cooldown_sec: int = 300,
 ) -> tuple[NakedPositionRemediator, MagicMock, MagicMock, AsyncMock, _FakeClock]:
     exchange = MagicMock()
     if exchange_execute_raises:
@@ -100,6 +102,8 @@ def _make_remediator(
         fallback_sl_pct=fallback_sl_pct,
         fallback_tp_pct=fallback_tp_pct,
         min_sl_distance_pct=min_sl_distance_pct,
+        max_consecutive_arm_failures=max_consecutive_arm_failures,
+        arm_backoff_cooldown_sec=arm_backoff_cooldown_sec,
         clock=clock,
     )
     return remediator, exchange, pm, close_cb, clock
@@ -635,3 +639,144 @@ async def test_malformed_alert_latch_resets_after_clean_pass() -> None:
         # Re-occurs — alerts again.
         await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
     assert mock_crit.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# #560 — bounded backoff + escalation after repeated re-arm failures
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_arm_backoff_skips_after_max_consecutive_failures() -> None:
+    """Per #560: after max_consecutive_arm_failures failed re-arm attempts on
+    the same (symbol, side), the remediator must stop calling exchange.execute
+    every cycle and instead skip until the cooldown expires — this is the
+    fix for the observed infinite -4130 retry-every-cycle loop.
+    """
+    r, ex, _, _, clock = _make_remediator(
+        mode="arm_only",
+        exchange_execute_raises=True,
+        max_consecutive_arm_failures=2,
+        arm_backoff_cooldown_sec=120,
+    )
+    div = _unhedged_div()
+    positions = _binance_positions()
+
+    # Cycle 1: failure #1 — still under threshold, exchange is called.
+    counts1 = await r.remediate([div], positions)
+    assert counts1["failed"] == 1
+    calls_after_1 = ex.execute.call_count
+    assert calls_after_1 > 0
+
+    # Cycle 2: failure #2 — hits threshold, backoff engages.
+    clock.advance(1)
+    counts2 = await r.remediate([div], positions)
+    assert counts2["failed"] == 1
+    calls_after_2 = ex.execute.call_count
+    assert calls_after_2 > calls_after_1
+
+    # Cycle 3: still within cooldown window — must be SKIPPED, not retried.
+    clock.advance(1)
+    counts3 = await r.remediate([div], positions)
+    assert counts3["skipped"] == 1
+    assert counts3["failed"] == 0
+    assert ex.execute.call_count == calls_after_2  # no new calls made
+
+    # Cycle 4: cooldown expired — attempts resume.
+    clock.advance(121)
+    counts4 = await r.remediate([div], positions)
+    assert counts4["failed"] == 1
+    assert ex.execute.call_count > calls_after_2
+
+
+@pytest.mark.asyncio
+async def test_arm_exhausted_alert_fires_once_per_backoff_episode() -> None:
+    """The CRITICAL alert + naked_position_arm_exhausted_total counter fire
+    exactly once when the threshold is crossed, not on every skipped cycle.
+    """
+    from tradeengine import naked_position_remediator as npr
+
+    baseline = npr.naked_position_arm_exhausted_total.labels(
+        symbol="BTCUSDT", side="LONG"
+    )._value.get()
+
+    r, _, _, _, clock = _make_remediator(
+        mode="arm_only",
+        exchange_execute_raises=True,
+        max_consecutive_arm_failures=2,
+        arm_backoff_cooldown_sec=120,
+    )
+    div = _unhedged_div()
+    positions = _binance_positions()
+
+    with patch.object(npr.logger, "critical") as mock_crit:
+        await r.remediate([div], positions)  # failure 1
+        clock.advance(1)
+        await r.remediate([div], positions)  # failure 2 -> escalates
+        clock.advance(1)
+        await r.remediate([div], positions)  # skipped (cooldown)
+        clock.advance(1)
+        await r.remediate([div], positions)  # still skipped (cooldown)
+
+    assert mock_crit.call_count == 1
+    after = npr.naked_position_arm_exhausted_total.labels(
+        symbol="BTCUSDT", side="LONG"
+    )._value.get()
+    assert after == baseline + 1
+
+
+@pytest.mark.asyncio
+async def test_arm_backoff_resets_on_successful_rearm() -> None:
+    """A successful re-arm clears the consecutive-failure count so a later,
+    unrelated failure streak starts counting from zero again.
+    """
+    r, ex, _, _, clock = _make_remediator(
+        mode="arm_only",
+        max_consecutive_arm_failures=2,
+        arm_backoff_cooldown_sec=120,
+    )
+    div = _unhedged_div()
+    positions = _binance_positions()
+
+    # First make it fail once via a raising exchange.
+    ex.execute = AsyncMock(side_effect=RuntimeError("boom"))
+    counts1 = await r.remediate([div], positions)
+    assert counts1["failed"] == 1
+
+    # Then let it succeed — failure streak must reset.
+    clock.advance(1)
+    ex.execute = AsyncMock(return_value={"status": "FILLED"})
+    counts2 = await r.remediate([div], positions)
+    assert counts2["armed"] == 1
+    assert r._consecutive_arm_failures.get(("BTCUSDT", "LONG")) is None
+
+    # Fail again — should take a fresh 2 failures to trip backoff, not 1.
+    clock.advance(1)
+    ex.execute = AsyncMock(side_effect=RuntimeError("boom"))
+    counts3 = await r.remediate([div], positions)
+    assert counts3["failed"] == 1  # not skipped — streak reset
+
+
+@pytest.mark.asyncio
+async def test_arm_backoff_state_cleared_on_clean_pass() -> None:
+    """A clean pass (no divergences) clears all #560 backoff bookkeeping."""
+    r, _, _, _, clock = _make_remediator(
+        mode="arm_only",
+        exchange_execute_raises=True,
+        max_consecutive_arm_failures=2,
+        arm_backoff_cooldown_sec=120,
+    )
+    div = _unhedged_div()
+    positions = _binance_positions()
+
+    await r.remediate([div], positions)
+    clock.advance(1)
+    await r.remediate([div], positions)  # trips backoff
+    key = ("BTCUSDT", "LONG")
+    assert key in r._arm_backoff_until
+
+    # Clean pass.
+    await r.remediate([], None)
+    assert key not in r._arm_backoff_until
+    assert key not in r._consecutive_arm_failures
+    assert key not in r._arm_exhausted_alerted

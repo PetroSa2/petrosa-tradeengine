@@ -73,6 +73,19 @@ malformed_position_total = Counter(
     ["symbol", "side"],
 )
 
+# #560: a position that keeps failing to re-arm every reconciliation cycle
+# (e.g. a -4130 conflict that survives the cancel-and-retry in
+# BinanceFuturesExchange._execute_with_retry) is backed off instead of being
+# retried every ~interval_seconds forever. This counter fires once per
+# escalation episode so operators can alert on a position stuck in backoff
+# rather than discovering it only via the raw retry-storm log volume.
+naked_position_arm_exhausted_total = Counter(
+    "tradeengine_naked_position_arm_exhausted_total",
+    "Positions backed off after repeated consecutive re-arm failures "
+    "instead of being retried every reconciliation cycle",
+    ["symbol", "side"],
+)
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -109,6 +122,8 @@ class NakedPositionRemediator:
         fallback_sl_pct: float = 2.0,
         fallback_tp_pct: float = 4.0,
         min_sl_distance_pct: float = 6.0,
+        max_consecutive_arm_failures: int = 5,
+        arm_backoff_cooldown_sec: int = 300,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._exchange = exchange
@@ -124,6 +139,11 @@ class NakedPositionRemediator:
         # floor rather than handing the re-arm a guaranteed-to-fail price
         # (2026-07-20 second-wave OCO-orphan incident).
         self._min_sl_distance_pct = float(min_sl_distance_pct)
+        # #560: cap consecutive re-arm failures per (symbol, side) before
+        # backing off instead of retrying every reconciliation cycle
+        # indefinitely (the "infinite retry loop" symptom).
+        self._max_consecutive_arm_failures = max(int(max_consecutive_arm_failures), 1)
+        self._arm_backoff_cooldown_sec = max(int(arm_backoff_cooldown_sec), 0)
         self._clock = clock
         # (symbol, side) -> first-seen monotonic timestamp
         self._first_seen: dict[tuple[str, str], float] = {}
@@ -131,6 +151,17 @@ class NakedPositionRemediator:
         # arm_only emits the alert once per detection episode rather than every
         # reconcile cycle. Cleared when the key is no longer diverging.
         self._malformed_alerted: set[tuple[str, str]] = set()
+        # #560: (symbol, side) -> consecutive _rearm failure count, reset on
+        # success or when the divergence clears.
+        self._consecutive_arm_failures: dict[tuple[str, str], int] = {}
+        # (symbol, side) -> monotonic timestamp until which re-arm attempts
+        # are skipped (set once _max_consecutive_arm_failures is reached).
+        self._arm_backoff_until: dict[tuple[str, str], float] = {}
+        # (symbol, side) keys already CRITICAL-logged as arm-exhausted, so the
+        # escalation alert fires once per backoff episode rather than every
+        # reconcile cycle. Cleared when the key is no longer diverging or the
+        # backoff window has expired and a fresh attempt is made.
+        self._arm_exhausted_alerted: set[tuple[str, str]] = set()
 
     @staticmethod
     def _coerce_mode(mode: str) -> RemediationMode:
@@ -169,6 +200,11 @@ class NakedPositionRemediator:
             # #547: also reset the malformed alert latch so a later
             # re-occurrence re-alerts CRITICAL.
             self._malformed_alerted.clear()
+            # #560: also reset the arm-failure backoff state so a later
+            # re-occurrence starts its own fresh failure count.
+            self._consecutive_arm_failures.clear()
+            self._arm_backoff_until.clear()
+            self._arm_exhausted_alerted.clear()
             return counts
 
         now = self._clock()
@@ -217,12 +253,46 @@ class NakedPositionRemediator:
                 else:
                     counts["failed"] += 1
             else:
+                # #560: a position already backed off after repeated
+                # consecutive re-arm failures is skipped (not retried) until
+                # its cooldown expires, instead of hammering the same
+                # doomed-to-fail placement every reconciliation cycle.
+                backoff_until = self._arm_backoff_until.get(key)
+                if backoff_until is not None and now < backoff_until:
+                    counts["skipped"] += 1
+                    continue
+
                 ok = await self._rearm(div, binance_positions)
                 if ok:
                     counts["armed"] += 1
                     reconcile_lag_seconds.labels(action="armed").observe(elapsed)
+                    self._consecutive_arm_failures.pop(key, None)
+                    self._arm_backoff_until.pop(key, None)
+                    self._arm_exhausted_alerted.discard(key)
                 else:
                     counts["failed"] += 1
+                    fails = self._consecutive_arm_failures.get(key, 0) + 1
+                    self._consecutive_arm_failures[key] = fails
+                    if fails >= self._max_consecutive_arm_failures:
+                        self._arm_backoff_until[key] = (
+                            now + self._arm_backoff_cooldown_sec
+                        )
+                        if key not in self._arm_exhausted_alerted:
+                            self._arm_exhausted_alerted.add(key)
+                            naked_position_arm_exhausted_total.labels(
+                                symbol=symbol, side=side
+                            ).inc()
+                            logger.critical(
+                                "NakedPositionRemediator: %s/%s failed to "
+                                "re-arm %d consecutive times — backing off "
+                                "for %ds instead of retrying every cycle. "
+                                "Position may still be naked; operator "
+                                "action required (#560).",
+                                symbol,
+                                side,
+                                fails,
+                                self._arm_backoff_cooldown_sec,
+                            )
 
         # Drop first-seen entries for keys no longer unhedged (re-arm
         # succeeded between cycles).
@@ -230,10 +300,21 @@ class NakedPositionRemediator:
         for k in stale:
             self._first_seen.pop(k, None)
         # #547: reset the once-per-episode malformed alert latch for any key
-        # that resolved, so a future re-occurrence alerts CRITICAL again.
+        # that resolved, so a future re-occurrence re-alerts CRITICAL again.
         for k in list(self._malformed_alerted):
             if k not in currently_unhedged:
                 self._malformed_alerted.discard(k)
+        # #560: reset the arm-failure backoff state for any key that
+        # resolved, so a future re-occurrence starts a fresh failure count.
+        for k in list(self._consecutive_arm_failures):
+            if k not in currently_unhedged:
+                self._consecutive_arm_failures.pop(k, None)
+        for k in list(self._arm_backoff_until):
+            if k not in currently_unhedged:
+                self._arm_backoff_until.pop(k, None)
+        for k in list(self._arm_exhausted_alerted):
+            if k not in currently_unhedged:
+                self._arm_exhausted_alerted.discard(k)
 
         return counts
 

@@ -255,6 +255,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     # of re-arming with a guaranteed-to-fail price (#second-wave
                     # OCO-orphan: 2.4% strategy SL vs 6% floor deadlock).
                     min_sl_distance_pct=_te_settings.te_min_sl_distance_pct,
+                    # #560: bound consecutive re-arm failures per position
+                    # before backing off instead of retrying every cycle.
+                    max_consecutive_arm_failures=(
+                        _te_settings.naked_position_max_consecutive_arm_failures
+                    ),
+                    arm_backoff_cooldown_sec=(
+                        _te_settings.naked_position_arm_backoff_cooldown_sec
+                    ),
                 )
             except Exception:
                 logger.exception(

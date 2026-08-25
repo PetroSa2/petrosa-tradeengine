@@ -754,7 +754,13 @@ class BinanceFuturesExchange:
         for o in list(std_orders) + list(algo_orders):
             if str(o.get("symbol", "")).upper() != symbol_upper:
                 continue
-            kind = _classify_kind(o.get("type"))
+            # Per #562: Binance's /openAlgoOrders response has no "type" key —
+            # the conditional-order kind lives in "orderType" instead. Standard
+            # /openOrders entries use "type". Without this fallback, every algo
+            # order silently classifies as "other" and both already_protected
+            # (#483) and conflicting_order_detected-cancel (#560) become dead
+            # code for algo orders — confirmed live in production.
+            kind = _classify_kind(o.get("type") or o.get("orderType"))
             if kind == "other":
                 continue
             if not _is_close_position(o):

@@ -141,12 +141,15 @@ class TestAlreadyProtectedViaAlgoOrders:
     @pytest.mark.asyncio
     async def test_algo_endpoint_only_match(self, exchange):
         baseline = _counter_value("already_protected", "BTCUSDT")
+        # Per #562: real /openAlgoOrders responses have NO "type" key — the
+        # kind lives in "orderType". Deliberately omit "type" here so this
+        # test reproduces the live production shape, not a synthetic one.
         algo_order = {
             "algoId": 1000000095179762,
             "symbol": "BTCUSDT",
             "side": "SELL",
             "positionSide": "LONG",
-            "type": "STOP_MARKET",
+            "orderType": "STOP_MARKET",
             "algoType": "CONDITIONAL",
             "closePosition": True,
             "clientAlgoId": "algo-xyz",
@@ -311,12 +314,14 @@ class TestConflictingOrderCancelledBeforeRetry:
 
         monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
 
+        # Per #562: real /openAlgoOrders responses have NO "type" key —
+        # only "orderType". This fixture reproduces that shape.
         conflicting_algo = {
             "algoId": 777777,
             "symbol": "BTCUSDT",
             "side": "BUY",
             "positionSide": "SHORT",
-            "type": "STOP_MARKET",
+            "orderType": "STOP_MARKET",
             "algoType": "CONDITIONAL",
             "closePosition": True,
             "clientAlgoId": "stale-algo-leg",
@@ -459,6 +464,8 @@ class TestReconcilerHelperDirect:
     @pytest.mark.asyncio
     async def test_match_in_algo_orders_with_string_closePosition(self, exchange):
         # Binance algo-order response may serialize bool as string "true".
+        # Per #562: real /openAlgoOrders responses have NO "type" key — only
+        # "orderType". This fixture reproduces that shape.
         exchange.client.futures_get_open_orders = Mock(return_value=[])
         exchange.client._request_futures_api = Mock(
             return_value=[
@@ -467,7 +474,7 @@ class TestReconcilerHelperDirect:
                     "symbol": "ETHUSDT",
                     "side": "SELL",
                     "positionSide": "LONG",
-                    "type": "STOP_MARKET",
+                    "orderType": "STOP_MARKET",
                     "algoType": "CONDITIONAL",
                     "closePosition": "true",
                 }
@@ -568,3 +575,134 @@ class TestReconcilerHelperDirect:
         )
         assert outcome == "conflicting_order_detected"
         assert payload["clientOrderId"] == "existing-tp"
+
+
+class TestOrderTypeFieldMismatch562:
+    """#562: /openAlgoOrders responses have NO "type" key — only "orderType".
+
+    Reproduces the exact live-production payload shape (captured in-cluster
+    from v1.2.17-r184) to guard against the classification silently
+    degrading to "other" for every algo order, which made #483's
+    already_protected short-circuit and #560's conflicting_order_detected
+    cancel-and-retry both dead code in production despite passing CI (the
+    prior test fixtures used a synthetic "type" key that real Binance
+    responses do not send).
+    """
+
+    # Real /openAlgoOrders shape observed live for BTCUSDT — two stacked
+    # closePosition TAKE_PROFIT_MARKET orders, no "type" key on either.
+    _LIVE_DUPLICATE_TP_A = {
+        "algoId": 1000000180649623,
+        "clientAlgoId": "dFz9lbWjNghF2qHCXoXzQH",
+        "algoType": "CONDITIONAL",
+        "orderType": "TAKE_PROFIT_MARKET",
+        "symbol": "BTCUSDT",
+        "side": "SELL",
+        "positionSide": "LONG",
+        "closePosition": True,
+        "reduceOnly": True,
+        "triggerPrice": "83738.7",
+    }
+    _LIVE_DUPLICATE_TP_B = {
+        "algoId": 1000000180649617,
+        "clientAlgoId": "otherClientAlgoId",
+        "algoType": "CONDITIONAL",
+        "orderType": "TAKE_PROFIT_MARKET",
+        "symbol": "BTCUSDT",
+        "side": "SELL",
+        "positionSide": "LONG",
+        "closePosition": True,
+        "reduceOnly": True,
+        "triggerPrice": "77145.0",
+    }
+
+    @pytest.mark.asyncio
+    async def test_already_protected_classifies_via_orderType_only(self, exchange):
+        """A same-kind, same-direction algo order with no "type" key must
+        still be recognized as already_protected — not silently skipped as
+        "other".
+        """
+        exchange.client.futures_get_open_orders = Mock(return_value=[])
+        exchange.client._request_futures_api = Mock(
+            return_value=[self._LIVE_DUPLICATE_TP_A]
+        )
+
+        outcome, payload = await exchange._reconcile_4130_against_truth(
+            symbol="BTCUSDT",
+            side="SELL",
+            position_side="LONG",
+            order_type="TAKE_PROFIT_MARKET",
+        )
+
+        assert outcome == "already_protected"
+        assert payload["algoId"] == 1000000180649623
+
+    @pytest.mark.asyncio
+    async def test_conflicting_order_classifies_via_orderType_only(self, exchange):
+        """The exact live self-conflict: a second TAKE_PROFIT_MARKET
+        closePosition order already occupies the slot a fresh placement (of
+        the same kind, matching direction) is targeting. Must classify as
+        conflicting_order_detected (matches, so actually already_protected —
+        use a differing direction below to force the conflict branch) and,
+        critically, must NOT fall through to "other"/none_found.
+        """
+        conflicting = dict(self._LIVE_DUPLICATE_TP_A)
+        conflicting["side"] = "BUY"  # opposite direction -> real conflict
+        conflicting["positionSide"] = "SHORT"
+        exchange.client.futures_get_open_orders = Mock(return_value=[])
+        exchange.client._request_futures_api = Mock(return_value=[conflicting])
+
+        outcome, payload = await exchange._reconcile_4130_against_truth(
+            symbol="BTCUSDT",
+            side="SELL",
+            position_side="LONG",
+            order_type="TAKE_PROFIT_MARKET",
+        )
+
+        assert outcome == "conflicting_order_detected"
+        assert payload["algoId"] == conflicting["algoId"]
+
+    @pytest.mark.asyncio
+    async def test_live_duplicate_tp_scenario_triggers_cancel_before_retry(
+        self, exchange, monkeypatch
+    ):
+        """End-to-end: the exact live BTCUSDT duplicate-TP payload, fed
+        through _execute_with_retry, must resolve via cancel-and-retry
+        (#560) rather than exhausting retries on an unclassifiable conflict.
+        """
+
+        async def _sleep_noop(_):
+            return None
+
+        monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
+
+        # The "existing" order truth-query returns TP_B (opposite direction
+        # of our SELL/LONG placement) so it's a genuine conflict, not a
+        # duplicate of the exact placement being attempted.
+        conflicting = dict(self._LIVE_DUPLICATE_TP_B)
+        conflicting["side"] = "BUY"
+        conflicting["positionSide"] = "SHORT"
+        exchange.client.futures_get_open_orders = Mock(return_value=[])
+        exchange.client._request_futures_api = Mock(
+            side_effect=[
+                [conflicting],  # GET openAlgoOrders (reconcile read)
+                {"algoId": conflicting["algoId"], "status": "CANCELED"},  # DELETE
+            ]
+        )
+
+        tp_params = dict(ALGO_PARAMS)
+        tp_params["type"] = "TAKE_PROFIT_MARKET"
+        func = Mock(
+            side_effect=[
+                _make_api_exc(-4130, "already existing"),
+                {"algoId": 555, "status": "NEW", "algoStatus": "NEW"},
+            ]
+        )
+
+        result = await exchange._execute_with_retry(func, **tp_params)
+
+        assert result["algoId"] == 555
+        delete_call = exchange.client._request_futures_api.call_args_list[1]
+        assert delete_call.args[0] == "delete"
+        assert delete_call.args[1] == "algoOrder"
+        assert delete_call.kwargs["data"]["algoId"] == conflicting["algoId"]

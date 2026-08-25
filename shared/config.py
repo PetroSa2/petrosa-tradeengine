@@ -163,6 +163,13 @@ class Settings(BaseSettings):
     naked_position_fallback_sl_pct: float = 6.5
     naked_position_fallback_tp_pct: float = 4.0
 
+    # #560: consecutive re-arm failures allowed per (symbol, side) before the
+    # remediator backs off instead of retrying every reconciliation cycle
+    # (the observed -4130 infinite-retry-loop symptom). Backoff duration in
+    # seconds once the threshold is hit.
+    naked_position_max_consecutive_arm_failures: int = 5
+    naked_position_arm_backoff_cooldown_sec: int = 300
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

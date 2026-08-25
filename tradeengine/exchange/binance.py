@@ -896,13 +896,13 @@ class BinanceFuturesExchange:
                         conflicting_client_id = payload.get(
                             "clientOrderId"
                         ) or payload.get("clientAlgoId")
+                        conflicting_id = payload.get("algoId") or payload.get("orderId")
                         logger.warning(
                             "conflicting_order_detected: -4130 received but truth "
                             "shows a non-matching order on "
                             f"{kwargs.get('symbol')} "
                             f"{kwargs.get('positionSide') or kwargs.get('side')}; "
-                            f"conflicting_clientOrderId={conflicting_client_id}. "
-                            "Falling through to normal retry."
+                            f"conflicting_clientOrderId={conflicting_client_id}."
                         )
                         try:
                             from tradeengine.metrics import (
@@ -915,6 +915,61 @@ class BinanceFuturesExchange:
                             ).inc()
                         except Exception:  # pragma: no cover
                             pass
+
+                        # Per #560: a "conflicting_order_detected" verdict means
+                        # Binance is holding a stale closePosition order — most
+                        # often the remediator's OWN prior-cycle placement at a
+                        # since-re-anchored price (#551) — that occupies the
+                        # exact (symbol, side, kind) slot the fresh placement
+                        # needs. Blindly retrying the identical call is
+                        # guaranteed to hit -4130 again, which is precisely the
+                        # infinite-retry-loop symptom this ticket reports.
+                        # Cancel the stale order so the retry below can
+                        # actually land; if the cancel itself fails, fall
+                        # through unchanged to the pre-existing backoff retry.
+                        if conflicting_id is not None:
+                            try:
+                                if payload.get("algoId") is not None:
+                                    await self.cancel_algo_order(
+                                        symbol=str(kwargs.get("symbol", "")),
+                                        algo_id=conflicting_id,
+                                    )
+                                else:
+                                    await self.cancel_order(
+                                        symbol=str(kwargs.get("symbol", "")),
+                                        order_id=conflicting_id,
+                                    )
+                                logger.warning(
+                                    "conflicting_order_cancelled: cancelled stale "
+                                    f"closePosition order id={conflicting_id} on "
+                                    f"{kwargs.get('symbol')} "
+                                    f"{kwargs.get('positionSide') or kwargs.get('side')} "
+                                    "to clear the -4130 conflict before retrying "
+                                    "(#560)"
+                                )
+                                try:
+                                    from tradeengine.metrics import (
+                                        binance_4130_resolution_total as _b4130,
+                                    )
+
+                                    _b4130.labels(
+                                        outcome="conflict_cancelled",
+                                        symbol=symbol_for_metric,
+                                    ).inc()
+                                except Exception:  # pragma: no cover
+                                    pass
+                            except Exception as cancel_exc:
+                                logger.warning(
+                                    "conflicting_order_cancel_failed: could not "
+                                    f"cancel {conflicting_id} on "
+                                    f"{kwargs.get('symbol')}: {cancel_exc}. "
+                                    "Falling through to normal retry."
+                                )
+                        else:
+                            logger.warning(
+                                "conflicting_order_detected: no cancellable id in "
+                                "truth payload; falling through to normal retry."
+                            )
 
                 last_exception = e
             except Exception as e:

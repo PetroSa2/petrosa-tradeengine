@@ -231,6 +231,9 @@ class TestConflictingOrderDetected:
             "clientOrderId": "different-leg-zzz",
         }
         exchange.client.futures_get_open_orders = Mock(return_value=[conflicting])
+        exchange.client.futures_cancel_order = Mock(
+            return_value={"orderId": 5555, "status": "CANCELED", "symbol": "BTCUSDT"}
+        )
 
         # Eventually succeed on retry so the wrapper exits cleanly.
         func = Mock(
@@ -249,6 +252,139 @@ class TestConflictingOrderDetected:
             "conflicting_order_detected" in rec.message
             and "different-leg-zzz" in rec.message
             for rec in caplog.records
+        )
+
+
+class TestConflictingOrderCancelledBeforeRetry:
+    """#560: a conflicting order is a stale placement (most often the
+    remediator's own prior-cycle re-anchored SL/TP) occupying the exact slot
+    a fresh placement needs. Blindly retrying is guaranteed to hit -4130
+    again forever. The exchange layer must cancel the conflicting order
+    before falling through to the pre-existing backoff retry.
+    """
+
+    @pytest.mark.asyncio
+    async def test_standard_order_conflict_is_cancelled_via_cancel_order(
+        self, exchange, monkeypatch
+    ):
+        async def _sleep_noop(_):
+            return None
+
+        monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
+
+        conflicting = {
+            "orderId": 5555,
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "STOP_MARKET",
+            "closePosition": True,
+            "clientOrderId": "stale-leg",
+        }
+        exchange.client.futures_get_open_orders = Mock(return_value=[conflicting])
+        exchange.client.futures_cancel_order = Mock(
+            return_value={"orderId": 5555, "status": "CANCELED", "symbol": "BTCUSDT"}
+        )
+
+        func = Mock(
+            side_effect=[
+                _make_api_exc(-4130, "already existing"),
+                {"algoId": 8, "status": "NEW", "algoStatus": "NEW"},
+            ]
+        )
+
+        baseline_cancelled = _counter_value("conflict_cancelled", "BTCUSDT")
+        result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
+
+        assert result["algoId"] == 8
+        exchange.client.futures_cancel_order.assert_called_once_with(
+            symbol="BTCUSDT", orderId=5555
+        )
+        assert _counter_value("conflict_cancelled", "BTCUSDT") == baseline_cancelled + 1
+
+    @pytest.mark.asyncio
+    async def test_algo_order_conflict_is_cancelled_via_algo_endpoint(
+        self, exchange, monkeypatch
+    ):
+        async def _sleep_noop(_):
+            return None
+
+        monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
+
+        conflicting_algo = {
+            "algoId": 777777,
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "STOP_MARKET",
+            "algoType": "CONDITIONAL",
+            "closePosition": True,
+            "clientAlgoId": "stale-algo-leg",
+        }
+        exchange.client.futures_get_open_orders = Mock(return_value=[])
+        exchange.client._request_futures_api = Mock(
+            side_effect=[
+                [conflicting_algo],  # GET openAlgoOrders (reconcile read)
+                {"algoId": 777777, "status": "CANCELED"},  # DELETE algoOrder
+            ]
+        )
+
+        func = Mock(
+            side_effect=[
+                _make_api_exc(-4130, "already existing"),
+                {"algoId": 9, "status": "NEW", "algoStatus": "NEW"},
+            ]
+        )
+
+        result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
+
+        assert result["algoId"] == 9
+        # First call = GET openAlgoOrders (reconcile), second = DELETE algoOrder.
+        delete_call = exchange.client._request_futures_api.call_args_list[1]
+        assert delete_call.args[0] == "delete"
+        assert delete_call.args[1] == "algoOrder"
+        assert delete_call.kwargs["data"]["algoId"] == 777777
+
+    @pytest.mark.asyncio
+    async def test_cancel_failure_falls_through_to_normal_retry(
+        self, exchange, monkeypatch, caplog
+    ):
+        """If the cancel itself raises, the wrapper must not crash — it falls
+        through to the existing backoff-and-retry behavior unchanged.
+        """
+
+        async def _sleep_noop(_):
+            return None
+
+        monkeypatch.setattr("tradeengine.exchange.binance.asyncio.sleep", _sleep_noop)
+
+        conflicting = {
+            "orderId": 6666,
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "type": "STOP_MARKET",
+            "closePosition": True,
+            "clientOrderId": "uncancellable",
+        }
+        exchange.client.futures_get_open_orders = Mock(return_value=[conflicting])
+        exchange.client.futures_cancel_order = Mock(
+            side_effect=RuntimeError("cancel rejected")
+        )
+
+        func = Mock(
+            side_effect=[
+                _make_api_exc(-4130, "already existing"),
+                {"algoId": 10, "status": "NEW", "algoStatus": "NEW"},
+            ]
+        )
+
+        with caplog.at_level("WARNING"):
+            result = await exchange._execute_with_retry(func, **ALGO_PARAMS)
+
+        assert result["algoId"] == 10
+        assert any(
+            "conflicting_order_cancel_failed" in rec.message for rec in caplog.records
         )
 
 

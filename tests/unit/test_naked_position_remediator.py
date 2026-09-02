@@ -642,6 +642,60 @@ async def test_malformed_alert_latch_resets_after_clean_pass() -> None:
 
 
 # ---------------------------------------------------------------------------
+# #566 — malformed-position stuck-duration gauge
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_malformed_stuck_gauge_tracks_elapsed_age_in_arm_only() -> None:
+    """arm_only never resolves a malformed position — the stuck gauge must
+    reflect the growing age each cycle instead of staying at a fixed value."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, clock = _make_remediator(mode="arm_only")
+    with patch.object(npr.malformed_position_stuck_seconds, "labels") as mock_labels:
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        mock_labels.assert_any_call(symbol="LTCUSDT", side="LONG")
+        first_set = mock_labels.return_value.set.call_args.args[0]
+        assert first_set == pytest.approx(0.0)
+
+        clock.advance(120)
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        second_set = mock_labels.return_value.set.call_args.args[0]
+        assert second_set == pytest.approx(120.0)
+
+
+@pytest.mark.asyncio
+async def test_malformed_stuck_gauge_zeroed_on_flatten() -> None:
+    """arm_or_flatten flattening a malformed position must zero its stuck
+    gauge rather than leaving the last observed age dangling."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, clock = _make_remediator(mode="arm_or_flatten", grace_sec=60)
+    await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    clock.advance(61)
+    with patch.object(npr.malformed_position_stuck_seconds, "labels") as mock_labels:
+        counts = await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        assert counts["flattened"] == 1
+        mock_labels.assert_any_call(symbol="LTCUSDT", side="LONG")
+        assert mock_labels.return_value.set.call_args.args[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_stuck_gauge_zeroed_on_clean_pass() -> None:
+    """A clean pass (position resolved externally) must zero any stuck
+    gauge left over from a prior malformed episode."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, _ = _make_remediator(mode="arm_only")
+    await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+    with patch.object(npr.malformed_position_stuck_seconds, "labels") as mock_labels:
+        await r.remediate([], None)
+        mock_labels.assert_any_call(symbol="LTCUSDT", side="LONG")
+        assert mock_labels.return_value.set.call_args.args[0] == 0
+
+
+# ---------------------------------------------------------------------------
 # #560 — bounded backoff + escalation after repeated re-arm failures
 # ---------------------------------------------------------------------------
 

@@ -730,3 +730,113 @@ async def test_reconcile_once_malformed_position_ltcusdt_shape():
     assert malformed[0]["symbol"] == "LTCUSDT"
     assert malformed[0]["side"] == "LONG"
     mock_counter.labels.assert_any_call(category="malformed_position", symbol="LTCUSDT")
+
+
+# ---------------------------------------------------------------------------
+# #566 — hedge-mode confirmation cross-check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_matching_sets_gauge_zero_no_alert():
+    reconciler = _make_reconciler([], {})
+    reconciler._expected_hedge_mode = True
+    reconciler._exchange.verify_hedge_mode = AsyncMock(
+        return_value={"hedge_mode_enabled": True, "position_mode": "hedge"}
+    )
+    with (
+        patch("tradeengine.position_reconciler.hedge_mode_mismatch") as mock_gauge,
+        patch("tradeengine.position_reconciler.logger") as mock_logger,
+    ):
+        await reconciler._check_hedge_mode()
+    mock_gauge.set.assert_called_once_with(0)
+    mock_logger.critical.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_mismatch_alerts_once_per_episode():
+    reconciler = _make_reconciler([], {})
+    reconciler._expected_hedge_mode = True
+    reconciler._exchange.verify_hedge_mode = AsyncMock(
+        return_value={"hedge_mode_enabled": False, "position_mode": "one-way"}
+    )
+    with (
+        patch("tradeengine.position_reconciler.hedge_mode_mismatch") as mock_gauge,
+        patch("tradeengine.position_reconciler.logger") as mock_logger,
+    ):
+        await reconciler._check_hedge_mode()
+        await reconciler._check_hedge_mode()
+    assert mock_gauge.set.call_args_list == [((1,),), ((1,),)]
+    assert mock_logger.critical.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_mismatch_realerts_after_recovery():
+    reconciler = _make_reconciler([], {})
+    reconciler._expected_hedge_mode = True
+    reconciler._exchange.verify_hedge_mode = AsyncMock(
+        return_value={"hedge_mode_enabled": False, "position_mode": "one-way"}
+    )
+    with (
+        patch("tradeengine.position_reconciler.hedge_mode_mismatch"),
+        patch("tradeengine.position_reconciler.logger") as mock_logger,
+    ):
+        await reconciler._check_hedge_mode()
+        reconciler._exchange.verify_hedge_mode = AsyncMock(
+            return_value={"hedge_mode_enabled": True, "position_mode": "hedge"}
+        )
+        await reconciler._check_hedge_mode()
+        reconciler._exchange.verify_hedge_mode = AsyncMock(
+            return_value={"hedge_mode_enabled": False, "position_mode": "one-way"}
+        )
+        await reconciler._check_hedge_mode()
+    assert mock_logger.critical.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_inconclusive_does_not_set_gauge():
+    """verify_hedge_mode's own error path returns position_mode='unknown' —
+    must not flip the gauge on a transient API failure."""
+    reconciler = _make_reconciler([], {})
+    reconciler._exchange.verify_hedge_mode = AsyncMock(
+        return_value={"hedge_mode_enabled": False, "position_mode": "unknown"}
+    )
+    with patch("tradeengine.position_reconciler.hedge_mode_mismatch") as mock_gauge:
+        await reconciler._check_hedge_mode()
+    mock_gauge.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_missing_attr_is_noop():
+    """Exchange doubles without verify_hedge_mode (e.g. bare MagicMock) must
+    not raise — the check silently no-ops."""
+    exchange = MagicMock(spec=["get_position_info", "get_open_algo_orders"])
+    exchange.get_position_info = AsyncMock(return_value=[])
+    pm = MagicMock()
+    pm.get_positions = MagicMock(return_value={})
+    reconciler = PositionReconciler(exchange=exchange, position_manager=pm)
+    await reconciler._check_hedge_mode()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_check_hedge_mode_exception_is_caught():
+    reconciler = _make_reconciler([], {})
+    reconciler._exchange.verify_hedge_mode = AsyncMock(
+        side_effect=RuntimeError("network blip")
+    )
+    with patch("tradeengine.position_reconciler.hedge_mode_mismatch") as mock_gauge:
+        await reconciler._check_hedge_mode()  # must not raise
+    mock_gauge.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_calls_hedge_mode_check():
+    """reconcile_once() must invoke the hedge-mode cross-check every cycle."""
+    reconciler = _make_reconciler([], {})
+    reconciler._check_hedge_mode = AsyncMock()
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+    ):
+        await reconciler.reconcile_once()
+    reconciler._check_hedge_mode.assert_awaited_once()

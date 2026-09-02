@@ -2007,8 +2007,12 @@ class BinanceFuturesExchange:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
 
-            # Get position mode/dual side position setting
-            position_mode = self.client.futures_get_position_mode()
+            # #566: offload sync REST call to a thread — see get_position_info
+            # for rationale (#565). PositionReconciler now calls this once per
+            # reconciliation cycle, so it must not block the event loop.
+            position_mode = await asyncio.to_thread(
+                self.client.futures_get_position_mode
+            )
 
             hedge_mode_enabled = position_mode.get("dualSidePosition", False)
 

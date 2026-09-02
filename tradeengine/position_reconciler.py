@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from prometheus_client import Counter, Gauge
 
+from shared.constants import HEDGE_MODE_ENABLED
 from tradeengine.exchange_truth_store import (
     ExchangeTruthStore,
     exchange_truth_store_stale_seconds,
@@ -55,6 +56,18 @@ reconciliation_evaluator_verdict = Gauge(
 reconciliation_alert = Gauge(
     "tradeengine_position_reconciliation_alert",
     "1 when position divergences are present, 0 when clean (FR66 category e)",
+)
+
+# #566: the reconciler classifies positionSide LONG/SHORT rows assuming the
+# account is in Binance hedge mode (dualSidePosition=true). If the account's
+# actual setting ever drifts from that assumption, `_is_malformed_sign` and
+# `_normalise_side` are interpreting the wrong contract. This gauge makes that
+# assumption independently verifiable rather than implicitly trusted.
+hedge_mode_mismatch = Gauge(
+    "tradeengine_hedge_mode_mismatch",
+    "1 when the account's actual dualSidePosition setting differs from the "
+    "hedge-mode assumption the reconciler uses to classify positions, "
+    "0 when confirmed matching or verification is inconclusive",
 )
 
 # ---------------------------------------------------------------------------
@@ -305,6 +318,11 @@ class PositionReconciler:
         self._store = store
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._last_divergence_count: int = 0
+        # #566: expected hedge-mode assumption baked into _normalise_side /
+        # _is_malformed_sign. Compared each cycle against the account's
+        # actual dualSidePosition setting via verify_hedge_mode().
+        self._expected_hedge_mode: bool = HEDGE_MODE_ENABLED
+        self._hedge_mode_mismatch_alerted: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -341,8 +359,61 @@ class PositionReconciler:
     # Core reconciliation
     # ------------------------------------------------------------------
 
+    async def _check_hedge_mode(self) -> None:
+        """#566: confirm the account's actual hedge-mode setting matches the
+        assumption baked into ``_normalise_side``/``_is_malformed_sign``.
+
+        Never raises — a failed or inconclusive check must not interrupt the
+        read-only reconciliation pass. Alerts CRITICAL once per mismatch
+        episode (latched) rather than every cycle.
+        """
+        try:
+            verify = getattr(self._exchange, "verify_hedge_mode", None)
+            if verify is None:
+                return
+            result = await verify()
+        except Exception:
+            logger.debug(
+                "PositionReconciler: verify_hedge_mode() unavailable/failed — "
+                "skipping hedge-mode confirmation this cycle",
+                exc_info=True,
+            )
+            return
+
+        if not isinstance(result, dict) or result.get("position_mode") == "unknown":
+            # Inconclusive (API error surfaced by verify_hedge_mode itself) —
+            # do not flip the gauge on a transient failure.
+            return
+
+        actual_hedge_mode = bool(result.get("hedge_mode_enabled", False))
+        if actual_hedge_mode == self._expected_hedge_mode:
+            hedge_mode_mismatch.set(0)
+            self._hedge_mode_mismatch_alerted = False
+            return
+
+        hedge_mode_mismatch.set(1)
+        if not self._hedge_mode_mismatch_alerted:
+            self._hedge_mode_mismatch_alerted = True
+            logger.critical(
+                "PositionReconciler: hedge-mode MISMATCH — account "
+                "dualSidePosition=%s (%s) but engine assumes hedge_mode=%s. "
+                "positionSide/positionAmt classification "
+                "(_normalise_side/_is_malformed_sign) may be misinterpreting "
+                "the exchange contract for every position row. Confirm the "
+                "testnet account's position mode setting matches "
+                "HEDGE_MODE_ENABLED/POSITION_MODE (#566).",
+                actual_hedge_mode,
+                result.get("position_mode"),
+                self._expected_hedge_mode,
+            )
+
     async def reconcile_once(self) -> list[dict[str, Any]]:
         """Run one reconciliation pass; return the divergence list."""
+        # #566: verify the hedge-mode assumption before classifying rows —
+        # independent of the fetch/divergence pipeline below so a failure
+        # here never blocks reconciliation.
+        await self._check_hedge_mode()
+
         try:
             raw = await self._exchange.get_position_info()
         except Exception:

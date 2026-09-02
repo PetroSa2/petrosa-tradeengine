@@ -24,7 +24,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 from contracts.order import OrderStatus, TradeOrder
 
@@ -70,6 +70,21 @@ malformed_position_total = Counter(
     "tradeengine_malformed_position_total",
     "Malformed hedge-mode positions (LONG with negative amt or SHORT with "
     "positive amt) observed by the remediator",
+    ["symbol", "side"],
+)
+
+# #566: in arm_only mode a malformed position is never flattened by design —
+# it alerts once (malformed_position_total) and then stays "skipped" every
+# cycle indefinitely (pending operator action or a promotion to
+# arm_or_flatten). That "stuck" state had no time-series visibility beyond
+# the once-per-episode CRITICAL log, so operators could not tell a
+# 2-minute-old malformed position from a 2-day-old one without grepping
+# logs. This gauge tracks live age per (symbol, side) so it can be alerted
+# on (e.g. "stuck > 1h") independent of remediation-mode promotion.
+malformed_position_stuck_seconds = Gauge(
+    "tradeengine_malformed_position_stuck_seconds",
+    "Seconds a malformed (inverted-sign) position has been observed without "
+    "being armed or flattened; 0 once resolved",
     ["symbol", "side"],
 )
 
@@ -199,6 +214,10 @@ class NakedPositionRemediator:
             self._first_seen.clear()
             # #547: also reset the malformed alert latch so a later
             # re-occurrence re-alerts CRITICAL.
+            # #566: zero the stuck-duration gauge for any keys that were
+            # malformed before this clean pass.
+            for k in self._malformed_alerted:
+                malformed_position_stuck_seconds.labels(symbol=k[0], side=k[1]).set(0)
             self._malformed_alerted.clear()
             # #560: also reset the arm-failure backoff state so a later
             # re-occurrence starts its own fresh failure count.
@@ -301,9 +320,11 @@ class NakedPositionRemediator:
             self._first_seen.pop(k, None)
         # #547: reset the once-per-episode malformed alert latch for any key
         # that resolved, so a future re-occurrence re-alerts CRITICAL again.
+        # #566: also zero the stuck-duration gauge for the same resolved keys.
         for k in list(self._malformed_alerted):
             if k not in currently_unhedged:
                 self._malformed_alerted.discard(k)
+                malformed_position_stuck_seconds.labels(symbol=k[0], side=k[1]).set(0)
         # #560: reset the arm-failure backoff state for any key that
         # resolved, so a future re-occurrence starts a fresh failure count.
         for k in list(self._consecutive_arm_failures):
@@ -573,6 +594,7 @@ class NakedPositionRemediator:
 
         # arm_only OR arm_or_flatten before grace → alert, never arm.
         malformed_position_total.labels(symbol=symbol, side=side).inc()
+        malformed_position_stuck_seconds.labels(symbol=symbol, side=side).set(elapsed)
         if key not in self._malformed_alerted:
             self._malformed_alerted.add(key)
             logger.critical(
@@ -604,6 +626,7 @@ class NakedPositionRemediator:
             reconcile_lag_seconds.labels(action="flattened").observe(elapsed)
             self._first_seen.pop(key, None)
             self._malformed_alerted.discard(key)
+            malformed_position_stuck_seconds.labels(symbol=symbol, side=side).set(0)
             return "flattened"
         return "failed"
 

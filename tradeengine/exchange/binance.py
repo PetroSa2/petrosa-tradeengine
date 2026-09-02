@@ -799,7 +799,13 @@ class BinanceFuturesExchange:
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
             try:
-                result = func(**kwargs)  # Futures client is synchronous
+                # #565: python-binance's futures Client is synchronous. Calling it
+                # directly on the event loop blocks ALL coroutines (including the
+                # /live and /ready HTTP handlers) for the full REST round-trip.
+                # Offload to a thread so the loop stays responsive — same pattern
+                # already established at binance.py's _ping_loop and dispatcher.py
+                # (#465).
+                result = await asyncio.to_thread(func, **kwargs)
 
                 # Capture and broadcast rate limit info
                 if (
@@ -1916,7 +1922,13 @@ class BinanceFuturesExchange:
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            positions = self.client.futures_position_information()
+            # #565: offload sync REST call to a thread so the event loop stays
+            # responsive (this is called from PositionReconciler's background
+            # task, potentially at boot with the liveness probe running
+            # concurrently).
+            positions = await asyncio.to_thread(
+                self.client.futures_position_information
+            )
             # Type cast to satisfy mypy
             return list(positions) if positions else []
         except Exception as e:
@@ -1938,8 +1950,17 @@ class BinanceFuturesExchange:
             if symbol:
                 params["symbol"] = symbol
 
-            orders = self.client._request_futures_api(
-                "get", "openAlgoOrders", signed=True, data=params
+            # #565: offload sync REST call to a thread — see get_position_info
+            # for rationale. This is invoked once per unique symbol (up to 17+
+            # in a naked-position incident) from PositionReconciler's
+            # background task; serial-but-blocking calls here are what froze
+            # the event loop and caused the liveness-probe crash loop.
+            orders = await asyncio.to_thread(
+                self.client._request_futures_api,
+                "get",
+                "openAlgoOrders",
+                signed=True,
+                data=params,
             )
             return cast(list[dict[str, Any]], orders) if orders else []
         except Exception as e:

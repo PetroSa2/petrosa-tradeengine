@@ -9,7 +9,9 @@ This test suite covers:
 5. Error handling
 """
 
+import asyncio  # noqa: E402
 import sys  # noqa: E402
+import time  # noqa: E402
 from unittest.mock import AsyncMock, MagicMock, Mock, patch  # noqa: E402
 
 import pytest  # noqa: E402
@@ -880,6 +882,107 @@ class TestRetryLogic:
         result = await binance_exchange._execute_with_retry(mock_func, param1="value1")
         assert result == {"success": True}
         assert mock_func.called
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_does_not_block_event_loop(self, binance_exchange):
+        """#565 regression: a slow synchronous Binance call must not freeze
+        the event loop.
+
+        python-binance's futures Client is synchronous. Calling it directly
+        inside an ``async def`` blocks every other coroutine — including the
+        ``/live``/``/ready`` HTTP handlers — for the full REST round-trip.
+        With up to 17 divergent positions re-armed serially at startup, this
+        froze the loop long enough for the k8s liveness probe to SIGKILL the
+        pod (1143 restarts). ``_execute_with_retry`` must offload the sync
+        call via ``asyncio.to_thread`` so concurrently-scheduled coroutines
+        keep making progress while the call is in flight.
+
+        Uses a real blocking ``time.sleep`` (not ``AsyncMock``) so the
+        assertion would fail against the pre-fix implementation.
+        """
+
+        def slow_sync_call(**kwargs):
+            time.sleep(0.3)
+            return {"success": True}
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(10):
+                await asyncio.sleep(0.03)
+                ticks += 1
+
+        ticker_task = asyncio.create_task(ticker())
+        result = await binance_exchange._execute_with_retry(slow_sync_call)
+        await ticker_task
+
+        assert result == {"success": True}
+        # If the event loop had been blocked for the ~0.3s sync call, the
+        # concurrently-scheduled ticker (10 x 0.03s = 0.3s of sleeps) would
+        # not have had a chance to interleave and would show far fewer ticks.
+        assert ticks >= 5, (
+            f"event loop appears blocked during sync call — only {ticks}/10 "
+            "ticker iterations completed concurrently"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_position_info_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#565 regression: get_position_info must offload the sync REST call."""
+        mock_binance_client.futures_position_information = Mock(
+            side_effect=lambda: (time.sleep(0.3), [])[1]
+        )
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(10):
+                await asyncio.sleep(0.03)
+                ticks += 1
+
+        ticker_task = asyncio.create_task(ticker())
+        result = await binance_exchange.get_position_info()
+        await ticker_task
+
+        assert result == []
+        assert ticks >= 5, (
+            f"event loop appears blocked during get_position_info — only "
+            f"{ticks}/10 ticker iterations completed concurrently"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_open_algo_orders_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#565 regression: get_open_algo_orders must offload the sync REST call.
+
+        This is invoked once per unique symbol (up to 17+ during a naked-
+        position incident) from PositionReconciler's background task.
+        """
+        mock_binance_client._request_futures_api = Mock(
+            side_effect=lambda *a, **k: (time.sleep(0.3), [])[1]
+        )
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(10):
+                await asyncio.sleep(0.03)
+                ticks += 1
+
+        ticker_task = asyncio.create_task(ticker())
+        result = await binance_exchange.get_open_algo_orders(symbol="BTCUSDT")
+        await ticker_task
+
+        assert result == []
+        assert ticks >= 5, (
+            f"event loop appears blocked during get_open_algo_orders — only "
+            f"{ticks}/10 ticker iterations completed concurrently"
+        )
 
 
 class TestFallbackLogic:

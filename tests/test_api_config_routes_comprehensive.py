@@ -513,7 +513,7 @@ class TestGetConfigManager:
 
 
 class TestSetGlobalLimitsEndpoint:
-    """Test PUT /api/v1/config/config/limits/global endpoint."""
+    """Test PUT /api/v1/config/limits/global endpoint."""
 
     def test_set_global_limits_success(self, client, mock_config_manager):
         """Test successful global limits update."""
@@ -529,7 +529,7 @@ class TestSetGlobalLimitsEndpoint:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         response = client.put(
-            "/api/v1/config/config/limits/global",
+            "/api/v1/config/limits/global",
             params={
                 "max_position_size": 100.0,
                 "max_accumulations": 3,
@@ -554,7 +554,7 @@ class TestSetGlobalLimitsEndpoint:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         response = client.put(
-            "/api/v1/config/config/limits/global",
+            "/api/v1/config/limits/global",
             params={"max_position_size": 100.0},
         )
         assert response.status_code == 200
@@ -570,7 +570,7 @@ class TestSetGlobalLimitsEndpoint:
         )
 
         response = client.put(
-            "/api/v1/config/config/limits/global",
+            "/api/v1/config/limits/global",
             params={"max_position_size": 100.0},
         )
         # HTTPException is caught by exception handler and returns 200 with error
@@ -584,7 +584,7 @@ class TestSetGlobalLimitsEndpoint:
         mock_config_manager.get_config = AsyncMock(side_effect=Exception("DB error"))
 
         response = client.put(
-            "/api/v1/config/config/limits/global",
+            "/api/v1/config/limits/global",
             params={"max_position_size": 100.0},
         )
         assert response.status_code == 200
@@ -594,7 +594,7 @@ class TestSetGlobalLimitsEndpoint:
 
 
 class TestSetSymbolLimitsEndpoint:
-    """Test PUT /api/v1/config/config/limits/symbol/{symbol} endpoint."""
+    """Test PUT /api/v1/config/limits/symbol/{symbol} endpoint."""
 
     def test_set_symbol_limits_success(self, client, mock_config_manager):
         """Test successful symbol limits update."""
@@ -611,7 +611,7 @@ class TestSetSymbolLimitsEndpoint:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         response = client.put(
-            "/api/v1/config/config/limits/symbol/BTCUSDT",
+            "/api/v1/config/limits/symbol/BTCUSDT",
             params={
                 "max_position_size": 50.0,
                 "max_accumulations": 2,
@@ -637,7 +637,7 @@ class TestSetSymbolLimitsEndpoint:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         response = client.put(
-            "/api/v1/config/config/limits/symbol/BTCUSDT",
+            "/api/v1/config/limits/symbol/BTCUSDT",
             params={"max_position_size": 50.0},
         )
         assert response.status_code == 200
@@ -653,7 +653,7 @@ class TestSetSymbolLimitsEndpoint:
         )
 
         response = client.put(
-            "/api/v1/config/config/limits/symbol/BTCUSDT",
+            "/api/v1/config/limits/symbol/BTCUSDT",
             params={"max_position_size": 50.0},
         )
         # HTTPException is caught by exception handler and returns 200 with error
@@ -667,7 +667,7 @@ class TestSetSymbolLimitsEndpoint:
         mock_config_manager.get_config = AsyncMock(side_effect=Exception("DB error"))
 
         response = client.put(
-            "/api/v1/config/config/limits/symbol/BTCUSDT",
+            "/api/v1/config/limits/symbol/BTCUSDT",
             params={"max_position_size": 50.0},
         )
         assert response.status_code == 200
@@ -677,7 +677,7 @@ class TestSetSymbolLimitsEndpoint:
 
 
 class TestGetAllLimitsEndpoint:
-    """Test GET /api/v1/config/config/limits endpoint."""
+    """Test GET /api/v1/config/limits endpoint."""
 
     @patch("shared.constants.SUPPORTED_SYMBOLS", ["BTCUSDT", "ETHUSDT"])
     def test_get_all_limits_success(self, client, mock_config_manager):
@@ -698,7 +698,7 @@ class TestGetAllLimitsEndpoint:
             ]
         )
 
-        response = client.get("/api/v1/config/config/limits")
+        response = client.get("/api/v1/config/limits")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -710,7 +710,7 @@ class TestGetAllLimitsEndpoint:
         """Test get all limits with error."""
         mock_config_manager.get_config = AsyncMock(side_effect=Exception("DB error"))
 
-        response = client.get("/api/v1/config/config/limits")
+        response = client.get("/api/v1/config/limits")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -718,13 +718,13 @@ class TestGetAllLimitsEndpoint:
 
 
 class TestDeleteSymbolLimitsEndpoint:
-    """Test DELETE /api/v1/config/config/limits/symbol/{symbol} endpoint."""
+    """Test DELETE /api/v1/config/limits/symbol/{symbol} endpoint."""
 
     def test_delete_symbol_limits_success(self, client, mock_config_manager):
         """Test successful symbol limits deletion."""
         mock_config_manager.delete_config = AsyncMock(return_value=True)
 
-        response = client.delete("/api/v1/config/config/limits/symbol/BTCUSDT")
+        response = client.delete("/api/v1/config/limits/symbol/BTCUSDT")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -733,7 +733,7 @@ class TestDeleteSymbolLimitsEndpoint:
         """Test symbol limits deletion when not found."""
         mock_config_manager.delete_config = AsyncMock(return_value=False)
 
-        response = client.delete("/api/v1/config/config/limits/symbol/BTCUSDT")
+        response = client.delete("/api/v1/config/limits/symbol/BTCUSDT")
         # The endpoint raises HTTPException which FastAPI converts to 404
         # But if it's caught, it returns 200 with error. Let's check what actually happens
         assert response.status_code in [200, 404]
@@ -746,7 +746,7 @@ class TestDeleteSymbolLimitsEndpoint:
         """Test symbol limits deletion with error."""
         mock_config_manager.delete_config = AsyncMock(side_effect=Exception("DB error"))
 
-        response = client.delete("/api/v1/config/config/limits/symbol/BTCUSDT")
+        response = client.delete("/api/v1/config/limits/symbol/BTCUSDT")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -770,7 +770,7 @@ class TestPositionLimitsEdgeCases:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         # Call with no params - should still work but not update anything
-        response = client.put("/api/v1/config/config/limits/global")
+        response = client.put("/api/v1/config/limits/global")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -790,7 +790,7 @@ class TestPositionLimitsEdgeCases:
         mock_config_manager.set_config = AsyncMock(return_value=(True, config_obj, []))
 
         # Call with no params - should still work but not update anything
-        response = client.put("/api/v1/config/config/limits/symbol/BTCUSDT")
+        response = client.put("/api/v1/config/limits/symbol/BTCUSDT")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -802,7 +802,7 @@ class TestPositionLimitsEdgeCases:
         with patch("shared.constants.SUPPORTED_SYMBOLS", ["BTCUSDT"]):
             mock_config_manager.get_config = AsyncMock(return_value=None)
 
-            response = client.get("/api/v1/config/config/limits")
+            response = client.get("/api/v1/config/limits")
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
@@ -820,7 +820,7 @@ class TestPositionLimitsEdgeCases:
                 side_effect=[global_config, symbol_config]
             )
 
-            response = client.get("/api/v1/config/config/limits")
+            response = client.get("/api/v1/config/limits")
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True

@@ -984,6 +984,104 @@ class TestRetryLogic:
             f"{ticks}/10 ticker iterations completed concurrently"
         )
 
+    async def _assert_concurrent_ticks(self, coro):
+        """Shared helper: run ``coro`` alongside a ticker and assert interleaving.
+
+        #564: same event-loop-starvation regression pattern as #565's tests
+        above, applied to the additional blocking call sites #567 left
+        unwrapped (cancel_algo_order, get_order_status, get_all_open_orders,
+        _get_current_price, _reconcile_4130_against_truth).
+        """
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(10):
+                await asyncio.sleep(0.03)
+                ticks += 1
+
+        ticker_task = asyncio.create_task(ticker())
+        result = await coro
+        await ticker_task
+
+        assert ticks >= 5, (
+            f"event loop appears blocked — only {ticks}/10 ticker iterations "
+            "completed concurrently"
+        )
+        return result
+
+    @pytest.mark.asyncio
+    async def test_cancel_algo_order_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#564 regression: cancel_algo_order must offload the sync REST call.
+
+        This is NakedPositionRemediator's primary cancel path when re-arming
+        SL/TP for divergent positions (up to 17+ in an incident) — the exact
+        call pattern that caused the #565 liveness crash loop before #567,
+        left unwrapped by that fix.
+        """
+        mock_binance_client._request_futures_api = Mock(
+            side_effect=lambda *a, **k: (time.sleep(0.3), {"algoId": 1})[1]
+        )
+        result = await self._assert_concurrent_ticks(
+            binance_exchange.cancel_algo_order(symbol="BTCUSDT", algo_id=1)
+        )
+        assert result["status"] == "CANCELED"
+
+    @pytest.mark.asyncio
+    async def test_get_order_status_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#564 regression: get_order_status must offload the sync REST call.
+
+        Polled per order by the OCO monitor's background loop.
+        """
+        mock_binance_client.futures_get_order = Mock(
+            side_effect=lambda **k: (
+                time.sleep(0.3),
+                {"orderId": 1, "status": "NEW"},
+            )[1]
+        )
+        result = await self._assert_concurrent_ticks(
+            binance_exchange.get_order_status("BTCUSDT", 1)
+        )
+        assert result["status"] == "NEW"
+
+    @pytest.mark.asyncio
+    async def test_get_all_open_orders_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#564 regression: get_all_open_orders must offload the sync REST call.
+
+        Polled by the OCO monitor's background loop.
+        """
+        mock_binance_client.futures_get_open_orders = Mock(
+            side_effect=lambda **k: (time.sleep(0.3), [])[1]
+        )
+        mock_binance_client._request_futures_api = Mock(return_value=[])
+        result = await self._assert_concurrent_ticks(
+            binance_exchange.get_all_open_orders(symbol="BTCUSDT")
+        )
+        assert result == set()
+
+    @pytest.mark.asyncio
+    async def test_get_current_price_does_not_block_event_loop(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#564 regression: _get_current_price must offload the sync REST call.
+
+        Called on every order's notional validation — one of the highest-
+        frequency blocking call sites in the file.
+        """
+        mock_binance_client.futures_symbol_ticker = Mock(
+            side_effect=lambda **k: (time.sleep(0.3), {"price": "100.0"})[1]
+        )
+        result = await self._assert_concurrent_ticks(
+            binance_exchange._get_current_price("BTCUSDT")
+        )
+        assert result == 100.0
+
 
 class TestFallbackLogic:
     """Test fallback logic for cancellation and status checks"""

@@ -108,7 +108,10 @@ class BinanceFuturesExchange:
 
                 # Test connection
                 logger.info("Testing Binance Futures connection...")
-                self.client.futures_ping()
+                # #564: offload sync REST call to a thread so a slow/retrying
+                # ping during startup cannot itself contribute to the
+                # event-loop starvation this init sequence is meant to avoid.
+                await asyncio.to_thread(self.client.futures_ping)
                 logger.info("Binance Futures connection test successful")
 
                 # Load exchange info
@@ -209,7 +212,11 @@ class BinanceFuturesExchange:
             # Get futures exchange information
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            self.exchange_info = self.client.futures_exchange_info()
+            # #564: offload sync REST call to a thread — see get_position_info
+            # for rationale.
+            self.exchange_info = await asyncio.to_thread(
+                self.client.futures_exchange_info
+            )
 
             # Create symbol info lookup
             for symbol_data in self.exchange_info["symbols"]:
@@ -281,7 +288,12 @@ class BinanceFuturesExchange:
         """Get current market price for a symbol"""
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-        ticker = self.client.futures_symbol_ticker(symbol=symbol)
+        # #564: offload sync REST call to a thread — see get_position_info
+        # for rationale. Called on every order's notional validation, so a
+        # slow round-trip here can stack up during a remediation cycle.
+        ticker = await asyncio.to_thread(
+            self.client.futures_symbol_ticker, symbol=symbol
+        )
         return float(ticker["price"])
 
     async def _validate_notional(self, order: TradeOrder, price: float) -> None:
@@ -737,7 +749,15 @@ class BinanceFuturesExchange:
 
         # AC1: standard open orders.
         try:
-            std_orders = self.client.futures_get_open_orders(symbol=symbol) or []
+            # #564: offload sync REST call to a thread — see get_position_info
+            # for rationale. Invoked from the -4130 retry path, which fires
+            # per divergent position during naked-position remediation.
+            std_orders = (
+                await asyncio.to_thread(
+                    self.client.futures_get_open_orders, symbol=symbol
+                )
+                or []
+            )
         except Exception as exc:
             logger.warning(f"4130 reconcile: futures_get_open_orders failed: {exc}")
             std_orders = []
@@ -1745,7 +1765,9 @@ class BinanceFuturesExchange:
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            account_info = self.client.futures_account()
+            # #564: offload sync REST call to a thread — see get_position_info
+            # for rationale.
+            account_info = await asyncio.to_thread(self.client.futures_account)
             return {
                 "maker_commission": account_info.get("makerCommission"),
                 "taker_commission": account_info.get("takerCommission"),
@@ -1770,7 +1792,11 @@ class BinanceFuturesExchange:
         try:
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
-            ticker = self.client.futures_symbol_ticker(symbol=symbol)
+            # #564: offload sync REST call to a thread — see get_position_info
+            # for rationale.
+            ticker = await asyncio.to_thread(
+                self.client.futures_symbol_ticker, symbol=symbol
+            )
             return float(ticker["price"])
         except Exception as e:
             logger.error(f"Failed to get price for {symbol}: {e}")
@@ -1794,8 +1820,13 @@ class BinanceFuturesExchange:
                 raise RuntimeError("Binance Futures client not initialized")
 
             try:
-                result = self.client.futures_cancel_order(
-                    symbol=symbol, orderId=order_id
+                # #564: offload sync REST call to a thread — see
+                # get_position_info for rationale. Cancellation is called
+                # per divergent position from NakedPositionRemediator.
+                result = await asyncio.to_thread(
+                    self.client.futures_cancel_order,
+                    symbol=symbol,
+                    orderId=order_id,
                 )
                 canceled_order_id = result.get("orderId")
                 status = result.get("status")
@@ -1805,7 +1836,8 @@ class BinanceFuturesExchange:
                     logger.info(
                         f"Order {order_id} not found as standard order, attempting algo order cancellation"
                     )
-                    result = self.client._request_futures_api(
+                    result = await asyncio.to_thread(
+                        self.client._request_futures_api,
                         "delete",
                         "algoOrder",
                         signed=True,
@@ -1850,7 +1882,11 @@ class BinanceFuturesExchange:
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
 
-        result = self.client._request_futures_api(
+        # #564: offload sync REST call to a thread — see get_position_info
+        # for rationale. This is the primary cancel path NakedPositionRemediator
+        # uses to re-arm SL/TP per divergent position, up to 17+ in an incident.
+        result = await asyncio.to_thread(
+            self.client._request_futures_api,
             "delete",
             "algoOrder",
             signed=True,
@@ -1875,7 +1911,12 @@ class BinanceFuturesExchange:
                 raise RuntimeError("Binance Futures client not initialized")
 
             try:
-                order = self.client.futures_get_order(symbol=symbol, orderId=order_id)
+                # #564: offload sync REST call to a thread — see
+                # get_position_info for rationale. Called per order by the
+                # OCO monitor's background polling loop.
+                order = await asyncio.to_thread(
+                    self.client.futures_get_order, symbol=symbol, orderId=order_id
+                )
                 order_id_resp = order.get("orderId")
             except BinanceAPIException as e:
                 if e.code in [-2011, -4132]:
@@ -1980,7 +2021,12 @@ class BinanceFuturesExchange:
 
         try:
             # 1. Get standard open orders
-            std_orders = self.client.futures_get_open_orders(symbol=symbol)
+            # #564: offload sync REST call to a thread — see
+            # get_position_info for rationale. Called by OCO monitoring's
+            # periodic background loop.
+            std_orders = await asyncio.to_thread(
+                self.client.futures_get_open_orders, symbol=symbol
+            )
             order_ids = {str(o["orderId"]) for o in std_orders}
 
             # 2. Get algo open orders

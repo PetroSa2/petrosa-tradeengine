@@ -1119,7 +1119,7 @@ async def config_health_check():
 # =============================================================================
 
 
-@router.put("/config/limits/global", response_model=APIResponse)
+@router.put("/limits/global", response_model=APIResponse)
 async def set_global_limits(
     max_position_size: float | None = None,
     max_accumulations: int | None = None,
@@ -1192,7 +1192,7 @@ async def set_global_limits(
         )
 
 
-@router.put("/config/limits/symbol/{symbol}", response_model=APIResponse)
+@router.put("/limits/symbol/{symbol}", response_model=APIResponse)
 async def set_symbol_limits(
     symbol: str,
     max_position_size: float | None = None,
@@ -1268,7 +1268,7 @@ async def set_symbol_limits(
         )
 
 
-@router.get("/config/limits", response_model=APIResponse)
+@router.get("/limits", response_model=APIResponse)
 async def get_all_limits() -> APIResponse:
     """Get all position limits (global and symbol-specific)."""
     try:
@@ -1318,7 +1318,7 @@ async def get_all_limits() -> APIResponse:
         )
 
 
-@router.delete("/config/limits/symbol/{symbol}", response_model=APIResponse)
+@router.delete("/limits/symbol/{symbol}", response_model=APIResponse)
 async def delete_symbol_limits(symbol: str) -> APIResponse:
     """Delete symbol-specific limits (revert to global limits)."""
     try:

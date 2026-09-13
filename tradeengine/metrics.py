@@ -518,6 +518,63 @@ def set_position_reconciler_running(
 
 
 # ============================================================
+# Order-flow / execution-halt observability (#569)
+# ============================================================
+# Per #569: five Grafana alert rules referenced metrics that were never
+# instrumented. Adversarial review (2026-09-13) confirmed the actual gap is
+# three metrics — `oco_orphan_leg_total` (above, #497) was already shipped and
+# is excluded here.
+
+# `orders_total{route_status}` — every order routing decision made by the
+# dispatcher, whether it never reaches the exchange (rejected by a risk check)
+# or is sent to the exchange and resolves to an accepted/error status. This is
+# the metric the "order rejection rate" alert (`petrosa_tradeengine_orders_total
+# {route_status="rejected"} / sum(...) > 0.1`) depends on. `route_status` is a
+# fixed 3-value enum (accepted|rejected|error) — bounded cardinality. `symbol`
+# is capped to actively traded symbols per the ticket's cardinality
+# requirement; `exchange` mirrors the existing order_failures_total dimension.
+orders_total = Counter(
+    "petrosa_tradeengine_orders_total",
+    "Total order routing decisions, labelled by outcome",
+    ["route_status", "symbol", "exchange"],
+)
+
+# `tradeengine_algo_orders_open{symbol}` — currently-open algo (closePosition
+# TP/SL) orders per symbol, refreshed on every algo-order-limit check
+# (position_manager.check_algo_order_limits, called on every order attempt).
+# Backs the "algo-order accumulation" (critical) and "near per-symbol limit"
+# (warning) alerts. `symbol` is the only label and is bounded to actively
+# traded symbols.
+algo_orders_open = Gauge(
+    "tradeengine_algo_orders_open",
+    "Currently-open algo (closePosition TP/SL) orders per symbol",
+    ["symbol"],
+)
+
+# `execution_halt_active` — backs the "TradeEngine in execution halt mode"
+# alert. Per #569's AC, a decision was required on whether this is the same
+# concept as the existing `tradeengine_restricted_mode_status` gauge.
+#
+# DECISION (recorded here, not just on the issue): they are NOT the same.
+# `restricted_mode_status` (heartbeat_monitor.py) reflects the NATS-heartbeat
+# fail-safe — CIO stopped heartbeating, so TradeEngine falls back to
+# conservative `FAIL_SAFE_PARAMETERS` but keeps trading. `execution_halt_active`
+# reflects `HaltSuspectedDetector` (services/halt_suspected_detector.py, #419):
+# a burst/duration of `source="balance"` rejections with no successful order in
+# between — the exact silent-9-hour-halt pattern from #404/#406, where the
+# service is up, heartbeating normally, and NOT restricted, but every order is
+# failing. The two gauges can be independently 0/1 in all four combinations, so
+# aliasing one to the other would hide real incidents. Implemented (not
+# rewritten-as-alias): the gauge mirrors `HaltSuspectedDetector.is_halt_active`.
+execution_halt_active = Gauge(
+    "petrosa_tradeengine_execution_halt_active",
+    "1 when HaltSuspectedDetector has an active halt_suspected condition "
+    "(sustained balance-rejection burst with no successful order), else 0. "
+    "NOT the same signal as tradeengine_restricted_mode_status — see #569.",
+)
+
+
+# ============================================================
 # OTel SDK instruments (dual-export — OTLP push to Grafana Alloy)
 # ============================================================
 # Per #415: registered ALONGSIDE the prometheus_client instruments above (the
@@ -620,4 +677,22 @@ otel_oco_pair_age_seconds = meter.create_gauge(
     "petrosa_tradeengine_oco_pair_age_seconds",
     description="Age in seconds of each active OCO pair (time since it entered active_oco_pairs) (OTLP dual-export)",
     unit="s",
+)
+
+# #569 — order-flow / execution-halt observability (OTLP dual-export).
+# Mirrors the prometheus_client instruments above; names match 1:1 for
+# cross-system correlation in Grafana.
+otel_orders_total = meter.create_counter(
+    "petrosa_tradeengine_orders_total",
+    description="Total order routing decisions, labelled by outcome (OTLP dual-export)",
+)
+
+otel_algo_orders_open = meter.create_gauge(
+    "tradeengine_algo_orders_open",
+    description="Currently-open algo (closePosition TP/SL) orders per symbol (OTLP dual-export)",
+)
+
+otel_execution_halt_active = meter.create_gauge(
+    "petrosa_tradeengine_execution_halt_active",
+    description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
 )

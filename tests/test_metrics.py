@@ -617,3 +617,53 @@ class TestBusinessMetrics:
         from prometheus_client import Gauge
 
         assert isinstance(order_success_rate, Gauge)
+
+
+class TestOrderFlowExecutionHaltMetrics:
+    """#569: orders_total, algo_orders_open, execution_halt_active."""
+
+    def test_orders_total_exists_and_is_counter(self):
+        from prometheus_client import Counter
+
+        from tradeengine.metrics import orders_total
+
+        assert orders_total is not None
+        assert isinstance(orders_total, Counter)
+        assert orders_total._name == "petrosa_tradeengine_orders"
+
+    def test_orders_total_labels_include_route_status(self):
+        from tradeengine.metrics import orders_total
+
+        assert set(orders_total._labelnames) == {"route_status", "symbol", "exchange"}
+
+    def test_algo_orders_open_exists_and_is_gauge(self):
+        from prometheus_client import Gauge
+
+        from tradeengine.metrics import algo_orders_open
+
+        assert algo_orders_open is not None
+        assert isinstance(algo_orders_open, Gauge)
+        assert algo_orders_open._name == "tradeengine_algo_orders_open"
+        assert set(algo_orders_open._labelnames) == {"symbol"}
+
+    def test_execution_halt_active_exists_and_is_gauge(self):
+        from prometheus_client import Gauge
+
+        from tradeengine.metrics import execution_halt_active
+
+        assert execution_halt_active is not None
+        assert isinstance(execution_halt_active, Gauge)
+        assert (
+            execution_halt_active._name == "petrosa_tradeengine_execution_halt_active"
+        )
+
+    def test_otel_dual_export_instruments_exist(self):
+        from tradeengine.metrics import (
+            otel_algo_orders_open,
+            otel_execution_halt_active,
+            otel_orders_total,
+        )
+
+        assert otel_orders_total is not None
+        assert otel_algo_orders_open is not None
+        assert otel_execution_halt_active is not None

@@ -26,8 +26,10 @@ from shared.constants import (
 from shared.mysql_client import position_client
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
+    algo_orders_open,
     current_position_size,
     exchange_truth_shadow_delta_total,
+    otel_algo_orders_open,
     position_commission_usd,
     position_duration_seconds,
     position_entry_price,
@@ -1143,6 +1145,11 @@ class PositionManager:
             # filled or cancelled orders are never included in this count.
             algo_orders = await self.exchange.get_open_algo_orders(symbol=order.symbol)
             open_count = len(algo_orders)
+            # #569: refresh the open-algo-orders gauge on every check (i.e. on
+            # every order attempt) so it reflects current exchange state.
+            # symbol-labelled only — bounded to actively traded symbols.
+            algo_orders_open.labels(symbol=order.symbol).set(open_count)
+            otel_algo_orders_open.set(open_count, {"symbol": order.symbol})
             if open_count >= 9:  # Need 2 free slots for a new OCO pair (SL + TP)
                 logger.warning(
                     f"⛔ RISK REJECTION: Algo order limit reached for {order.symbol} "

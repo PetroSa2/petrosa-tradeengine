@@ -4,7 +4,12 @@ import pytest
 
 from contracts.order import TradeOrder
 from shared.constants import UTC
+from tradeengine.metrics import algo_orders_open
 from tradeengine.position_manager import PositionManager
+
+
+def _algo_gauge_value(symbol: str) -> float:
+    return algo_orders_open.labels(symbol=symbol)._value.get()
 
 
 @pytest.fixture
@@ -40,6 +45,7 @@ async def test_check_algo_order_limits_within_limit(position_manager, mock_excha
     result = await position_manager.check_algo_order_limits(order)
     assert result is True
     assert mock_exchange.get_open_algo_orders.call_count == 2
+    assert _algo_gauge_value("BTCUSDT") == 0
 
 
 @pytest.mark.asyncio
@@ -58,6 +64,7 @@ async def test_check_algo_order_limits_symbol_exceeded(position_manager, mock_ex
     assert result is False
     # Account check should NOT be called if symbol check fails
     assert mock_exchange.get_open_algo_orders.call_count == 1
+    assert _algo_gauge_value("BTCUSDT") == 9
 
 
 @pytest.mark.asyncio

@@ -32,7 +32,9 @@ from tradeengine.metrics import (
     order_failures_total,
     order_placement_skipped_total,
     orders_executed_by_type,
+    orders_total,
     otel_oco_pair_age_seconds,
+    otel_orders_total,
     risk_checks_total,
     risk_rejections_total,
     strategy_close_blocked_no_exchange_position_total,
@@ -93,6 +95,25 @@ signals_duplicate = Counter(
 
 # OpenTelemetry tracer for business context spans
 tracer = trace.get_tracer(__name__)
+
+
+def _record_orders_total(route_status: str, symbol: str, exchange: str) -> None:
+    """Record one order routing decision (#569).
+
+    `route_status` is a fixed, bounded enum: "accepted" (reached the exchange
+    and did not error), "rejected" (never reached the exchange — a risk check
+    stopped it, or the exchange itself rejected/cancelled it), or "error" (an
+    exception was raised during exchange execution). Called from every exit
+    point of the routing decision: the risk-check early-returns in
+    `_execute_order_with_consensus` and the terminal status classification in
+    `execute_order` (also reachable directly from the manual-order API path).
+    """
+    orders_total.labels(
+        route_status=route_status, symbol=symbol, exchange=exchange
+    ).inc()
+    otel_orders_total.add(
+        1, {"route_status": route_status, "symbol": symbol, "exchange": exchange}
+    )
 
 
 class OCOManager:
@@ -2756,6 +2777,7 @@ class Dispatcher:
                     event_type="rejected",
                     reason=pm_reason,
                 )
+                _record_orders_total("rejected", order.symbol, order.exchange)
                 return {
                     "status": "rejected",
                     "reason": pm_reason,
@@ -2801,6 +2823,7 @@ class Dispatcher:
                     event_type="rejected",
                     reason="daily_loss_limits_exceeded",
                 )
+                _record_orders_total("rejected", order.symbol, order.exchange)
                 return {
                     "status": "rejected",
                     "reason": "daily_loss_limits_exceeded",
@@ -2885,6 +2908,7 @@ class Dispatcher:
                     event_type="rejected",
                     reason=_lb_reason[:128],
                 )
+                _record_orders_total("rejected", order.symbol, order.exchange)
                 return {
                     "status": "rejected",
                     "reason": _lb_reason,
@@ -3772,6 +3796,19 @@ class Dispatcher:
                         exchange=order.exchange,
                     ).inc()
 
+                # #569: record the terminal routing decision. "error" ==
+                # exchange raised/returned an error status; "rejected" ==
+                # exchange rejected/cancelled the order; anything else
+                # (filled/partial/new/pending/accepted/open/working) counts
+                # as "accepted" — the order reached and was taken by the
+                # exchange (or simulator).
+                if order_status == "error":
+                    _record_orders_total("error", order.symbol, order.exchange)
+                elif order_status in ("rejected", "cancelled", "canceled"):
+                    _record_orders_total("rejected", order.symbol, order.exchange)
+                else:
+                    _record_orders_total("accepted", order.symbol, order.exchange)
+
                 # Update span with execution result
                 span.set_attribute("order.status", result.get("status", "unknown"))
                 if result.get("order_id"):
@@ -3847,6 +3884,7 @@ class Dispatcher:
                     event_type="rejected",
                     reason=f"order_execution_exception: {str(e)[:80]}",
                 )
+                _record_orders_total("error", order.symbol, order.exchange)
                 return {"status": "error", "error": str(e)}
 
     def _register_pending_fill_signal(

@@ -22,6 +22,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from shared.constants import UTC
+from tradeengine.metrics import execution_halt_active, otel_execution_halt_active
 from tradeengine.services.alert_publisher import alert_publisher
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,10 @@ class HaltSuspectedDetector:
             "detected_at": now.astimezone(UTC).isoformat(),
         }
         self._halt_active = True
+        # #569: mirror the in-process boolean onto the Prometheus/OTel gauge
+        # that backs the "TradeEngine in execution halt mode" alert.
+        execution_halt_active.set(1)
+        otel_execution_halt_active.set(1)
         try:
             await self._publisher.publish(
                 alert_name="halt_suspected",
@@ -185,6 +190,8 @@ class HaltSuspectedDetector:
         if not self._halt_active:
             return
         self._halt_active = False
+        execution_halt_active.set(0)
+        otel_execution_halt_active.set(0)
         payload = {
             "cleared_at": now.astimezone(UTC).isoformat(),
         }

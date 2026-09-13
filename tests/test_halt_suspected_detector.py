@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from shared.constants import UTC
+from tradeengine.metrics import execution_halt_active
 from tradeengine.services.halt_suspected_detector import HaltSuspectedDetector
+
+
+def _halt_gauge_value() -> float:
+    """Read the current value of the unlabeled execution_halt_active Gauge."""
+    return execution_halt_active._value.get()
 
 
 class _StubPublisher:
@@ -84,6 +90,7 @@ async def test_emit_when_count_threshold_exceeded_within_window():
     assert payload["rejected_count"] == 11
     assert payload["last_10_decision_ids"] == [f"d-{i}" for i in range(1, 11)]
     assert detector.is_halt_active is True
+    assert _halt_gauge_value() == 1
 
 
 @pytest.mark.asyncio
@@ -130,6 +137,7 @@ async def test_non_balance_completion_clears_halt_state():
     assert cleared_calls[0]["severity"] == "info"
     assert detector.is_halt_active is False
     assert detector.tracked_rejection_count == 0
+    assert _halt_gauge_value() == 0
 
 
 @pytest.mark.asyncio

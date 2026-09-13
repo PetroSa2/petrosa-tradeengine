@@ -26,6 +26,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
+from tradeengine.metrics import orders_total
+
+
+def _orders_total_count(route_status: str, symbol: str, exchange: str) -> float:
+    return orders_total.labels(
+        route_status=route_status, symbol=symbol, exchange=exchange
+    )._value.get()
 
 
 def _bare_order(**overrides) -> TradeOrder:
@@ -158,12 +165,15 @@ async def test_position_limits_reject_marks_and_emits(
     d = _make_dispatcher_under_test()
     d.position_manager.rejection_reason = pm_reason
     order = _bare_order()
+    before = _orders_total_count("rejected", order.symbol, order.exchange)
 
     result = await d._execute_order_with_consensus(order)
 
     assert result["status"] == "rejected"
     assert result["reason"] == pm_reason
     assert result["rejection_source"] == expected_source
+    # #569: every risk-check rejection is a routing decision.
+    assert _orders_total_count("rejected", order.symbol, order.exchange) == before + 1
     assert order.rejection_source == expected_source
     assert order.rejection_reason == pm_reason
     assert order.rejected_at is not None
@@ -184,6 +194,7 @@ async def test_daily_loss_reject_marks_and_emits() -> None:
     d.position_manager.check_position_limits = AsyncMock(return_value=True)
     d.position_manager.check_daily_loss_limits = AsyncMock(return_value=False)
     order = _bare_order()
+    before = _orders_total_count("rejected", order.symbol, order.exchange)
 
     result = await d._execute_order_with_consensus(order)
 
@@ -193,6 +204,7 @@ async def test_daily_loss_reject_marks_and_emits() -> None:
     assert order.rejection_source == "risk_check"
     assert order.rejection_reason == "daily_loss_limits_exceeded"
     assert order.status == OrderStatus.REJECTED
+    assert _orders_total_count("rejected", order.symbol, order.exchange) == before + 1
 
 
 # ----------------------------------------------------------------------

@@ -20,6 +20,11 @@ jobs:
       image-name: 'yurisa2/petrosa-tradeengine'
       python-version: '3.11'
       skip-docker-build: true
+      # Explicit per-repo floor (petrosa_k8s#1052 epic step 5 / #575). Measured
+      # coverage is 75% (quality-baseline-2026-09.md §1), far above the
+      # shared-workflow default of 40 — per the socket-client precedent
+      # (petrosa-socket-client#136 / PR #140), pin the canonical Golden
+      # Standard floor of 40 explicitly instead of a narrower ratchet.
       coverage-threshold: '40'
       pytest-extra-args: >-  # yamllint disable-line rule:line-length
         --ignore=tests/test_api.py

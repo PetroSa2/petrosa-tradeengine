@@ -20,8 +20,10 @@ The ``connected`` attribute is preserved for backwards compatibility (some
 tests still patch it) but is no longer consulted by any gate. It mirrors
 ``is_persistent`` so the value remains truthful.
 
-A separate MySQL audit logger lives in :mod:`shared.logger`; do not conflate
-the two.
+A dead, never-imported MySQL-backed `AuditLogger` used to live in
+:mod:`shared.logger` alongside this stub; it was removed (see #583) since it
+never opened a connection in production. If persistent audit is ever wanted,
+it must go through the data-manager gateway, not a direct MySQL pool.
 """
 
 import logging

@@ -25,6 +25,7 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamC
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
+    close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
     oco_cancel_retry_exhausted_total,
     oco_pair_age_seconds,
@@ -5181,31 +5182,41 @@ class Dispatcher:
         if not raw:
             return 0.0
         target_side = (position_side or "").upper()
-        for pos in raw:
-            if pos.get("symbol") != symbol:
-                continue
-            side = str(pos.get("positionSide", "BOTH")).upper()
-            try:
-                raw_amt = float(pos.get("positionAmt", 0))
-            except (TypeError, ValueError):
-                continue
-            # ONE-WAY mode returns positionSide="BOTH"; derive the effective
-            # side from the sign of positionAmt (matches position_reconciler's
-            # _normalise_side). A LONG rollback against a BOTH row with
-            # negative positionAmt would otherwise send a sell reduceOnly on
-            # the wrong direction.
-            if side == "BOTH":
-                if raw_amt == 0:
+        try:
+            for pos in raw:
+                if pos.get("symbol") != symbol:
                     continue
-                effective_side = "LONG" if raw_amt > 0 else "SHORT"
-                if target_side and effective_side != target_side:
+                side = str(pos.get("positionSide", "BOTH")).upper()
+                try:
+                    raw_amt = float(pos.get("positionAmt", 0))
+                except (TypeError, ValueError):
                     continue
-            elif side in ("LONG", "SHORT"):
-                if target_side and side != target_side:
-                    continue
-            qty = abs(raw_amt)
-            if qty > 0:
-                return qty
+                # ONE-WAY mode returns positionSide="BOTH"; derive the effective
+                # side from the sign of positionAmt (matches position_reconciler's
+                # _normalise_side). A LONG rollback against a BOTH row with
+                # negative positionAmt would otherwise send a sell reduceOnly on
+                # the wrong direction.
+                if side == "BOTH":
+                    if raw_amt == 0:
+                        continue
+                    effective_side = "LONG" if raw_amt > 0 else "SHORT"
+                    if target_side and effective_side != target_side:
+                        continue
+                elif side in ("LONG", "SHORT"):
+                    if target_side and side != target_side:
+                        continue
+                qty = abs(raw_amt)
+                if qty > 0:
+                    return qty
+        except TypeError:
+            # #586 hardening: honor this method's "never raises" contract even
+            # when ``raw`` is a truthy-but-non-iterable value (e.g. a
+            # misconfigured mock, or an unexpected exchange response shape).
+            self.logger.warning(
+                "get_position_info() returned a non-iterable payload for %s",
+                symbol,
+            )
+            return 0.0
         return 0.0
 
     async def _exchange_position_presence(
@@ -5322,6 +5333,84 @@ class Dispatcher:
                 }
             # Record the allowed close so it counts toward the window.
             self.thrash_breaker.record_close(symbol, cio_audited=cio_audited)
+
+            # Step 1d (#586): clamp the requested closing quantity to the live
+            # Binance positionAmt before emission. In hedge mode Binance drops
+            # ``reduceOnly`` from the wire request whenever ``positionSide``
+            # is set (the API rejects the combination — see #547/#586
+            # investigation), so side+positionSide only fixes *direction* —
+            # the exchange applies NO server-side cap on the closing
+            # quantity. A stale or duplicate ``quantity`` (e.g. two
+            # independent close triggers racing on the same position, or a
+            # delayed close firing after the position was already partially
+            # reduced elsewhere) would otherwise overshoot the live position
+            # and flip its sign — the exact un-armable "malformed position"
+            # terminal state #547 documents. Gated by the same
+            # TE_CLOSE_GUARD_ENABLED flag as the presence check above (an
+            # operator disabling the close-guard disables both together).
+            #
+            # A confident live quantity is required to act: the
+            # ExchangeTruthStore (when ready) is authoritative and a
+            # confident 0 there means "skip, truly flat". The REST fallback
+            # (`_fetch_binance_position_qty`) is ambiguous at 0 by its own
+            # documented contract (absent-vs-lookup-failed) so a REST 0 is
+            # treated as UNKNOWN here — same "unknown must not block a
+            # legitimate close" rule `_exchange_position_presence` already
+            # applies (#481 AC3). Only a confident reading ever clamps or
+            # skips; on unknown, the pre-clamp `quantity` is used unchanged.
+            if os.getenv("TE_CLOSE_GUARD_ENABLED", "1") == "1":
+                live_qty: float | None = None
+                store = getattr(
+                    getattr(self, "user_data_consumer", None), "store", None
+                )
+                if store is not None and getattr(store, "is_ready", False):
+                    snap = store.get_positions().get((symbol, position_side))
+                    live_qty = abs(snap.quantity) if snap is not None else 0.0
+                else:
+                    rest_qty = await self._fetch_binance_position_qty(
+                        symbol, position_side
+                    )
+                    live_qty = rest_qty if rest_qty > 0 else None
+
+                if live_qty is not None:
+                    if live_qty <= 0:
+                        self.logger.warning(
+                            "⛔ CLOSE SKIPPED (#586): live Binance %s position "
+                            "for %s is confidently flat — refusing to emit a "
+                            "close that would overshoot into a sign-inverted "
+                            "position (requested qty=%s, reason=%s).",
+                            position_side,
+                            symbol,
+                            quantity,
+                            reason,
+                        )
+                        close_qty_clamped_total.labels(
+                            symbol=symbol,
+                            side=position_side,
+                            outcome="skipped_flat",
+                        ).inc()
+                        return {
+                            "position_closed": False,
+                            "oco_cancelled": oco_cancelled,
+                            "close_result": None,
+                            "status": "skipped_flat_position",
+                        }
+                    if quantity > live_qty:
+                        self.logger.warning(
+                            "⚠️ CLOSE QTY CLAMPED (#586): requested %s > live "
+                            "Binance %s %s positionAmt %s — clamping to live "
+                            "qty to prevent sign-inversion overshoot "
+                            "(reason=%s).",
+                            quantity,
+                            symbol,
+                            position_side,
+                            live_qty,
+                            reason,
+                        )
+                        close_qty_clamped_total.labels(
+                            symbol=symbol, side=position_side, outcome="clamped"
+                        ).inc()
+                        quantity = live_qty
 
             # Step 2: Close the position
             position_closed = False

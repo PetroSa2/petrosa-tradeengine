@@ -10,6 +10,10 @@ Covers the emission-time defenses added to
   ExchangeTruthStore does NOT block (avoids suppressing a legitimate close).
 - AC5: repeated un-audited closes on the same symbol trip the circuit-breaker
   and increment ``dispatcher_thrash_circuit_open_total``; audited closes flow.
+- #586: a requested closing quantity larger than the live Binance position is
+  clamped (never overshoots into a sign-inverted "malformed position");
+  a confidently-flat live position skips the close outright; an unknown live
+  reading (store not ready, REST lookup ambiguous) does not block or clamp.
 """
 
 from __future__ import annotations
@@ -205,3 +209,178 @@ async def test_ac5_audited_closes_bypass_circuit() -> None:
             cio_audited=True,
         )
         assert result["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# #586 — close-quantity clamp against the live Binance position
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_586_oversized_close_is_clamped_to_live_qty() -> None:
+    """A stale/duplicate close requesting more than the live position size
+    must be clamped to the live |positionAmt| — never overshoot into a
+    sign-inverted (malformed) position."""
+    positions = {
+        ("LTCUSDT", "LONG"): PositionSnapshot(
+            symbol="LTCUSDT",
+            side="LONG",
+            quantity=0.303,
+            entry_price=47.99,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+
+    # Caller requests closing MORE than the live position holds (e.g. a
+    # racing second close trigger computed from a stale snapshot).
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="LTCUSDT",
+        position_side="LONG",
+        quantity=0.5,
+        reason="racing_close_trigger",
+    )
+
+    assert result["status"] == "success"
+    disp.exchange.execute.assert_called_once()
+    placed_order = disp.exchange.execute.call_args[0][0]
+    # The order sent to the exchange must be clamped to the live qty, never
+    # the oversized requested amount — this is what prevents the sign flip.
+    assert placed_order.amount == pytest.approx(0.303)
+
+
+@pytest.mark.asyncio
+async def test_586_confidently_flat_position_skips_close() -> None:
+    """A store-confirmed-flat (symbol, side) must refuse the close outright
+    rather than let an oversized MARKET order flip the position's sign.
+
+    The pre-existing #481 AC3 presence check (step 1b) already catches this
+    exact case for a store-ready lookup — the #586 clamp's own
+    ``skipped_flat_position`` branch is defense-in-depth for a live_qty of
+    literally 0 that somehow survives the presence check. Either way, no
+    close order may ever reach the exchange."""
+    # Store is ready but holds no row for (LTCUSDT, LONG) at all — the
+    # confident-empty case.
+    disp = _dispatcher_with_positions({})
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="LTCUSDT",
+        position_side="LONG",
+        quantity=0.303,
+        reason="stale_close_after_already_flat",
+    )
+
+    assert result["status"] == "skipped_no_exchange_position"
+    assert result["position_closed"] is False
+    disp.exchange.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_586_exact_match_is_not_clamped() -> None:
+    """Requesting exactly the live quantity must pass through unchanged."""
+    positions = {
+        ("LTCUSDT", "LONG"): PositionSnapshot(
+            symbol="LTCUSDT",
+            side="LONG",
+            quantity=0.303,
+            entry_price=47.99,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="LTCUSDT",
+        position_side="LONG",
+        quantity=0.303,
+        reason="tp_triggered",
+    )
+
+    assert result["status"] == "success"
+    placed_order = disp.exchange.execute.call_args[0][0]
+    assert placed_order.amount == pytest.approx(0.303)
+
+
+@pytest.mark.asyncio
+async def test_586_malformed_negative_quantity_snapshot_clamped_by_abs() -> None:
+    """A malformed LONG row (negative stored quantity, mirroring the raw
+    Binance positionAmt sign inversion #586 describes) must still clamp by
+    absolute value rather than skip or pass through a negative live_qty."""
+    positions = {
+        ("LTCUSDT", "LONG"): PositionSnapshot(
+            symbol="LTCUSDT",
+            side="LONG",
+            quantity=-0.303,  # inverted sign, as stored by the WS consumer
+            entry_price=47.99,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="LTCUSDT",
+        position_side="LONG",
+        quantity=1.0,
+        reason="malformed_position",
+    )
+
+    assert result["status"] == "success"
+    placed_order = disp.exchange.execute.call_args[0][0]
+    assert placed_order.amount == pytest.approx(0.303)
+
+
+@pytest.mark.asyncio
+async def test_586_unknown_live_qty_does_not_clamp_or_block() -> None:
+    """Store not ready AND REST lookup ambiguous (returns 0) must be treated
+    as UNKNOWN — never confidently 'flat' — so a legitimate close is not
+    suppressed (mirrors the #481 AC3 "unknown must not block" rule)."""
+    disp = _dispatcher_with_positions(None, store_ready=False)
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="ETHUSDT",
+        position_side="LONG",
+        quantity=1.0,
+        reason="manual",
+    )
+
+    assert result["status"] == "success"
+    placed_order = disp.exchange.execute.call_args[0][0]
+    # Unclamped: the pre-clamp requested quantity passed through unchanged.
+    assert placed_order.amount == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_586_clamp_disabled_by_close_guard_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TE_CLOSE_GUARD_ENABLED=0 disables the #586 clamp along with the #481
+    presence check — a single operator override switch for both."""
+    monkeypatch.setenv("TE_CLOSE_GUARD_ENABLED", "0")
+    positions = {
+        ("LTCUSDT", "LONG"): PositionSnapshot(
+            symbol="LTCUSDT",
+            side="LONG",
+            quantity=0.303,
+            entry_price=47.99,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="LTCUSDT",
+        position_side="LONG",
+        quantity=5.0,  # grossly oversized
+        reason="manual",
+    )
+
+    assert result["status"] == "success"
+    placed_order = disp.exchange.execute.call_args[0][0]
+    # Flag off -> no clamp applied, oversized quantity ships as-is.
+    assert placed_order.amount == pytest.approx(5.0)

@@ -8,6 +8,7 @@ https://github.com/PetroSa2/petrosa-tradeengine/issues/442
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -222,6 +223,78 @@ async def test_health_check_reports_healthy_when_connected(mgr):
 
 
 @pytest.mark.asyncio
+async def test_health_check_reads_cached_leader_info_without_live_query(mgr):
+    """#588: health_check() must never query MongoDB for leader_info inline —
+    it reads the background-refreshed ``_cached_leader_info`` snapshot.
+
+    Proves the fix for the intermittent readiness-probe timeout: a single
+    ``find_one`` against ``leader_election`` was empirically observed taking
+    up to ~14s against the shared Atlas cluster, blowing the 5.0s /ready
+    budget even though the query never raised. ``health_check()`` must
+    return instantly regardless of how slow (or hung) a live query would be.
+    """
+
+    fake_client, fake_db = _make_fake_mongo_db()
+    mgr.mongodb_client = fake_client
+    mgr.mongodb_db = fake_db
+
+    # A live query would hang forever if ever awaited by health_check().
+    hung_find_one = AsyncMock(
+        side_effect=asyncio.CancelledError("should never be called")
+    )
+    leader_election = AsyncMock()
+    leader_election.find_one = hung_find_one
+    fake_db.leader_election = leader_election
+
+    mgr._cached_leader_info = {
+        "leader_pod_id": "petrosa-tradeengine-other-pod",
+        "status": "leader",
+        "last_heartbeat": "2026-09-16T09:00:00+00:00",
+        "is_current_leader": False,
+        "current_pod_id": mgr.pod_id,
+        "elected_at": "2026-09-16T07:00:00+00:00",
+    }
+
+    health = await asyncio.wait_for(mgr.health_check(), timeout=0.5)
+
+    hung_find_one.assert_not_called()
+    assert health["status"] == "healthy"
+    assert health["leader_info"] == mgr._cached_leader_info
+
+
+@pytest.mark.asyncio
+async def test_leader_info_refresh_loop_populates_cache_from_live_query(mgr):
+    """#588: the background refresh loop is what keeps ``_cached_leader_info``
+    fresh — one iteration should populate the cache from ``get_leader_info()``
+    and then sleep, without ``health_check()`` ever needing to query itself."""
+
+    fake_client, fake_db = _make_fake_mongo_db()
+    mgr.mongodb_client = fake_client
+    mgr.mongodb_db = fake_db
+
+    leader_doc = {
+        "pod_id": "petrosa-tradeengine-leader-pod",
+        "status": "leader",
+        "last_heartbeat": None,
+        "elected_at": None,
+    }
+    leader_election = AsyncMock()
+    leader_election.find_one = AsyncMock(return_value=leader_doc)
+    fake_db.leader_election = leader_election
+
+    # Make the loop's sleep raise immediately after the first refresh so the
+    # background task exits after exactly one iteration.
+    with patch.object(
+        dl_module.asyncio, "sleep", new=AsyncMock(side_effect=asyncio.CancelledError)
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await mgr._leader_info_refresh_loop()
+
+    assert mgr._cached_leader_info["leader_pod_id"] == "petrosa-tradeengine-leader-pod"
+    assert mgr._cached_leader_info["status"] == "leader"
+
+
+@pytest.mark.asyncio
 async def test_lock_init_failed_counter_increments_on_failure(mgr):
     """AC2: lock_init_failed_total fires on every ``_initialize_mongodb``
     failure so operators can alert on a silent trading-halt. Exercises the
@@ -272,6 +345,15 @@ async def test_initialize_does_not_raise_when_mongo_unavailable(mgr):
             await mgr.lock_cleanup_task
         except BaseException:
             # CancelledError inherits from BaseException in 3.8+; swallow it.
+            pass
+
+    # #588: also cancel the leader-info cache refresh task spawned by
+    # initialize() so the test doesn't leak it.
+    if mgr._leader_info_refresh_task is not None:
+        mgr._leader_info_refresh_task.cancel()
+        try:
+            await mgr._leader_info_refresh_task
+        except BaseException:
             pass
 
     # Health correctly reflects the degraded state.

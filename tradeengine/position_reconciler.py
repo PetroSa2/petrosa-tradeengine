@@ -70,6 +70,22 @@ hedge_mode_mismatch = Gauge(
     "0 when confirmed matching or verification is inconclusive",
 )
 
+# #587: independent count-level check. detect_divergences() already compares
+# per-(symbol,side) rows between `binance_positions` and
+# `position_manager.get_positions()` — but when TE_EXCHANGE_TRUTH_STORE_ENABLED
+# is "on", get_positions() itself already returns exchange-sourced snapshots,
+# so that comparison can read "clean" even while the raw local audit journal
+# (`position_manager.positions`, which feeds any code path that still reads
+# it directly instead of through the accessor) has drifted arbitrarily far
+# from exchange truth — exactly the class of bug behind #587 (13 vs 1).
+raw_journal_count_mismatch = Gauge(
+    "tradeengine_raw_journal_count_mismatch",
+    "1 when len(position_manager.positions) (raw local audit journal) "
+    "differs from what position_manager.get_positions() reports (the "
+    "exchange-authoritative accessor when TE_EXCHANGE_TRUTH_STORE_ENABLED=on), "
+    "0 when they agree (#587)",
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -199,6 +215,53 @@ def _is_malformed_sign(side: str, position_amt: float) -> bool:
     if side == "SHORT":
         return position_amt > 0
     return False
+
+
+def detect_count_divergence(
+    raw_journal_positions: dict[tuple[str, str], dict[str, Any]],
+    accessor_positions: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any] | None:
+    """#587: flag a *count* mismatch between the raw local audit journal
+    (``position_manager.positions``, read directly) and whatever
+    ``position_manager.get_positions()`` currently returns.
+
+    This is deliberately independent of :func:`detect_divergences`, which
+    compares ``binance_positions`` against the *accessor's* output
+    (``get_positions()``) — that comparison is already exchange-vs-exchange
+    (and reads clean) once ``TE_EXCHANGE_TRUTH_STORE_ENABLED=on``, so it
+    cannot see drift in the raw journal itself. #587's root cause was
+    exactly this: ``/state`` read ``position_manager.positions`` directly
+    (13 stale entries) while ``/positions`` read ``get_positions()`` (1
+    exchange-authoritative entry) — two call sites, two different counts,
+    with no per-symbol divergence ever raised because neither compared the
+    raw journal against the accessor. This check closes that gap so any
+    future direct read of ``.positions`` is monitored against the
+    accessor's view, regardless of which flag mode is active.
+
+    Returns a single structured divergence record when the counts differ,
+    else ``None``.
+    """
+    raw_count = sum(
+        1
+        for pos in raw_journal_positions.values()
+        if float(pos.get("quantity", pos.get("amount", 0)) or 0) != 0
+    )
+    accessor_count = len(accessor_positions)
+    if raw_count == accessor_count:
+        return None
+    return {
+        "category": "raw_journal_count_mismatch",
+        "symbol": "ALL",
+        "side": "ALL",
+        "binance_qty": float(accessor_count),
+        "local_qty": float(raw_count),
+        "detail": (
+            f"Raw local position journal has {raw_count} non-zero entries but "
+            f"position_manager.get_positions() (the exchange-authoritative "
+            f"accessor when enabled) reports {accessor_count} — any code path "
+            "still reading .positions directly may report a stale count (#587)"
+        ),
+    }
 
 
 def detect_unhedged_positions(
@@ -427,6 +490,18 @@ class PositionReconciler:
         local_positions = self._position_manager.get_positions()
 
         divergences = detect_divergences(binance_positions, local_positions)
+
+        # #587: independent count-level check against the raw local audit
+        # journal (see detect_count_divergence docstring for why this is not
+        # redundant with detect_divergences above).
+        count_divergence = detect_count_divergence(
+            self._position_manager.positions, local_positions
+        )
+        if count_divergence is not None:
+            divergences.append(count_divergence)
+            raw_journal_count_mismatch.set(1)
+        else:
+            raw_journal_count_mismatch.set(0)
 
         # AC5 of #424: also detect positions on Binance with no matching
         # reduceOnly SL+TP orders. Fetch open algo orders per unique

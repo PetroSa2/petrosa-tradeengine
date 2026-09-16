@@ -1280,7 +1280,18 @@ class PositionManager:
     def get_cio_portfolio_summary(self, symbol: str) -> dict[str, Any]:
         """
         Calculates real-time portfolio metrics for the CIO reasoning loop.
-        Pulling ground-truth data from the live positions dictionary.
+
+        #587: sources positions via ``get_positions()`` rather than the raw
+        ``self.positions`` journal dict, so this mirrors exactly what
+        ``/positions`` returns. When TE_EXCHANGE_TRUTH_STORE_ENABLED=on,
+        ``get_positions()`` returns exchange-authoritative snapshots —
+        before this fix, ``/state``'s ``open_positions_count`` read the
+        local audit journal directly and could diverge from exchange truth
+        (e.g. stale entries never pruned on close), while ``/positions``
+        (via ``get_positions()``) already reported the exchange-
+        authoritative count. Using the same accessor here makes both
+        endpoints agree by construction instead of patching the count
+        independently.
         """
         total_value = self.total_portfolio_value
         if total_value <= 0:
@@ -1294,7 +1305,7 @@ class PositionManager:
         same_asset_value = 0.0
         open_count = 0
 
-        for key, pos in self.positions.items():
+        for key, pos in self.get_positions().items():
             qty = pos.get("quantity", 0.0)
             if qty != 0:
                 open_count += 1

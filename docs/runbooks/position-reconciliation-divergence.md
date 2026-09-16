@@ -24,6 +24,7 @@ This is a **read-only** detector — it does not close, re-open, or modify any p
 | `untracked` | Binance has a non-zero position; local tracker is empty | Crash-loop wiped the position tracker (#402) or a manual trade was placed outside TradeEngine |
 | `ghost` | Local tracker shows an open position; Binance shows zero | Position was closed externally (liquidation, manual close, TP hit) but TradeEngine was not notified |
 | `mutation` | Both sides agree a position exists but the quantity differs | Partial fill race condition, rounding, or external size change |
+| `raw_journal_count_mismatch` | `len(position_manager.positions)` (raw local audit journal) disagrees with `get_positions()` (the exchange-authoritative accessor when `TE_EXCHANGE_TRUTH_STORE_ENABLED=on`) | Stale entries in the raw journal never pruned on close — the class of bug behind [#587](https://github.com/PetroSa2/petrosa-tradeengine/issues/587) (`/state` reported 13 open positions, `/positions` reported 1) |
 
 ---
 
@@ -92,6 +93,19 @@ curl -s http://localhost:8000/positions | jq .
 2. If persistent (> 5 minutes): inspect the position record in Data Manager and compare
    with the Binance positionRisk `positionAmt`.  Identify which side is wrong and update
    accordingly.
+
+### `raw_journal_count_mismatch` — internal count disagrees with exchange truth
+
+1. Compare `/state`'s `portfolio.open_positions_count` against `/positions`' record count
+   (`.pagination.total`, or `len(.data)`) for the same account — they should now always agree
+   (both are sourced from `get_positions()` post-#587).
+2. If they still disagree, or the metric fires with `TE_EXCHANGE_TRUTH_STORE_ENABLED=off`,
+   another code path is likely reading `position_manager.positions` directly instead of via
+   `get_positions()` — grep for `.positions[` / `.positions.items()` / `.positions.values()`
+   usages outside `position_manager.py` itself.
+3. This category never mutates state; it is purely diagnostic. No remediation script is
+   required — it exists to prevent the two-endpoints-disagree class of bug from silently
+   recurring after #587's fix.
 
 ---
 

@@ -262,6 +262,28 @@ dispatcher_thrash_circuit_open_total = Counter(
     ["symbol"],
 )
 
+# #586 — a close-order quantity was clamped to the live Binance positionAmt
+# before emission. In Binance hedge mode, ``reduceOnly`` is dropped from the
+# wire request whenever ``positionSide`` is set (Binance rejects the
+# combination outright), so the exchange applies NO server-side cap on a
+# closing order's quantity: side+positionSide only fixes *direction*, not
+# *size*. A caller-supplied quantity that is stale or larger than the live
+# position (e.g. two independent close triggers racing on the same position,
+# or a delayed close firing after the position was already partially reduced
+# elsewhere) fully executes and can overshoot past zero, flipping the
+# position's sign (LONG with negative positionAmt or vice versa) — exactly
+# the un-armable "malformed position" terminal state #547 documents. This
+# counter fires whenever the pre-flight clamp in
+# ``close_position_with_cleanup`` reduced the requested quantity (or skipped
+# the close entirely because the live position was already flat) to prevent
+# that sign inversion from ever reaching the exchange.
+close_qty_clamped_total = Counter(
+    "petrosa_tradeengine_close_qty_clamped_total",
+    "Close-order quantity was clamped (or the close skipped) against the "
+    "live Binance position to prevent a sign-inversion overshoot (#586)",
+    ["symbol", "side", "outcome"],  # outcome: clamped | skipped_flat
+)
+
 # #497 — current OCO orphan count: positions on Binance that lack the full
 # stop/target pair (i.e. unhedged). The pre-existing
 # `tradeengine-oco-pair-orphan` Grafana alert fires on

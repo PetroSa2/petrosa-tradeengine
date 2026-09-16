@@ -12,6 +12,7 @@ from tradeengine.position_reconciler import (
     _index_binance_positions,
     _is_malformed_sign,
     _normalise_side,
+    detect_count_divergence,
     detect_divergences,
     detect_unhedged_positions,
 )
@@ -88,6 +89,12 @@ def _make_reconciler(
 
     pm = MagicMock()
     pm.get_positions = MagicMock(return_value=local_positions)
+    # #587: detect_count_divergence reads the raw `.positions` journal
+    # directly (not via get_positions()) — default it to the same fixture
+    # data so pre-#587 tests, which model local == get_positions(), don't
+    # trip a spurious raw_journal_count_mismatch divergence. Tests targeting
+    # #587 explicitly override `pm.positions` to diverge from local_positions.
+    pm.positions = dict(local_positions)
     return PositionReconciler(
         exchange=exchange, position_manager=pm, interval_seconds=60
     )
@@ -191,6 +198,94 @@ def test_multiple_divergence_categories():
     divergences = detect_divergences(binance, local)
     categories = {d["category"] for d in divergences}
     assert categories == {"untracked", "ghost", "mutation"}
+
+
+# ---------------------------------------------------------------------------
+# detect_count_divergence — #587
+# ---------------------------------------------------------------------------
+
+
+def test_count_divergence_none_when_counts_match():
+    raw = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 0.5)}
+    accessor = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 0.5)}
+    assert detect_count_divergence(raw, accessor) is None
+
+
+def test_count_divergence_flags_13_vs_1_regression():
+    """The exact #587 scenario: 13 stale raw-journal entries vs the 1
+    exchange-authoritative position get_positions() actually returns."""
+    raw = {
+        (f"SYM{i}USDT", "LONG"): _local_pos(f"SYM{i}USDT", "LONG", 1.0)
+        for i in range(13)
+    }
+    accessor = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 2.0)}
+    divergence = detect_count_divergence(raw, accessor)
+    assert divergence is not None
+    assert divergence["category"] == "raw_journal_count_mismatch"
+    assert divergence["local_qty"] == 13.0
+    assert divergence["binance_qty"] == 1.0
+
+
+def test_count_divergence_ignores_zero_quantity_raw_entries():
+    """Zero-qty raw rows (already-closed but not yet deleted) shouldn't
+    inflate the raw count."""
+    raw = {
+        ("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 0.5),
+        ("ETHUSDT", "SHORT"): _local_pos("ETHUSDT", "SHORT", 0.0),
+    }
+    accessor = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 0.5)}
+    assert detect_count_divergence(raw, accessor) is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_flags_raw_journal_count_mismatch():
+    """Integration: reconcile_once appends the count divergence when the raw
+    `.positions` journal disagrees with what get_positions() returns, even
+    though the per-symbol binance-vs-accessor comparison is clean."""
+    binance_raw = [_binance_pos("LTCUSDT", "LONG", 2.0)]
+    local = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 2.0)}
+    reconciler = _make_reconciler(binance_raw, local)
+    # Simulate the #587 bug: raw journal has 13 stale entries even though
+    # get_positions() (mocked above to return `local`) correctly reports 1.
+    reconciler._position_manager.positions = {
+        (f"SYM{i}USDT", "LONG"): {"quantity": 1.0} for i in range(13)
+    }
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch(
+            "tradeengine.position_reconciler.raw_journal_count_mismatch"
+        ) as mock_gauge,
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    count_divergences = [
+        d for d in divergences if d["category"] == "raw_journal_count_mismatch"
+    ]
+    assert len(count_divergences) == 1
+    mock_gauge.set.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_clean_raw_journal_no_mismatch_gauge():
+    binance_raw = [_binance_pos("BTCUSDT", "LONG", 0.5)]
+    local = {("BTCUSDT", "LONG"): _local_pos("BTCUSDT", "LONG", 0.5)}
+    reconciler = _make_reconciler(
+        binance_raw, local
+    )  # pm.positions == local by default
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch(
+            "tradeengine.position_reconciler.raw_journal_count_mismatch"
+        ) as mock_gauge,
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    assert divergences == []
+    mock_gauge.set.assert_called_once_with(0)
 
 
 # ---------------------------------------------------------------------------

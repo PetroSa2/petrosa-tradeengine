@@ -60,6 +60,22 @@ class DistributedLockManager:
         self.settings = Settings()
         self.mongodb_client: Any = None
         self.mongodb_db: Any = None
+        # #588: cached leader-info snapshot, refreshed in the background by
+        # ``_leader_info_refresh_loop`` every ``heartbeat_interval`` seconds
+        # rather than being queried live on every ``health_check()`` call.
+        # An occasional slow-but-healthy Atlas round-trip (observed up to
+        # ~14s against a shared free-tier cluster, well past the 5.0s
+        # readiness-probe budget) must never block the /ready request path.
+        # Mirrors the Binance ping-sentinel cache pattern (#564).
+        self._cached_leader_info: dict[str, Any] = {
+            "leader_pod_id": None,
+            "status": "unknown",
+            "last_heartbeat": None,
+            "is_current_leader": False,
+            "current_pod_id": self.pod_id,
+            "elected_at": None,
+        }
+        self._leader_info_refresh_task: asyncio.Task[None] | None = None
         # Lazy-reconnect state. Backoff is bounded so any momentary Mongo
         # unavailability heals without a pod restart (issue #442).
         self._init_lock: asyncio.Lock = asyncio.Lock()
@@ -90,6 +106,13 @@ class DistributedLockManager:
             # Try to become leader (no-op if Mongo not connected yet — heals on reconnect)
             await self._try_become_leader()
 
+            # #588: start the background leader-info cache refresh for ALL
+            # pods (leader and followers) so health_check() always has a
+            # recently-refreshed snapshot without querying Mongo inline.
+            self._leader_info_refresh_task = asyncio.create_task(
+                self._leader_info_refresh_loop()
+            )
+
             logger.info(f"Distributed lock manager initialized for pod {self.pod_id}")
         except Exception as e:
             logger.error(f"Failed to initialize distributed lock manager: {e}")
@@ -110,6 +133,14 @@ class DistributedLockManager:
                 self.lock_cleanup_task.cancel()
                 try:
                     await self.lock_cleanup_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Stop the #588 leader-info cache refresh task
+            if self._leader_info_refresh_task:
+                self._leader_info_refresh_task.cancel()
+                try:
+                    await self._leader_info_refresh_task
                 except asyncio.CancelledError:
                     pass
 
@@ -488,6 +519,30 @@ class DistributedLockManager:
                 logger.error(f"Error cleaning up expired locks: {e}")
                 await asyncio.sleep(60)
 
+    async def _leader_info_refresh_loop(self) -> None:
+        """#588: periodically refresh ``_cached_leader_info`` in the
+        background so ``health_check()`` (called on every ``/ready`` and
+        ``/health`` poll) never performs a live MongoDB round-trip inline.
+
+        Root cause: a single ``find_one`` against the (tiny, one-document)
+        ``leader_election`` collection was empirically observed to
+        occasionally take 5-14+ seconds against the shared Atlas cluster —
+        no errors, no reconnects, just a slow-but-healthy round-trip that
+        blew the readiness probe's 5.0s budget. The query's *result* was
+        already purely informational (``dispatcher.health_check()``'s outer
+        ``status`` never derived from it), so there is no correctness reason
+        to fetch it synchronously on the request path. This loop runs for
+        both leader and follower pods — unlike ``_heartbeat_loop`` (leader
+        only) — so follower ``/health`` output stays reasonably fresh too.
+        """
+        while True:
+            try:
+                if self.mongodb_db is not None:
+                    self._cached_leader_info = await self.get_leader_info()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Leader info cache refresh failed: {e}")
+            await asyncio.sleep(self.heartbeat_interval)
+
     async def get_leader_info(self) -> dict[str, Any]:
         """Get current leader information"""
         if self.mongodb_db is None:
@@ -538,9 +593,14 @@ class DistributedLockManager:
         mongodb_connected = self.mongodb_db is not None
         status = "healthy" if mongodb_connected else "unhealthy"
 
+        # #588: read the background-refreshed cache instead of issuing a
+        # live MongoDB query inline — see ``_leader_info_refresh_loop`` for
+        # rationale. ``leader_info`` here may lag reality by up to
+        # ``heartbeat_interval`` seconds; that staleness is an acceptable
+        # trade-off for an observability field that never gated readiness.
         leader_info: dict[str, Any]
         if mongodb_connected:
-            leader_info = await self.get_leader_info()
+            leader_info = self._cached_leader_info
         else:
             leader_info = {
                 "status": "unknown",

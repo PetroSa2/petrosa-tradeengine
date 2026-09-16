@@ -595,6 +595,10 @@ async def test_admitted_signal_places_order_after_mongo_lazy_reconnect(
         ),
         # Stub the background cleanup loop so the test doesn't leak a task.
         patch.object(mgr, "_cleanup_expired_locks", new=AsyncMock(return_value=None)),
+        # #588: stub the leader-info cache refresh loop for the same reason.
+        patch.object(
+            mgr, "_leader_info_refresh_loop", new=AsyncMock(return_value=None)
+        ),
         # Swap the dispatcher's module-level lock manager singleton.
         patch.object(dispatcher_module, "distributed_lock_manager", mgr),
     ):

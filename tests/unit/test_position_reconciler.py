@@ -12,6 +12,7 @@ from tradeengine.position_reconciler import (
     _index_binance_positions,
     _is_malformed_sign,
     _normalise_side,
+    classify_verdict,
     detect_count_divergence,
     detect_divergences,
     detect_unhedged_positions,
@@ -935,3 +936,184 @@ async def test_reconcile_once_calls_hedge_mode_check():
     ):
         await reconciler.reconcile_once()
     reconciler._check_hedge_mode.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# classify_verdict — #592
+# ---------------------------------------------------------------------------
+
+
+def test_classify_verdict_healthy_when_no_divergences():
+    assert classify_verdict([]) == "healthy"
+
+
+def test_classify_verdict_degraded_for_ghost_only():
+    assert (
+        classify_verdict([{"category": "ghost", "symbol": "LTCUSDT", "side": "LONG"}])
+        == "degraded"
+    )
+
+
+def test_classify_verdict_degraded_for_raw_journal_count_mismatch_only():
+    divs = [{"category": "raw_journal_count_mismatch", "symbol": "ALL", "side": "ALL"}]
+    assert classify_verdict(divs) == "degraded"
+
+
+def test_classify_verdict_degraded_for_ghost_plus_count_mismatch():
+    divs = [
+        {"category": "ghost", "symbol": "LTCUSDT", "side": "LONG"},
+        {"category": "raw_journal_count_mismatch", "symbol": "ALL", "side": "ALL"},
+    ]
+    assert classify_verdict(divs) == "degraded"
+
+
+@pytest.mark.parametrize(
+    "category", ["untracked", "mutation", "unhedged", "malformed_position"]
+)
+def test_classify_verdict_unhealthy_for_real_divergence_categories(category):
+    assert (
+        classify_verdict([{"category": category, "symbol": "X", "side": "LONG"}])
+        == "unhealthy"
+    )
+
+
+def test_classify_verdict_unhealthy_when_mixed_with_ghost():
+    """A ghost alongside a genuinely unsafe divergence must NOT be diluted
+    down to degraded — any non-degraded category makes the whole cycle
+    unhealthy."""
+    divs = [
+        {"category": "ghost", "symbol": "LTCUSDT", "side": "LONG"},
+        {"category": "untracked", "symbol": "BTCUSDT", "side": "LONG"},
+    ]
+    assert classify_verdict(divs) == "unhealthy"
+
+
+# ---------------------------------------------------------------------------
+# reconcile_once ghost auto-void + degraded verdict — #592
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_ghost_only_sets_degraded_not_unhealthy():
+    """#592 AC: a journal-only position produces verdict `degraded` (not
+    `unhealthy`) and is surfaced with a resolution action."""
+    binance_raw: list = []
+    local = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 0.303)}
+    reconciler = _make_reconciler(binance_raw, local)
+
+    with (
+        patch(
+            "tradeengine.position_reconciler.reconciliation_evaluator_verdict"
+        ) as mock_verdict,
+        patch("tradeengine.position_reconciler.reconciliation_alert") as mock_alert,
+        patch(
+            "tradeengine.position_reconciler.reconciliation_verdict_state"
+        ) as mock_state,
+        patch("tradeengine.ghost_position_remediator.audit_logger"),
+    ):
+        divergences = await reconciler.reconcile_once()
+
+    ghost = [d for d in divergences if d["category"] == "ghost"]
+    assert len(ghost) == 1
+    # Surfaced with a resolution action (auto-voided by default mode="void").
+    assert ghost[0]["resolution"] == "voided"
+    # Does not hard-block intake: legacy binary gauge stays 0.
+    mock_verdict.set.assert_called_once_with(0)
+    mock_alert.set.assert_called_once_with(1)
+    mock_state.set.assert_called_once_with(1)  # 1 == degraded
+    assert reconciler.last_verdict == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_voids_stale_raw_journal_entry_on_ghost():
+    """The ghost's raw PositionManager.positions entry is actually removed
+    (idempotent write path — see GhostPositionRemediator tests for the
+    full idempotency contract)."""
+    binance_raw: list = []
+    local = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 0.303)}
+    reconciler = _make_reconciler(binance_raw, local)
+    assert ("LTCUSDT", "LONG") in reconciler._position_manager.positions
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch("tradeengine.position_reconciler.reconciliation_verdict_state"),
+        patch("tradeengine.ghost_position_remediator.audit_logger"),
+    ):
+        await reconciler.reconcile_once()
+
+    assert ("LTCUSDT", "LONG") not in reconciler._position_manager.positions
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_untracked_still_unhealthy_after_592():
+    """Regression guard: #592's degrade-for-ghost change must not soften
+    the pre-existing `untracked` unhealthy behavior."""
+    binance_raw = [_binance_pos("BTCUSDT", "LONG", 0.5)]
+    local: dict = {}
+    reconciler = _make_reconciler(binance_raw, local)
+
+    with (
+        patch(
+            "tradeengine.position_reconciler.reconciliation_evaluator_verdict"
+        ) as mock_verdict,
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch(
+            "tradeengine.position_reconciler.reconciliation_verdict_state"
+        ) as mock_state,
+    ):
+        await reconciler.reconcile_once()
+
+    mock_verdict.set.assert_called_once_with(1)
+    mock_state.set.assert_called_once_with(2)  # 2 == unhealthy
+    assert reconciler.last_verdict == "unhealthy"
+
+
+@pytest.mark.asyncio
+async def test_health_check_degraded_for_ghost_only_divergence():
+    binance_raw: list = []
+    local = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 0.303)}
+    reconciler = _make_reconciler(binance_raw, local)
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch("tradeengine.position_reconciler.reconciliation_verdict_state"),
+        patch("tradeengine.ghost_position_remediator.audit_logger"),
+    ):
+        await reconciler.reconcile_once()
+
+    result = await reconciler.health_check()
+    assert result["status"] == "degraded"
+    assert result["divergence_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_once_three_consecutive_clean_cycles_are_healthy():
+    """#592 AC: evaluator.execution.verdict reports `healthy` for 3
+    consecutive reconciliation cycles once the ghost is resolved."""
+    binance_raw: list = []
+    local = {("LTCUSDT", "LONG"): _local_pos("LTCUSDT", "LONG", 0.303)}
+    reconciler = _make_reconciler(binance_raw, local)
+
+    with (
+        patch("tradeengine.position_reconciler.reconciliation_evaluator_verdict"),
+        patch("tradeengine.position_reconciler.reconciliation_alert"),
+        patch("tradeengine.position_reconciler.reconciliation_verdict_state"),
+        patch("tradeengine.ghost_position_remediator.audit_logger"),
+    ):
+        # Cycle 1: ghost detected + voided this same pass -> degraded.
+        await reconciler.reconcile_once()
+        assert reconciler.last_verdict == "degraded"
+
+        # The reconciler's `local_positions` fixture is static (a MagicMock
+        # side_effect returning the same dict) so simulate the exchange
+        # truth store having self-healed by clearing it, matching what the
+        # real ExchangeTruthStore.update_from_rest self-heal (#592 wiring
+        # fix) achieves within one cycle in production.
+        reconciler._position_manager.get_positions = MagicMock(return_value={})
+
+        for _ in range(3):
+            divergences = await reconciler.reconcile_once()
+            assert divergences == []
+            assert reconciler.last_verdict == "healthy"

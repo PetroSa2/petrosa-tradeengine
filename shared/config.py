@@ -170,6 +170,19 @@ class Settings(BaseSettings):
     naked_position_max_consecutive_arm_failures: int = 5
     naked_position_arm_backoff_cooldown_sec: int = 300
 
+    # #592: ghost-position remediator mode. A `ghost` divergence is a
+    # journal-only position (local tracker has it, Binance shows nothing) —
+    # this remediator NEVER touches the exchange, it only closes the stale
+    # PositionManager.positions entry with an audit record ("void"). This is
+    # deliberately the opposite risk profile of naked_position_remediation_mode
+    # above (which places/cancels REAL exchange orders): voiding a local-only
+    # bookkeeping record has zero exchange-side blast radius, so it defaults
+    # to "void" rather than shipping off-by-default. "dry_run" logs the
+    # intended void without mutating state; "off" disables remediation
+    # entirely (the reconciler still degrades the verdict to `degraded`
+    # instead of `unhealthy` for ghost-only divergences either way).
+    ghost_position_remediation_mode: str = "void"
+
     model_config = {
         "env_file": ".env",
         "case_sensitive": False,

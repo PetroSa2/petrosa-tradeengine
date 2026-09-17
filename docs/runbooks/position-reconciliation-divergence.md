@@ -10,10 +10,28 @@
 
 TradeEngine's `PositionReconciler` queries Binance Futures `/fapi/v2/positionRisk` every
 60 s (configurable via `POSITION_RECONCILIATION_INTERVAL_SECONDS`) and compares the result
-against the in-memory position tracker.  When the two disagree, the alert fires and
-`evaluator.execution.verdict` is set to `unhealthy`.
+against the in-memory position tracker.  When the two disagree, the alert fires.
 
-This is a **read-only** detector — it does not close, re-open, or modify any positions.
+The reconciler itself is a **read-only** detector — it does not close, re-open, or modify
+any positions. Two dedicated write-mode remediators act on its output:
+`NakedPositionRemediator` (#445, exchange-side arm/flatten for `unhedged`/`malformed_position`)
+and `GhostPositionRemediator` (#592, local-journal-only void for `ghost`) — see
+"Remediation by category" below.
+
+### Verdict states (#592)
+
+`evaluator.execution.verdict` (`tradeengine_position_reconciliation_verdict_state`) is now
+ternary, not binary:
+
+| Verdict | State value | Meaning | Hard-blocks intake? |
+|---|---|---|---|
+| `healthy` | 0 | No divergences | No |
+| `degraded` | 1 | Divergences present, but **all** are `ghost` and/or `raw_journal_count_mismatch` — self-healing, journal-only issues | **No** — the legacy binary gauge `tradeengine_position_reconciliation_evaluator_verdict` is also `0` in this state |
+| `unhealthy` | 2 | At least one `untracked`, `mutation`, `unhedged`, or `malformed_position` divergence — real exchange-state risk | Yes — legacy binary gauge is `1` |
+
+The FR66 category-e alert (`tradeengine_position_reconciliation_alert`) still fires at `1`
+for **any** divergence (degraded or unhealthy) so this runbook stays in the loop even when
+intake isn't hard-blocked.
 
 ---
 
@@ -80,11 +98,26 @@ curl -s http://localhost:8000/positions | jq .
 
 ### `ghost` — local has position, Binance shows nothing
 
-1. Verify whether the position was **legitimately closed** (TP/SL hit, liquidation) while
-   TradeEngine was offline or the fill event was missed.
-2. Call `DELETE /positions/{symbol}` (if available) or restart TradeEngine — the tracker
-   will reload from Data Manager which should reflect the closed state.
-3. If Data Manager is also stale, manually update the DB record to `status=closed`.
+Since #592, this is handled automatically by `GhostPositionRemediator`
+(`GHOST_POSITION_REMEDIATION_MODE`, default `void`): the stale
+`PositionManager.positions` entry for the `(symbol, side)` is deleted with an
+audit record (`audit_logger.log_position(..., status="voided_ghost")`) the **same
+cycle** it's detected — it never re-materialises the position on the exchange
+(a ghost means Binance has *nothing*; placing an order to match a phantom local
+record would create a real, unintended position). The verdict for a ghost-only
+cycle is `degraded`, not `unhealthy` (see "Verdict states" above), and normally
+clears within 1–2 reconciliation cycles.
+
+Manual steps are now only needed if it does **not** clear automatically:
+
+1. Confirm the remediator is not disabled: `GHOST_POSITION_REMEDIATION_MODE` should be
+   `void` (check `dry_run`/`off` overrides).
+2. Force an out-of-cycle pass: `curl -X POST http://localhost:8000/admin/reconcile-positions`
+   (idempotent — safe to call repeatedly; returns the verdict + divergence list).
+3. If it still recurs for the *same* symbol every cycle, the write is failing silently or the
+   `ExchangeTruthStore` itself is stale (check `tradeengine_exchange_truth_store_stale_seconds`
+   — a large value means the WS stream + REST self-heal are both not refreshing it; see #592).
+4. Last resort: restart TradeEngine — the tracker reloads from Data Manager / the exchange.
 
 ### `mutation` — size mismatch
 
@@ -96,6 +129,18 @@ curl -s http://localhost:8000/positions | jq .
 
 ### `raw_journal_count_mismatch` — internal count disagrees with exchange truth
 
+**#592 root cause (fixed):** `PositionReconciler` was constructed in `api.py` without its
+optional `store=` kwarg, so the AC1 (446-B) REST self-heal at the end of every
+`reconcile_once()` pass — which overwrites the `ExchangeTruthStore` with that cycle's fresh
+`positionRisk` snapshot — was dead code. The store (which backs
+`position_manager.get_positions()` when `TE_EXCHANGE_TRUTH_STORE_ENABLED=on`) then only
+self-corrected on a WebSocket reconnect/reseed or a live `ACCOUNT_UPDATE` event; a single
+missed/late close event left it stale indefinitely. `store=` is now wired from
+`dispatcher.user_data_consumer.store` at startup, so the store — and therefore the accessor
+count — re-syncs to Binance REST truth every reconciliation cycle regardless of WS gaps.
+
+Triage if it still fires after the #592 fix:
+
 1. Compare `/state`'s `portfolio.open_positions_count` against `/positions`' record count
    (`.pagination.total`, or `len(.data)`) for the same account — they should now always agree
    (both are sourced from `get_positions()` post-#587).
@@ -103,9 +148,11 @@ curl -s http://localhost:8000/positions | jq .
    another code path is likely reading `position_manager.positions` directly instead of via
    `get_positions()` — grep for `.positions[` / `.positions.items()` / `.positions.values()`
    usages outside `position_manager.py` itself.
-3. This category never mutates state; it is purely diagnostic. No remediation script is
-   required — it exists to prevent the two-endpoints-disagree class of bug from silently
-   recurring after #587's fix.
+3. A lingering raw-journal-only entry (never touched by a real fill event, e.g. a
+   pre-#592 ghost that predates the remediator) is voided the next time it also surfaces
+   as a `ghost` divergence — force it with `POST /admin/reconcile-positions`.
+4. This category never mutates state itself; it is purely diagnostic. It degrades the
+   verdict (see "Verdict states") rather than blocking intake.
 
 ---
 
@@ -127,6 +174,8 @@ curl -X POST http://localhost:8000/config/pause
 - [#409](https://github.com/PetroSa2/petrosa-tradeengine/issues/409) — implementing ticket
 - [#402](https://github.com/PetroSa2/petrosa-tradeengine/issues/402) — NATS consumer crash loop that wipes the position tracker
 - [#404](https://github.com/PetroSa2/petrosa-tradeengine/issues/404) — portfolio_value bug (fixed in PR #406)
+- [#587](https://github.com/PetroSa2/petrosa-tradeengine/issues/587) — introduced `raw_journal_count_mismatch`
+- [#592](https://github.com/PetroSa2/petrosa-tradeengine/issues/592) — `store=` wiring fix (root cause) + `GhostPositionRemediator` (auto-void) + ternary verdict + `POST /admin/reconcile-positions`
 - FR65, FR21, FR66 — PRD contract references
 
 ---
@@ -137,6 +186,7 @@ curl -X POST http://localhost:8000/config/pause
 |---|---|---|
 | `POSITION_RECONCILIATION_ENABLED` | `true` | Set `false` to disable (e.g. pure simulation runs) |
 | `POSITION_RECONCILIATION_INTERVAL_SECONDS` | `60` | Cadence in seconds |
+| `GHOST_POSITION_REMEDIATION_MODE` | `void` | `void` (default, auto-close stale journal entries) / `dry_run` (log only) / `off` (per #592) |
 
 The reconciler is automatically **disabled** when `SIMULATION_ENABLED=true` (no real
 Binance positions to reconcile against in simulation mode).

@@ -22,6 +22,7 @@ from tradeengine.exchange_truth_store import (
     ExchangeTruthStore,
     exchange_truth_store_stale_seconds,
 )
+from tradeengine.ghost_position_remediator import GhostPositionRemediator
 
 if TYPE_CHECKING:
     from tradeengine.exchange.binance import BinanceFuturesExchange
@@ -86,12 +87,32 @@ raw_journal_count_mismatch = Gauge(
     "0 when they agree (#587)",
 )
 
+# #592: ternary verdict state, in addition to the binary
+# `reconciliation_evaluator_verdict` gauge above (kept for backwards
+# compatibility with existing alert rules keyed on ==1). A single
+# unresolved `ghost` or `raw_journal_count_mismatch` divergence is
+# self-healing (see GhostPositionRemediator + the ExchangeTruthStore REST
+# refresh) and must not hard-block intake the way untracked/mutation/
+# unhedged/malformed_position divergences do.
+reconciliation_verdict_state = Gauge(
+    "tradeengine_position_reconciliation_verdict_state",
+    "Execution-evaluator verdict: 0=healthy, 1=degraded, 2=unhealthy (#592)",
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 # Treat |Δqty| below this as rounding noise rather than a real mismatch
 _FLOAT_TOLERANCE = 1e-4
+
+# #592: divergence categories that are journal-only/local-bookkeeping issues
+# rather than evidence of unsafe exchange state. A cycle whose divergences
+# are made up ENTIRELY of these categories degrades the verdict instead of
+# hard-failing it — see `classify_verdict`.
+_DEGRADED_CATEGORIES = frozenset({"ghost", "raw_journal_count_mismatch"})
+
+_VERDICT_STATE_VALUES = {"healthy": 0, "degraded": 1, "unhealthy": 2}
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +285,29 @@ def detect_count_divergence(
     }
 
 
+def classify_verdict(divergences: list[dict[str, Any]]) -> str:
+    """#592: classify the execution-evaluator verdict for this cycle.
+
+    - no divergences -> ``"healthy"``
+    - every divergence category is in ``_DEGRADED_CATEGORIES`` (``ghost``,
+      ``raw_journal_count_mismatch``) -> ``"degraded"``. These are
+      journal-only/local-bookkeeping issues: `ghost` is auto-voided by
+      :class:`tradeengine.ghost_position_remediator.GhostPositionRemediator`
+      and `raw_journal_count_mismatch` is purely diagnostic (see the
+      runbook) — neither is evidence of unsafe exchange state, so a single
+      unresolved occurrence must not hard-block intake.
+    - any other category present (``untracked``, ``mutation``,
+      ``unhedged``, ``malformed_position``) -> ``"unhealthy"`` (unchanged
+      pre-#592 behavior — these DO indicate real exchange-state risk).
+    """
+    if not divergences:
+        return "healthy"
+    categories = {d["category"] for d in divergences}
+    if categories <= _DEGRADED_CATEGORIES:
+        return "degraded"
+    return "unhealthy"
+
+
 def detect_unhedged_positions(
     binance_positions: dict[tuple[str, str], dict[str, Any]],
     binance_open_orders_by_symbol: dict[str, list[dict[str, Any]]],
@@ -373,19 +417,37 @@ class PositionReconciler:
         interval_seconds: int = 60,
         remediator: NakedPositionRemediator | None = None,
         store: ExchangeTruthStore | None = None,
+        ghost_remediator: GhostPositionRemediator | None = None,
     ) -> None:
         self._exchange = exchange
         self._position_manager = position_manager
         self._interval = interval_seconds
         self._remediator = remediator
         self._store = store
+        # #592: ghost-position write path. Defaults to an always-on
+        # GhostPositionRemediator (mode="void") rather than None so this
+        # ticket's fix is effective even for callers that don't thread the
+        # new kwarg through explicitly — production wiring (api.py) passes
+        # one built from settings.ghost_position_remediation_mode.
+        self._ghost_remediator = ghost_remediator or GhostPositionRemediator(
+            position_manager=position_manager
+        )
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._last_divergence_count: int = 0
+        # #592: last computed verdict string ("healthy" | "degraded" |
+        # "unhealthy"), surfaced via health_check() and the admin
+        # force-reconcile endpoint.
+        self._last_verdict: str = "healthy"
         # #566: expected hedge-mode assumption baked into _normalise_side /
         # _is_malformed_sign. Compared each cycle against the account's
         # actual dualSidePosition setting via verify_hedge_mode().
         self._expected_hedge_mode: bool = HEDGE_MODE_ENABLED
         self._hedge_mode_mismatch_alerted: bool = False
+
+    @property
+    def last_verdict(self) -> str:
+        """#592: verdict computed by the most recent reconcile_once() pass."""
+        return self._last_verdict
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -518,11 +580,30 @@ class PositionReconciler:
                 category=d["category"], symbol=d["symbol"]
             ).inc()
 
+        # #592: hand `ghost` divergences to the write-mode ghost remediator
+        # BEFORE computing the verdict, so a voided entry's `resolution` is
+        # already attached to the divergence dict this function returns.
+        # Never poisons the read-only pass on failure — same guard pattern
+        # as the unhedged/malformed remediator call below.
+        ghost_divergences = [d for d in divergences if d.get("category") == "ghost"]
+        if ghost_divergences:
+            try:
+                await self._ghost_remediator.remediate(ghost_divergences)
+            except Exception:
+                logger.exception(
+                    "PositionReconciler: ghost_remediator raised — read-only "
+                    "reconciliation pass continues"
+                )
+
+        verdict = classify_verdict(divergences)
+        self._last_verdict = verdict
+
         if divergences:
-            self._emit_unhealthy(divergences)
+            self._log_divergence_summary(divergences, verdict)
         else:
             reconciliation_evaluator_verdict.set(0)
             reconciliation_alert.set(0)
+            reconciliation_verdict_state.set(_VERDICT_STATE_VALUES["healthy"])
             logger.debug("PositionReconciler: positions clean, no divergences")
 
         # AC1 (446-B) — write REST snapshot into ExchangeTruthStore so the store
@@ -604,16 +685,32 @@ class PositionReconciler:
     # Alert / evaluator helpers
     # ------------------------------------------------------------------
 
-    def _emit_unhealthy(self, divergences: list[dict[str, Any]]) -> None:
-        """AC3 + AC4: set unhealthy verdict and FR66 category-e alert."""
+    def _log_divergence_summary(
+        self, divergences: list[dict[str, Any]], verdict: str
+    ) -> None:
+        """AC3 + AC4 (+ #592 ternary verdict): set the evaluator/alert gauges
+        and log the divergence summary, including any `resolution` recorded
+        by the ghost remediator.
+        """
         summary = "; ".join(
-            f"{d['category']}:{d['symbol']}:{d['side']}" for d in divergences
+            f"{d['category']}:{d['symbol']}:{d['side']}"
+            + (f"[{d['resolution']}]" if d.get("resolution") else "")
+            for d in divergences
         )
-        reconciliation_evaluator_verdict.set(1)
+        # FR66 category e: the alert still fires for ANY divergence,
+        # degraded or unhealthy, so operators/the runbook stay in the loop
+        # even when intake is not hard-blocked.
         reconciliation_alert.set(1)
-        logger.warning(
-            "PositionReconciler: %d divergence(s) — evaluator.execution.verdict=unhealthy. %s",
+        # Backwards-compatible binary gauge: only the hard-unhealthy verdict
+        # sets it to 1, so a `degraded` cycle (per #592) does not trip
+        # existing alert rules keyed on ==1.
+        reconciliation_evaluator_verdict.set(1 if verdict == "unhealthy" else 0)
+        reconciliation_verdict_state.set(_VERDICT_STATE_VALUES[verdict])
+        log_fn = logger.warning if verdict == "unhealthy" else logger.info
+        log_fn(
+            "PositionReconciler: %d divergence(s) — evaluator.execution.verdict=%s. %s",
             len(divergences),
+            verdict,
             summary,
         )
 
@@ -624,7 +721,7 @@ class PositionReconciler:
     async def health_check(self) -> dict[str, Any]:
         divergence_count = self._last_divergence_count
         return {
-            "status": "unhealthy" if divergence_count > 0 else "healthy",
+            "status": self._last_verdict,
             "divergence_count": divergence_count,
             "interval_seconds": self._interval,
         }

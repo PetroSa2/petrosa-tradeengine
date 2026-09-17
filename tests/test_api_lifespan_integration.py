@@ -251,3 +251,79 @@ async def test_lifespan_error_path_without_watchdog():
         assert len(watchdog_logs) == 0
     finally:
         api_logger.removeHandler(handler)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_wires_exchange_truth_store_into_position_reconciler():
+    """#592 regression guard: PositionReconciler MUST be constructed with
+    `store=dispatcher.user_data_consumer.store` (not the default None).
+
+    Before #592, this kwarg was silently omitted, so the AC1 (446-B) REST
+    self-heal at the end of every reconcile_once() pass never ran — the
+    ExchangeTruthStore (and therefore get_positions() when
+    TE_EXCHANGE_TRUTH_STORE_ENABLED=on) only self-corrected on a WebSocket
+    reconnect, leaving stale positions (ghost:LTCUSDT:LONG) undetected-stale
+    for hours. This test fails again if the `store=` kwarg is ever dropped.
+    """
+    import tradeengine.api as api_module
+    import tradeengine.consumer as consumer_module
+
+    mock_app = MagicMock()
+    mock_app.state = MagicMock()
+
+    with (
+        patch("tradeengine.api.setup_telemetry", return_value=True),
+        patch("shared.constants.validate_mongodb_config"),
+        patch.object(api_module, "TradingConfigManager") as MockConfig,
+        patch.object(api_module, "binance_exchange") as mock_binance,
+        patch.object(api_module, "simulator_exchange") as mock_sim,
+        patch.object(api_module, "dispatcher") as mock_disp,
+        patch.object(consumer_module, "signal_consumer") as mock_consumer,
+        patch("tradeengine.position_reconciler.PositionReconciler") as MockReconciler,
+        patch(
+            "tradeengine.services.data_manager_boot_probe.DataManagerBootProbe.run",
+            new=AsyncMock(return_value=MagicMock(success=True, failure_mode=None)),
+        ),
+    ):
+        mock_config = AsyncMock()
+        mock_config.start = AsyncMock()
+        mock_config.stop = AsyncMock()
+        MockConfig.return_value = mock_config
+
+        mock_binance.initialize = AsyncMock()
+        mock_binance.close = AsyncMock()
+        mock_binance.get_account_info = AsyncMock(
+            return_value={"assets": [], "can_trade": True}
+        )
+        mock_binance.get_symbol_price = AsyncMock(return_value=0.0)
+        mock_binance.start_ping_loop = AsyncMock()
+        mock_binance.stop_ping_loop = AsyncMock()
+        mock_sim.initialize = AsyncMock()
+        mock_sim.close = AsyncMock()
+        mock_disp.initialize = AsyncMock()
+        mock_disp.close = AsyncMock()
+        mock_consumer.initialize = AsyncMock(return_value=False)
+        mock_consumer.running = False
+        mock_consumer.start_consuming = AsyncMock()
+        mock_consumer.stop_consuming = AsyncMock()
+
+        sentinel_store = MagicMock(name="exchange_truth_store")
+        mock_disp.user_data_consumer.store = sentinel_store
+
+        mock_reconciler_instance = MagicMock()
+        mock_reconciler_instance.start = AsyncMock()
+        MockReconciler.return_value = mock_reconciler_instance
+
+        async with api_module.lifespan(mock_app):
+            pass
+
+        assert MockReconciler.called, "PositionReconciler was never constructed"
+        _, kwargs = MockReconciler.call_args
+        assert kwargs.get("store") is sentinel_store, (
+            "PositionReconciler must be constructed with "
+            "store=dispatcher.user_data_consumer.store (#592)"
+        )
+        assert kwargs.get("ghost_remediator") is not None, (
+            "PositionReconciler must be constructed with a GhostPositionRemediator "
+            "(#592)"
+        )

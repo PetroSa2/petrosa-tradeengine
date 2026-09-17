@@ -271,15 +271,48 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
                 _remediator = None
 
+            # #592: ghost-position write path (local-journal-only; never
+            # touches the exchange — see GhostPositionRemediator docstring).
+            from tradeengine.ghost_position_remediator import GhostPositionRemediator
+
+            _ghost_remediator = GhostPositionRemediator(
+                position_manager=dispatcher.position_manager,
+                mode=_te_settings.ghost_position_remediation_mode,  # type: ignore[arg-type]
+            )
+
+            # #592 ROOT CAUSE FIX: `store=` was never wired here, so the AC1
+            # (446-B) REST self-heal at the end of reconcile_once() — which
+            # overwrites the ExchangeTruthStore with THIS cycle's fresh
+            # Binance REST snapshot every ~60s — was dead code. The store
+            # (dispatcher.position_manager.exchange_truth_store, injected
+            # from dispatcher.user_data_consumer.store during
+            # dispatcher.initialize() above) only ever self-corrected on a
+            # WebSocket reconnect/reseed or a live ACCOUNT_UPDATE event.
+            # A single missed/late close event for a position therefore left
+            # the store — and therefore get_positions()/`/positions` when
+            # TE_EXCHANGE_TRUTH_STORE_ENABLED=on — permanently stale until
+            # the next reconnect, which is the mechanism behind the
+            # ghost:LTCUSDT:LONG + raw_journal_count_mismatch:ALL:ALL
+            # divergences reported in #592 (25 consecutive cycles, ~9h pod
+            # uptime, no reconnect in that window).
+            _truth_store = (
+                dispatcher.user_data_consumer.store
+                if dispatcher.user_data_consumer is not None
+                else None
+            )
+
             _reconciler = PositionReconciler(
                 exchange=binance_exchange,
                 position_manager=dispatcher.position_manager,
                 interval_seconds=_te_settings.position_reconciliation_interval_seconds,
                 remediator=_remediator,
+                store=_truth_store,
+                ghost_remediator=_ghost_remediator,
             )
             await _reconciler.start()
             app.state.position_reconciler = _reconciler
             app.state.naked_position_remediator = _remediator
+            app.state.ghost_position_remediator = _ghost_remediator
 
             # #500: surface the EFFECTIVE remediation mode prominently and
             # export it as a metric so operators can alert when the watchdog
@@ -1568,6 +1601,43 @@ async def get_position(symbol: str) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Position error for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get position: {e}")
+
+
+@app.post("/admin/reconcile-positions")
+async def force_reconcile_positions() -> dict[str, Any]:
+    """#592: idempotent operator entrypoint to force an immediate
+    position-reconciliation pass (including ghost-position auto-void)
+    outside the periodic ~60s interval.
+
+    Safe to call repeatedly: reconcile_once() is read-only aside from the
+    ghost-remediator write path, and GhostPositionRemediator.remediate() is
+    itself idempotent — a (symbol, side) already voided on a prior pass (or
+    a clean state) produces no new audit entry and no new state mutation.
+    """
+    reconciler = getattr(app.state, "position_reconciler", None)
+    if reconciler is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Position reconciler is not running "
+                "(POSITION_RECONCILIATION_ENABLED=false or not yet started)"
+            ),
+        )
+    try:
+        divergences = await reconciler.reconcile_once()
+    except Exception as e:
+        logger.error(f"Force-reconcile error: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to force reconcile: {e}"
+        ) from e
+
+    return {
+        "status": "success",
+        "verdict": reconciler.last_verdict,
+        "divergence_count": len(divergences),
+        "divergences": divergences,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
 
 
 @app.get("/orders")

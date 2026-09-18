@@ -16,7 +16,11 @@ import pytest
 
 from shared.retry import PersistResult, is_transient_error
 from tradeengine.services.data_manager_client import APIError, ConnectionError
-from tradeengine.services.persist_retry_queue import PendingWrite, PersistRetryQueue
+from tradeengine.services.persist_retry_queue import (
+    PendingWrite,
+    PersistRetryQueue,
+    register_default_handlers,
+)
 
 # ---------------------------------------------------------------------------
 # PersistResult
@@ -158,6 +162,74 @@ class TestDataManagerPositionClient:
         )
         assert result.ok is True
 
+    # -- #596: 0-insert diagnostics -----------------------------------
+
+    @pytest.mark.asyncio
+    async def test_create_position_zero_insert_logs_full_response(self, caplog):
+        """A 2xx response with inserted_count=0 must log the raw response,
+        not just the bare '0-insert' literal, so operators can see WHY."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0, "error": "duplicate"}
+        )
+        client.health_check = AsyncMock(return_value={"status": "healthy"})
+        with caplog.at_level("ERROR"):
+            result = await client.create_position(
+                {"position_id": "p1", "symbol": "BTCUSDT"}
+            )
+        assert result.ok is False
+        assert any(
+            "0-insert" in rec.message and "duplicate" in rec.message
+            for rec in caplog.records
+        ), "expected the full DM response (incl. 'duplicate') in the log message"
+
+    @pytest.mark.asyncio
+    async def test_create_position_zero_insert_triggers_health_snapshot(self, caplog):
+        """On 0-insert, a reactive health-check snapshot must be logged so
+        operators can distinguish a DM outage from a constraint/schema
+        issue without adding a blocking pre-check to the hot path."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0}
+        )
+        client.health_check = AsyncMock(
+            return_value={"status": "unhealthy", "error": "connection pool exhausted"}
+        )
+        with caplog.at_level("ERROR"):
+            await client.create_position({"position_id": "p2", "symbol": "ETHUSDT"})
+        client.health_check.assert_awaited_once()
+        assert any("connection pool exhausted" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_create_position_zero_insert_health_probe_never_raises(self):
+        """If the reactive health probe itself fails, create_position must
+        still return the (failed) PersistResult rather than raising."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0}
+        )
+        client.health_check = AsyncMock(side_effect=RuntimeError("probe boom"))
+        result = await client.create_position(
+            {"position_id": "p3", "symbol": "SOLUSDT"}
+        )
+        assert result.ok is False
+        assert result.reason == "permanent"
+
+    @pytest.mark.asyncio
+    async def test_create_position_success_does_not_probe_health(self):
+        """The reactive health probe must only fire on the failure path —
+        never add an extra call on the (common) success path."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "abc", "inserted_count": 1}
+        )
+        client.health_check = AsyncMock(return_value={"status": "healthy"})
+        result = await client.create_position(
+            {"position_id": "p4", "symbol": "BTCUSDT"}
+        )
+        assert result.ok is True
+        client.health_check.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # PersistRetryQueue
@@ -257,3 +329,172 @@ class TestPersistRetryQueue:
 
         result = asyncio.get_event_loop().run_until_complete(run())
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# register_default_handlers (#596) — the actual production wiring gap:
+# persist_retry_queue was constructed but never had .start() called nor any
+# operation handler registered, so enqueued 0-insert failures sat forever
+# and were never retried.
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterDefaultHandlers:
+    @pytest.mark.asyncio
+    async def test_create_position_retry_reassembles_flat_kwargs_into_dict(self):
+        """PersistRetryQueue._try_one calls fn(**pw.data); create_position
+        takes ONE positional dict, so the wrapper must reassemble it."""
+        q = PersistRetryQueue()
+        mock_client = MagicMock()
+        mock_client.create_position = AsyncMock(return_value=PersistResult(ok=True))
+        register_default_handlers(q, mock_client)
+
+        pw = PendingWrite(
+            operation="create_position",
+            data={"position_id": "p1", "symbol": "BTCUSDT", "status": "open"},
+            symbol="BTCUSDT",
+            position_id="p1",
+        )
+        result = await q._try_one(pw)
+
+        assert result is True
+        mock_client.create_position.assert_awaited_once_with(
+            {"position_id": "p1", "symbol": "BTCUSDT", "status": "open"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_position_retry_extracts_stashed_position_id(self):
+        """update_position needs a position_id that is not a field of the
+        update payload — the wrapper must pop `_retry_position_id` back out
+        and call client.update_position(position_id, remaining_dict)."""
+        q = PersistRetryQueue()
+        mock_client = MagicMock()
+        mock_client.update_position = AsyncMock(return_value=PersistResult(ok=True))
+        register_default_handlers(q, mock_client)
+
+        pw = PendingWrite(
+            operation="update_position",
+            data={"status": "closed", "_retry_position_id": "strategy-pos-42"},
+            symbol="BTCUSDT",
+            position_id="strategy-pos-42",
+        )
+        result = await q._try_one(pw)
+
+        assert result is True
+        mock_client.update_position.assert_awaited_once_with(
+            "strategy-pos-42", {"status": "closed"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_position_risk_orders_retry_extracts_position_id(self):
+        q = PersistRetryQueue()
+        mock_client = MagicMock()
+        mock_client.update_position_risk_orders = AsyncMock(
+            return_value=PersistResult(ok=True)
+        )
+        register_default_handlers(q, mock_client)
+
+        pw = PendingWrite(
+            operation="update_position_risk_orders",
+            data={"stop_loss": 100.0, "_retry_position_id": "pos-7"},
+            symbol="ETHUSDT",
+            position_id="pos-7",
+        )
+        result = await q._try_one(pw)
+
+        assert result is True
+        mock_client.update_position_risk_orders.assert_awaited_once_with(
+            "pos-7", {"stop_loss": 100.0}
+        )
+
+    @pytest.mark.asyncio
+    async def test_wired_queue_actually_drains_and_retries_zero_insert(self):
+        """End-to-end (fast drain): enqueue a failed create_position write
+        against a wired-up queue and confirm the background drain loop
+        actually calls the client again — proving the previously dead
+        infrastructure now delivers real retries."""
+        import tradeengine.services.persist_retry_queue as retry_queue_module
+
+        q = PersistRetryQueue(max_drain_attempts=3, drain_interval=0.01)
+        mock_client = MagicMock()
+        mock_client.create_position = AsyncMock(return_value=PersistResult(ok=True))
+        register_default_handlers(q, mock_client)
+
+        pw = PendingWrite(
+            operation="create_position",
+            data={"position_id": "p_retry", "symbol": "BTCUSDT"},
+            symbol="BTCUSDT",
+            position_id="p_retry",
+        )
+        q.enqueue(pw)
+        with (
+            patch.object(retry_queue_module, "_BACKOFF_BASE", 0.01),
+            patch.object(retry_queue_module, "_BACKOFF_CAP", 0.05),
+        ):
+            q.start()
+            try:
+                for _ in range(500):
+                    await asyncio.sleep(0.01)
+                    if mock_client.create_position.await_count > 0:
+                        break
+            finally:
+                q.stop()
+
+        mock_client.create_position.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _on_persist_failure (strategy_position_manager) — must stash the position
+# id for update-type operations before enqueueing (#596).
+# ---------------------------------------------------------------------------
+
+
+class TestOnPersistFailureRetryPositionId:
+    def test_update_position_failure_stashes_retry_position_id(self):
+        from tradeengine.strategy_position_manager import _on_persist_failure
+
+        result = PersistResult(
+            ok=False,
+            reason="permanent",
+            error="0-insert",
+            operation="update_position",
+            symbol="BTCUSDT",
+            position_id="strategy-pos-99",
+        )
+        position_data = {"status": "closed"}
+
+        with (
+            patch(
+                "tradeengine.strategy_position_manager.persist_retry_queue"
+            ) as mock_queue,
+            patch("tradeengine.strategy_position_manager.alert_publisher"),
+        ):
+            _on_persist_failure(result, position_data)
+            assert mock_queue.enqueue.called
+            enqueued_pw = mock_queue.enqueue.call_args[0][0]
+            assert enqueued_pw.data.get("_retry_position_id") == "strategy-pos-99"
+
+    def test_create_position_failure_does_not_stash_retry_position_id(self):
+        """create_position's dict already IS the full payload — no
+        _retry_position_id sentinel should be injected for it."""
+        from tradeengine.strategy_position_manager import _on_persist_failure
+
+        result = PersistResult(
+            ok=False,
+            reason="permanent",
+            error="0-insert",
+            operation="create_position",
+            symbol="BTCUSDT",
+            position_id="pos-1",
+        )
+        position_data = {"position_id": "pos-1", "symbol": "BTCUSDT"}
+
+        with (
+            patch(
+                "tradeengine.strategy_position_manager.persist_retry_queue"
+            ) as mock_queue,
+            patch("tradeengine.strategy_position_manager.alert_publisher"),
+        ):
+            _on_persist_failure(result, position_data)
+            enqueued_pw = mock_queue.enqueue.call_args[0][0]
+            assert "_retry_position_id" not in enqueued_pw.data

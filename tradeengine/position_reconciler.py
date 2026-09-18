@@ -364,7 +364,11 @@ def detect_unhedged_positions(
                 continue
             if not _order_is_reduce_only(o):
                 continue
-            o_type = str(o.get("type") or o.get("origType") or "").upper()
+            # Per #594: Binance's /openAlgoOrders response uses "orderType" instead of "type"
+            # for conditional orders. Add fallback so SL/TP are correctly detected.
+            o_type = str(
+                o.get("type") or o.get("orderType") or o.get("origType") or ""
+            ).upper()
             if "STOP" in o_type:
                 sl_present = True
             elif "TAKE_PROFIT" in o_type:

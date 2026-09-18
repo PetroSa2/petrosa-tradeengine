@@ -504,6 +504,64 @@ def test_detect_unhedged_returns_empty_when_both_sl_and_tp_present():
     assert divergences == []
 
 
+def test_detect_unhedged_uses_orderType_from_openAlgoOrders():
+    """AC2 of #594: /openAlgoOrders response has 'orderType' not 'type'.
+
+    Positions with full SL+TP pairs should NOT be reported as unhedged
+    when the orders come from algo endpoint (no 'type' key).
+    """
+    binance_positions = {
+        ("BTCUSDT", "LONG"): _binance_pos("BTCUSDT", "LONG", 1.0),
+    }
+    # Real /openAlgoOrders shape: uses "orderType", no "type" key
+    orders_by_symbol = {
+        "BTCUSDT": [
+            {"positionSide": "LONG", "orderType": "STOP_MARKET", "reduceOnly": True},
+            {
+                "positionSide": "LONG",
+                "orderType": "TAKE_PROFIT_MARKET",
+                "reduceOnly": True,
+            },
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert divergences == []
+
+
+def test_detect_unhedged_orderType_no_false_alarm_for_paired_positions():
+    """#594 regression: nine valid positions with complete SL/TP pairs were
+    falsely reported as unhedged because code only checked 'type'/'origType'.
+
+    This test uses the real Binance response shape and proves paired
+    positions are correctly recognized as hedged.
+    """
+    binance_positions = {
+        ("ETHUSDT", "LONG"): _binance_pos("ETHUSDT", "LONG", 2.5),
+        ("SOLUSDT", "SHORT"): _binance_pos("SOLUSDT", "SHORT", -1.0),
+    }
+    # Both positions have full SL+TP via algo orders (orderType, not type)
+    orders_by_symbol = {
+        "ETHUSDT": [
+            {"positionSide": "LONG", "orderType": "STOP_MARKET", "reduceOnly": True},
+            {
+                "positionSide": "LONG",
+                "orderType": "TAKE_PROFIT_MARKET",
+                "reduceOnly": True,
+            },
+        ],
+        "SOLUSDT": [
+            {"positionSide": "SHORT", "orderType": "STOP_MARKET", "reduceOnly": True},
+            {
+                "positionSide": "SHORT",
+                "orderType": "TAKE_PROFIT_MARKET",
+                "reduceOnly": True,
+            },
+        ],
+    }
+    divergences = detect_unhedged_positions(binance_positions, orders_by_symbol)
+    assert divergences == []
+
+
 def test_detect_unhedged_flags_position_with_no_orders():
     """AC5 / H5 of #424: a Binance position with NO open orders is the
     incident-reproduction case — must flag as unhedged."""

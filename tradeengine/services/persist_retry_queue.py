@@ -180,5 +180,41 @@ class PersistRetryQueue:
         return self._queue.qsize()
 
 
+def register_default_handlers(queue: PersistRetryQueue, client: Any) -> None:
+    """Register the position_client write operations the drain loop retries.
+
+    Closes #596: prior to this, ``persist_retry_queue`` was constructed but
+    never had ``.start()`` called nor any operation handlers registered, so
+    every ``PendingWrite`` enqueued by ``_on_persist_failure`` (including
+    "0-insert" position-creation failures) sat in the in-memory queue
+    forever — the drain loop never ran, so nothing was ever actually
+    retried until the 500-item cap was hit and writes were silently
+    dropped into ``never_persisted``.
+
+    ``PersistRetryQueue._try_one`` invokes the registered handler as
+    ``fn(**pw.data)``. ``create_position`` takes a single positional dict,
+    so the wrapper re-assembles the flattened kwargs back into that dict.
+    ``update_position`` / ``update_position_risk_orders`` need a
+    ``position_id`` that is not itself a field of the update payload;
+    ``_on_persist_failure`` stashes it under the ``_retry_position_id`` key
+    before enqueueing, and the wrappers below pop it back out.
+    """
+
+    async def _retry_create_position(**kwargs: Any) -> Any:
+        return await client.create_position(kwargs)
+
+    async def _retry_update_position(**kwargs: Any) -> Any:
+        position_id = str(kwargs.pop("_retry_position_id", ""))
+        return await client.update_position(position_id, kwargs)
+
+    async def _retry_update_position_risk_orders(**kwargs: Any) -> Any:
+        position_id = str(kwargs.pop("_retry_position_id", ""))
+        return await client.update_position_risk_orders(position_id, kwargs)
+
+    queue.register("create_position", _retry_create_position)
+    queue.register("update_position", _retry_update_position)
+    queue.register("update_position_risk_orders", _retry_update_position_risk_orders)
+
+
 # Module-level singleton — wired up in api.py startup
 persist_retry_queue = PersistRetryQueue()

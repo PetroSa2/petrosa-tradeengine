@@ -209,6 +209,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             app.state.dm_boot_probe_result = None
 
+        # #596: wire up the position-persist retry queue (#448 built the
+        # class but nothing ever called .start() or .register() in
+        # production — enqueued 0-insert/failed writes sat forever and were
+        # never actually retried).
+        try:
+            from shared.mysql_client import position_client
+            from tradeengine.services.persist_retry_queue import (
+                persist_retry_queue,
+                register_default_handlers,
+            )
+
+            register_default_handlers(persist_retry_queue, position_client)
+            persist_retry_queue.start()
+            app.state.persist_retry_queue = persist_retry_queue
+            logger.info("✅ Position persist-retry queue started")
+        except Exception as _retry_queue_exc:
+            logger.error("Failed to start persist_retry_queue: %s", _retry_queue_exc)
+
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
         from tradeengine.position_reconciler import PositionReconciler
@@ -507,6 +525,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if hasattr(app.state, "position_reconciler"):
             await app.state.position_reconciler.stop()
             logger.info("✅ Position reconciler stopped")
+
+        # Stop position persist-retry queue (#596)
+        if hasattr(app.state, "persist_retry_queue"):
+            app.state.persist_retry_queue.stop()
+            logger.info("✅ Position persist-retry queue stopped")
 
         # Cancel Binance ping loop before closing exchange
         await binance_exchange.stop_ping_loop()

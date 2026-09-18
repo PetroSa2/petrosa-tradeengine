@@ -84,9 +84,17 @@ def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) ->
         logger.warning("Alert publish failed for persist_failed: %s", exc)
 
     try:
+        pw_data = dict(position_data)
+        # create_position takes the payload dict as-is; update_position and
+        # update_position_risk_orders need a position_id that is not itself
+        # a field of the update payload — stash it so the registered retry
+        # handler (persist_retry_queue.register_default_handlers) can pop it
+        # back out before calling through.
+        if result.operation != "create_position" and result.position_id:
+            pw_data["_retry_position_id"] = result.position_id
         pw = PendingWrite(
             operation=result.operation,
-            data=dict(position_data),
+            data=pw_data,
             symbol=result.symbol or str(position_data.get("symbol", "")),
             position_id=result.position_id,
             last_error=result.error,

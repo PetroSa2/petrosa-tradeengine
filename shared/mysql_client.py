@@ -72,6 +72,24 @@ class DataManagerPositionClient:
             position_id=position_id,
         )
 
+    async def _log_health_snapshot(self, pid: str) -> None:
+        """Best-effort Data Manager health probe logged on a 0-insert failure.
+
+        #596 AC: "Health check ... to catch DB issues early". A blocking
+        pre-check before every position creation would add latency (and a
+        new failure mode) to the hot trading path; instead this fires only
+        on the failure path so operators get an immediate health snapshot
+        correlated with the failed write, without slowing down the common
+        case. Never raises — this is diagnostics only.
+        """
+        try:
+            health = await self.health_check()
+            logger.error(
+                "Data Manager health at time of 0-insert for %s: %s", pid, health
+            )
+        except Exception as exc:  # pragma: no cover - defensive, diagnostics-only
+            logger.warning("Health snapshot probe failed for %s: %s", pid, exc)
+
     # ------------------------------------------------------------------
     # Write methods — all return PersistResult
     # ------------------------------------------------------------------
@@ -90,9 +108,18 @@ class DataManagerPositionClient:
             if ok:
                 logger.info("Created position record %s via Data Manager", pid)
             else:
+                # #596: log the full Data Manager response instead of the bare
+                # "0-insert" literal so the actual inserted_count/inserted_id
+                # values (and any extra diagnostic fields data-manager returns)
+                # are visible in logs, plus a reactive health snapshot to help
+                # distinguish a DB-side outage from a constraint/schema issue.
                 logger.error(
-                    "Failed to create position %s via Data Manager: 0-insert", pid
+                    "Failed to create position %s via Data Manager: 0-insert "
+                    "(response=%s)",
+                    pid,
+                    response,
                 )
+                await self._log_health_snapshot(pid)
             return self._make_result(
                 ok, operation="create_position", symbol=sym, position_id=pid
             )

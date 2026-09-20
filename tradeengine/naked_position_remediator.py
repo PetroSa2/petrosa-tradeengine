@@ -660,8 +660,8 @@ class NakedPositionRemediator:
                         "arm_only cannot flatten — RECOMMEND promoting "
                         "TE_NAKED_POSITION_REMEDIATION_MODE to arm_or_flatten "
                         "so this position stops floating unprotected; "
-                        "re-alerting every %ds until resolved."
-                        % self._malformed_realert_interval_sec
+                        f"re-alerting every "
+                        f"{self._malformed_realert_interval_sec}s until resolved."
                     )
                 ),
             )

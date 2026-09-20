@@ -129,6 +129,51 @@ def test_ac3_disabled_when_cap_is_zero():
 
 
 # ---------------------------------------------------------------------------
+# #600: schema-drift / partial config must not silently permit everything
+# ---------------------------------------------------------------------------
+
+
+def test_missing_max_leverage_bound_raises_instead_of_defaulting_to_125():
+    """#600: a partial/drifted config missing max_leverage_bound used to
+    silently default to 125 (Binance's absolute max — i.e. no bound),
+    reporting a 'passed' check on the most permissive possible guard. It
+    must now raise so the caller (dispatcher) fails CLOSED instead."""
+    guard = LeverageBoundGuard()
+    order = _make_order()
+    cfg = {
+        "leverage": 50,
+        "portfolio_leverage_cap": 0,
+        "leverage_breach_alert_threshold": 3,
+        # max_leverage_bound intentionally omitted
+    }
+
+    with pytest.raises(ValueError, match="max_leverage_bound") as exc_info:
+        guard.check(order, cfg, open_position_leverages=[])
+    assert "max_leverage_bound" in str(exc_info.value)
+
+
+def test_missing_portfolio_leverage_cap_raises_instead_of_defaulting_to_disabled():
+    """#600: a partial/drifted config missing portfolio_leverage_cap used
+    to silently default to 0, which is treated as 'disabled' — the
+    portfolio-aggregate check (AC3) was skipped entirely without any
+    signal. It must now raise."""
+    guard = LeverageBoundGuard()
+    order = _make_order()
+    cfg = {
+        "leverage": 10,
+        "max_leverage_bound": 125,
+        "leverage_breach_alert_threshold": 3,
+        # portfolio_leverage_cap intentionally omitted
+    }
+
+    with pytest.raises(
+        ValueError, match="max_leverage_bound|portfolio_leverage_cap"
+    ) as exc_info:
+        guard.check(order, cfg, open_position_leverages=[])
+    assert "portfolio_leverage_cap" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
 # AC5: Consecutive breach alert
 # ---------------------------------------------------------------------------
 

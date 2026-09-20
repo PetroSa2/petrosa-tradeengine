@@ -88,19 +88,23 @@ async def test_check_algo_order_limits_account_exceeded(
 
 
 @pytest.mark.asyncio
-async def test_check_algo_order_limits_api_error_failsafe(
+async def test_check_algo_order_limits_fails_closed_on_api_error(
     position_manager, mock_exchange
 ):
-    """Test failsafe behavior when API call fails"""
+    """#600: was 'Should return True (allow trade) even if API fails' — the
+    comment called this a 'failsafe' but it was fail-OPEN: an outage let
+    check_algo_order_limits() pass every guard while the algo_orders_open
+    gauge stayed frozen, so a subsequent SL/TP OCO could be rejected by
+    Binance with -4045, leaving the position naked. It must now fail
+    CLOSED (reject the entry) until the exchange query succeeds again."""
     mock_exchange.get_open_algo_orders.side_effect = Exception("API Error")
 
     order = TradeOrder(
         symbol="BTCUSDT", side="buy", type="market", amount=0.001, position_side="LONG"
     )
 
-    # Should return True (allow trade) even if API fails
     result = await position_manager.check_algo_order_limits(order)
-    assert result is True
+    assert result is False
 
 
 @pytest.mark.asyncio

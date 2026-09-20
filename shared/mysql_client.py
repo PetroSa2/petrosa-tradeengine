@@ -324,6 +324,14 @@ class DataManagerPositionClient:
         return positions
 
     async def get_daily_pnl(self, date: str) -> float | None:
+        """Return today's realized P&L, or None if no record exists yet.
+
+        Raises on a genuine query/connection failure (#600) so the caller
+        can distinguish "no data recorded yet" (a legitimate None — first
+        trade of the day) from "Data Manager is unreachable" — the two were
+        previously indistinguishable, which let the daily-loss kill-switch
+        silently evaluate against a stale/zero P&L during an outage.
+        """
         try:
             response = await self.data_manager_client._client.query(
                 database="mysql",
@@ -335,7 +343,7 @@ class DataManagerPositionClient:
             return None
         except Exception as exc:
             logger.error("Failed to get daily P&L for %s: %s", date, exc)
-            return None
+            raise
 
     async def update_daily_pnl(self, date: str, daily_pnl: float) -> PersistResult:
         try:

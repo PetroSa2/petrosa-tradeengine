@@ -3351,6 +3351,7 @@ class Dispatcher:
                 reason=reason,
                 decision_id=signal.decision_id,
                 extra=merged_extra,
+                client_order_id=signal.client_order_id,  # petrosa_k8s#1127
             )
         except Exception as emit_err:
             self.logger.warning(
@@ -3461,6 +3462,7 @@ class Dispatcher:
                 reason=reason,
                 decision_id=decision_id,
                 extra=extra,
+                client_order_id=order.client_order_id,  # petrosa_k8s#1127
             )
         except Exception as emit_err:
             self.logger.warning(
@@ -4107,6 +4109,7 @@ class Dispatcher:
             #   L = last filled price, z = cumulative filled qty,
             #   n = commission, N = commission asset, rp = realized pnl,
             #   T = transaction time (ms epoch).
+            #   c = original client order ID (petrosa_k8s#1127).
             def _to_float(v: Any) -> float | None:
                 try:
                     return float(v)
@@ -4151,6 +4154,7 @@ class Dispatcher:
                 reason="user_data_stream_fill",
                 decision_id=decision_id,
                 extra=extra,
+                client_order_id=order_obj.get("c"),  # petrosa_k8s#1127
             )
         except Exception as emit_err:
             self.logger.warning(

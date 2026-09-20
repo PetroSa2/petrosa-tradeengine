@@ -4,6 +4,7 @@ Configuration settings for Petrosa Trading Engine
 
 from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -178,7 +179,19 @@ class Settings(BaseSettings):
     # for 1h15m on 2026-09-20. This bounds how often the remediator re-fires
     # the CRITICAL alert (each time recommending promotion to
     # arm_or_flatten) while the position remains stuck.
-    naked_position_malformed_realert_interval_sec: int = 300
+    # Copilot review (PR #612): Settings has no env_prefix/alias for the
+    # existing "TE_"-documented deployment names, so a plain field default
+    # here would silently ignore TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC
+    # and always fall back to 300s in production. Explicit AliasChoices makes
+    # the documented TE_ name actually load, while still accepting the plain
+    # field name (e.g. from a .env file or direct kwarg).
+    naked_position_malformed_realert_interval_sec: int = Field(
+        default=300,
+        validation_alias=AliasChoices(
+            "TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC",
+            "naked_position_malformed_realert_interval_sec",
+        ),
+    )
 
     # #560: consecutive re-arm failures allowed per (symbol, side) before the
     # remediator backs off instead of retrying every reconciliation cycle

@@ -235,6 +235,25 @@ class TestSettings:
         assert settings.jwt_algorithm == "HS512"
         assert settings.jwt_expiration_hours == 48
 
+    def test_naked_position_malformed_realert_interval_default(self):
+        """#607: default is 300s when no env override is set."""
+        settings = Settings()
+        assert settings.naked_position_malformed_realert_interval_sec == 300
+
+    def test_naked_position_malformed_realert_interval_env_override(self):
+        """#607 / Copilot review (PR #612): the documented
+        TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC env var must actually
+        be read — Settings has no env_prefix, so without an explicit
+        validation_alias this field would silently ignore the TE_-prefixed
+        name (matching the other naked_position_* deployment names) and
+        always fall back to the 300s default in production."""
+        with patch.dict(
+            os.environ,
+            {"TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC": "60"},
+        ):
+            settings = Settings()
+        assert settings.naked_position_malformed_realert_interval_sec == 60
+
     def test_model_config_pydantic_v2(self):
         """Test model_config attribute (Pydantic v2 migration)"""
         settings = Settings()

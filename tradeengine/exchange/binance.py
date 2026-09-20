@@ -2028,14 +2028,25 @@ class BinanceFuturesExchange:
         """Combine standard and algo open orders into a single set of IDs
 
         This is a helper for OCO monitoring to ensure we see all types of orders.
+
+        #601: was "except Exception: return set()" (and "if self.client is
+        None: return set()") — both indistinguishable from "genuinely zero
+        open orders", which let position_health_guard's _binance_ids_for
+        treat a transient Binance 5xx as "sl_present=False, tp_present=False"
+        for every position simultaneously, producing a mass stale_order_id
+        divergence that naked_position_remediator's arm_or_flatten mode
+        could act on across the whole book. Raise instead (same pattern as
+        get_position_info and get_open_algo_orders above) so callers' own
+        try/except can fail closed via the existing binance_ids-is-None
+        branch.
         """
         if not self.initialized:
             await self.initialize()
 
-        if self.client is None:
-            return set()
-
         try:
+            if self.client is None:
+                raise RuntimeError("Binance Futures client not initialized")
+
             # 1. Get standard open orders
             # #564: offload sync REST call to a thread — see
             # get_position_info for rationale. Called by OCO monitoring's
@@ -2045,7 +2056,12 @@ class BinanceFuturesExchange:
             )
             order_ids = {str(o["orderId"]) for o in std_orders}
 
-            # 2. Get algo open orders
+            # 2. Get algo open orders. #601: get_open_algo_orders (fixed by
+            # #600) now raises on its own failure instead of returning [];
+            # letting that propagate here (rather than swallowing it below)
+            # ensures an algo-endpoint-only outage is reported as
+            # "verification unavailable" rather than silently presented as
+            # "standard orders only, no algo orders exist" (failure mode B).
             algo_orders = await self.get_open_algo_orders(symbol=symbol)
             for o in algo_orders:
                 if "algoId" in o:
@@ -2054,7 +2070,7 @@ class BinanceFuturesExchange:
             return order_ids
         except Exception as e:
             logger.error(f"Failed to get all open orders: {e}")
-            return set()
+            raise
 
     async def verify_hedge_mode(self) -> dict[str, Any]:
         """Verify if hedge mode is enabled on Binance Futures account

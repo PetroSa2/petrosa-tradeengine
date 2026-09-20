@@ -1088,6 +1088,44 @@ class TestRetryLogic:
         assert result == set()
 
     @pytest.mark.asyncio
+    async def test_get_all_open_orders_raises_on_full_api_failure(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#601: was 'except Exception: return set()' — indistinguishable
+        from genuinely zero open orders. That let
+        position_health_guard._binance_ids_for treat a transient Binance
+        5xx as "no stops exist" for every position simultaneously, which
+        could trigger arm_or_flatten remediation across the whole book.
+        Now raises (same pattern as get_position_info /
+        get_open_algo_orders) so callers can fail closed."""
+        mock_binance_client.futures_get_open_orders = Mock(
+            side_effect=Exception("Binance 5xx: service unavailable")
+        )
+
+        with pytest.raises(Exception, match="Binance 5xx: service unavailable"):
+            await binance_exchange.get_all_open_orders(symbol="BTCUSDT")
+
+    @pytest.mark.asyncio
+    async def test_get_all_open_orders_raises_on_algo_endpoint_partial_failure(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#601 failure mode B: standard orders succeed but the algo
+        endpoint fails. This must NOT be presented as a complete result
+        with "no algo orders" (get_open_algo_orders swallowing to [] was
+        the #600 bug) — get_all_open_orders must propagate the failure so
+        the caller treats the whole query as unverified, not as "SL/TP
+        genuinely absent"."""
+        mock_binance_client.futures_get_open_orders = Mock(
+            return_value=[{"orderId": 111}]
+        )
+        mock_binance_client._request_futures_api = Mock(
+            side_effect=Exception("openAlgoOrders endpoint down")
+        )
+
+        with pytest.raises(Exception, match="openAlgoOrders endpoint down"):
+            await binance_exchange.get_all_open_orders(symbol="BTCUSDT")
+
+    @pytest.mark.asyncio
     async def test_get_current_price_does_not_block_event_loop(
         self, binance_exchange, mock_binance_client
     ):

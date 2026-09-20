@@ -101,6 +101,18 @@ class Signal(BaseModel):
         None,
         description="uuid4 hex string assigned by petrosa-cio for the decision that produced this signal; None for strategy-direct signals",
     )
+    leverage: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "Admission-time leverage decided by CIO's leverage arbiter "
+            "(cio/output/translator.py). None for strategy-direct signals "
+            "or legacy producers; the consumer falls back to the "
+            "configured default (TE_DEFAULT_LEVERAGE) and logs the "
+            "fallback explicitly rather than silently applying a fixed "
+            "value (#599)."
+        ),
+    )
     strategy_mode: StrategyMode = Field(
         StrategyMode.DETERMINISTIC, description="Processing mode for this signal"
     )
@@ -223,4 +235,11 @@ class Signal(BaseModel):
     model_config = {
         "json_encoders": {datetime: lambda v: v.isoformat()},
         "protected_namespaces": (),
+        # #599: was implicitly "ignore" (pydantic v2 default), which is how
+        # CIO's "leverage" field evaporated silently for months. Producer/
+        # consumer field drift must now raise instead of vanishing. Any
+        # producer field that is intentionally out-of-band (e.g. OTel trace
+        # propagation) must be popped from the payload dict by the consumer
+        # before constructing Signal — see tradeengine/consumer.py.
+        "extra": "forbid",
     }

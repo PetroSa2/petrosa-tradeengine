@@ -247,6 +247,14 @@ class SignalConsumer:
                 )
                 ctx = context.get_current()
 
+            # #599: Signal now enforces extra="forbid" so producer/consumer
+            # field drift raises instead of silently vanishing. The OTel
+            # trace-propagation fields above are legitimate, already-consumed
+            # out-of-band metadata (petrosa_otel standard + ta-bot legacy) —
+            # they must not reach Signal(**signal_data) below.
+            signal_data.pop("_otel_trace_context", None)
+            signal_data.pop("_otel_trace_headers", None)
+
             # Create span with extracted context for distributed tracing
             with tracer.start_as_current_span(
                 "process_trading_signal",

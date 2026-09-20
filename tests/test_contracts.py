@@ -71,6 +71,107 @@ def test_signal_validation_invalid_confidence() -> None:
     assert "confidence" in error_str, "Error should mention 'confidence' field"
 
 
+def test_signal_leverage_field_accepts_cio_decision() -> None:
+    """#599: Signal must declare a leverage field so CIO's admission-time
+    leverage decision (cio/output/translator.py decided_leverage) survives
+    the wire instead of being silently dropped."""
+    signal = Signal(
+        strategy_id="test-strategy-1",
+        symbol="BTCUSDT",
+        signal_type="buy",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+        leverage=3,
+    )
+    assert signal.leverage == 3
+
+
+def test_signal_leverage_defaults_to_none() -> None:
+    """Legacy/strategy-direct signals with no leverage decision must not be
+    coerced to a magic value at the contract layer — the fallback is
+    applied explicitly downstream (#599)."""
+    signal = Signal(
+        strategy_id="test-strategy-1",
+        symbol="BTCUSDT",
+        signal_type="buy",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+    )
+    assert signal.leverage is None
+
+
+def test_signal_leverage_rejects_below_one() -> None:
+    """leverage must be >= 1 (ge=1 constraint)."""
+    with pytest.raises(ValidationError) as exc_info:
+        Signal(
+            strategy_id="test-strategy-1",
+            symbol="BTCUSDT",
+            signal_type="buy",
+            action="buy",
+            confidence=0.8,
+            strength="medium",
+            timeframe="1h",
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="petrosa-cio",
+            strategy="test-strategy",
+            leverage=0,
+        )
+    assert "leverage" in str(exc_info.value).lower()
+
+
+def test_signal_rejects_unknown_field() -> None:
+    """#599: model_config now sets extra='forbid' so producer/consumer field
+    drift raises instead of silently vanishing (this is exactly how CIO's
+    'leverage' field evaporated for months before this fix)."""
+    with pytest.raises(ValidationError) as exc_info:
+        Signal(
+            strategy_id="test-strategy-1",
+            symbol="BTCUSDT",
+            signal_type="buy",
+            action="buy",
+            confidence=0.8,
+            strength="medium",
+            timeframe="1h",
+            price=45000.0,
+            quantity=0.1,
+            current_price=45000.0,
+            source="petrosa-cio",
+            strategy="test-strategy",
+            totally_unknown_field="should raise, not vanish",
+        )
+    error_str = str(exc_info.value).lower()
+    assert "totally_unknown_field" in error_str
+
+
+def test_order_leverage_field_carries_signal_decision() -> None:
+    """#599: TradeOrder must carry the leverage that was applied for this
+    order (from Signal.leverage or the configured default)."""
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=3,
+    )
+    assert order.leverage == 3
+
+
 def test_signal_validation_invalid_price() -> None:
     """Test signal validation with invalid price"""
     # Pydantic doesn't validate negative prices by default, so this should pass

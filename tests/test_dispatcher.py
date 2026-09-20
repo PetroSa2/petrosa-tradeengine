@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -803,3 +803,185 @@ def test_cleanup_signal_cache(dispatcher: Dispatcher) -> None:
 
     # Cache should be cleaned (or entries expired)
     assert isinstance(dispatcher.signal_cache, dict)
+
+
+# ---------------------------------------------------------------------------
+# #599 — CIO leverage decision passthrough (signal -> order -> exchange)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_carries_leverage(dispatcher: Dispatcher) -> None:
+    """Signal.leverage must survive the signal->order conversion (#599)."""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+        leverage=3,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.leverage == 3
+
+
+@pytest.mark.asyncio
+async def test_signal_to_order_no_leverage_is_none(dispatcher: Dispatcher) -> None:
+    """A signal with no leverage decision produces an order with leverage=None,
+    not a hardcoded value — the fallback is applied later, explicitly (#599)."""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+    )
+
+    order = dispatcher._signal_to_order(signal)
+
+    assert order.leverage is None
+
+
+@pytest.mark.asyncio
+async def test_end_to_end_signal_leverage_applied_to_exchange(
+    dispatcher: Dispatcher,
+) -> None:
+    """End-to-end (#599 AC): a signal carrying leverage=3 must result in
+    futures_change_leverage(..., leverage=3) on the exchange client, not the
+    old hardcoded 10x."""
+    signal = Signal(
+        strategy_id="test-strategy",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        strength="medium",
+        timeframe="1h",
+        price=50000.0,
+        quantity=0.1,
+        current_price=50000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+        order_type=OrderType.MARKET,
+        strategy_mode=StrategyMode.DETERMINISTIC,
+        leverage=3,
+    )
+    order = dispatcher._signal_to_order(signal)
+    assert order.leverage == 3
+    order.simulate = False
+
+    mock_client = Mock()
+    mock_client.futures_change_leverage = Mock()
+    dispatcher.exchange = Mock()
+    dispatcher.exchange.client = mock_client
+
+    await dispatcher._apply_order_leverage(order)
+
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="BTCUSDT", leverage=3
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_order_leverage_falls_back_to_default_when_absent(
+    dispatcher: Dispatcher,
+) -> None:
+    """No leverage on the signal -> the named, configurable default is used
+    and applied to the exchange, not a magic literal (#599)."""
+    order = TradeOrder(
+        symbol="ETHUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=None,
+        simulate=False,
+    )
+
+    mock_client = Mock()
+    mock_client.futures_change_leverage = Mock()
+    dispatcher.exchange = Mock()
+    dispatcher.exchange.client = mock_client
+    dispatcher.settings.te_default_leverage = 7
+
+    await dispatcher._apply_order_leverage(order)
+
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="ETHUSDT", leverage=7
+    )
+
+
+@pytest.mark.asyncio
+async def test_apply_order_leverage_skips_simulated_orders(
+    dispatcher: Dispatcher,
+) -> None:
+    """Simulated orders must never touch the real exchange leverage."""
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=5,
+        simulate=True,
+    )
+
+    mock_client = Mock()
+    mock_client.futures_change_leverage = Mock()
+    dispatcher.exchange = Mock()
+    dispatcher.exchange.client = mock_client
+
+    await dispatcher._apply_order_leverage(order)
+
+    mock_client.futures_change_leverage.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_order_with_consensus_applies_leverage_before_exchange(
+    dispatcher: Dispatcher,
+) -> None:
+    """Full risk-check path: _execute_order_with_consensus must apply the
+    order's leverage before dispatching to the exchange (#599)."""
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        target_price=50000.0,
+        leverage=3,
+        simulate=False,
+        strategy_metadata={"strategy_id": "test-strategy"},
+    )
+
+    dispatcher.position_manager.check_position_limits = AsyncMock(return_value=True)
+    dispatcher.position_manager.check_daily_loss_limits = AsyncMock(return_value=True)
+    dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+    dispatcher._register_pending_fill_signal = Mock()
+
+    mock_client = Mock()
+    mock_client.futures_change_leverage = Mock()
+    dispatcher.exchange = Mock()
+    dispatcher.exchange.client = mock_client
+
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.get_all_open_strategy_positions.return_value = []
+        await dispatcher._execute_order_with_consensus(order)
+
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="BTCUSDT", leverage=3
+    )

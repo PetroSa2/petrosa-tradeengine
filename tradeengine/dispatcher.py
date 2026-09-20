@@ -23,6 +23,7 @@ from shared.distributed_lock import distributed_lock_manager
 from shared.logger import get_logger
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
+from tradeengine.leverage_manager import LeverageManager
 from tradeengine.metrics import (
     atomic_rollback_failed_total,
     close_qty_clamped_total,
@@ -2007,6 +2008,14 @@ class Dispatcher:
         # Initialize Leverage Bound Guard (FR64, P6.4)
         self.leverage_bound_guard = LeverageBoundGuard()
 
+        # #599: applies the leverage actually carried on each signal/order
+        # (falling back to settings.te_default_leverage when absent) right
+        # before order execution, instead of the removed startup loop that
+        # blindly forced 10x on every symbol regardless of any decision.
+        self.leverage_manager = LeverageManager(
+            binance_client=getattr(exchange, "client", None) if exchange else None
+        )
+
         # Duplicate signal detection cache
         # Format: {signal_id: timestamp} - stores signal IDs with their reception time
         self.signal_cache: dict[str, float] = {}
@@ -2114,28 +2123,20 @@ class Dispatcher:
                 "Strategy position manager initialization started in background"
             )
 
-            # PROACTIVE LEVERAGE SETUP (#465: offload sync REST to a thread so it
-            # yields the event loop between symbols and does not starve the
-            # downstream DataManager boot probe)
+            # #599: the previous startup step here blindly forced 10x
+            # leverage on every SUPPORTED_SYMBOLS at boot, regardless of what
+            # any signal's leverage decision would later require — that
+            # hardcoded value is exactly what silently overrode CIO's
+            # leverage arbitration. Leverage is now applied per-order in
+            # _execute_order_with_consensus() using the leverage carried on
+            # the signal (falling back to settings.te_default_leverage), via
+            # self.leverage_manager. No blanket startup pass is needed.
             if self.exchange:
-                try:
-                    self.logger.info("🔧 SETTING PROACTIVE LEVERAGE (10x)...")
-                    from shared.constants import SUPPORTED_SYMBOLS
-
-                    for symbol in SUPPORTED_SYMBOLS:
-                        try:
-                            await asyncio.to_thread(
-                                self.exchange.client.futures_change_leverage,
-                                symbol=symbol,
-                                leverage=10,
-                            )
-                            self.logger.info(f"✅ Leverage set to 10x for {symbol}")
-                        except Exception as lev_err:
-                            self.logger.warning(
-                                f"⚠️ Failed to set leverage for {symbol}: {lev_err}"
-                            )
-                except Exception as e:
-                    self.logger.error(f"❌ PROACTIVE LEVERAGE SETUP FAILED: {e}")
+                self.logger.info(
+                    "🔧 Leverage will be applied per-order from each signal "
+                    "(fallback: %sx) — no blanket startup pass (#599).",
+                    self.settings.te_default_leverage,
+                )
 
             # STARTUP OCO RECONCILIATION: Rebuild active_oco_pairs from live Binance state
             # This prevents ghost-order errors (-2013/-1102) after pod restarts
@@ -2717,6 +2718,45 @@ class Dispatcher:
                 span.record_exception(e)
                 return {"status": "error", "error": str(e)}
 
+    async def _apply_order_leverage(self, order: TradeOrder) -> None:
+        """Apply the leverage carried on `order` before it is sent to the exchange.
+
+        Fixes #599: CIO's admission-time leverage decision (Signal.leverage)
+        was silently dropped by the Signal contract and replaced with a
+        hardcoded 10x set once at startup for every symbol. This uses the
+        leverage actually carried on the order (originating from
+        Signal.leverage), falling back to the configured, explicit default
+        (`settings.te_default_leverage`) when the signal carried none — and
+        logs that fallback so silent-default usage stays visible in
+        production. Best-effort: a failure here never blocks order flow
+        (Binance rejects leverage changes on symbols with an open position;
+        the order then proceeds at whatever leverage is already set).
+        """
+        binance_client = (
+            getattr(self.exchange, "client", None) if self.exchange else None
+        )
+        if order.simulate or not binance_client:
+            return
+
+        target_leverage = order.leverage
+        if target_leverage is None:
+            target_leverage = self.settings.te_default_leverage
+            self.logger.info(
+                f"ℹ️ Signal for {order.symbol} carried no leverage — falling "
+                f"back to configured default TE_DEFAULT_LEVERAGE="
+                f"{target_leverage}x"
+            )
+
+        try:
+            self.leverage_manager.binance_client = binance_client
+            await self.leverage_manager.ensure_leverage(order.symbol, target_leverage)
+        except Exception as lev_exc:
+            self.logger.warning(
+                f"⚠️ Leverage application failed for {order.symbol} "
+                f"(non-fatal, order proceeds with exchange's existing "
+                f"leverage): {lev_exc}"
+            )
+
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order with distributed consensus"""
         try:
@@ -2922,6 +2962,11 @@ class Dispatcher:
                 exchange=order.exchange,
             ).inc()
             # -- End AC2+AC3 --------------------------------------------------
+
+            # -- #599: apply the leverage carried on the order (originating
+            # from Signal.leverage / CIO's leverage arbiter) before sending
+            # the order to the exchange.
+            await self._apply_order_leverage(order)
 
             # Execute order
             result = await self.execute_order(order)
@@ -3528,6 +3573,7 @@ class Dispatcher:
             average_price=0.0,
             time_in_force=current_signal.time_in_force.value,
             position_size_pct=current_signal.position_size_pct,
+            leverage=current_signal.leverage,
             created_at=current_signal.timestamp,
             updated_at=current_signal.timestamp,
             simulate=(

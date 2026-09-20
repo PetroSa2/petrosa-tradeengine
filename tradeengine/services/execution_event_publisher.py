@@ -119,6 +119,7 @@ class ExecutionEventPublisher:
         reason: str,
         timestamp: datetime | None = None,
         extra: dict[str, Any] | None = None,
+        client_order_id: str | None = None,  # petrosa_k8s#1127: position_id from CIO
     ) -> dict[str, Any]:
         ts = (timestamp or datetime.now(UTC)).astimezone(UTC).isoformat()
         payload: dict[str, Any] = {
@@ -129,6 +130,8 @@ class ExecutionEventPublisher:
             "timestamp": ts,
             "reason": reason or "",
         }
+        if client_order_id:
+            payload["client_order_id"] = client_order_id
         if extra:
             # Skip keys that would clobber required fields.
             for k, v in extra.items():
@@ -146,6 +149,7 @@ class ExecutionEventPublisher:
         decision_id: str | None = None,
         timestamp: datetime | None = None,
         extra: dict[str, Any] | None = None,
+        client_order_id: str | None = None,  # petrosa_k8s#1127
     ) -> bool:
         """Emit one execution event. Returns True on success, False otherwise.
 
@@ -165,6 +169,7 @@ class ExecutionEventPublisher:
             reason=reason,
             timestamp=timestamp,
             extra=extra,
+            client_order_id=client_order_id,
         )
 
         with tracer.start_as_current_span(

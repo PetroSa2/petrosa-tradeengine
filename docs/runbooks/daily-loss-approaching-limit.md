@@ -1,5 +1,11 @@
 # Runbook: Daily Loss Approaching Limit
 
+**GitHub tooling:** Use the official `github` MCP server for linked issue, pull
+request, review, release, or Actions operations, and `github-projects` MCP for
+Projects v2. Use `gh` only for non-MCP clients, deterministic scripts, runners, or
+unsupported operations, with authentication from the configured file-backed token
+or environment.
+
 ## Alert Details
 
 - **Alert Name**: `TradeEngineDailyLossApproachingLimit`

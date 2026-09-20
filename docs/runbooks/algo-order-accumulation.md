@@ -1,5 +1,11 @@
 # Runbook — algo-order accumulation
 
+**GitHub tooling:** Use the official `github` MCP server for linked issue, pull
+request, review, release, or Actions operations, and `github-projects` MCP for
+Projects v2. Use `gh` only for non-MCP clients, deterministic scripts, runners, or
+unsupported operations, with authentication from the configured file-backed token
+or environment.
+
 **Linked alerts (Grafana Cloud, defined in `petrosa_k8s/observability/alert-rules/tradeengine-business-alerts.yaml`):**
 
 - `tradeengine-algo-order-accumulation` (critical, fires at `tradeengine_algo_orders_open > 4` for 2m).

@@ -1,5 +1,11 @@
 # Runbook: Naked-Position Remediation Mode
 
+**GitHub tooling:** Use the official `github` MCP server for linked issue, pull
+request, review, release, or Actions operations, and `github-projects` MCP for
+Projects v2. Use `gh` only for non-MCP clients, deterministic scripts, runners, or
+unsupported operations, with authentication from the configured file-backed token
+or environment.
+
 **Alert:** `tradeengine-naked-remediation-off` (Grafana Cloud)
 **Metric:** `tradeengine_naked_position_remediation_mode_status{mode="off"} > 0`
 **Severity:** `critical`

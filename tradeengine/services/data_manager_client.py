@@ -85,7 +85,10 @@ class BaseDataManagerClient:
     `tradeengine/db/mongodb_client.py` and `shared/mysql_client.py`:
 
     - ``query``       → ``{"data": list}``
-    - ``insert_one``  → ``{"inserted_id": str, "inserted_count": int}``
+    - ``insert_one``  → ``{"inserted_id": str, "inserted_count": int,
+      "duplicates": int, "failed": int}``  (#598: ``duplicates``/``failed``
+      let callers tell an idempotent ``INSERT IGNORE`` no-op apart from a
+      genuine write failure when ``inserted_count`` is 0)
     - ``insert``      → ``{"inserted_count": int}``
     - ``update_one``  → ``{"modified_count": int}``
     - ``upsert_one``  → ``{"modified_count", "upserted_count", "upserted_id"}``
@@ -233,6 +236,14 @@ class BaseDataManagerClient:
         real call — never the literal ``"placeholder"``. We synthesize a
         deterministic non-placeholder id from the record's own identity
         when present, otherwise from collection + count.
+
+        #598: data-manager also returns ``duplicates`` and ``failed``
+        (``api/routes/generic.py``). These were previously discarded here,
+        which made ``inserted_count == 0`` ambiguous for callers: a MySQL
+        ``INSERT IGNORE`` that silently dropped an already-existing row
+        (an idempotent no-op, HTTP 200) was indistinguishable from a real
+        write failure. Both counters are now propagated so callers can
+        classify the two cases correctly.
         """
         body = {
             "database": database,
@@ -241,6 +252,8 @@ class BaseDataManagerClient:
         }
         resp = await self._retry_request("POST", "/api/v1/data/insert", json_body=body)
         inserted_count = int(resp.get("inserted_count", 0) or 0)
+        duplicates = int(resp.get("duplicates", 0) or 0)
+        failed = int(resp.get("failed", 0) or 0)
         synthetic_id = ""
         if inserted_count > 0:
             for candidate_key in ("_id", "id", "uuid"):
@@ -250,7 +263,12 @@ class BaseDataManagerClient:
                     break
             if not synthetic_id:
                 synthetic_id = f"{collection}-{inserted_count}"
-        return {"inserted_id": synthetic_id, "inserted_count": inserted_count}
+        return {
+            "inserted_id": synthetic_id,
+            "inserted_count": inserted_count,
+            "duplicates": duplicates,
+            "failed": failed,
+        }
 
     async def insert(
         self,

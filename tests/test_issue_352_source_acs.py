@@ -539,8 +539,20 @@ class TestAC5NatsQueueGroup:
             except Exception:
                 pass
 
-        mock_nc.subscribe.assert_called_once()
-        call_kwargs = mock_nc.subscribe.call_args[1]
+        # petrosa_k8s#1130: start_consuming now also subscribes to
+        # cio.position.> (CIO in-position governance commands) alongside the
+        # signals.trading.> subscription this test targets — assert on the
+        # signal subscription specifically rather than call count.
+        signal_calls = [
+            c
+            for c in mock_nc.subscribe.call_args_list
+            if c.args[:1] == ("signals.trading.>",)
+        ]
+        assert len(signal_calls) == 1, (
+            f"Expected exactly one signals.trading.> subscribe call, got: "
+            f"{mock_nc.subscribe.call_args_list}"
+        )
+        call_kwargs = signal_calls[0][1]
         assert call_kwargs.get("queue") == "tradeengine-workers", (
             f"Expected queue='tradeengine-workers', got: {call_kwargs.get('queue')!r}"
         )

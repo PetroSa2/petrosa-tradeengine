@@ -52,6 +52,10 @@ class SignalConsumer:
         self.nc: nats.aio.client.Client | None = None
         self.running: bool = False
         self.subscription: nats.aio.subscription.Subscription | None = None
+        # petrosa_k8s#1130: second subscription for CIO in-position governance
+        # commands (exit_now / scale_out / modify_stops), independent of the
+        # signals.trading.> subscription above.
+        self.position_subscription: nats.aio.subscription.Subscription | None = None
         self.dispatcher = dispatcher  # Use provided dispatcher or None
         self._dispatcher_provided = dispatcher is not None
 
@@ -174,6 +178,24 @@ class SignalConsumer:
                 subscribe_subject,
             )
             logger.info("Subscription details: %s", self.subscription)
+
+            # petrosa_k8s#1130: subscribe to CIO in-position governance
+            # commands (cio.position.<exit_now|scale_out|modify_stops>.<strategy_id>,
+            # petrosa-cio router.py `_POSITION_ACTIONS`). Same queue group as
+            # the signal subscription so exactly one pod acts on each command.
+            logger.info(
+                "🚀 STARTING CIO POSITION LIFECYCLE SUBSCRIPTION | Subject: cio.position.> | "
+                "Queue group: tradeengine-workers (petrosa_k8s#1130)"
+            )
+            self.position_subscription = await self.nc.subscribe(
+                "cio.position.>",
+                queue="tradeengine-workers",
+                cb=self._position_lifecycle_handler,
+            )
+            logger.info(
+                "✅ NATS SUBSCRIPTION ACTIVE | Subject: cio.position.> | "
+                "Waiting for CIO position lifecycle commands..."
+            )
 
             # Keep the consumer running
             logger.info("Entering consumer loop...")
@@ -494,6 +516,75 @@ class SignalConsumer:
                 except (TimeoutError, Exception):
                     pass  # Don't block on error ACK
 
+    async def _position_lifecycle_handler(self, msg: Any) -> None:
+        """Handle a CIO in-position governance command (petrosa_k8s#1130).
+
+        Subject shape: ``cio.position.<action>.<strategy_id>`` (petrosa-cio
+        ``OutputRouter.route``, `_POSITION_ACTIONS`). ``strategy_id`` is
+        already whitespace-normalized by the CIO producer (petrosa-cio#211)
+        before it reaches the subject, so no further NATS-token validation
+        is required here.
+
+        The message body is the JSON-serialized `DecisionResult` — it has no
+        `strategy_id` field of its own, so `strategy_id` is taken from the
+        subject exclusively, never from the payload.
+        """
+        subject = msg.subject if msg else ""
+        logger.info(
+            "📨 CIO POSITION LIFECYCLE MESSAGE | Subject: %s | Size: %d bytes",
+            subject,
+            len(msg.data) if msg and msg.data else 0,
+        )
+        parts = subject.split(".")
+        if len(parts) < 4 or parts[0] != "cio" or parts[1] != "position":
+            logger.warning(
+                "cio_position_handler.unexpected_subject subject=%s — ignoring", subject
+            )
+            return
+        action = parts[2]
+        strategy_id = ".".join(parts[3:])
+
+        try:
+            decision_payload = json.loads(msg.data.decode())
+            if not isinstance(decision_payload, dict):
+                decision_payload = {}
+        except Exception as e:
+            logger.error(
+                "cio_position_handler.parse_error subject=%s error=%s", subject, e
+            )
+            decision_payload = {}
+
+        if not self.dispatcher:
+            logger.error(
+                "cio_position_handler.no_dispatcher action=%s strategy_id=%s — "
+                "cannot execute; message dropped",
+                action,
+                strategy_id,
+            )
+            return
+
+        try:
+            result = await self.dispatcher.handle_cio_position_lifecycle_action(
+                action=action,
+                strategy_id=strategy_id,
+                decision_payload=decision_payload,
+            )
+            logger.info(
+                "cio_position_handler.done action=%s strategy_id=%s result=%s",
+                action,
+                strategy_id,
+                result,
+            )
+        except Exception as e:
+            logger.error(
+                "cio_position_handler.failed action=%s strategy_id=%s error=%s",
+                action,
+                strategy_id,
+                e,
+                exc_info=True,
+            )
+            nats_errors.labels(type="position_lifecycle").inc()
+
     async def stop_consuming(self) -> None:
         """Stop the consumer"""
         self.running = False
@@ -505,6 +596,17 @@ class SignalConsumer:
             except nats.errors.ConnectionClosedError:
                 logger.info("NATS subscription already closed (connection was dropped)")
             self.subscription = None
+
+        if self.position_subscription:
+            try:
+                await self.position_subscription.unsubscribe()
+                logger.info("NATS CIO position lifecycle subscription closed")
+            except nats.errors.ConnectionClosedError:
+                logger.info(
+                    "NATS CIO position lifecycle subscription already closed "
+                    "(connection was dropped)"
+                )
+            self.position_subscription = None
 
         if self.nc:
             try:

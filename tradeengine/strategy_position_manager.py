@@ -243,6 +243,13 @@ class StrategyPositionManager:
                 "sl_order_id": None,
                 "status": "open",
                 "exchange_position_key": exchange_position_key,
+                # petrosa_k8s#1130: echo of the CIO-assigned position_id
+                # (set as Signal.client_order_id by the translator, #1127).
+                # Persisted here so a later close can round-trip it back to
+                # CIO on the execution.events.<strategy_id> payload, letting
+                # PortfolioTracker.record_exit / PositionReviewLoop.remove_position
+                # key off the same identifier CIO used at admission time.
+                "client_order_id": getattr(signal, "client_order_id", None),
                 "strategy_metadata": {
                     "timeframe": signal.timeframe,
                     "confidence": signal.confidence,
@@ -407,6 +414,13 @@ class StrategyPositionManager:
                 "quantity": exit_quantity,
                 "realized_pnl": pnl,
                 "realized_pnl_pct": pnl_pct,
+                # petrosa_k8s#1130: round-trip the CIO position_id + whether
+                # this closure emptied the position (vs a partial scale-out)
+                # so callers can decide whether to tell CIO the position is
+                # fully gone (portfolio_tracker.record_exit / position_review_loop
+                # .remove_position) or still open at a reduced size.
+                "client_order_id": position.get("client_order_id"),
+                "position_status": position["status"],
             }
 
         except Exception as e:

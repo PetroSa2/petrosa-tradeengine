@@ -26,6 +26,13 @@ def mock_exchange():
     exchange.get_account_info = AsyncMock(
         return_value={"available_balance": 10000.0, "total_wallet_balance": 10000.0}
     )
+    # #600: check_algo_order_limits() now fails CLOSED (returns False) if
+    # this call errors/isn't awaitable, instead of the old silent fail-open
+    # True. Default it to an empty AsyncMock so tests exercising unrelated
+    # risk checks (position size, whitelist, exposure) aren't tripped up by
+    # this sub-check; tests that specifically exercise algo-order-limit
+    # behavior override this per-test.
+    exchange.get_open_algo_orders = AsyncMock(return_value=[])
     return exchange
 
 
@@ -555,6 +562,65 @@ async def test_check_daily_loss_limits_exceeded(position_manager):
     ):
         result = await position_manager.check_daily_loss_limits()
         assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_daily_loss_limits_fails_closed_on_refresh_error(
+    position_manager,
+):
+    """#600: a Data Manager outage during the daily-P&L refresh must fail
+    CLOSED (reject new entries), not silently evaluate the kill-switch
+    against a stale/zero daily_pnl. Previously get_daily_pnl swallowed its
+    own exception into None, which the `if daily_pnl is not None:` guard
+    left as self.daily_pnl's stale/initial 0.0 — always passing the check."""
+    position_manager.total_portfolio_value = 10000.0
+    position_manager.max_daily_loss_pct = 0.05
+    position_manager.daily_pnl = 0.0  # stale/initial value
+
+    with patch(
+        "shared.mysql_client.position_client.get_daily_pnl",
+        new_callable=AsyncMock,
+        side_effect=Exception("Data Manager unreachable"),
+    ):
+        result = await position_manager.check_daily_loss_limits()
+        assert result is False
+        assert position_manager._daily_pnl_refresh_stale is True
+
+
+@pytest.mark.asyncio
+async def test_check_daily_loss_limits_recovers_after_refresh_error(
+    position_manager,
+):
+    """#600: once the refresh succeeds again, the stale flag clears and the
+    kill-switch resumes evaluating the real daily_pnl."""
+    position_manager.total_portfolio_value = 10000.0
+    position_manager.max_daily_loss_pct = 0.05
+    position_manager._daily_pnl_refresh_stale = True
+
+    with patch(
+        "shared.mysql_client.position_client.get_daily_pnl",
+        new_callable=AsyncMock,
+        return_value=-100.0,
+    ):
+        result = await position_manager.check_daily_loss_limits()
+        assert result is True
+        assert position_manager._daily_pnl_refresh_stale is False
+
+
+@pytest.mark.asyncio
+async def test_check_algo_order_limits_fails_closed_on_exchange_error(
+    position_manager, sample_long_order
+):
+    """#600: was 'return True  # Fail-safe to allow trades if API check
+    fails' — actually fail-OPEN. An algo-order-limit API failure must now
+    reject the entry rather than risk placing it with no room for its
+    SL/TP OCO (Binance -4045), which previously left the position naked."""
+    position_manager.exchange.get_open_algo_orders = AsyncMock(
+        side_effect=Exception("Binance API unreachable")
+    )
+
+    result = await position_manager.check_algo_order_limits(sample_long_order)
+    assert result is False
 
 
 @pytest.mark.asyncio

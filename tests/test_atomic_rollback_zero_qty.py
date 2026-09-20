@@ -85,7 +85,18 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
             dispatcher.position_manager, "create_position_record", AsyncMock()
         ),
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
-        patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
+        # #600: leverage_bound_guard now fails CLOSED on any unexpected
+        # error inside its try block, including
+        # strategy_position_manager.get_all_open_strategy_positions()
+        # raising against a bare, unconfigured Mock(). Return a real (empty)
+        # list so the leverage-bound gate passes cleanly and this
+        # rollback-focused test can reach the code path it's actually
+        # testing, same as it did before #600 only by accident (the old
+        # fail-open swallowed this exact TypeError).
+        patch(
+            "tradeengine.dispatcher.strategy_position_manager",
+            MagicMock(get_all_open_strategy_positions=MagicMock(return_value=[])),
+        ),
     ):
         final_result = await dispatcher._execute_order_with_consensus(order)
 
@@ -143,7 +154,11 @@ async def test_atomic_rollback_skips_when_total_quantity_is_zero(
             dispatcher.position_manager, "create_position_record", AsyncMock()
         ),
         patch.object(dispatcher, "order_to_signal", {order.order_id: Mock()}),
-        patch("tradeengine.dispatcher.strategy_position_manager", Mock()),
+        # #600: see matching comment in the test above.
+        patch(
+            "tradeengine.dispatcher.strategy_position_manager",
+            MagicMock(get_all_open_strategy_positions=MagicMock(return_value=[])),
+        ),
     ):
         final_result = await dispatcher._execute_order_with_consensus(order)
 

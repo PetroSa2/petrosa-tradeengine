@@ -2927,11 +2927,17 @@ class Dispatcher:
                     order, _resolved, _open_leverages
                 )
             except Exception as _lb_exc:
-                self.logger.warning(
-                    f"Leverage bound guard raised an unexpected error for "
-                    f"{order.symbol} — failing open (order proceeds): {_lb_exc}"
+                # #600: was "failing open (order proceeds)" — bypassed FR64
+                # AC2/AC3 (per-strategy bound + portfolio aggregate cap)
+                # silently on any transient config-store hiccup. Fail
+                # CLOSED instead; the existing `if not _lb_pass:` branch
+                # below records the rejection metric and audit-trail entry.
+                self.logger.error(
+                    f"⛔ RISK REJECTION: Leverage bound guard raised an "
+                    f"unexpected error for {order.symbol} — failing CLOSED "
+                    f"(order rejected): {_lb_exc}"
                 )
-                _lb_pass, _lb_reason = True, ""
+                _lb_pass, _lb_reason = False, f"leverage_bound_guard_error: {_lb_exc}"
 
             if not _lb_pass:
                 order.mark_rejected(source="leverage_bound", reason=_lb_reason)

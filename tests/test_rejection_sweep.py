@@ -207,6 +207,32 @@ async def test_daily_loss_reject_marks_and_emits() -> None:
     assert _orders_total_count("rejected", order.symbol, order.exchange) == before + 1
 
 
+@pytest.mark.asyncio
+async def test_leverage_bound_guard_error_fails_closed() -> None:
+    """#600: was 'except Exception: _lb_pass, _lb_reason = True, ""' —
+    fail-OPEN, bypassing FR64 AC2/AC3 on any unexpected error (e.g. the
+    guard itself is unavailable, as it is on this minimally-mocked
+    dispatcher which never set `self.leverage_bound_guard`). It must now
+    fail CLOSED: the order is rejected, not admitted."""
+    d = _make_dispatcher_under_test()
+    d.position_manager.check_position_limits = AsyncMock(return_value=True)
+    d.position_manager.check_daily_loss_limits = AsyncMock(return_value=True)
+    # `d` was built via Dispatcher.__new__ — leverage_bound_guard was never
+    # assigned, so self.leverage_bound_guard.check(...) raises AttributeError
+    # and the dispatcher's except block must fail closed rather than open.
+    order = _bare_order()
+    before = _orders_total_count("rejected", order.symbol, order.exchange)
+
+    result = await d._execute_order_with_consensus(order)
+
+    assert result["status"] == "rejected"
+    assert result["rejection_source"] == "leverage_bound"
+    assert "leverage_bound_guard_error" in result["reason"]
+    assert order.status == OrderStatus.REJECTED
+    assert order.rejection_source == "leverage_bound"
+    assert _orders_total_count("rejected", order.symbol, order.exchange) == before + 1
+
+
 # ----------------------------------------------------------------------
 # AC5: round-trip — mark_rejected fields survive model_dump → dict → TradeOrder.
 # ----------------------------------------------------------------------

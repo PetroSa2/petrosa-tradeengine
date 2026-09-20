@@ -1325,10 +1325,17 @@ class BinanceFuturesExchange:
             return (False, price, "")
 
         except Exception as e:
+            # #600: was "return (False, price, '')" — the ORIGINAL price,
+            # never None, so the `if adjusted_price is None:` refusal
+            # branch at the dispatcher's SL/TP placement callers (AC4 of
+            # #424) could never fire through this path. An unvalidated SL
+            # price would either be rejected by Binance (-4131/-2021,
+            # leaving a naked position) or sit inside the safety floor and
+            # trigger immediately. Return None so callers refuse to place
+            # the order instead of proceeding blind.
             error_msg = f"Error validating PERCENT_PRICE for {symbol}: {e}"
             logger.error(error_msg, exc_info=True)
-            # Return original price if validation fails (fail open)
-            return (False, price, "")
+            return (False, None, error_msg)
 
     async def validate_price_within_percent_filter(
         self, symbol: str, price: float, order_type: str
@@ -1385,10 +1392,14 @@ class BinanceFuturesExchange:
             return (True, "")
 
         except Exception as e:
+            # #600: was "return (True, '')" — fail-open. All three callers
+            # (limit / stop-limit / take-profit-limit order placement) do
+            # `if not is_valid: raise ValueError(error_msg)`, so failing
+            # open here silently let orders through with an unvalidated
+            # price. Fail CLOSED instead.
             error_msg = f"Error validating PERCENT_PRICE for {symbol}: {e}"
             logger.error(error_msg, exc_info=True)
-            # Allow order to proceed if validation fails (fail open)
-            return (True, "")
+            return (False, error_msg)
 
     def calculate_min_order_amount(
         self, symbol: str, current_price: float | None = None
@@ -2005,8 +2016,13 @@ class BinanceFuturesExchange:
             )
             return cast(list[dict[str, Any]], orders) if orders else []
         except Exception as e:
+            # #600: was "return []" — indistinguishable from "genuinely zero
+            # open algo orders", which let check_algo_order_limits() compute
+            # open_count=0 and pass every guard during an API outage. Raise
+            # instead (same pattern as get_position_info above) so the
+            # caller's own try/except can fail closed.
             logger.error(f"Failed to get open algo orders: {e}")
-            return []
+            raise
 
     async def get_all_open_orders(self, symbol: str | None = None) -> set[str]:
         """Combine standard and algo open orders into a single set of IDs

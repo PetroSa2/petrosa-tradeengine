@@ -151,6 +151,16 @@ class TestAC3ClosePositionFlag:
         exchange.validate_price_within_percent_filter = AsyncMock(
             return_value=(True, None)
         )
+        # #600: _execute_stop_order's #503 PERCENT_PRICE validation calls
+        # validate_and_adjust_price_for_percent_filter (not the deprecated
+        # sibling mocked above). On this bare __new__ exchange with no
+        # symbol_info, the real method would hit an AttributeError and
+        # — post-#600 — fail CLOSED (adjusted_price=None), which is correct
+        # production behavior but irrelevant to this closePosition-flag
+        # test. Mock it as a pass-through (no adjustment needed).
+        exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+            side_effect=lambda symbol, price, order_type, **kw: (False, price, "")
+        )
         return exchange
 
     @pytest.mark.asyncio

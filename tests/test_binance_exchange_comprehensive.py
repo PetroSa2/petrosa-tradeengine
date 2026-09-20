@@ -632,7 +632,10 @@ class TestInitialization:
 
     @pytest.mark.asyncio
     async def test_validate_and_adjust_price_exception_handling(self, binance_exchange):
-        """Test price validation exception handling"""
+        """#600: price validation exception now fails CLOSED (adjusted_price
+        is None), not open (original price). The dispatcher's `if
+        adjusted_price is None:` refusal branch (AC4 of #424) relies on
+        this to skip placing an unvalidated SL/TP price."""
         # Mock to raise exception
         binance_exchange._get_current_price = AsyncMock(
             side_effect=Exception("Price fetch error")
@@ -641,7 +644,6 @@ class TestInitialization:
             side_effect=Exception("Filter error")
         )
 
-        # Should handle exception gracefully
         (
             is_adjusted,
             adjusted_price,
@@ -649,8 +651,9 @@ class TestInitialization:
         ) = await binance_exchange.validate_and_adjust_price_for_percent_filter(
             "BTCUSDT", 50000.0, "LIMIT"
         )
-        # Should return original price on error (fail open)
-        assert adjusted_price == 50000.0
+        assert is_adjusted is False
+        assert adjusted_price is None
+        assert "Price fetch error" in msg or "Filter error" in msg
 
     @pytest.mark.asyncio
     async def test_validate_price_within_percent_filter_invalid(self, binance_exchange):
@@ -675,21 +678,24 @@ class TestInitialization:
     async def test_validate_price_within_percent_filter_exception(
         self, binance_exchange
     ):
-        """Test price validation exception handling"""
+        """#600: price validation exception now fails CLOSED (is_valid is
+        False), not open. All three callers (limit / stop-limit /
+        take-profit-limit placement) raise ValueError when is_valid is
+        False, so this rejects the order instead of silently proceeding
+        with an unvalidated price."""
         # Mock to raise exception
         binance_exchange._get_current_price = AsyncMock(
             side_effect=Exception("Price error")
         )
 
-        # Should handle exception gracefully (fail open)
         (
             is_valid,
             error_msg,
         ) = await binance_exchange.validate_price_within_percent_filter(
             "BTCUSDT", 50000.0, "LIMIT"
         )
-        assert is_valid is True  # Fail open
-        assert error_msg == ""
+        assert is_valid is False
+        assert "Price error" in error_msg
 
     def test_calculate_min_order_amount_with_exception(self, binance_exchange):
         """Test calculate_min_order_amount with exception"""
@@ -983,6 +989,22 @@ class TestRetryLogic:
             f"event loop appears blocked during get_open_algo_orders — only "
             f"{ticks}/10 ticker iterations completed concurrently"
         )
+
+    @pytest.mark.asyncio
+    async def test_get_open_algo_orders_raises_on_api_failure(
+        self, binance_exchange, mock_binance_client
+    ):
+        """#600: was 'return []' on error — indistinguishable from
+        genuinely zero open algo orders, which let
+        check_algo_order_limits() compute open_count=0 and pass every
+        guard during an outage. Now raises (same pattern as
+        get_position_info) so the caller's try/except can fail closed."""
+        mock_binance_client._request_futures_api = Mock(
+            side_effect=Exception("Binance API unreachable")
+        )
+
+        with pytest.raises(Exception, match="Binance API unreachable"):
+            await binance_exchange.get_open_algo_orders(symbol="BTCUSDT")
 
     async def _assert_concurrent_ticks(self, coro):
         """Shared helper: run ``coro`` alongside a ticker and assert interleaving.

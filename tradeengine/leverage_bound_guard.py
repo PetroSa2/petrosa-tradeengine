@@ -80,11 +80,28 @@ class LeverageBoundGuard:
             (True, "") if both checks pass.
             (False, rejection_reason_str) if either check fails.
         """
-        strategy_configured_leverage: int = int(resolved_config.get("leverage", 10))
-        max_leverage_bound: int = int(resolved_config.get("max_leverage_bound", 125))
-        portfolio_leverage_cap: int = int(
-            resolved_config.get("portfolio_leverage_cap", 0)
-        )
+        # #600: max_leverage_bound and portfolio_leverage_cap used to default
+        # to 125 (Binance's absolute max — i.e. no bound) and 0 (treated as
+        # "disabled" below) respectively when missing from resolved_config.
+        # A partial config or schema drift then silently produced the most
+        # permissive possible guard while still reporting a "passed" check.
+        # Both are now required keys — a missing/invalid value raises,
+        # which the dispatcher's caller (#600) treats as a fail-CLOSED
+        # rejection rather than a fail-open pass. `leverage` and the alert
+        # threshold are not security bounds, so they keep permissive
+        # defaults.
+        try:
+            strategy_configured_leverage: int = int(resolved_config.get("leverage", 10))
+            max_leverage_bound = int(resolved_config["max_leverage_bound"])
+            portfolio_leverage_cap = int(resolved_config["portfolio_leverage_cap"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"leverage_bound_guard.check: resolved_config for "
+                f"{order.symbol} is missing/invalid required key(s) "
+                f"'max_leverage_bound'/'portfolio_leverage_cap' — refusing "
+                f"to apply a permissive default (schema drift or partial "
+                f"config): {exc}"
+            ) from exc
         alert_threshold: int = int(
             resolved_config.get("leverage_breach_alert_threshold", 3)
         )

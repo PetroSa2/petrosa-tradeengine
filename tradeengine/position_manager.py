@@ -57,6 +57,12 @@ class PositionManager:
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
+        # #600: set when the last _refresh_daily_pnl_from_data_manager() call
+        # failed (Data Manager outage) rather than succeeding with no record
+        # for today. check_daily_loss_limits() fails CLOSED while this is
+        # True instead of silently evaluating the kill-switch against a
+        # stale/zero daily_pnl.
+        self._daily_pnl_refresh_stale: bool = False
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
         self.max_portfolio_exposure_pct: float = MAX_PORTFOLIO_EXPOSURE_PCT
@@ -1177,8 +1183,19 @@ class PositionManager:
             )
             return True
         except Exception as e:
-            logger.error(f"Error checking algo order limits: {e}")
-            return True  # Fail-safe to allow trades if API check fails
+            # #600: was "return True  # Fail-safe to allow trades if API
+            # check fails" — that comment lied: it was fail-OPEN, not
+            # fail-safe. An algo-order-limit API failure now blocks the
+            # entry order until the exchange query succeeds again, rather
+            # than admitting an order whose SL/TP OCO may be rejected with
+            # -4045 (max algo orders), leaving the position naked.
+            logger.error(
+                f"⛔ RISK REJECTION: Error checking algo order limits for "
+                f"{order.symbol} — failing CLOSED (order rejected) rather "
+                f"than risk placing an entry with no room for its SL/TP "
+                f"OCO: {e}"
+            )
+            return False
 
     async def _refresh_positions_from_data_manager(self) -> None:
         """Refresh positions from Data Manager to ensure consistency across pods"""
@@ -1234,6 +1251,17 @@ class PositionManager:
         # Refresh daily P&L from Data Manager
         await self._refresh_daily_pnl_from_data_manager()
 
+        # #600: a failed refresh must not leave the kill-switch evaluating
+        # against a stale/zero daily_pnl — fail CLOSED (reject new entries)
+        # rather than trade blind through a Data Manager outage.
+        if self._daily_pnl_refresh_stale:
+            logger.warning(
+                "⛔ RISK REJECTION: Daily P&L refresh failed (Data Manager "
+                "unreachable) — failing CLOSED rather than evaluating the "
+                "daily-loss kill-switch against a stale/zero value."
+            )
+            return False
+
         max_daily_loss = self.total_portfolio_value * self.max_daily_loss_pct
 
         if self.daily_pnl < -max_daily_loss:
@@ -1245,14 +1273,27 @@ class PositionManager:
         return True
 
     async def _refresh_daily_pnl_from_data_manager(self) -> None:
-        """Refresh daily P&L from Data Manager"""
+        """Refresh daily P&L from Data Manager.
+
+        #600: distinguishes "no record for today" (a legitimate None —
+        first trade of the day, self.daily_pnl correctly stays wherever it
+        was) from "refresh failed" (Data Manager outage — sets
+        self._daily_pnl_refresh_stale so check_daily_loss_limits() fails
+        CLOSED instead of silently evaluating against a stale value).
+        """
         try:
             today = datetime.now(UTC).date().isoformat()
             daily_pnl = await position_client.get_daily_pnl(today)
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
+            self._daily_pnl_refresh_stale = False
         except Exception as e:
-            logger.warning(f"Failed to refresh daily P&L from Data Manager: {e}")
+            logger.error(
+                f"⛔ Failed to refresh daily P&L from Data Manager — the "
+                f"daily-loss kill-switch will fail CLOSED until refresh "
+                f"succeeds again: {e}"
+            )
+            self._daily_pnl_refresh_stale = True
 
     def _calculate_portfolio_exposure(self) -> float:
         """Calculate current portfolio exposure

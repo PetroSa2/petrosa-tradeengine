@@ -61,7 +61,7 @@ class PositionStopStatus(BaseModel):
     has_tp_order: bool
     sl_order_id: str | None
     tp_order_id: str | None
-    status: Literal["healthy", "missing_sl", "missing_tp", "missing_both"]
+    status: Literal["healthy", "missing_sl", "missing_tp", "missing_both", "unknown"]
     remediation_outcome: Literal[
         "none",
         "sl_placed",
@@ -104,6 +104,11 @@ class PositionStopsHealthResponse(BaseModel):
     alarms_emitted: int
     positions: list[PositionStopStatus]
     divergences: list[StopsDivergence] = []
+    # #601: positions whose Binance verification failed (get_all_open_orders
+    # raised). Neither healthy nor a violation — no alarm, no remediation —
+    # tracked separately so operators can see "unverifiable" distinctly from
+    # both "protected" and "actually missing stops".
+    unknown_count: int = 0
 
 
 async def check_position_stops(
@@ -161,6 +166,7 @@ async def check_position_stops(
     healthy_count = 0
     violation_count = 0
     alarms_emitted = 0
+    unknown_count = 0
 
     # AC3 of #424: per-symbol cache of Binance open algo-order IDs. None
     # signals "verification unavailable" (exchange call failed) — we then
@@ -208,22 +214,41 @@ async def check_position_stops(
             # A position is healthy only when BOTH stored IDs look like
             # Binance algo IDs AND are actually open on the exchange.
             binance_ids = await _binance_ids_for(symbol_for_pos)
+
+            if binance_ids is None:
+                # #601: verification unavailable (get_all_open_orders
+                # raised — Binance 5xx, network error, etc.). This must
+                # NEVER be treated as "stops are missing" (mass
+                # stale_order_id divergence -> arm_or_flatten flattens the
+                # book) and must NOT be asserted "healthy" purely because
+                # the locally stored IDs happen to look algo-id-shaped
+                # (that hid the #424 price-string bug). Record an explicit
+                # "unknown" status: no alarm, no remediation attempt, until
+                # a future cycle successfully re-verifies against Binance.
+                result_positions.append(
+                    PositionStopStatus(
+                        strategy_position_id=spid,
+                        symbol=symbol_for_pos,
+                        side=pos.get("side", "unknown"),
+                        has_sl_order=True,
+                        has_tp_order=True,
+                        sl_order_id=str(sl_order_id),
+                        tp_order_id=str(tp_order_id),
+                        status="unknown",
+                        remediation_outcome="none",
+                        source=src,
+                    )
+                )
+                unknown_count += 1
+                continue
+
             sl_real = _is_real_algo_id(sl_order_id)
             tp_real = _is_real_algo_id(tp_order_id)
-            sl_present = (
-                binance_ids is not None and sl_real and str(sl_order_id) in binance_ids
-            )
-            tp_present = (
-                binance_ids is not None and tp_real and str(tp_order_id) in binance_ids
-            )
+            sl_present = sl_real and str(sl_order_id) in binance_ids
+            tp_present = tp_real and str(tp_order_id) in binance_ids
+            verified_healthy = sl_present and tp_present
 
-            verified_healthy = binance_ids is not None and sl_present and tp_present
-            # Fail-open path: if Binance verification is unavailable, only
-            # accept the position as healthy when local IDs at least pass
-            # the shape check — otherwise the price-string bug stays hidden.
-            unverified_healthy = binance_ids is None and sl_real and tp_real
-
-            if verified_healthy or unverified_healthy:
+            if verified_healthy:
                 result_positions.append(
                     PositionStopStatus(
                         strategy_position_id=spid,
@@ -518,4 +543,5 @@ async def check_position_stops(
         alarms_emitted=alarms_emitted,
         positions=result_positions,
         divergences=divergences,
+        unknown_count=unknown_count,
     )

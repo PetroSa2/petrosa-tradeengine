@@ -34,7 +34,13 @@ def _pos(
     }
 
 
-def _mocks(memory=None, mysql=None, exchange_raises=False, binance_open_ids=None):
+def _mocks(
+    memory=None,
+    mysql=None,
+    exchange_raises=False,
+    binance_open_ids=None,
+    binance_verification_fails=False,
+):
     spm = MagicMock()
     spm.get_all_open_strategy_positions.return_value = memory or []
     spm.close_strategy_position = AsyncMock()
@@ -60,7 +66,15 @@ def _mocks(memory=None, mysql=None, exchange_raises=False, binance_open_ids=None
     # AC3 of #424: stops-health now verifies stored sl/tp ids against
     # the on-Binance open-order set; tests must seed this explicitly so
     # the verified-healthy path can be exercised.
-    exc.get_all_open_orders = AsyncMock(return_value=set(binance_open_ids or []))
+    if binance_verification_fails:
+        # #601: get_all_open_orders now raises on a Binance failure
+        # instead of returning an empty set — see the "unknown" status
+        # tests below.
+        exc.get_all_open_orders = AsyncMock(
+            side_effect=Exception("Binance 5xx: transient outage")
+        )
+    else:
+        exc.get_all_open_orders = AsyncMock(return_value=set(binance_open_ids or []))
 
     pub = MagicMock()
     pub.publish = AsyncMock(return_value=True)
@@ -361,6 +375,72 @@ async def test_set_strategy_position_orders_validates_via_pydantic():
             sl_order_id="2022.6338",
         )
     assert "Binance algo-order ID" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# #601 — get_all_open_orders failure must never mass-flatten the book
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_601_binance_verification_failure_reports_unknown_not_divergence():
+    """#601: a transient Binance failure (get_all_open_orders raises) must
+    NOT be treated as "stops are missing" for every position — that mass
+    stale_order_id divergence is what could trigger arm_or_flatten to
+    flatten the whole book. Positions land in the explicit "unknown"
+    status instead: no divergence, no violation, no remediation, no
+    alarm."""
+    real_sl = "1398104567890123"
+    real_tp = "1398104567890124"
+    positions = [
+        _pos(
+            spid=f"pos-{i}",
+            sl_order_id=real_sl,
+            tp_order_id=real_tp,
+        )
+        for i in range(5)
+    ]
+    spm, pc, exc, pub = _mocks(memory=positions, binance_verification_fails=True)
+    alert = _alert()
+
+    resp = await check_position_stops(spm, pc, exc, pub, alert_pub=alert)
+
+    assert resp.total_checked == 5
+    assert resp.violation_count == 0
+    assert resp.healthy_count == 0
+    assert resp.unknown_count == 5
+    assert resp.divergences == []
+    assert resp.alarms_emitted == 0
+    assert all(p.status == "unknown" for p in resp.positions)
+    assert all(p.remediation_outcome == "none" for p in resp.positions)
+    spm.close_strategy_position.assert_not_called()
+    exc.execute.assert_not_called()
+    alert.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_601_unverifiable_price_string_ids_stay_unknown_not_healthy():
+    """#601 related defect: when Binance verification is unavailable, a
+    position must NOT be declared healthy purely because the locally
+    stored IDs happen to look algo-id-shaped (the old "unverified_healthy"
+    fail-open path) — that hid the #424 price-string bug. It must also not
+    be force-closed. It lands in "unknown" regardless of local ID shape."""
+    pos = _pos(
+        sl_order_id="2022.6338",  # price-shaped, NOT a real algo id
+        tp_order_id="2050.12",
+        stop_loss_price=1980.0,
+        take_profit_price=2060.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos], binance_verification_fails=True)
+
+    resp = await check_position_stops(spm, pc, exc, pub)
+
+    assert resp.unknown_count == 1
+    assert resp.healthy_count == 0
+    assert resp.violation_count == 0
+    assert resp.positions[0].status == "unknown"
+    spm.close_strategy_position.assert_not_called()
+    exc.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

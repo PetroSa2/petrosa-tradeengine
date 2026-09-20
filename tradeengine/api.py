@@ -281,6 +281,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     arm_backoff_cooldown_sec=(
                         _te_settings.naked_position_arm_backoff_cooldown_sec
                     ),
+                    # #607: bound how often arm_only re-fires the malformed-
+                    # position CRITICAL alert instead of firing once per
+                    # episode and going silent for the rest of its lifetime.
+                    malformed_realert_interval_sec=(
+                        _te_settings.naked_position_malformed_realert_interval_sec
+                    ),
                 )
             except Exception:
                 logger.exception(

@@ -4,6 +4,7 @@ Configuration settings for Petrosa Trading Engine
 
 from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -171,6 +172,26 @@ class Settings(BaseSettings):
     # is unchanged.
     naked_position_fallback_sl_pct: float = 6.5
     naked_position_fallback_tp_pct: float = 4.0
+
+    # #607: a malformed (inverted-sign) position stuck in arm_only mode used
+    # to CRITICAL-log exactly once per detection episode and then go silent
+    # for the rest of its lifetime — how BCHUSDT/XRPUSDT floated without TP
+    # for 1h15m on 2026-09-20. This bounds how often the remediator re-fires
+    # the CRITICAL alert (each time recommending promotion to
+    # arm_or_flatten) while the position remains stuck.
+    # Copilot review (PR #612): Settings has no env_prefix/alias for the
+    # existing "TE_"-documented deployment names, so a plain field default
+    # here would silently ignore TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC
+    # and always fall back to 300s in production. Explicit AliasChoices makes
+    # the documented TE_ name actually load, while still accepting the plain
+    # field name (e.g. from a .env file or direct kwarg).
+    naked_position_malformed_realert_interval_sec: int = Field(
+        default=300,
+        validation_alias=AliasChoices(
+            "TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC",
+            "naked_position_malformed_realert_interval_sec",
+        ),
+    )
 
     # #560: consecutive re-arm failures allowed per (symbol, side) before the
     # remediator backs off instead of retrying every reconciliation cycle

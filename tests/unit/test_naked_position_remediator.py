@@ -75,6 +75,7 @@ def _make_remediator(
     min_sl_distance_pct: float = 0.0,
     max_consecutive_arm_failures: int = 5,
     arm_backoff_cooldown_sec: int = 300,
+    malformed_realert_interval_sec: int = 300,
 ) -> tuple[NakedPositionRemediator, MagicMock, MagicMock, AsyncMock, _FakeClock]:
     exchange = MagicMock()
     if exchange_execute_raises:
@@ -104,6 +105,7 @@ def _make_remediator(
         min_sl_distance_pct=min_sl_distance_pct,
         max_consecutive_arm_failures=max_consecutive_arm_failures,
         arm_backoff_cooldown_sec=arm_backoff_cooldown_sec,
+        malformed_realert_interval_sec=malformed_realert_interval_sec,
         clock=clock,
     )
     return remediator, exchange, pm, close_cb, clock
@@ -577,6 +579,50 @@ async def test_malformed_arm_only_alerts_once_per_episode() -> None:
         clock.advance(30)
         await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
     assert mock_crit.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_arm_only_realerts_after_interval() -> None:
+    """#607: arm_only must re-fire the CRITICAL alert once the malformed
+    position has been stuck past malformed_realert_interval_sec instead of
+    going silent forever after the first episode — the exact dead path
+    behind the BCHUSDT/XRPUSDT incident (positions naked for 1h15m with no
+    further alert after the initial one)."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, clock = _make_remediator(
+        mode="arm_only", malformed_realert_interval_sec=300
+    )
+    with patch.object(npr.logger, "critical") as mock_crit:
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        assert mock_crit.call_count == 1
+        # Still within the re-alert interval — no additional alert.
+        clock.advance(299)
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        assert mock_crit.call_count == 1
+        # Past the interval — re-alert fires again.
+        clock.advance(2)
+        await r.remediate([_malformed_div()], _binance_positions("LTCUSDT"))
+        assert mock_crit.call_count == 2
+        # Message explicitly recommends promoting to arm_or_flatten (AC1c).
+        last_msg = mock_crit.call_args.args[0] % mock_crit.call_args.args[1:]
+        assert "arm_or_flatten" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_remediation_mode_divergence_counts_metric() -> None:
+    """#607 AC3: per-mode divergence breakdown, e.g. arm_only detected N
+    unhedged + M malformed, exported as a single labeled counter."""
+    from tradeengine import naked_position_remediator as npr
+
+    r, _, _, _, _ = _make_remediator(mode="arm_only")
+    with patch.object(npr, "remediation_mode_divergence_counts") as mock_metric:
+        await r.remediate(
+            [_unhedged_div(), _malformed_div()],
+            {**_binance_positions(), **_binance_positions("LTCUSDT")},
+        )
+    mock_metric.labels.assert_any_call(mode="arm_only", category="unhedged")
+    mock_metric.labels.assert_any_call(mode="arm_only", category="malformed_position")
 
 
 @pytest.mark.asyncio

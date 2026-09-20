@@ -172,6 +172,14 @@ class Settings(BaseSettings):
     naked_position_fallback_sl_pct: float = 6.5
     naked_position_fallback_tp_pct: float = 4.0
 
+    # #607: a malformed (inverted-sign) position stuck in arm_only mode used
+    # to CRITICAL-log exactly once per detection episode and then go silent
+    # for the rest of its lifetime — how BCHUSDT/XRPUSDT floated without TP
+    # for 1h15m on 2026-09-20. This bounds how often the remediator re-fires
+    # the CRITICAL alert (each time recommending promotion to
+    # arm_or_flatten) while the position remains stuck.
+    naked_position_malformed_realert_interval_sec: int = 300
+
     # #560: consecutive re-arm failures allowed per (symbol, side) before the
     # remediator backs off instead of retrying every reconciliation cycle
     # (the observed -4130 infinite-retry-loop symptom). Backoff duration in

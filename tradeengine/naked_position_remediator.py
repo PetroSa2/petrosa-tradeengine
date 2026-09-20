@@ -101,6 +101,19 @@ naked_position_arm_exhausted_total = Counter(
     ["symbol", "side"],
 )
 
+# #607: per-mode divergence visibility. The existing counters
+# (naked_position_detected_total, malformed_position_total, ...) are
+# per-category, so answering "what did arm_only actually see this cycle?"
+# required cross-referencing several time series. This one counter, broken
+# out by (mode, category), lets an operator read "arm_only detected 3
+# unhedged + 2 malformed" directly off a single query.
+remediation_mode_divergence_counts = Counter(
+    "tradeengine_remediation_mode_divergence_counts",
+    "Divergences observed by the naked-position remediator, broken out by "
+    "the active remediation mode and the divergence category",
+    ["mode", "category"],
+)
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -139,6 +152,7 @@ class NakedPositionRemediator:
         min_sl_distance_pct: float = 6.0,
         max_consecutive_arm_failures: int = 5,
         arm_backoff_cooldown_sec: int = 300,
+        malformed_realert_interval_sec: int = 300,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._exchange = exchange
@@ -159,13 +173,26 @@ class NakedPositionRemediator:
         # indefinitely (the "infinite retry loop" symptom).
         self._max_consecutive_arm_failures = max(int(max_consecutive_arm_failures), 1)
         self._arm_backoff_cooldown_sec = max(int(arm_backoff_cooldown_sec), 0)
+        # #607: a malformed position stuck in arm_only (which by design never
+        # arms or flattens it — see _handle_malformed) used to CRITICAL-log
+        # exactly once per detection episode and then go silent for the rest
+        # of its lifetime, which is how BCHUSDT/XRPUSDT floated without TP
+        # for 1h15m with nothing but a slowly-climbing, easy-to-miss gauge to
+        # show for it. This interval makes the alert repeat while the
+        # position remains stuck, each time explicitly recommending a
+        # promotion to arm_or_flatten.
+        self._malformed_realert_interval_sec = max(
+            int(malformed_realert_interval_sec), 0
+        )
         self._clock = clock
         # (symbol, side) -> first-seen monotonic timestamp
         self._first_seen: dict[tuple[str, str], float] = {}
-        # #547: (symbol, side) keys already CRITICAL-logged as malformed, so
-        # arm_only emits the alert once per detection episode rather than every
-        # reconcile cycle. Cleared when the key is no longer diverging.
-        self._malformed_alerted: set[tuple[str, str]] = set()
+        # #547/#607: (symbol, side) -> monotonic timestamp of the last
+        # CRITICAL malformed-position alert. Re-alerts every
+        # `malformed_realert_interval_sec` while still stuck instead of
+        # firing once and going silent. Cleared when the key is no longer
+        # diverging so a later re-occurrence alerts immediately again.
+        self._malformed_last_alert: dict[tuple[str, str], float] = {}
         # #560: (symbol, side) -> consecutive _rearm failure count, reset on
         # success or when the divergence clears.
         self._consecutive_arm_failures: dict[tuple[str, str], int] = {}
@@ -212,13 +239,13 @@ class NakedPositionRemediator:
         if not unhedged_divergences:
             # Clean pass — clear first-seen so future detections start fresh.
             self._first_seen.clear()
-            # #547: also reset the malformed alert latch so a later
-            # re-occurrence re-alerts CRITICAL.
+            # #547/#607: also reset the malformed re-alert timers so a later
+            # re-occurrence alerts CRITICAL immediately again.
             # #566: zero the stuck-duration gauge for any keys that were
             # malformed before this clean pass.
-            for k in self._malformed_alerted:
+            for k in self._malformed_last_alert:
                 malformed_position_stuck_seconds.labels(symbol=k[0], side=k[1]).set(0)
-            self._malformed_alerted.clear()
+            self._malformed_last_alert.clear()
             # #560: also reset the arm-failure backoff state so a later
             # re-occurrence starts its own fresh failure count.
             self._consecutive_arm_failures.clear()
@@ -236,6 +263,11 @@ class NakedPositionRemediator:
             currently_unhedged.add(key)
             counts["detected"] += 1
             naked_position_detected_total.labels(symbol=symbol, side=side).inc()
+            # #607 AC3: per-mode divergence breakdown so an operator can see
+            # e.g. "arm_only detected 3 unhedged + 2 malformed" at a glance.
+            remediation_mode_divergence_counts.labels(
+                mode=self._mode, category=div.get("category") or "unhedged"
+            ).inc()
 
             first_seen_at = self._first_seen.setdefault(key, now)
             elapsed = now - first_seen_at
@@ -318,12 +350,12 @@ class NakedPositionRemediator:
         stale = [k for k in self._first_seen if k not in currently_unhedged]
         for k in stale:
             self._first_seen.pop(k, None)
-        # #547: reset the once-per-episode malformed alert latch for any key
-        # that resolved, so a future re-occurrence re-alerts CRITICAL again.
+        # #547/#607: reset the malformed re-alert timer for any key that
+        # resolved, so a future re-occurrence alerts CRITICAL immediately.
         # #566: also zero the stuck-duration gauge for the same resolved keys.
-        for k in list(self._malformed_alerted):
+        for k in list(self._malformed_last_alert):
             if k not in currently_unhedged:
-                self._malformed_alerted.discard(k)
+                self._malformed_last_alert.pop(k, None)
                 malformed_position_stuck_seconds.labels(symbol=k[0], side=k[1]).set(0)
         # #560: reset the arm-failure backoff state for any key that
         # resolved, so a future re-occurrence starts a fresh failure count.
@@ -568,10 +600,14 @@ class NakedPositionRemediator:
         from the declared side is direction-invalid. Rather than loop forever:
 
         - ``off`` / ``dry_run``: observe only (``skipped``).
-        - ``arm_only``: increment ``tradeengine_malformed_position_total``, log
-          CRITICAL once per detection episode, and take NO arm action (a
-          guaranteed-to-fail arm every cycle is exactly the bug). Returns
-          ``skipped`` — the position is stuck pending human/mode intervention.
+        - ``arm_only``: increment ``tradeengine_malformed_position_total``,
+          log CRITICAL immediately and then again every
+          ``malformed_realert_interval_sec`` while still stuck (#607 — a
+          one-shot alert that then goes silent is how BCHUSDT/XRPUSDT floated
+          without TP for 1h15m), explicitly recommending promotion to
+          ``arm_or_flatten``, and take NO arm action (a guaranteed-to-fail arm
+          every cycle is exactly the bug). Returns ``skipped`` — the position
+          is stuck pending human/mode intervention.
         - ``arm_or_flatten``: after ``flatten_grace_sec``, flatten reduce-only
           MARKET with ``reason="malformed_position"``; before grace, alert like
           arm_only. Returns ``flattened`` / ``failed`` / ``skipped``.
@@ -595,22 +631,38 @@ class NakedPositionRemediator:
         # arm_only OR arm_or_flatten before grace → alert, never arm.
         malformed_position_total.labels(symbol=symbol, side=side).inc()
         malformed_position_stuck_seconds.labels(symbol=symbol, side=side).set(elapsed)
-        if key not in self._malformed_alerted:
-            self._malformed_alerted.add(key)
+
+        # #607: alert immediately on first detection, then re-alert every
+        # `malformed_realert_interval_sec` while the position remains stuck,
+        # instead of firing once per episode and going silent for its entire
+        # remaining lifetime.
+        last_alert_elapsed = self._malformed_last_alert.get(key)
+        should_alert = last_alert_elapsed is None or (
+            elapsed - last_alert_elapsed >= self._malformed_realert_interval_sec
+        )
+        if should_alert:
+            self._malformed_last_alert[key] = elapsed
             logger.critical(
                 "NakedPositionRemediator: MALFORMED position %s/%s "
                 "raw_positionAmt=%s (positionSide=%s sign mismatch) — cannot be "
-                "armed with a direction-valid reduceOnly SL/TP. mode=%s. %s (#547)",
+                "armed with a direction-valid reduceOnly SL/TP. mode=%s "
+                "stuck_for=%.1fs. %s (#547/#607)",
                 symbol,
                 side,
                 div.get("raw_position_amt"),
                 side,
                 self._mode,
+                elapsed,
                 (
                     "Will flatten after grace window."
                     if self._mode == "arm_or_flatten"
-                    else "arm_only cannot flatten — position is stuck pending "
-                    "operator action or arm_or_flatten mode."
+                    else (
+                        "arm_only cannot flatten — RECOMMEND promoting "
+                        "TE_NAKED_POSITION_REMEDIATION_MODE to arm_or_flatten "
+                        "so this position stops floating unprotected; "
+                        "re-alerting every %ds until resolved."
+                        % self._malformed_realert_interval_sec
+                    )
                 ),
             )
 
@@ -625,7 +677,7 @@ class NakedPositionRemediator:
         if ok:
             reconcile_lag_seconds.labels(action="flattened").observe(elapsed)
             self._first_seen.pop(key, None)
-            self._malformed_alerted.discard(key)
+            self._malformed_last_alert.pop(key, None)
             malformed_position_stuck_seconds.labels(symbol=symbol, side=side).set(0)
             return "flattened"
         return "failed"

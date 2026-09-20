@@ -106,21 +106,47 @@ tradeengine_naked_position_remediation_mode_status{mode="arm_or_flatten"} == 1
 
 ---
 
-## Malformed (sign-inverted) positions — #547 / #586
+## Malformed (sign-inverted) positions — #547 / #586 / #607
 
 A **malformed** position is a hedge-mode row where the declared
 `positionSide` disagrees with the sign of `positionAmt` (e.g.
 `positionSide=LONG` with a *negative* `positionAmt`). It is un-armable: any
 `reduceOnly` SL/TP derived from the declared side would be direction-invalid.
 
-- In `arm_only` mode, `_handle_malformed` (#547) alerts once
-  (`tradeengine_malformed_position_total` +
-  `tradeengine_malformed_position_stuck_seconds`, plus a one-time CRITICAL
-  log) and **never** attempts to flatten — the position stays stuck by
-  design until an operator acts or the mode is promoted to
-  `arm_or_flatten`.
+> **⚠️ `arm_only` does NOT remediate malformed positions.** By design it can
+> only re-arm ordinary `unhedged` divergences; a malformed position is
+> un-armable (see above) so `arm_only` can only alert and wait — it never
+> flattens. If you rely on `arm_only` in production, a malformed position
+> **will** sit naked (missing SL and/or TP) until an operator intervenes or
+> the mode is promoted to `arm_or_flatten`. This was the exact dead path
+> behind the 2026-09-20 BCHUSDT/XRPUSDT incident (#607): both positions sat
+> without TP for 1h15m while `arm_only` logged one CRITICAL alert and then
+> went silent. **`arm_or_flatten` is the recommended production mode** if
+> malformed positions are a realistic occurrence on your account (hedge-mode
+> sign inversions have recurred across #547/#566/#586/#607).
+
+- In `arm_only` mode, `_handle_malformed` alerts immediately on first
+  detection (`tradeengine_malformed_position_total` +
+  `tradeengine_malformed_position_stuck_seconds`, plus a CRITICAL log) and
+  **re-alerts every `TE_NAKED_POSITION_MALFORMED_REALERT_INTERVAL_SEC`**
+  (default 300s / `shared/config.py::naked_position_malformed_realert_interval_sec`)
+  while the position remains stuck (#607 — previously this fired exactly
+  once per episode and then went silent for the position's entire remaining
+  lifetime). Each alert explicitly recommends promoting to `arm_or_flatten`.
+  It **never** attempts to flatten — the position stays stuck by design
+  until an operator acts or the mode is promoted.
 - In `arm_or_flatten` mode, the same handler flattens it via
   `close_position_with_cleanup` after `flatten_grace_sec`.
+- `tradeengine_remediation_mode_divergence_counts{mode,category}` (#607)
+  exports a per-mode, per-category breakdown of every divergence the
+  remediator sees each cycle (e.g. `{mode="arm_only",
+  category="malformed_position"}`), so an operator can read "arm_only
+  detected 3 unhedged + 2 malformed this cycle" directly off one metric
+  instead of cross-referencing separate per-category counters.
+- Recommended alert rule (add to `petrosa_k8s/observability/alert-rules/`):
+  `tradeengine_malformed_position_stuck_seconds > 300` for `5m` at
+  `critical` — the stuck-seconds gauge already tracks live age continuously
+  independent of the alert-repeat interval above.
 
 ### Root cause (#586, 2026-09-16 LTCUSDT incident)
 

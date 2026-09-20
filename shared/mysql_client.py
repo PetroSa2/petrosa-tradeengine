@@ -104,9 +104,35 @@ class DataManagerPositionClient:
             response = await self.data_manager_client._client.insert_one(
                 database="mysql", collection="positions", record=position_data
             )
-            ok = bool(response.get("inserted_id") or response.get("inserted_count", 0))
-            if ok:
+            inserted = bool(
+                response.get("inserted_id") or response.get("inserted_count", 0)
+            )
+            duplicates = int(response.get("duplicates", 0) or 0)
+            failed = int(response.get("failed", 0) or 0)
+            # #598: `inserted_count == 0` is NOT automatically a failure. The
+            # `positions` table has a UNIQUE `position_id`, so re-creating an
+            # existing position takes data-manager's MySQL `INSERT IGNORE`
+            # branch: the row is silently dropped, `inserted_count` is 0,
+            # `duplicates` is 1 and the HTTP status is 200. That is an
+            # idempotent no-op — the row we wanted is already in MySQL — so
+            # the desired end state holds and the operation is a success.
+            # Treating it as a failure was architecturally unwinnable: every
+            # retry re-hit the same duplicate, burned all 5 attempts, and then
+            # surfaced a bogus "never-persisted divergence" for a position
+            # that demonstrably exists. A genuine failure (`failed > 0`, or a
+            # 0-insert with no duplicate signal at all) still falls through to
+            # the error path below.
+            idempotent_duplicate = not inserted and failed == 0 and duplicates > 0
+            ok = inserted or idempotent_duplicate
+            if inserted:
                 logger.info("Created position record %s via Data Manager", pid)
+            elif idempotent_duplicate:
+                logger.info(
+                    "Position %s already persisted (idempotent duplicate: "
+                    "inserted_count=0, duplicates=%s) — treating as success",
+                    pid,
+                    duplicates,
+                )
             else:
                 # #596: log the full Data Manager response instead of the bare
                 # "0-insert" literal so the actual inserted_count/inserted_id
@@ -120,9 +146,14 @@ class DataManagerPositionClient:
                     response,
                 )
                 await self._log_health_snapshot(pid)
-            return self._make_result(
+            result = self._make_result(
                 ok, operation="create_position", symbol=sym, position_id=pid
             )
+            if idempotent_duplicate:
+                # Surface the distinction to callers/metrics: this succeeded
+                # because the row already existed, not because we wrote it.
+                result.extra["idempotent_duplicate"] = True
+            return result
         except Exception as exc:
             logger.error("Failed to create position %s via Data Manager: %s", pid, exc)
             return self._make_result(

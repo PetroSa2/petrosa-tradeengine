@@ -166,11 +166,18 @@ class TestDataManagerPositionClient:
 
     @pytest.mark.asyncio
     async def test_create_position_zero_insert_logs_full_response(self, caplog):
-        """A 2xx response with inserted_count=0 must log the raw response,
-        not just the bare '0-insert' literal, so operators can see WHY."""
+        """A 2xx response with inserted_count=0 and NO duplicate signal is a
+        genuine failure and must log the raw response, not just the bare
+        '0-insert' literal, so operators can see WHY."""
         client, mock_base = self._make_client()
         mock_base.insert_one = AsyncMock(
-            return_value={"inserted_id": "", "inserted_count": 0, "error": "duplicate"}
+            return_value={
+                "inserted_id": "",
+                "inserted_count": 0,
+                "duplicates": 0,
+                "failed": 1,
+                "error": "constraint violation",
+            }
         )
         client.health_check = AsyncMock(return_value={"status": "healthy"})
         with caplog.at_level("ERROR"):
@@ -179,9 +186,9 @@ class TestDataManagerPositionClient:
             )
         assert result.ok is False
         assert any(
-            "0-insert" in rec.message and "duplicate" in rec.message
+            "0-insert" in rec.message and "constraint violation" in rec.message
             for rec in caplog.records
-        ), "expected the full DM response (incl. 'duplicate') in the log message"
+        ), "expected the full DM response in the log message"
 
     @pytest.mark.asyncio
     async def test_create_position_zero_insert_triggers_health_snapshot(self, caplog):
@@ -229,6 +236,93 @@ class TestDataManagerPositionClient:
         )
         assert result.ok is True
         client.health_check.assert_not_awaited()
+
+    # -- #598: idempotent duplicate is success, not failure ------------
+
+    @pytest.mark.asyncio
+    async def test_create_position_duplicate_is_success(self):
+        """AC: a DM response of {"inserted_count": 0, "duplicates": 1} means
+        MySQL's INSERT IGNORE dropped an already-existing row. The position
+        IS persisted, so create_position must report success."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={
+                "inserted_id": "",
+                "inserted_count": 0,
+                "duplicates": 1,
+                "failed": 0,
+            }
+        )
+        result = await client.create_position(
+            {"position_id": "dup-1", "symbol": "BTCUSDT"}
+        )
+        assert result.ok is True
+        assert result.extra.get("idempotent_duplicate") is True
+
+    @pytest.mark.asyncio
+    async def test_create_position_duplicate_logs_no_error_and_skips_health_probe(
+        self, caplog
+    ):
+        """An idempotent duplicate is a normal steady-state event: it must not
+        emit the 0-insert ERROR nor fire the reactive health snapshot (which
+        exists only to diagnose real DB trouble)."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={
+                "inserted_id": "",
+                "inserted_count": 0,
+                "duplicates": 1,
+                "failed": 0,
+            }
+        )
+        client.health_check = AsyncMock(return_value={"status": "healthy"})
+        with caplog.at_level("INFO"):
+            result = await client.create_position(
+                {"position_id": "dup-2", "symbol": "ETHUSDT"}
+            )
+        assert result.ok is True
+        client.health_check.assert_not_awaited()
+        assert not any(rec.levelname == "ERROR" for rec in caplog.records), (
+            "an idempotent duplicate must not log an error"
+        )
+        assert any("already persisted" in rec.message for rec in caplog.records), (
+            "expected an informational idempotency log line"
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_position_genuine_failure_still_fails(self):
+        """AC: `failed > 0` is a real write failure and must keep the existing
+        ok=False / retry / divergence behaviour even if duplicates are also
+        reported in the same batch response."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={
+                "inserted_id": "",
+                "inserted_count": 0,
+                "duplicates": 1,
+                "failed": 1,
+            }
+        )
+        client.health_check = AsyncMock(return_value={"status": "unhealthy"})
+        result = await client.create_position(
+            {"position_id": "bad-1", "symbol": "SOLUSDT"}
+        )
+        assert result.ok is False
+        client.health_check.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_position_zero_insert_without_duplicate_signal_fails(self):
+        """A 0-insert with no duplicate and no failure counter carries no
+        evidence the row exists — stay conservative and report failure."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0}
+        )
+        client.health_check = AsyncMock(return_value={"status": "healthy"})
+        result = await client.create_position(
+            {"position_id": "unknown-1", "symbol": "BTCUSDT"}
+        )
+        assert result.ok is False
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,11 @@
 # Runbook: Position-State Reconciliation Divergence (FR65)
 
+**GitHub tooling:** Use the official `github` MCP server for linked issue, pull
+request, review, release, or Actions operations, and `github-projects` MCP for
+Projects v2. Use `gh` only for non-MCP clients, deterministic scripts, runners, or
+unsupported operations, with authentication from the configured file-backed token
+or environment.
+
 **Alert:** `tradeengine_position_reconciliation_alert == 1`
 **Verdict metric:** `tradeengine_position_reconciliation_evaluator_verdict == 1`
 **FR refs:** FR65 (reconciliation), FR21 (execution evaluator), FR66 category e (alert)

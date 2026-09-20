@@ -83,6 +83,14 @@ class TradeOrder(BaseModel):
         None, description="Position side for hedge mode (LONG/SHORT)"
     )
     exchange: str = Field("binance", description="Exchange identifier")
+    leverage: int | None = Field(
+        None,
+        description=(
+            "Leverage applied for this order, carried from Signal.leverage "
+            "or the configured default fallback when the signal carried "
+            "none (#599)."
+        ),
+    )
     strategy_metadata: dict[str, Any] = Field(
         default_factory=dict, description="Strategy parameters for tracking"
     )

@@ -1981,7 +1981,18 @@ class OCOManager:
                     "fill_qty": filled_quantity,
                     "pnl": pnl,
                     "close_reason": close_reason,
+                    # petrosa_k8s#1130: an SL/TP trigger is always a full,
+                    # reduce_only exit of the strategy position — lets CIO's
+                    # execution.events.> listener call
+                    # portfolio_tracker.record_exit / position_review_loop
+                    # .remove_position without guessing from event_type alone.
+                    "reduce_only": True,
+                    "position_status": closure.get("position_status"),
                 },
+                # petrosa_k8s#1130/#1127: round-trip the CIO-assigned position_id
+                # so the CIO listener can map this exit back to the PositionKey
+                # it registered at admission time.
+                client_order_id=closure.get("client_order_id"),
             )
         except Exception as emit_err:
             self.logger.warning(
@@ -3430,6 +3441,10 @@ class Dispatcher:
             "symbol": order.symbol,
             "side": order.side,
             "qty": order.amount,
+            # petrosa_k8s#1130: lets CIO's execution.events.> listener tell a
+            # position-closing fill from a position-opening one without
+            # guessing from event_type alone (both use "filled").
+            "reduce_only": getattr(order, "reduce_only", None),
         }
         if fill_qty is not None:
             extra["fill_qty"] = fill_qty
@@ -5551,6 +5566,355 @@ class Dispatcher:
                 "status": "error",
                 "error": str(e),
             }
+
+    async def handle_cio_position_lifecycle_action(
+        self,
+        action: str,
+        strategy_id: str,
+        decision_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Handle a CIO in-position governance command (petrosa_k8s#1130).
+
+        Consumer side of the ``cio.position.<action>.<strategy_id>`` NATS
+        subject family (petrosa-cio router.py `_POSITION_ACTIONS`). The
+        subject carries ``strategy_id`` — the published ``DecisionResult``
+        JSON payload has no ``strategy_id``/``position_id`` field of its own
+        (see cio/models/decision.py), so ``strategy_id`` MUST come from the
+        subject, never from the payload.
+
+        Idempotent: if no open strategy position exists for ``strategy_id``
+        (already closed by an OCO trigger, a prior duplicate delivery, or a
+        race with a concurrent manual close), this is a no-op per action —
+        matches the "race condition" acceptance criterion.
+
+        Args:
+            action: one of "exit_now", "scale_out", "modify_stops"
+                (``ActionType`` values from petrosa-cio, lower-cased).
+            strategy_id: extracted from the NATS subject.
+            decision_payload: best-effort ``json.loads`` of the message body
+                (the serialized ``DecisionResult``). Never required to be
+                present/complete — every field access is defensive.
+
+        Returns:
+            Summary dict with one entry per affected strategy position id.
+        """
+        results: dict[str, Any] = {"action": action, "strategy_id": strategy_id}
+        positions = [
+            p
+            for p in strategy_position_manager.get_strategy_positions_by_strategy(
+                strategy_id
+            )
+            if p.get("status") == "open"
+        ]
+        if not positions:
+            self.logger.info(
+                "cio_position_action.no_open_position action=%s strategy_id=%s "
+                "(already closed or race with concurrent close — no-op)",
+                action,
+                strategy_id,
+            )
+            results["positions_affected"] = 0
+            return results
+
+        affected: list[dict[str, Any]] = []
+        for pos in positions:
+            strategy_position_id = pos["strategy_position_id"]
+            try:
+                if action == "exit_now":
+                    affected.append(
+                        await self._cio_exit_now(strategy_id, pos, decision_payload)
+                    )
+                elif action == "scale_out":
+                    affected.append(
+                        await self._cio_scale_out(strategy_id, pos, decision_payload)
+                    )
+                elif action == "modify_stops":
+                    affected.append(
+                        await self._cio_modify_stops(strategy_id, pos, decision_payload)
+                    )
+                else:
+                    self.logger.warning(
+                        "cio_position_action.unknown_action action=%s strategy_id=%s "
+                        "strategy_position_id=%s — ignoring",
+                        action,
+                        strategy_id,
+                        strategy_position_id,
+                    )
+            except Exception as e:
+                self.logger.error(
+                    "cio_position_action.failed action=%s strategy_id=%s "
+                    "strategy_position_id=%s error=%s",
+                    action,
+                    strategy_id,
+                    strategy_position_id,
+                    e,
+                    exc_info=True,
+                )
+                affected.append(
+                    {"strategy_position_id": strategy_position_id, "status": "error"}
+                )
+
+        results["positions_affected"] = len(affected)
+        results["details"] = affected
+        return results
+
+    async def _cio_exit_now(
+        self, strategy_id: str, pos: dict[str, Any], decision_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """EXIT_NOW: fully close one strategy position via the existing
+        OCO-aware close path (cancels protective orders + market-closes).
+        """
+        strategy_position_id = pos["strategy_position_id"]
+        close_result = await self.close_position_with_cleanup(
+            position_id=strategy_position_id,
+            symbol=pos["symbol"],
+            position_side=pos["side"],
+            quantity=pos["entry_quantity"],
+            reason="cio_exit_now",
+            cio_audited=True,
+        )
+        if close_result.get("position_closed"):
+            fill = (close_result.get("close_result") or {}).get("order_id", "")
+            await execution_event_publisher.publish(
+                event_type="filled",
+                strategy_id=strategy_id,
+                order_id=str(fill or strategy_position_id),
+                reason="cio_exit_now",
+                decision_id=pos.get("decision_id"),
+                extra={
+                    "symbol": pos["symbol"],
+                    "side": pos["side"],
+                    "reduce_only": True,
+                    # exit_now is always a full close of the strategy position.
+                    "position_status": "closed",
+                },
+                client_order_id=pos.get("client_order_id"),
+            )
+        return {
+            "strategy_position_id": strategy_position_id,
+            "status": close_result.get("status"),
+            "position_closed": close_result.get("position_closed"),
+        }
+
+    async def _cio_scale_out(
+        self, strategy_id: str, pos: dict[str, Any], decision_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """SCALE_OUT: reduce-only partial close, protective OCO left intact.
+
+        petrosa_k8s#1130 gap: the `DecisionResult` wire contract (petrosa-cio
+        cio/models/decision.py) carries no scale-out fraction field, so there
+        is nothing on the wire to size the partial close from. Falls back to
+        a fixed, operator-tunable fraction of the current strategy position
+        (``CIO_SCALE_OUT_DEFAULT_FRACTION``, default 0.5) until a follow-up
+        ticket adds a fraction to the CIO->TE contract.
+        """
+        strategy_position_id = pos["strategy_position_id"]
+        try:
+            fraction = float(os.getenv("CIO_SCALE_OUT_DEFAULT_FRACTION", "0.5"))
+        except (TypeError, ValueError):
+            fraction = 0.5
+        fraction = min(max(fraction, 0.01), 1.0)
+
+        entry_quantity = float(pos["entry_quantity"])
+        scale_qty = entry_quantity * fraction
+        if scale_qty <= 0:
+            return {
+                "strategy_position_id": strategy_position_id,
+                "status": "skipped_zero_qty",
+            }
+
+        close_side = "sell" if pos["side"] == "LONG" else "buy"
+        partial_order = TradeOrder(
+            symbol=pos["symbol"],
+            side=close_side,
+            type=OrderType.MARKET,
+            amount=scale_qty,
+            target_price=None,
+            stop_loss=None,
+            take_profit=None,
+            conditional_price=None,
+            conditional_direction=None,
+            conditional_timeout=None,
+            iceberg_quantity=None,
+            client_order_id=None,
+            order_id=f"scaleout_{strategy_position_id}_{int(time.time())}",
+            status=OrderStatus.PENDING,
+            filled_amount=0.0,
+            average_price=None,
+            position_id=None,
+            position_side=pos["side"],
+            exchange="binance",
+            reduce_only=True,
+            time_in_force=TimeInForce.GTC,
+            position_size_pct=None,
+            simulate=False,
+            updated_at=None,
+        )
+
+        if not self.exchange:
+            self.logger.error(
+                "cio_scale_out.no_exchange strategy_id=%s strategy_position_id=%s",
+                strategy_id,
+                strategy_position_id,
+            )
+            return {
+                "strategy_position_id": strategy_position_id,
+                "status": "no_exchange",
+            }
+
+        try:
+            exec_result = await self.exchange.execute(partial_order)
+        except Exception as e:
+            self.logger.error(
+                "cio_scale_out.exchange_execute_failed strategy_id=%s "
+                "strategy_position_id=%s error=%s",
+                strategy_id,
+                strategy_position_id,
+                e,
+            )
+            return {"strategy_position_id": strategy_position_id, "status": "error"}
+
+        if exec_result.get("status") not in ("NEW", "FILLED", "PARTIALLY_FILLED"):
+            self.logger.error(
+                "cio_scale_out.order_not_accepted strategy_id=%s result=%s",
+                strategy_id,
+                exec_result,
+            )
+            return {
+                "strategy_position_id": strategy_position_id,
+                "status": "order_rejected",
+                "exchange_result": exec_result,
+            }
+
+        exit_price = float(
+            exec_result.get("fill_price")
+            or exec_result.get("price")
+            or pos["entry_price"]
+        )
+        closure = await strategy_position_manager.close_strategy_position(
+            strategy_position_id=strategy_position_id,
+            exit_price=exit_price,
+            exit_quantity=scale_qty,
+            close_reason="cio_scale_out",
+            exit_order_id=exec_result.get("order_id"),
+        )
+
+        await execution_event_publisher.publish(
+            event_type="filled",
+            strategy_id=strategy_id,
+            order_id=str(exec_result.get("order_id") or ""),
+            reason="cio_scale_out",
+            decision_id=pos.get("decision_id"),
+            extra={
+                "symbol": pos["symbol"],
+                "side": pos["side"],
+                "fill_price": exit_price,
+                "price": exit_price,
+                "fill_quantity": scale_qty,
+                "fill_qty": scale_qty,
+                "reduce_only": True,
+                "position_status": (closure or {}).get("position_status"),
+            },
+            client_order_id=(closure or {}).get("client_order_id"),
+        )
+        return {
+            "strategy_position_id": strategy_position_id,
+            "status": "scaled_out",
+            "quantity": scale_qty,
+            "fraction": fraction,
+        }
+
+    async def _cio_modify_stops(
+        self, strategy_id: str, pos: dict[str, Any], decision_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """MODIFY_STOPS: cancel the existing OCO pair and re-arm with new
+        SL/TP prices computed from `DecisionResult.stop_loss_pct` /
+        `take_profit_pct` (present on the wire, unlike the scale-out
+        fraction) relative to this strategy position's entry price.
+        """
+        strategy_position_id = pos["strategy_position_id"]
+        sl_pct = decision_payload.get("stop_loss_pct")
+        tp_pct = decision_payload.get("take_profit_pct")
+        if sl_pct is None and tp_pct is None:
+            self.logger.info(
+                "cio_modify_stops.nothing_to_do strategy_id=%s strategy_position_id=%s "
+                "(no stop_loss_pct/take_profit_pct on decision payload)",
+                strategy_id,
+                strategy_position_id,
+            )
+            return {"strategy_position_id": strategy_position_id, "status": "no_op"}
+
+        entry_price = float(pos["entry_price"])
+        side = pos["side"]
+        new_sl = pos.get("stop_loss_price")
+        new_tp = pos.get("take_profit_price")
+        try:
+            if sl_pct is not None:
+                sl_pct = float(sl_pct)
+                new_sl = (
+                    entry_price * (1 - sl_pct)
+                    if side == "LONG"
+                    else entry_price * (1 + sl_pct)
+                )
+            if tp_pct is not None:
+                tp_pct = float(tp_pct)
+                new_tp = (
+                    entry_price * (1 + tp_pct)
+                    if side == "LONG"
+                    else entry_price * (1 - tp_pct)
+                )
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "cio_modify_stops.invalid_pct strategy_id=%s sl_pct=%r tp_pct=%r",
+                strategy_id,
+                sl_pct,
+                tp_pct,
+            )
+            return {
+                "strategy_position_id": strategy_position_id,
+                "status": "invalid_pct",
+            }
+
+        await self.oco_manager.cancel_oco_pair(
+            position_id=strategy_position_id,
+            symbol=pos["symbol"],
+            position_side=side,
+        )
+
+        oco_result = await self.oco_manager.place_oco_orders(
+            position_id=strategy_position_id,
+            symbol=pos["symbol"],
+            position_side=side,
+            quantity=pos["entry_quantity"],
+            stop_loss_price=new_sl or 0.0,
+            take_profit_price=new_tp or 0.0,
+            strategy_position_id=strategy_position_id,
+            entry_price=entry_price,
+        )
+
+        if oco_result.get("status") == "success":
+            await strategy_position_manager.set_strategy_position_orders(
+                strategy_position_id,
+                sl_order_id=oco_result.get("sl_order_id"),
+                tp_order_id=oco_result.get("tp_order_id"),
+            )
+            pos["stop_loss_price"] = new_sl
+            pos["take_profit_price"] = new_tp
+            self.logger.info(
+                "cio_modify_stops.applied strategy_id=%s strategy_position_id=%s "
+                "new_sl=%s new_tp=%s",
+                strategy_id,
+                strategy_position_id,
+                new_sl,
+                new_tp,
+            )
+
+        return {
+            "strategy_position_id": strategy_position_id,
+            "status": oco_result.get("status"),
+            "stop_loss_price": new_sl,
+            "take_profit_price": new_tp,
+        }
 
     def _generate_signal_fingerprint(self, signal: Signal) -> str:
         """

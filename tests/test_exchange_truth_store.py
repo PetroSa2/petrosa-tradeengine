@@ -469,6 +469,140 @@ class TestUserDataStreamConsumer:
         assert health["status"] == "healthy"
         assert health["last_updated"] is not None
 
+    # -----------------------------------------------------------------
+    # #609 — stream_connected must reflect event freshness, not just
+    # transport-level socket state; force_reconnect() is the active fix.
+    # -----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_health_check_reports_disconnected_when_stale(self):
+        """AC1: a connection that is still open (`_stream_connected=True`)
+        but hasn't delivered an event within the staleness threshold must
+        report `stream_connected: False` — this is exactly the "connected:
+        true but stops receiving events" failure mode from #609."""
+        from datetime import UTC, datetime, timedelta
+
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        await consumer._seed_store()
+        consumer._stream_connected = True
+        # Force the store's last_updated far enough in the past to exceed
+        # the default 120s staleness threshold.
+        consumer.store._last_updated = datetime.now(UTC) - timedelta(seconds=300)
+
+        health = await consumer.health_check()
+        assert health["stream_connected"] is False
+        assert health["status"] == "degraded"
+
+    @pytest.mark.asyncio
+    async def test_health_check_reports_connected_when_fresh(self):
+        from datetime import UTC, datetime, timedelta
+
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        await consumer._seed_store()
+        consumer._stream_connected = True
+        consumer.store._last_updated = datetime.now(UTC) - timedelta(seconds=10)
+
+        health = await consumer.health_check()
+        assert health["stream_connected"] is True
+        assert health["status"] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_force_reconnect_noop_when_not_connected(self):
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+
+        triggered = await consumer.force_reconnect(reason="test")
+        assert triggered is False
+
+    @pytest.mark.asyncio
+    async def test_force_reconnect_closes_active_connection(self):
+        """AC2: force_reconnect() is the only way to unblock a stream that
+        neither closes nor raises on its own."""
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        consumer._stream_connected = True
+        mock_ws = AsyncMock()
+        consumer._current_ws = mock_ws
+
+        triggered = await consumer.force_reconnect(reason="stale 300s")
+        assert triggered is True
+        mock_ws.close.assert_awaited_once()
+        assert consumer._force_reconnect_reason == "stale 300s"
+
+    @pytest.mark.asyncio
+    async def test_force_reconnect_swallows_close_errors(self):
+        """force_reconnect() must never raise into the caller (PositionReconciler
+        treats it as best-effort)."""
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        consumer._stream_connected = True
+        mock_ws = AsyncMock()
+        mock_ws.close.side_effect = RuntimeError("boom")
+        consumer._current_ws = mock_ws
+
+        triggered = await consumer.force_reconnect(reason="stale")
+        assert triggered is True  # attempt was made even though close() raised
+
+    @pytest.mark.asyncio
+    async def test_consumer_loop_reconnects_after_forced_close(self):
+        """End-to-end: force_reconnect() closing the active connection from
+        outside the loop causes the consumer to reconnect and reseed —
+        exercising the exact recovery path PositionReconciler relies on."""
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        consumer._create_listen_key = AsyncMock(return_value="TEST_KEY")
+        consumer._renewal_loop = AsyncMock()
+
+        seed_call_count = 0
+
+        async def _fake_seed():
+            nonlocal seed_call_count
+            seed_call_count += 1
+
+        consumer._seed_store = _fake_seed
+
+        connect_call_count = 0
+
+        @asynccontextmanager
+        async def _ws_that_closes_after_force_reconnect(url):
+            nonlocal connect_call_count
+            connect_call_count += 1
+
+            class _ClosableWS:
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    # First connection: simulate force_reconnect() being
+                    # called externally right after connect, which for a
+                    # gracefully-closed connection ends the async-for
+                    # iteration without raising (websockets' ConnectionClosedOK
+                    # semantics) — never delivering a message.
+                    if connect_call_count == 1:
+                        consumer._force_reconnect_reason = "stale 300s"
+                        raise StopAsyncIteration
+                    # Second connection: confirms the reconnect actually
+                    # happened, then the test stops the loop — no need to
+                    # simulate any further stream activity.
+                    consumer._running = False
+                    raise StopAsyncIteration
+
+            yield _ClosableWS()
+
+        with patch(
+            "websockets.connect", side_effect=_ws_that_closes_after_force_reconnect
+        ):
+            consumer._running = True
+            await asyncio.wait_for(consumer._consumer_loop(), timeout=5.0)
+
+        assert connect_call_count >= 2
+        assert seed_call_count >= 2
+        # Reason must have been cleared once the reconnect it announced
+        # actually happened.
+        assert consumer._force_reconnect_reason is None
+
 
 # ---------------------------------------------------------------------------
 # ExchangeTruthStore.update_from_rest (AC1 + AC2 — #446-B)

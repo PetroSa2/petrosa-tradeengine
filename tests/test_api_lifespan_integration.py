@@ -327,3 +327,9 @@ async def test_lifespan_wires_exchange_truth_store_into_position_reconciler():
             "PositionReconciler must be constructed with a GhostPositionRemediator "
             "(#592)"
         )
+        assert kwargs.get("stream_consumer") is mock_disp.user_data_consumer, (
+            "PositionReconciler must be constructed with "
+            "stream_consumer=dispatcher.user_data_consumer so a stale "
+            "ExchangeTruthStore can actually force a WS reconnect instead "
+            "of only logging (#609)"
+        )

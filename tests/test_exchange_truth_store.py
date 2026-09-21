@@ -64,6 +64,29 @@ async def _ws_context(messages: list[str]):
     yield _MockWS(messages)
 
 
+class _BlockingClosableWS:
+    """A fake websocket whose `__anext__` genuinely blocks (never raises,
+    never returns) until `close()` is called from outside — the exact shape
+    of #609's original bug: a connection that reports connected but neither
+    delivers a message nor closes/errors on its own. `close()` is what
+    `UserDataStreamConsumer.force_reconnect()` calls on `_current_ws`."""
+
+    def __init__(self) -> None:
+        self._closed_event = asyncio.Event()
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await self._closed_event.wait()
+        raise StopAsyncIteration
+
+    async def close(self) -> None:
+        self.closed = True
+        self._closed_event.set()
+
+
 # ---------------------------------------------------------------------------
 # ExchangeTruthStore
 # ---------------------------------------------------------------------------
@@ -547,9 +570,12 @@ class TestUserDataStreamConsumer:
 
     @pytest.mark.asyncio
     async def test_consumer_loop_reconnects_after_forced_close(self):
-        """End-to-end: force_reconnect() closing the active connection from
-        outside the loop causes the consumer to reconnect and reseed —
-        exercising the exact recovery path PositionReconciler relies on."""
+        """End-to-end: calling the PUBLIC force_reconnect() while the loop is
+        genuinely blocked on the first connection closes it from outside and
+        causes the consumer to reconnect and reseed — exercising the exact
+        recovery path PositionReconciler relies on. Unlike setting
+        `_force_reconnect_reason` directly, this actually verifies
+        force_reconnect() closes the live socket."""
         exchange = _make_exchange()
         consumer = UserDataStreamConsumer(exchange)
         consumer._create_listen_key = AsyncMock(return_value="TEST_KEY")
@@ -564,41 +590,50 @@ class TestUserDataStreamConsumer:
         consumer._seed_store = _fake_seed
 
         connect_call_count = 0
+        ws_instances: list[_BlockingClosableWS] = []
 
         @asynccontextmanager
-        async def _ws_that_closes_after_force_reconnect(url):
+        async def _connect(url):
             nonlocal connect_call_count
             connect_call_count += 1
+            ws = _BlockingClosableWS()
+            ws_instances.append(ws)
+            yield ws
 
-            class _ClosableWS:
-                def __aiter__(self):
-                    return self
-
-                async def __anext__(self):
-                    # First connection: simulate force_reconnect() being
-                    # called externally right after connect, which for a
-                    # gracefully-closed connection ends the async-for
-                    # iteration without raising (websockets' ConnectionClosedOK
-                    # semantics) — never delivering a message.
-                    if connect_call_count == 1:
-                        consumer._force_reconnect_reason = "stale 300s"
-                        raise StopAsyncIteration
-                    # Second connection: confirms the reconnect actually
-                    # happened, then the test stops the loop — no need to
-                    # simulate any further stream activity.
-                    consumer._running = False
-                    raise StopAsyncIteration
-
-            yield _ClosableWS()
-
-        with patch(
-            "websockets.connect", side_effect=_ws_that_closes_after_force_reconnect
-        ):
+        with patch("websockets.connect", side_effect=_connect):
             consumer._running = True
-            await asyncio.wait_for(consumer._consumer_loop(), timeout=5.0)
+            loop_task = asyncio.ensure_future(consumer._consumer_loop())
+            try:
+                # Wait for the first connection to actually be established
+                # and genuinely blocked (mirrors the real #609 failure mode:
+                # connected, but no exception/close ever arrives on its own).
+                for _ in range(100):
+                    if connect_call_count >= 1 and consumer._current_ws is not None:
+                        break
+                    await asyncio.sleep(0.02)
+                assert connect_call_count == 1
+                assert consumer._stream_connected is True
+
+                triggered = await consumer.force_reconnect(reason="stale 300s")
+                assert triggered is True
+
+                for _ in range(100):
+                    if connect_call_count >= 2:
+                        break
+                    await asyncio.sleep(0.02)
+                assert connect_call_count >= 2
+
+                consumer._running = False
+                # Unblock the second connection too so the loop can exit.
+                await ws_instances[-1].close()
+                await asyncio.wait_for(loop_task, timeout=3.0)
+            finally:
+                if not loop_task.done():
+                    loop_task.cancel()
 
         assert connect_call_count >= 2
         assert seed_call_count >= 2
+        assert ws_instances[0].closed is True
         # Reason must have been cleared once the reconnect it announced
         # actually happened.
         assert consumer._force_reconnect_reason is None

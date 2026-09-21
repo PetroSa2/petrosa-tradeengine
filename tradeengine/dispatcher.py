@@ -2255,8 +2255,23 @@ class Dispatcher:
                     await self.user_data_consumer.health_check()
                 )
 
+            # #609: the top-level dispatcher status was hardcoded "healthy"
+            # regardless of nested component health, so a stale-but-
+            # "connected" user-data stream (health_check() now correctly
+            # reporting `status: "degraded"`, see exchange_truth_store.py)
+            # never reached /health or /ready in api.py — both gate purely
+            # on this top-level field, never the nested component dicts.
+            # "not_started" is a neutral baseline (no consumer wired at all,
+            # e.g. a non-live deployment) and does not degrade overall status.
+            overall_status = "healthy"
+            if exchange_truth_store_health.get("status") not in (
+                "healthy",
+                "not_started",
+            ):
+                overall_status = "degraded"
+
             return {
-                "status": "healthy",
+                "status": overall_status,
                 "components": {
                     "order_manager": order_manager_health,
                     "position_manager": position_manager_health,

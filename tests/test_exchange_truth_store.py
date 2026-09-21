@@ -555,9 +555,12 @@ class TestUserDataStreamConsumer:
         assert consumer._force_reconnect_reason == "stale 300s"
 
     @pytest.mark.asyncio
-    async def test_force_reconnect_swallows_close_errors(self):
+    async def test_force_reconnect_reports_failure_when_close_raises(self):
         """force_reconnect() must never raise into the caller (PositionReconciler
-        treats it as best-effort)."""
+        treats it as best-effort), but a failed close() must be reported as
+        `False` — NOT `True` — so PositionReconciler doesn't arm its 5-minute
+        cooldown for a reconnect that never actually happened (the stream
+        would stay stuck for the whole cooldown window otherwise)."""
         exchange = _make_exchange()
         consumer = UserDataStreamConsumer(exchange)
         consumer._stream_connected = True
@@ -566,7 +569,10 @@ class TestUserDataStreamConsumer:
         consumer._current_ws = mock_ws
 
         triggered = await consumer.force_reconnect(reason="stale")
-        assert triggered is True  # attempt was made even though close() raised
+        assert triggered is False
+        # The forced-reconnects counter and _force_reconnect_reason must not
+        # reflect a success that didn't happen.
+        assert consumer._force_reconnect_reason is None
 
     @pytest.mark.asyncio
     async def test_consumer_loop_reconnects_after_forced_close(self):

@@ -388,22 +388,32 @@ class UserDataStreamConsumer:
         nothing inside `_consumer_loop` will otherwise notice a connection
         that never raises and never closes on its own.
 
-        Safe no-op (returns False) if not currently connected. Never raises
-        into the caller — callers (e.g. PositionReconciler) must be able to
-        treat this as best-effort.
+        Returns True only when the close was actually issued successfully —
+        the return value is a genuine "the stale connection was closed"
+        signal, not merely "an attempt was made". This matters because
+        callers (PositionReconciler) use it to decide whether to arm a
+        reconnect cooldown: reporting success on a failed close would
+        suppress retries for the full cooldown window while the consumer
+        loop remains stuck on the very connection that never got closed.
+
+        Safe no-op (returns False) if not currently connected, or if the
+        underlying close() call itself raises. Never raises into the
+        caller — callers must be able to treat this as best-effort.
         """
         if self._current_ws is None or not self._stream_connected:
             return False
         logger.warning("UserDataStreamConsumer: forcing reconnect — %s", reason)
-        exchange_truth_store_forced_reconnects_total.inc()
-        self._force_reconnect_reason = reason
         try:
             await self._current_ws.close()
         except Exception:
             logger.exception(
                 "UserDataStreamConsumer: error while closing connection for "
-                "forced reconnect"
+                "forced reconnect — stream remains stuck, NOT counted as a "
+                "successful forced reconnect"
             )
+            return False
+        exchange_truth_store_forced_reconnects_total.inc()
+        self._force_reconnect_reason = reason
         return True
 
     # ------------------------------------------------------------------

@@ -1299,6 +1299,28 @@ class TestStaleStreamForcedReconnect:
         stream_consumer.force_reconnect.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_failed_force_reconnect_does_not_arm_cooldown(self):
+        """A force_reconnect() that returns False (close attempt failed —
+        connection is still stuck) must NOT arm the 5-minute cooldown: the
+        next reconcile cycle should retry immediately instead of waiting."""
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=False)
+
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+        )
+
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+
+        # Every cycle retries since the previous attempt never succeeded.
+        assert stream_consumer.force_reconnect.await_count == 3
+
+    @pytest.mark.asyncio
     async def test_force_reconnect_failure_does_not_poison_reconcile_pass(self):
         """A raising stream_consumer.force_reconnect() must never break the
         read-only reconciliation pass — same fail-open contract as every

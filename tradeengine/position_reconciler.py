@@ -567,6 +567,13 @@ class PositionReconciler:
         forced within the cooldown window. Never raises — this is a
         best-effort recovery action layered on top of the read-only
         reconciliation pass.
+
+        The cooldown is only armed on a CONFIRMED close (``force_reconnect()``
+        returning True). If the close attempt itself fails — no-op because
+        the stream isn't connected, or the underlying close() call raised —
+        the stream is still stuck, so the next reconcile cycle
+        (``interval_seconds``, not the 5-minute cooldown) retries instead of
+        silently suppressing recovery for 5 minutes.
         """
         if self._stream_consumer is None:
             return
@@ -577,7 +584,6 @@ class PositionReconciler:
             < _STREAM_RECONNECT_COOLDOWN_SECS
         ):
             return
-        self._last_forced_reconnect_at = now
         try:
             triggered = await self._stream_consumer.force_reconnect(
                 reason=(
@@ -585,10 +591,13 @@ class PositionReconciler:
                     f"(threshold={stale_threshold:.0f}s)"
                 )
             )
-            if not triggered:
+            if triggered:
+                self._last_forced_reconnect_at = now
+            else:
                 logger.debug(
-                    "PositionReconciler: force_reconnect() was a no-op "
-                    "(stream_consumer not currently connected)"
+                    "PositionReconciler: force_reconnect() did not actually "
+                    "close a connection — will retry next reconcile cycle "
+                    "instead of arming the cooldown"
                 )
         except Exception:
             logger.exception(

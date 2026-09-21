@@ -985,3 +985,68 @@ async def test_execute_order_with_consensus_applies_leverage_before_exchange(
     mock_client.futures_change_leverage.assert_called_once_with(
         symbol="BTCUSDT", leverage=3
     )
+
+
+# ---------------------------------------------------------------------------
+# #609 — dispatcher.health_check() must propagate exchange_truth_store status
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_health_check_degrades_when_exchange_truth_store_stale(
+    dispatcher: Dispatcher,
+) -> None:
+    """The top-level dispatcher status was previously hardcoded 'healthy'
+    regardless of the nested exchange_truth_store health, so a stale-but-
+    'connected' user-data stream (health_check() now correctly reporting
+    status: 'degraded') never reached /health or /ready in api.py — both
+    gate purely on this top-level field."""
+    mock_consumer = Mock()
+    mock_consumer.health_check = AsyncMock(
+        return_value={
+            "status": "degraded",
+            "last_updated": "2026-09-20T15:30:06+00:00",
+            "is_ready": True,
+            "stream_connected": False,
+        }
+    )
+    dispatcher.user_data_consumer = mock_consumer
+
+    result = await dispatcher.health_check()
+
+    assert result["status"] == "degraded"
+    assert result["components"]["exchange_truth_store"]["stream_connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_check_healthy_when_exchange_truth_store_fresh(
+    dispatcher: Dispatcher,
+) -> None:
+    mock_consumer = Mock()
+    mock_consumer.health_check = AsyncMock(
+        return_value={
+            "status": "healthy",
+            "last_updated": "2026-09-20T15:30:06+00:00",
+            "is_ready": True,
+            "stream_connected": True,
+        }
+    )
+    dispatcher.user_data_consumer = mock_consumer
+
+    result = await dispatcher.health_check()
+
+    assert result["status"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_health_check_not_started_consumer_does_not_degrade(
+    dispatcher: Dispatcher,
+) -> None:
+    """No user_data_consumer wired (e.g. a non-live/simulator-only
+    deployment) is a neutral baseline, not a degradation."""
+    dispatcher.user_data_consumer = None
+
+    result = await dispatcher.health_check()
+
+    assert result["status"] == "healthy"
+    assert result["components"]["exchange_truth_store"]["status"] == "not_started"

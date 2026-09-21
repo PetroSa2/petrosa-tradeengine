@@ -114,6 +114,16 @@ _DEGRADED_CATEGORIES = frozenset({"ghost", "raw_journal_count_mismatch"})
 
 _VERDICT_STATE_VALUES = {"healthy": 0, "degraded": 1, "unhealthy": 2}
 
+# #609: minimum gap between forced-reconnect attempts triggered by detected
+# stream staleness. reconcile_once() runs every `interval_seconds` (default
+# 60s) and the staleness condition (`stale_secs > 2 * interval`) stays true
+# on every cycle until a reconnect actually lands a fresh event, so without
+# this cooldown a persistently-stale-but-still-"connected" stream would be
+# force-reconnected once per reconcile cycle. Bounding it to one attempt per
+# cooldown window still self-heals well within #609 AC5's 24h window while
+# avoiding a reconnect storm.
+_STREAM_RECONNECT_COOLDOWN_SECS = 300
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers (easy to unit-test)
@@ -422,12 +432,21 @@ class PositionReconciler:
         remediator: NakedPositionRemediator | None = None,
         store: ExchangeTruthStore | None = None,
         ghost_remediator: GhostPositionRemediator | None = None,
+        stream_consumer: Any | None = None,
     ) -> None:
         self._exchange = exchange
         self._position_manager = position_manager
         self._interval = interval_seconds
         self._remediator = remediator
         self._store = store
+        # #609: the UserDataStreamConsumer whose store this reconciler is
+        # backstopping. When the store goes stale (below), force_reconnect()
+        # is the active fix — logging alone (pre-#609 behavior) never
+        # recovered a connection that reports connected but has silently
+        # stopped delivering events, since nothing inside the consumer's own
+        # loop can notice a connection that neither closes nor raises.
+        self._stream_consumer = stream_consumer
+        self._last_forced_reconnect_at: datetime | None = None
         # #592: ghost-position write path. Defaults to an always-on
         # GhostPositionRemediator (mode="void") rather than None so this
         # ticket's fix is effective even for callers that don't thread the
@@ -536,6 +555,55 @@ class PositionReconciler:
                 self._expected_hedge_mode,
             )
 
+    async def _maybe_force_stream_reconnect(
+        self, stale_secs: float, stale_threshold: float
+    ) -> None:
+        """#609 AC2: force the user-data stream to reconnect when it has been
+        stale beyond ``stale_threshold``, rate-limited to at most once per
+        :data:`_STREAM_RECONNECT_COOLDOWN_SECS`.
+
+        No-op when no ``stream_consumer`` was injected (e.g. tests, or a
+        deployment that hasn't wired one) or when a reconnect was already
+        forced within the cooldown window. Never raises — this is a
+        best-effort recovery action layered on top of the read-only
+        reconciliation pass.
+
+        The cooldown is only armed on a CONFIRMED close (``force_reconnect()``
+        returning True). If the close attempt itself fails — no-op because
+        the stream isn't connected, or the underlying close() call raised —
+        the stream is still stuck, so the next reconcile cycle
+        (``interval_seconds``, not the 5-minute cooldown) retries instead of
+        silently suppressing recovery for 5 minutes.
+        """
+        if self._stream_consumer is None:
+            return
+        now = datetime.now(UTC)
+        if (
+            self._last_forced_reconnect_at is not None
+            and (now - self._last_forced_reconnect_at).total_seconds()
+            < _STREAM_RECONNECT_COOLDOWN_SECS
+        ):
+            return
+        try:
+            triggered = await self._stream_consumer.force_reconnect(
+                reason=(
+                    f"ExchangeTruthStore stream stale {stale_secs:.0f}s "
+                    f"(threshold={stale_threshold:.0f}s)"
+                )
+            )
+            if triggered:
+                self._last_forced_reconnect_at = now
+            else:
+                logger.debug(
+                    "PositionReconciler: force_reconnect() did not actually "
+                    "close a connection — will retry next reconcile cycle "
+                    "instead of arming the cooldown"
+                )
+        except Exception:
+            logger.exception(
+                "PositionReconciler: force_reconnect on stale stream failed"
+            )
+
     async def reconcile_once(self) -> list[dict[str, Any]]:
         """Run one reconciliation pass; return the divergence list."""
         # #566: verify the hedge-mode assumption before classifying rows —
@@ -625,11 +693,19 @@ class PositionReconciler:
             if stream_ts is not None:
                 stale_secs = (datetime.now(UTC) - stream_ts).total_seconds()
                 exchange_truth_store_stale_seconds.set(stale_secs)
-                if stale_secs > 2 * self._interval:
+                stale_threshold = 2 * self._interval
+                if stale_secs > stale_threshold:
                     logger.warning(
                         "ExchangeTruthStore stream stale: %.0fs (threshold=%ds)",
                         stale_secs,
-                        2 * self._interval,
+                        stale_threshold,
+                    )
+                    # #609 AC2: actually force the reconnect the log line
+                    # above used to just describe. Rate-limited so a
+                    # persistently-stale stream is retried at most once per
+                    # cooldown window instead of every reconcile cycle.
+                    await self._maybe_force_stream_reconnect(
+                        stale_secs, stale_threshold
                     )
 
         # #445: hand the unhedged subset to the write-mode remediator.

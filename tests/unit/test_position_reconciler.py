@@ -1175,3 +1175,168 @@ async def test_reconcile_once_three_consecutive_clean_cycles_are_healthy():
             divergences = await reconciler.reconcile_once()
             assert divergences == []
             assert reconciler.last_verdict == "healthy"
+
+
+# ---------------------------------------------------------------------------
+# #609 — stale-stream -> forced reconnect wiring
+# ---------------------------------------------------------------------------
+
+
+def _make_reconciler_with_store_and_consumer(
+    binance_raw: list,
+    local_positions: dict,
+    stream_consumer: object | None,
+    stale_seconds_ago: float,
+    interval_seconds: int = 60,
+):
+    """Build a PositionReconciler wired with a real ExchangeTruthStore whose
+    ``last_updated`` is ``stale_seconds_ago`` in the past, plus the given
+    (mock) ``stream_consumer``."""
+    from datetime import UTC, datetime, timedelta
+
+    from tradeengine.exchange_truth_store import ExchangeTruthStore
+
+    exchange = MagicMock()
+    exchange.get_position_info = AsyncMock(return_value=binance_raw)
+    exchange.get_open_algo_orders = AsyncMock(return_value=[])
+
+    pm = MagicMock()
+    pm.get_positions = MagicMock(return_value=local_positions)
+    pm.positions = dict(local_positions)
+
+    store = ExchangeTruthStore()
+    store._last_updated = datetime.now(UTC) - timedelta(seconds=stale_seconds_ago)
+    store._is_ready = True
+
+    reconciler = PositionReconciler(
+        exchange=exchange,
+        position_manager=pm,
+        interval_seconds=interval_seconds,
+        store=store,
+        stream_consumer=stream_consumer,
+    )
+    return reconciler, store
+
+
+class TestStaleStreamForcedReconnect:
+    """#609: PositionReconciler must actually force a reconnect when the
+    ExchangeTruthStore's WS-driven `last_updated` goes stale — not just log
+    a warning (the pre-#609 behavior that left #609 undetected/unrecovered
+    without a manual pod restart)."""
+
+    @pytest.mark.asyncio
+    async def test_stale_stream_triggers_force_reconnect(self):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+
+        # interval=60 -> threshold=120s; 300s stale is well past it.
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+        )
+
+        await reconciler.reconcile_once()
+
+        stream_consumer.force_reconnect.assert_awaited_once()
+        call_kwargs = stream_consumer.force_reconnect.call_args.kwargs
+        assert "stale" in call_kwargs["reason"].lower()
+        assert "300" in call_kwargs["reason"]
+
+    @pytest.mark.asyncio
+    async def test_fresh_stream_does_not_trigger_force_reconnect(self):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=5,
+        )
+
+        await reconciler.reconcile_once()
+
+        stream_consumer.force_reconnect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_stream_consumer_wired_is_a_safe_no_op(self):
+        """Reconciler without a stream_consumer (legacy wiring, or a
+        deployment that hasn't injected one) must keep working exactly as
+        before #609 — log-only, no AttributeError."""
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=None,
+            stale_seconds_ago=300,
+        )
+
+        divergences = await reconciler.reconcile_once()
+        assert isinstance(divergences, list)
+
+    @pytest.mark.asyncio
+    async def test_repeated_stale_cycles_respect_reconnect_cooldown(self):
+        """A stream that stays stale across multiple reconcile cycles must
+        not be force-reconnected on every single cycle — only once per
+        cooldown window (#609 anti-storm guard)."""
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+
+        reconciler, store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+        )
+
+        # Three consecutive cycles, store never recovers (still stale each
+        # time) since nothing updates store._last_updated in this test.
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+
+        stream_consumer.force_reconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_force_reconnect_does_not_arm_cooldown(self):
+        """A force_reconnect() that returns False (close attempt failed —
+        connection is still stuck) must NOT arm the 5-minute cooldown: the
+        next reconcile cycle should retry immediately instead of waiting."""
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=False)
+
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+        )
+
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+        await reconciler.reconcile_once()
+
+        # Every cycle retries since the previous attempt never succeeded.
+        assert stream_consumer.force_reconnect.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_force_reconnect_failure_does_not_poison_reconcile_pass(self):
+        """A raising stream_consumer.force_reconnect() must never break the
+        read-only reconciliation pass — same fail-open contract as every
+        other remediator hook in reconcile_once()."""
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(
+            side_effect=RuntimeError("websocket library blew up")
+        )
+
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+        )
+
+        divergences = await reconciler.reconcile_once()
+        assert isinstance(divergences, list)
+        stream_consumer.force_reconnect.assert_awaited_once()

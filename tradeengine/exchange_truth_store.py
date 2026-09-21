@@ -45,9 +45,26 @@ exchange_truth_store_stale_seconds = Gauge(
     "Seconds since the last WebSocket stream update (measured on each REST reconcile pass)",
 )
 
+# #609 AC2/AC4 — count of forced reconnects triggered because the stream was
+# detected stale (connected at the transport layer but no longer delivering
+# events). Alert on `increase(...) > 0` over a short window, or directly on
+# `tradeengine_exchange_truth_store_stale_seconds > threshold`.
+exchange_truth_store_forced_reconnects_total = Counter(
+    "tradeengine_exchange_truth_store_forced_reconnects_total",
+    "Total WebSocket reconnects forced because the user-data stream was "
+    "detected stale (#609)",
+)
+
 _LISTEN_KEY_RENEWAL_SECS = 55 * 60  # Binance expires keys at 60 min
 _RECONNECT_BASE_DELAY = 2.0
 _RECONNECT_MAX_DELAY = 60.0
+
+# #609 AC1 — how stale `store.last_updated` may get before health_check()
+# stops reporting `stream_connected: true`. Matches PositionReconciler's
+# default 2×interval_seconds (60s interval → 120s) so the two signals agree;
+# override via env if `position_reconciliation_interval_seconds` is tuned
+# away from its 60s default.
+_STREAM_STALE_THRESHOLD_SECS = int(os.getenv("TE_STREAM_STALE_THRESHOLD_SECS", "120"))
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +319,13 @@ class UserDataStreamConsumer:
         self._listen_key: str | None = None
         self._stream_connected: bool = False
         self._running: bool = False
+        # #609: handle to the currently-open websocket connection object so
+        # force_reconnect() can close it from outside the consumer loop —
+        # the only way to unblock an `async for message in ws` that is
+        # sitting on a connection which reports connected but has silently
+        # stopped delivering events.
+        self._current_ws: Any | None = None
+        self._force_reconnect_reason: str | None = None
 
     # ------------------------------------------------------------------
     # AC3 — lifecycle
@@ -331,18 +355,77 @@ class UserDataStreamConsumer:
         logger.info("UserDataStreamConsumer stopped")
 
     async def health_check(self) -> dict[str, Any]:
+        """#609 AC1: `stream_connected` reflects actual event freshness, not
+        just transport-level socket state. A connection that is still open
+        but has not delivered a WS event (`store.last_updated`, which is
+        only advanced by seed_from_rest()/live ACCOUNT_UPDATE/
+        ORDER_TRADE_UPDATE — never by PositionReconciler's REST-only
+        update_from_rest()) within `_STREAM_STALE_THRESHOLD_SECS` is
+        reported as NOT connected, so `/health` and readiness probes catch
+        the "connected: true but silent" failure mode without waiting for
+        the reconciler's next forced-reconnect pass.
+        """
+        last_updated = self.store.last_updated
+        stale = False
+        if self._stream_connected and last_updated is not None:
+            idle_secs = (datetime.now(UTC) - last_updated).total_seconds()
+            stale = idle_secs > _STREAM_STALE_THRESHOLD_SECS
+        effective_connected = self._stream_connected and not stale
         return {
             "status": (
-                "healthy"
-                if self.store.is_ready and self._stream_connected
-                else "degraded"
+                "healthy" if self.store.is_ready and effective_connected else "degraded"
             ),
-            "last_updated": (
-                self.store.last_updated.isoformat() if self.store.last_updated else None
-            ),
+            "last_updated": last_updated.isoformat() if last_updated else None,
             "is_ready": self.store.is_ready,
-            "stream_connected": self._stream_connected,
+            "stream_connected": effective_connected,
         }
+
+    async def force_reconnect(self, reason: str = "manual trigger") -> bool:
+        """#609 AC2: force-close the active WebSocket connection so the
+        consumer loop reconnects immediately with a fresh listen key and a
+        fresh REST seed. This is the only reliable way to recover a stream
+        that reports connected but has stopped delivering events, since
+        nothing inside `_consumer_loop` will otherwise notice a connection
+        that never raises and never closes on its own.
+
+        Returns True only when the close was actually issued successfully —
+        the return value is a genuine "the stale connection was closed"
+        signal, not merely "an attempt was made". This matters because
+        callers (PositionReconciler) use it to decide whether to arm a
+        reconnect cooldown: reporting success on a failed close would
+        suppress retries for the full cooldown window while the consumer
+        loop remains stuck on the very connection that never got closed.
+
+        Safe no-op (returns False) if not currently connected, or if the
+        underlying close() call itself raises. Never raises into the
+        caller — callers must be able to treat this as best-effort.
+        """
+        if self._current_ws is None or not self._stream_connected:
+            return False
+        logger.warning("UserDataStreamConsumer: forcing reconnect — %s", reason)
+        # #609: set the reason BEFORE awaiting close(), not after. The
+        # consumer loop task runs concurrently and can observe the close
+        # (and reach its own exception/end-of-loop handling) as soon as
+        # close() is invoked — before this coroutine resumes past the
+        # `await`. Setting the reason first ensures the loop always sees it
+        # attributed correctly instead of logging a plain "server closed
+        # stream" and then having a stale reason from this call linger into
+        # a later, unrelated connection.
+        self._force_reconnect_reason = reason
+        try:
+            await self._current_ws.close()
+        except Exception:
+            logger.exception(
+                "UserDataStreamConsumer: error while closing connection for "
+                "forced reconnect — stream remains stuck, NOT counted as a "
+                "successful forced reconnect"
+            )
+            # The close never actually happened — clear the reason so it
+            # doesn't misattribute some later, unrelated disconnect.
+            self._force_reconnect_reason = None
+            return False
+        exchange_truth_store_forced_reconnects_total.inc()
+        return True
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -428,6 +511,7 @@ class UserDataStreamConsumer:
                 await self._seed_store()
 
                 async with websockets.connect(url) as ws:
+                    self._current_ws = ws
                     self._stream_connected = True
                     logger.info(
                         "UserDataStreamConsumer: connected (testnet=%s)", is_testnet
@@ -456,21 +540,71 @@ class UserDataStreamConsumer:
                             exchange_truth_store_events_total.labels(
                                 event_type="order_trade_update"
                             ).inc()
+                        elif event_type == "listenKeyExpired":
+                            # #609 AC3: previously fell into the silent debug
+                            # branch below — Binance closes the socket right
+                            # after this, but log it explicitly so the
+                            # ensuing reconnect has a clear, structured cause
+                            # instead of appearing to be an unexplained drop.
+                            logger.warning(
+                                "UserDataStreamConsumer: listenKeyExpired "
+                                "received — reconnect with fresh key will follow"
+                            )
+                            exchange_truth_store_events_total.labels(
+                                event_type="listen_key_expired"
+                            ).inc()
                         else:
                             logger.debug(
                                 "UserDataStreamConsumer: ignoring event_type=%s",
                                 event_type,
                             )
 
+                    # #609 AC1/AC3: the stream ended WITHOUT raising — either
+                    # the server closed cleanly or force_reconnect() closed
+                    # it from outside. Previously this path produced ZERO
+                    # log output, which is exactly how a "connected: true
+                    # but silent" stream went undetected: no exception ever
+                    # fired for the caller's original bug (a connection that
+                    # never closes and never errors), so this branch exists
+                    # to cover the case where PositionReconciler's
+                    # force_reconnect() (the actual fix for that case, since
+                    # nothing inside this loop can otherwise notice a
+                    # connection that neither closes nor raises) closes it
+                    # for us, as well as any ordinary clean server-side close.
+                    close_reason = (
+                        self._force_reconnect_reason or "server closed stream"
+                    )
+                    logger.warning(
+                        "UserDataStreamConsumer: stream ended (%s) — reconnecting",
+                        close_reason,
+                    )
+                    exchange_truth_store_events_total.labels(
+                        event_type="reconnect"
+                    ).inc()
+                    if self._force_reconnect_reason is not None:
+                        delay = _RECONNECT_BASE_DELAY
+                        self._force_reconnect_reason = None
+
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception(
-                    "UserDataStreamConsumer: stream error, reconnecting in %.1fs", delay
-                )
+                if self._force_reconnect_reason is not None:
+                    logger.warning(
+                        "UserDataStreamConsumer: reconnecting after forced "
+                        "closure (%s)",
+                        self._force_reconnect_reason,
+                    )
+                    delay = _RECONNECT_BASE_DELAY
+                    self._force_reconnect_reason = None
+                else:
+                    logger.exception(
+                        "UserDataStreamConsumer: stream error, reconnecting in %.1fs",
+                        delay,
+                    )
                 exchange_truth_store_events_total.labels(event_type="reconnect").inc()
             finally:
                 self._stream_connected = False
+                self._current_ws = None
 
             if not self._running:
                 break

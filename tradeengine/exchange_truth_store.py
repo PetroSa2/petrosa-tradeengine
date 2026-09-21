@@ -403,6 +403,15 @@ class UserDataStreamConsumer:
         if self._current_ws is None or not self._stream_connected:
             return False
         logger.warning("UserDataStreamConsumer: forcing reconnect — %s", reason)
+        # #609: set the reason BEFORE awaiting close(), not after. The
+        # consumer loop task runs concurrently and can observe the close
+        # (and reach its own exception/end-of-loop handling) as soon as
+        # close() is invoked — before this coroutine resumes past the
+        # `await`. Setting the reason first ensures the loop always sees it
+        # attributed correctly instead of logging a plain "server closed
+        # stream" and then having a stale reason from this call linger into
+        # a later, unrelated connection.
+        self._force_reconnect_reason = reason
         try:
             await self._current_ws.close()
         except Exception:
@@ -411,9 +420,11 @@ class UserDataStreamConsumer:
                 "forced reconnect — stream remains stuck, NOT counted as a "
                 "successful forced reconnect"
             )
+            # The close never actually happened — clear the reason so it
+            # doesn't misattribute some later, unrelated disconnect.
+            self._force_reconnect_reason = None
             return False
         exchange_truth_store_forced_reconnects_total.inc()
-        self._force_reconnect_reason = reason
         return True
 
     # ------------------------------------------------------------------

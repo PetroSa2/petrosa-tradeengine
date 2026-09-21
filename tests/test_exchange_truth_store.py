@@ -555,6 +555,28 @@ class TestUserDataStreamConsumer:
         assert consumer._force_reconnect_reason == "stale 300s"
 
     @pytest.mark.asyncio
+    async def test_force_reconnect_sets_reason_before_awaiting_close(self):
+        """The consumer loop task runs concurrently and can reach its own
+        exception/end-of-loop handling as soon as close() is invoked — before
+        this coroutine resumes past the `await`. The reason must already be
+        visible at that point, not set only after close() returns."""
+        exchange = _make_exchange()
+        consumer = UserDataStreamConsumer(exchange)
+        consumer._stream_connected = True
+
+        reason_seen_during_close = None
+
+        class _ObservingWS:
+            async def close(self):
+                nonlocal reason_seen_during_close
+                reason_seen_during_close = consumer._force_reconnect_reason
+
+        consumer._current_ws = _ObservingWS()
+
+        await consumer.force_reconnect(reason="stale 300s")
+        assert reason_seen_during_close == "stale 300s"
+
+    @pytest.mark.asyncio
     async def test_force_reconnect_reports_failure_when_close_raises(self):
         """force_reconnect() must never raise into the caller (PositionReconciler
         treats it as best-effort), but a failed close() must be reported as

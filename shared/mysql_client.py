@@ -123,15 +123,20 @@ class DataManagerPositionClient:
             # 0-insert with no duplicate signal at all) still falls through to
             # the error path below.
             idempotent_duplicate = not inserted and failed == 0 and duplicates > 0
-            ok = inserted or idempotent_duplicate
+            legacy_duplicate = False
+            if not inserted and failed == 0 and duplicates == 0 and pid:
+                legacy_duplicate = await self.get_position(pid) is not None
+            ok = inserted or idempotent_duplicate or legacy_duplicate
             if inserted:
                 logger.info("Created position record %s via Data Manager", pid)
-            elif idempotent_duplicate:
+            elif idempotent_duplicate or legacy_duplicate:
                 logger.info(
                     "Position %s already persisted (idempotent duplicate: "
-                    "inserted_count=0, duplicates=%s) — treating as success",
+                    "inserted_count=0, duplicates=%s, read_verified=%s) — "
+                    "treating as success",
                     pid,
                     duplicates,
+                    legacy_duplicate,
                 )
             else:
                 # #596: log the full Data Manager response instead of the bare
@@ -153,6 +158,9 @@ class DataManagerPositionClient:
                 # Surface the distinction to callers/metrics: this succeeded
                 # because the row already existed, not because we wrote it.
                 result.extra["idempotent_duplicate"] = True
+            elif legacy_duplicate:
+                result.extra["idempotent_duplicate"] = True
+                result.extra["read_verified"] = True
             return result
         except Exception as exc:
             logger.error("Failed to create position %s via Data Manager: %s", pid, exc)
@@ -287,7 +295,8 @@ class DataManagerPositionClient:
             response = await self.data_manager_client._client.query(
                 database="mysql",
                 collection="positions",
-                params={"filter": {"position_id": position_id}, "limit": 1},
+                filter={"position_id": position_id},
+                limit=1,
             )
             if response and response.get("data"):
                 return response["data"][0]

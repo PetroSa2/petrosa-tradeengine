@@ -324,6 +324,47 @@ class TestDataManagerPositionClient:
         )
         assert result.ok is False
 
+    @pytest.mark.asyncio
+    async def test_create_position_legacy_zero_insert_is_read_verified(self):
+        """A legacy DM response can omit duplicate counters; verify the row."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0}
+        )
+        mock_base.query = AsyncMock(
+            return_value={"data": [{"position_id": "legacy-dup"}]}
+        )
+
+        result = await client.create_position(
+            {"position_id": "legacy-dup", "symbol": "BTCUSDT"}
+        )
+
+        assert result.ok is True
+        assert result.extra == {"idempotent_duplicate": True, "read_verified": True}
+        mock_base.query.assert_awaited_once_with(
+            database="mysql",
+            collection="positions",
+            filter={"position_id": "legacy-dup"},
+            limit=1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_position_legacy_zero_insert_missing_row_fails(self):
+        """A missing row remains a genuine persistence failure."""
+        client, mock_base = self._make_client()
+        mock_base.insert_one = AsyncMock(
+            return_value={"inserted_id": "", "inserted_count": 0}
+        )
+        mock_base.query = AsyncMock(return_value={"data": []})
+        client.health_check = AsyncMock(return_value={"status": "healthy"})
+
+        result = await client.create_position(
+            {"position_id": "missing-1", "symbol": "BTCUSDT"}
+        )
+
+        assert result.ok is False
+        client.health_check.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # PersistRetryQueue

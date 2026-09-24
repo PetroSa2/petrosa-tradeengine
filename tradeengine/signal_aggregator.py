@@ -12,7 +12,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
-from contracts.signal import Signal, TimeFrame
+from petrosa_contracts import Signal, TimeFrame
+
 from shared.constants import UTC
 
 

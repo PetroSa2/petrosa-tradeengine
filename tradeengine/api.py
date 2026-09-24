@@ -37,9 +37,10 @@ except ImportError:
     std_to_otel = None
 
 # Import Pyroscope profiling initialization
+from petrosa_contracts import Signal
+
 import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
 from contracts.order import TradeOrder
-from contracts.signal import Signal
 from shared.audit import audit_logger
 from shared.config import Settings
 from shared.mysql_client import position_client

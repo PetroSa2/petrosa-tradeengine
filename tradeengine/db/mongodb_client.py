@@ -9,7 +9,8 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from contracts.trading_config import TradingConfig, TradingConfigAudit
+from petrosa_contracts import TradingConfig, TradingConfigAudit
+
 from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 

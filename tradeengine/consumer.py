@@ -24,9 +24,9 @@ except ImportError:
         pass
 
 
+from petrosa_contracts import Signal
 from prometheus_client import Counter
 
-from contracts.signal import Signal
 from shared.config import settings
 from tradeengine.defaults import DEFAULT_TRADING_PARAMETERS
 from tradeengine.dispatcher import Dispatcher

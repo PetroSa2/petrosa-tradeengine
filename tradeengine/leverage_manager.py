@@ -14,8 +14,8 @@ from typing import Any, Optional
 
 from binance import Client
 from binance.exceptions import BinanceAPIException
+from petrosa_contracts import LeverageStatus
 
-from contracts.trading_config import LeverageStatus
 from shared.constants import UTC
 from tradeengine.db.mongodb_client import DataManagerConfigClient
 

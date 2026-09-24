@@ -8,7 +8,7 @@ from MySQL as a fallback to MongoDB.
 import logging
 from typing import Optional
 
-from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
+from petrosa_contracts import LeverageStatus, TradingConfig, TradingConfigAudit
 
 logger = logging.getLogger(__name__)
 

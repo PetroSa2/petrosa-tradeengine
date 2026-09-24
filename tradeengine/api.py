@@ -333,9 +333,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 remediator=_remediator,
                 store=_truth_store,
                 ghost_remediator=_ghost_remediator,
-                # #609: wire the live consumer so a stale ExchangeTruthStore
-                # (connected: true, no events delivered) triggers an actual
-                # forced reconnect instead of only a log line — see
+                # #609: wire the live consumer so PositionReconciler can use
+                # missed-update evidence to trigger an actual forced reconnect
+                # instead of treating event silence as a fault — see
                 # PositionReconciler._maybe_force_stream_reconnect().
                 stream_consumer=dispatcher.user_data_consumer,
             )

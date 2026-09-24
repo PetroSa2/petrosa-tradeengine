@@ -493,29 +493,84 @@ class TestUserDataStreamConsumer:
         assert health["last_updated"] is not None
 
     # -----------------------------------------------------------------
-    # #609 — stream_connected must reflect event freshness, not just
-    # transport-level socket state; force_reconnect() is the active fix.
+    # #625 — event silence is informational; transport state controls health.
     # -----------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_health_check_reports_disconnected_when_stale(self):
-        """AC1: a connection that is still open (`_stream_connected=True`)
-        but hasn't delivered an event within the staleness threshold must
-        report `stream_connected: False` — this is exactly the "connected:
-        true but stops receiving events" failure mode from #609."""
+    async def test_health_check_idle_connected_stream_stays_healthy(self):
+        """An idle but connected account remains ready."""
         from datetime import UTC, datetime, timedelta
 
         exchange = _make_exchange()
         consumer = UserDataStreamConsumer(exchange)
         await consumer._seed_store()
         consumer._stream_connected = True
-        # Force the store's last_updated far enough in the past to exceed
-        # the default 120s staleness threshold.
-        consumer.store._last_updated = datetime.now(UTC) - timedelta(seconds=300)
+        consumer.store._last_updated = datetime.now(UTC) - timedelta(seconds=3600)
 
         health = await consumer.health_check()
+        assert health["stream_connected"] is True
+        assert health["status"] == "healthy"
+        assert health["stream_idle_secs"] >= 3600
+        assert health["disconnected_secs"] is None
+
+    @pytest.mark.asyncio
+    async def test_health_check_healthy_during_reconnect_grace(self):
+        from datetime import UTC, datetime, timedelta
+
+        consumer = UserDataStreamConsumer(_make_exchange())
+        await consumer._seed_store()
+        consumer._stream_connected = False
+        consumer._disconnected_since = datetime.now(UTC) - timedelta(seconds=30)
+
+        health = await consumer.health_check()
+        assert health["status"] == "healthy"
         assert health["stream_connected"] is False
+        assert 30 <= health["disconnected_secs"] < 300
+
+    @pytest.mark.asyncio
+    async def test_health_check_degraded_after_disconnect_grace(self):
+        from datetime import UTC, datetime, timedelta
+
+        consumer = UserDataStreamConsumer(_make_exchange())
+        await consumer._seed_store()
+        consumer._stream_connected = False
+        consumer._disconnected_since = datetime.now(UTC) - timedelta(seconds=301)
+
+        health = await consumer.health_check()
         assert health["status"] == "degraded"
+
+    @pytest.mark.asyncio
+    async def test_health_check_degraded_when_stopped_and_disconnected(self):
+        consumer = UserDataStreamConsumer(_make_exchange())
+        await consumer._seed_store()
+        consumer._stream_connected = False
+        consumer._disconnected_since = None
+
+        health = await consumer.health_check()
+        assert health["status"] == "degraded"
+
+    @pytest.mark.asyncio
+    async def test_start_sets_disconnected_since(self):
+        consumer = UserDataStreamConsumer(_make_exchange())
+        consumer._consumer_loop = AsyncMock()
+
+        await consumer.start()
+        assert consumer._disconnected_since is not None
+        await consumer.stop()
+        assert consumer._disconnected_since is None
+
+    def test_stale_threshold_env_var_removed(self):
+        from pathlib import Path
+
+        import tradeengine
+        import tradeengine.exchange_truth_store as module
+
+        assert not hasattr(module, "_STREAM_STALE_THRESHOLD_SECS")
+        package_dir = Path(tradeengine.__file__).parent
+        assert all(
+            "TE_STREAM_STALE_THRESHOLD_SECS" not in path.read_text()
+            for path in package_dir.rglob("*.py")
+        )
 
     @pytest.mark.asyncio
     async def test_health_check_reports_connected_when_fresh(self):
@@ -822,13 +877,23 @@ class TestPositionReconcilerStoreIntegration:
 
     @pytest.mark.asyncio
     async def test_stale_stream_warning_fires(self, caplog):
-        """AC3 — stale-stream warning logs when stream timestamp exceeds 2x interval."""
+        """A REST position change without a WS event triggers recovery."""
         import logging
         from datetime import UTC, datetime, timedelta
 
         from tradeengine.position_reconciler import PositionReconciler
 
-        exchange = _make_reconciler_exchange()
+        exchange = _make_reconciler_exchange(
+            positions=[
+                {
+                    "symbol": "BTCUSDT",
+                    "positionSide": "LONG",
+                    "positionAmt": "0.01",
+                    "entryPrice": "50000",
+                    "unrealizedProfit": "0",
+                }
+            ]
+        )
         pm = _make_position_manager()
         store = ExchangeTruthStore()
 
@@ -836,6 +901,7 @@ class TestPositionReconcilerStoreIntegration:
         # 5*60 = 300s > 2*60 = 120s → should trigger warning
         stale_ts = datetime.now(UTC) - timedelta(seconds=300)
         store._last_updated = stale_ts
+        store._last_rest_sync = datetime.now(UTC) - timedelta(seconds=60)
         store._is_ready = True
 
         reconciler = PositionReconciler(
@@ -981,15 +1047,25 @@ class TestPositionReconcilerRestBackstop:
 
     @pytest.mark.asyncio
     async def test_stale_stream_warning_fires(self, caplog):
-        """AC3b: stale-stream warning fires when stream.last_updated is older than 2×interval."""
+        """AC3b: a changed REST position triggers a stale-stream warning."""
         import logging
         from datetime import UTC, datetime, timedelta
 
-        reconciler, store, _ = self._make_reconciler_deps()
+        positions = [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.01",
+                "entryPrice": "50000",
+                "unrealizedProfit": "0",
+            }
+        ]
+        reconciler, store, _ = self._make_reconciler_deps(positions=positions)
         reconciler._interval = 30  # threshold = 60s
 
         # Force stream last_updated to 120s ago (> 2 * 30 = 60s threshold)
         store._last_updated = datetime.now(UTC) - timedelta(seconds=120)
+        store._last_rest_sync = datetime.now(UTC) - timedelta(seconds=30)
         store._is_ready = True
 
         with caplog.at_level(logging.WARNING, logger="tradeengine.position_reconciler"):

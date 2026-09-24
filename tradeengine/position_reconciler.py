@@ -20,6 +20,7 @@ from prometheus_client import Counter, Gauge
 from shared.constants import HEDGE_MODE_ENABLED
 from tradeengine.exchange_truth_store import (
     ExchangeTruthStore,
+    PositionSnapshot,
     exchange_truth_store_stale_seconds,
 )
 from tradeengine.ghost_position_remediator import GhostPositionRemediator
@@ -114,14 +115,10 @@ _DEGRADED_CATEGORIES = frozenset({"ghost", "raw_journal_count_mismatch"})
 
 _VERDICT_STATE_VALUES = {"healthy": 0, "degraded": 1, "unhealthy": 2}
 
-# #609: minimum gap between forced-reconnect attempts triggered by detected
-# stream staleness. reconcile_once() runs every `interval_seconds` (default
-# 60s) and the staleness condition (`stale_secs > 2 * interval`) stays true
-# on every cycle until a reconnect actually lands a fresh event, so without
-# this cooldown a persistently-stale-but-still-"connected" stream would be
-# force-reconnected once per reconcile cycle. Bounding it to one attempt per
-# cooldown window still self-heals well within #609 AC5's 24h window while
-# avoiding a reconnect storm.
+# #609: minimum gap between forced-reconnect attempts triggered by evidence of
+# a missed stream position update. A persistently disconnected stream may be
+# observed on every reconciliation cycle, so this cooldown avoids a reconnect
+# storm while still retrying within the observation window.
 _STREAM_RECONNECT_COOLDOWN_SECS = 300
 
 
@@ -154,6 +151,30 @@ def _index_binance_positions(
         side = _normalise_side(pos)
         out[(symbol, side)] = pos
     return out
+
+
+def rest_positions_diverge_from_store(
+    raw: list[dict[str, Any]],
+    store_positions: dict[tuple[str, str], PositionSnapshot],
+) -> bool:
+    """Return whether a REST position snapshot differs from the store."""
+    rest_positions: dict[tuple[str, str], float] = {}
+    for position in raw:
+        quantity = float(position.get("positionAmt", 0))
+        if abs(quantity) < 1e-9:
+            continue
+        key = (
+            position.get("symbol", ""),
+            str(position.get("positionSide", "BOTH")).upper(),
+        )
+        rest_positions[key] = quantity
+
+    if set(rest_positions) != set(store_positions):
+        return True
+    return any(
+        abs(rest_positions[key] - snapshot.quantity) > _FLOAT_TOLERANCE
+        for key, snapshot in store_positions.items()
+    )
 
 
 def detect_divergences(
@@ -555,11 +576,10 @@ class PositionReconciler:
                 self._expected_hedge_mode,
             )
 
-    async def _maybe_force_stream_reconnect(
-        self, stale_secs: float, stale_threshold: float
-    ) -> None:
-        """#609 AC2: force the user-data stream to reconnect when it has been
-        stale beyond ``stale_threshold``, rate-limited to at most once per
+    async def _maybe_force_stream_reconnect(self, stale_secs: float) -> None:
+        """#609 AC2: force reconnect after evidence of a missed position update.
+
+        Attempts are rate-limited to at most once per
         :data:`_STREAM_RECONNECT_COOLDOWN_SECS`.
 
         No-op when no ``stream_consumer`` was injected (e.g. tests, or a
@@ -587,8 +607,8 @@ class PositionReconciler:
         try:
             triggered = await self._stream_consumer.force_reconnect(
                 reason=(
-                    f"ExchangeTruthStore stream stale {stale_secs:.0f}s "
-                    f"(threshold={stale_threshold:.0f}s)"
+                    "ExchangeTruthStore stream stale: missed position update "
+                    f"({stale_secs:.0f}s since last WS event)"
                 )
             )
             if triggered:
@@ -601,7 +621,7 @@ class PositionReconciler:
                 )
         except Exception:
             logger.exception(
-                "PositionReconciler: force_reconnect on stale stream failed"
+                "PositionReconciler: force_reconnect after missed position update failed"
             )
 
     async def reconcile_once(self) -> list[dict[str, Any]]:
@@ -682,31 +702,40 @@ class PositionReconciler:
         # stays accurate even when the stream missed events or was briefly down.
         if self._store is not None:
             all_orders = [o for orders in orders_by_symbol.values() for o in orders]
+            store_positions_before = self._store.get_positions()
+            prev_rest_sync = self._store.last_rest_sync
+            ws_ts = self._store.last_updated
             try:
                 await self._store.update_from_rest(raw, all_orders)
             except Exception:
                 logger.exception(
                     "PositionReconciler: store.update_from_rest raised — continuing"
                 )
-            # AC2 (446-B) — log stale-stream warning metric
-            stream_ts = self._store.last_updated
-            if stream_ts is not None:
-                stale_secs = (datetime.now(UTC) - stream_ts).total_seconds()
+            # AC2 (446-B) — detect missed updates, not ordinary idle periods.
+            if ws_ts is not None:
+                stale_secs = (datetime.now(UTC) - ws_ts).total_seconds()
                 exchange_truth_store_stale_seconds.set(stale_secs)
-                stale_threshold = 2 * self._interval
-                if stale_secs > stale_threshold:
-                    logger.warning(
-                        "ExchangeTruthStore stream stale: %.0fs (threshold=%ds)",
-                        stale_secs,
-                        stale_threshold,
-                    )
-                    # #609 AC2: actually force the reconnect the log line
-                    # above used to just describe. Rate-limited so a
-                    # persistently-stale stream is retried at most once per
-                    # cooldown window instead of every reconcile cycle.
-                    await self._maybe_force_stream_reconnect(
-                        stale_secs, stale_threshold
-                    )
+            else:
+                stale_secs = 0.0
+            missed_update = (
+                prev_rest_sync is not None
+                and (ws_ts is None or ws_ts <= prev_rest_sync)
+                and rest_positions_diverge_from_store(raw, store_positions_before)
+            )
+            if missed_update:
+                logger.warning(
+                    "ExchangeTruthStore stream stale: REST positions changed "
+                    "with no WS event since last REST sync (%.0fs since last WS event) "
+                    "— forcing reconnect",
+                    stale_secs,
+                )
+                await self._maybe_force_stream_reconnect(stale_secs)
+            elif ws_ts is not None and stale_secs > 2 * self._interval:
+                logger.debug(
+                    "ExchangeTruthStore stream idle: %.0fs since last WS event, "
+                    "no position divergence — idle is not a fault",
+                    stale_secs,
+                )
 
         # #445: hand the unhedged subset to the write-mode remediator.
         # When mode == "off" (default), this is a no-op. The remediator

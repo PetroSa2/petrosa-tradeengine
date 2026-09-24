@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tradeengine.exchange_truth_store import PositionSnapshot
 from tradeengine.position_reconciler import (
     PositionReconciler,
     _index_binance_positions,
@@ -16,6 +17,7 @@ from tradeengine.position_reconciler import (
     detect_count_divergence,
     detect_divergences,
     detect_unhedged_positions,
+    rest_positions_diverge_from_store,
 )
 
 # ---------------------------------------------------------------------------
@@ -1178,7 +1180,7 @@ async def test_reconcile_once_three_consecutive_clean_cycles_are_healthy():
 
 
 # ---------------------------------------------------------------------------
-# #609 — stale-stream -> forced reconnect wiring
+# #625 — REST position divergence helper and forced reconnect wiring
 # ---------------------------------------------------------------------------
 
 
@@ -1188,6 +1190,8 @@ def _make_reconciler_with_store_and_consumer(
     stream_consumer: object | None,
     stale_seconds_ago: float,
     interval_seconds: int = 60,
+    last_rest_sync_seconds_ago: float | None = 60,
+    store_positions: dict | None = None,
 ):
     """Build a PositionReconciler wired with a real ExchangeTruthStore whose
     ``last_updated`` is ``stale_seconds_ago`` in the past, plus the given
@@ -1197,7 +1201,14 @@ def _make_reconciler_with_store_and_consumer(
     from tradeengine.exchange_truth_store import ExchangeTruthStore
 
     exchange = MagicMock()
-    exchange.get_position_info = AsyncMock(return_value=binance_raw)
+    if (
+        isinstance(binance_raw, list)
+        and binance_raw
+        and isinstance(binance_raw[0], list)
+    ):
+        exchange.get_position_info = AsyncMock(side_effect=binance_raw)
+    else:
+        exchange.get_position_info = AsyncMock(return_value=binance_raw)
     exchange.get_open_algo_orders = AsyncMock(return_value=[])
 
     pm = MagicMock()
@@ -1206,6 +1217,18 @@ def _make_reconciler_with_store_and_consumer(
 
     store = ExchangeTruthStore()
     store._last_updated = datetime.now(UTC) - timedelta(seconds=stale_seconds_ago)
+    store._last_rest_sync = (
+        datetime.now(UTC) - timedelta(seconds=last_rest_sync_seconds_ago)
+        if last_rest_sync_seconds_ago is not None
+        else None
+    )
+    if store_positions:
+        store._positions = {
+            key: value
+            if isinstance(value, PositionSnapshot)
+            else PositionSnapshot(*value)
+            for key, value in store_positions.items()
+        }
     store._is_ready = True
 
     reconciler = PositionReconciler(
@@ -1218,20 +1241,51 @@ def _make_reconciler_with_store_and_consumer(
     return reconciler, store
 
 
+class TestRestPositionsDivergeFromStore:
+    def test_equal_single_position(self):
+        store = {("BTCUSDT", "LONG"): PositionSnapshot("BTCUSDT", "LONG", 0.01, 0, 0)}
+        assert not rest_positions_diverge_from_store(
+            [_binance_pos("BTCUSDT", "LONG", 0.01)], store
+        )
+
+    def test_quantity_difference_over_tolerance(self):
+        store = {("BTCUSDT", "LONG"): PositionSnapshot("BTCUSDT", "LONG", 0.01, 0, 0)}
+        assert rest_positions_diverge_from_store(
+            [_binance_pos("BTCUSDT", "LONG", 0.011)], store
+        )
+
+    def test_quantity_difference_within_tolerance(self):
+        store = {("BTCUSDT", "LONG"): PositionSnapshot("BTCUSDT", "LONG", 0.01, 0, 0)}
+        assert not rest_positions_diverge_from_store(
+            [_binance_pos("BTCUSDT", "LONG", 0.01005)], store
+        )
+
+    def test_rest_has_extra_key(self):
+        assert rest_positions_diverge_from_store(
+            [_binance_pos("BTCUSDT", "LONG", 0.01)], {}
+        )
+
+    def test_store_has_extra_key(self):
+        store = {("BTCUSDT", "LONG"): PositionSnapshot("BTCUSDT", "LONG", 0.01, 0, 0)}
+        assert rest_positions_diverge_from_store([], store)
+
+    def test_zero_rest_position_is_ignored(self):
+        assert not rest_positions_diverge_from_store(
+            [_binance_pos("BTCUSDT", "LONG", 0)], {}
+        )
+
+
 class TestStaleStreamForcedReconnect:
-    """#609: PositionReconciler must actually force a reconnect when the
-    ExchangeTruthStore's WS-driven `last_updated` goes stale — not just log
-    a warning (the pre-#609 behavior that left #609 undetected/unrecovered
-    without a manual pod restart)."""
+    """#625: reconnect only after REST evidence of a missed WS update."""
 
     @pytest.mark.asyncio
-    async def test_stale_stream_triggers_force_reconnect(self):
+    async def test_missed_position_update_triggers_force_reconnect(self):
         stream_consumer = MagicMock()
         stream_consumer.force_reconnect = AsyncMock(return_value=True)
 
-        # interval=60 -> threshold=120s; 300s stale is well past it.
+        # A changed REST position with no intervening WS event is evidence.
         reconciler, _store = _make_reconciler_with_store_and_consumer(
-            binance_raw=[],
+            binance_raw=[_binance_pos("BTCUSDT", "LONG", 0.01)],
             local_positions={},
             stream_consumer=stream_consumer,
             stale_seconds_ago=300,
@@ -1243,6 +1297,69 @@ class TestStaleStreamForcedReconnect:
         call_kwargs = stream_consumer.force_reconnect.call_args.kwargs
         assert "stale" in call_kwargs["reason"].lower()
         assert "300" in call_kwargs["reason"]
+
+    @pytest.mark.asyncio
+    async def test_idle_stream_without_divergence_does_not_force_reconnect(self):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=3600,
+        )
+
+        await reconciler.reconcile_once()
+        stream_consumer.force_reconnect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_idle_stream_with_unchanged_open_position_does_not_force_reconnect(
+        self,
+    ):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+        position = PositionSnapshot("BTCUSDT", "LONG", 0.01, 50000.0, 0.0)
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[_binance_pos("BTCUSDT", "LONG", 0.01)],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=3600,
+            store_positions={("BTCUSDT", "LONG"): position},
+        )
+
+        await reconciler.reconcile_once()
+        stream_consumer.force_reconnect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_divergence_with_ws_event_since_last_sync_does_not_force_reconnect(
+        self,
+    ):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[_binance_pos("BTCUSDT", "LONG", 0.01)],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=5,
+        )
+
+        await reconciler.reconcile_once()
+        stream_consumer.force_reconnect.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_first_pass_without_prior_rest_sync_does_not_force_reconnect(self):
+        stream_consumer = MagicMock()
+        stream_consumer.force_reconnect = AsyncMock(return_value=True)
+        reconciler, _store = _make_reconciler_with_store_and_consumer(
+            binance_raw=[_binance_pos("BTCUSDT", "LONG", 0.01)],
+            local_positions={},
+            stream_consumer=stream_consumer,
+            stale_seconds_ago=300,
+            last_rest_sync_seconds_ago=None,
+        )
+
+        await reconciler.reconcile_once()
+        stream_consumer.force_reconnect.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_fresh_stream_does_not_trigger_force_reconnect(self):
@@ -1284,7 +1401,11 @@ class TestStaleStreamForcedReconnect:
         stream_consumer.force_reconnect = AsyncMock(return_value=True)
 
         reconciler, store = _make_reconciler_with_store_and_consumer(
-            binance_raw=[],
+            binance_raw=[
+                [_binance_pos("BTCUSDT", "LONG", 0.01)],
+                [_binance_pos("BTCUSDT", "LONG", 0.02)],
+                [_binance_pos("BTCUSDT", "LONG", 0.03)],
+            ],
             local_positions={},
             stream_consumer=stream_consumer,
             stale_seconds_ago=300,
@@ -1307,7 +1428,11 @@ class TestStaleStreamForcedReconnect:
         stream_consumer.force_reconnect = AsyncMock(return_value=False)
 
         reconciler, _store = _make_reconciler_with_store_and_consumer(
-            binance_raw=[],
+            binance_raw=[
+                [_binance_pos("BTCUSDT", "LONG", 0.01)],
+                [_binance_pos("BTCUSDT", "LONG", 0.02)],
+                [_binance_pos("BTCUSDT", "LONG", 0.03)],
+            ],
             local_positions={},
             stream_consumer=stream_consumer,
             stale_seconds_ago=300,
@@ -1331,7 +1456,7 @@ class TestStaleStreamForcedReconnect:
         )
 
         reconciler, _store = _make_reconciler_with_store_and_consumer(
-            binance_raw=[],
+            binance_raw=[_binance_pos("BTCUSDT", "LONG", 0.01)],
             local_positions={},
             stream_consumer=stream_consumer,
             stale_seconds_ago=300,

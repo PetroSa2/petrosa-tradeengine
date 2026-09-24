@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -46,25 +45,19 @@ exchange_truth_store_stale_seconds = Gauge(
 )
 
 # #609 AC2/AC4 — count of forced reconnects triggered because the stream was
-# detected stale (connected at the transport layer but no longer delivering
-# events). Alert on `increase(...) > 0` over a short window, or directly on
-# `tradeengine_exchange_truth_store_stale_seconds > threshold`.
+# detected stale (REST positions changed without the stream delivering them).
+# Alert on `increase(...) > 0` over a short window.
 exchange_truth_store_forced_reconnects_total = Counter(
     "tradeengine_exchange_truth_store_forced_reconnects_total",
-    "Total WebSocket reconnects forced because the user-data stream was "
-    "detected stale (#609)",
+    "Total WebSocket reconnects forced because PositionReconciler found REST "
+    "positions the stream never delivered (#609)",
 )
 
 _LISTEN_KEY_RENEWAL_SECS = 55 * 60  # Binance expires keys at 60 min
 _RECONNECT_BASE_DELAY = 2.0
 _RECONNECT_MAX_DELAY = 60.0
 
-# #609 AC1 — how stale `store.last_updated` may get before health_check()
-# stops reporting `stream_connected: true`. Matches PositionReconciler's
-# default 2×interval_seconds (60s interval → 120s) so the two signals agree;
-# override via env if `position_reconciliation_interval_seconds` is tuned
-# away from its 60s default.
-_STREAM_STALE_THRESHOLD_SECS = int(os.getenv("TE_STREAM_STALE_THRESHOLD_SECS", "120"))
+_STREAM_DOWN_GRACE_SECS = 300
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +311,7 @@ class UserDataStreamConsumer:
         self._renewal_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._listen_key: str | None = None
         self._stream_connected: bool = False
+        self._disconnected_since: datetime | None = None
         self._running: bool = False
         # #609: handle to the currently-open websocket connection object so
         # force_reconnect() can close it from outside the consumer loop —
@@ -335,6 +329,7 @@ class UserDataStreamConsumer:
         if self._task is not None and not self._task.done():
             return
         self._running = True
+        self._disconnected_since = datetime.now(UTC)
         self._task = asyncio.create_task(
             self._consumer_loop(), name="user-data-stream-consumer"
         )
@@ -352,32 +347,42 @@ class UserDataStreamConsumer:
         self._task = None
         self._renewal_task = None
         self._stream_connected = False
+        self._disconnected_since = None
         logger.info("UserDataStreamConsumer stopped")
 
     async def health_check(self) -> dict[str, Any]:
-        """#609 AC1: `stream_connected` reflects actual event freshness, not
-        just transport-level socket state. A connection that is still open
-        but has not delivered a WS event (`store.last_updated`, which is
-        only advanced by seed_from_rest()/live ACCOUNT_UPDATE/
-        ORDER_TRADE_UPDATE — never by PositionReconciler's REST-only
-        update_from_rest()) within `_STREAM_STALE_THRESHOLD_SECS` is
-        reported as NOT connected, so `/health` and readiness probes catch
-        the "connected: true but silent" failure mode without waiting for
-        the reconciler's next forced-reconnect pass.
+        """Report transport health while treating an idle account as healthy.
+
+        Event silence is informational only. PositionReconciler compares REST
+        positions with the store and uses missed-update evidence to recover a
+        connected-but-dead stream.
         """
+        now = datetime.now(UTC)
         last_updated = self.store.last_updated
-        stale = False
-        if self._stream_connected and last_updated is not None:
-            idle_secs = (datetime.now(UTC) - last_updated).total_seconds()
-            stale = idle_secs > _STREAM_STALE_THRESHOLD_SECS
-        effective_connected = self._stream_connected and not stale
+        stream_idle_secs = (
+            round((now - last_updated).total_seconds(), 1)
+            if last_updated is not None
+            else None
+        )
+        disconnected_secs = (
+            round((now - self._disconnected_since).total_seconds(), 1)
+            if not self._stream_connected and self._disconnected_since is not None
+            else None
+        )
+        within_disconnect_grace = (
+            disconnected_secs is not None
+            and disconnected_secs <= _STREAM_DOWN_GRACE_SECS
+        )
         return {
-            "status": (
-                "healthy" if self.store.is_ready and effective_connected else "degraded"
-            ),
+            "status": "healthy"
+            if self.store.is_ready
+            and (self._stream_connected or within_disconnect_grace)
+            else "degraded",
             "last_updated": last_updated.isoformat() if last_updated else None,
             "is_ready": self.store.is_ready,
-            "stream_connected": effective_connected,
+            "stream_connected": self._stream_connected,
+            "stream_idle_secs": stream_idle_secs,
+            "disconnected_secs": disconnected_secs,
         }
 
     async def force_reconnect(self, reason: str = "manual trigger") -> bool:
@@ -513,6 +518,7 @@ class UserDataStreamConsumer:
                 async with websockets.connect(url) as ws:
                     self._current_ws = ws
                     self._stream_connected = True
+                    self._disconnected_since = None
                     logger.info(
                         "UserDataStreamConsumer: connected (testnet=%s)", is_testnet
                     )
@@ -605,6 +611,8 @@ class UserDataStreamConsumer:
             finally:
                 self._stream_connected = False
                 self._current_ws = None
+                if self._disconnected_since is None:
+                    self._disconnected_since = datetime.now(UTC)
 
             if not self._running:
                 break

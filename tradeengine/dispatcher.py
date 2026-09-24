@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from opentelemetry import trace
+from petrosa_contracts import Signal, TimeInForce
 from prometheus_client import Counter, Histogram
 
 from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
-from contracts.signal import Signal, TimeInForce
 from shared.audit import audit_logger
 from shared.config import Settings, settings
 from shared.constants import (

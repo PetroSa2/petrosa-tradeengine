@@ -1,4 +1,9 @@
 import pytest
+from petrosa_contracts import (
+    LeverageStatus as CanonicalLeverageStatus,
+    TradingConfig as CanonicalTradingConfig,
+    TradingConfigAudit as CanonicalTradingConfigAudit,
+)
 from pydantic import ValidationError
 
 from contracts.order import OrderStatus, TradeOrder
@@ -555,6 +560,34 @@ def test_trading_config_model_config() -> None:
     json_schema_extra = model_config["json_schema_extra"]
     assert isinstance(json_schema_extra, dict)
     assert "example" in json_schema_extra
+
+
+def test_canonical_trading_config_models_reject_unknown_fields() -> None:
+    """Canonical contract models must reject unknown persisted document fields."""
+    with pytest.raises(ValidationError) as config_error:
+        CanonicalTradingConfig(
+            parameters={"leverage": 10},
+            created_by="test",
+            unknown_field="must be rejected",
+        )
+    assert "unknown_field" in str(config_error.value)
+
+    with pytest.raises(ValidationError) as audit_error:
+        CanonicalTradingConfigAudit(
+            config_type="global",
+            action="create",
+            changed_by="test",
+            unknown_field="must be rejected",
+        )
+    assert "unknown_field" in str(audit_error.value)
+
+    with pytest.raises(ValidationError) as leverage_error:
+        CanonicalLeverageStatus(
+            symbol="BTCUSDT",
+            configured_leverage=10,
+            unknown_field="must be rejected",
+        )
+    assert "unknown_field" in str(leverage_error.value)
 
 
 def test_trading_config_audit_model_config() -> None:

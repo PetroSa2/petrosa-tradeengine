@@ -21,8 +21,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from petrosa_contracts import Signal
+
 from contracts.order import TradeOrder
-from contracts.signal import Signal
 from shared.constants import TE_EXCHANGE_TRUTH_STORE_ENABLED, UTC
 
 # Import Data Manager position client

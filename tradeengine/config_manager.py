@@ -15,7 +15,8 @@ import time
 from datetime import datetime
 from typing import Any
 
-from contracts.trading_config import TradingConfig, TradingConfigAudit
+from petrosa_contracts import TradingConfig, TradingConfigAudit
+
 from shared.constants import UTC
 from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 from tradeengine.defaults import (

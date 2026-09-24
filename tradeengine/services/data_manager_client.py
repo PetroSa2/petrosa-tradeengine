@@ -19,8 +19,8 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 import httpx
+from petrosa_contracts import LeverageStatus, TradingConfig, TradingConfigAudit
 
-from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 
 logger = logging.getLogger(__name__)

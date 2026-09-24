@@ -395,6 +395,11 @@ total_daily_pnl_usd = Gauge(
     ["exchange"],
 )
 
+daily_pnl_persist_failures_consecutive = Gauge(
+    "tradeengine_daily_pnl_persist_failures_consecutive",
+    "Consecutive daily PnL persistence failures",
+)
+
 # Order Success Metrics
 order_success_rate = Gauge(
     "tradeengine_order_success_rate",

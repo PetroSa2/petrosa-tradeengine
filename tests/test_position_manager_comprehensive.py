@@ -16,6 +16,9 @@ import pytest
 
 from contracts.order import TradeOrder
 from shared.constants import UTC
+from shared.mysql_client import DataManagerPositionClient
+from shared.retry import PersistResult
+from tradeengine.metrics import daily_pnl_persist_failures_consecutive
 from tradeengine.position_manager import PositionManager
 
 
@@ -605,6 +608,90 @@ async def test_check_daily_loss_limits_recovers_after_refresh_error(
         result = await position_manager.check_daily_loss_limits()
         assert result is True
         assert position_manager._daily_pnl_refresh_stale is False
+
+
+@pytest.mark.asyncio
+async def test_empty_daily_pnl_refresh_stays_stale(position_manager):
+    position_manager.daily_pnl = -125.0
+    position_manager._daily_pnl_refresh_stale = False
+
+    with patch(
+        "shared.mysql_client.position_client.get_daily_pnl",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        await position_manager._refresh_daily_pnl_from_data_manager()
+
+    assert position_manager.daily_pnl == -125.0
+    assert position_manager._daily_pnl_refresh_stale is True
+
+
+@pytest.mark.asyncio
+async def test_populated_daily_pnl_restores_after_restart(position_manager):
+    with patch(
+        "shared.mysql_client.position_client.get_daily_pnl",
+        new_callable=AsyncMock,
+        return_value=-321.5,
+    ):
+        await position_manager._load_daily_pnl_from_data_manager()
+
+    assert position_manager.daily_pnl == pytest.approx(-321.5)
+    assert position_manager._daily_pnl_refresh_stale is False
+
+
+@pytest.mark.asyncio
+async def test_missing_daily_pnl_blocks_daily_loss_check(position_manager):
+    position_manager._daily_pnl_refresh_stale = False
+
+    with patch(
+        "shared.mysql_client.position_client.get_daily_pnl",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        result = await position_manager.check_daily_loss_limits()
+
+    assert result is False
+    assert position_manager._daily_pnl_refresh_stale is True
+
+
+@pytest.mark.asyncio
+async def test_daily_pnl_persist_failure_is_logged_and_counted(
+    position_manager, caplog
+):
+    daily_pnl_persist_failures_consecutive.set(0)
+    failure = PersistResult(
+        ok=False,
+        error="database unavailable",
+        operation="update_daily_pnl",
+    )
+
+    with (
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+            return_value=failure,
+        ),
+        caplog.at_level("ERROR"),
+    ):
+        await position_manager._sync_positions_to_data_manager()
+
+    assert "database unavailable" in caplog.text
+    assert daily_pnl_persist_failures_consecutive._value.get() == 1
+
+
+@pytest.mark.asyncio
+async def test_update_daily_pnl_returns_failure_and_logs_exception(caplog):
+    client = DataManagerPositionClient()
+    client.data_manager_client._client.upsert_one = AsyncMock(
+        side_effect=RuntimeError("database unavailable")
+    )
+
+    with caplog.at_level("ERROR"):
+        result = await client.update_daily_pnl("2026-09-24", -5.0)
+
+    assert result.ok is False
+    assert result.error == "database unavailable"
+    assert "database unavailable" in caplog.text
 
 
 @pytest.mark.asyncio

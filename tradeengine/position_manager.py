@@ -28,6 +28,7 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     algo_orders_open,
     current_position_size,
+    daily_pnl_persist_failures_consecutive,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
     position_commission_usd,
@@ -57,12 +58,7 @@ class PositionManager:
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
-        # #600: set when the last _refresh_daily_pnl_from_data_manager() call
-        # failed (Data Manager outage) rather than succeeding with no record
-        # for today. check_daily_loss_limits() fails CLOSED while this is
-        # True instead of silently evaluating the kill-switch against a
-        # stale/zero daily_pnl.
-        self._daily_pnl_refresh_stale: bool = False
+        self._daily_pnl_refresh_stale: bool = True
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
         self.max_portfolio_exposure_pct: float = MAX_PORTFOLIO_EXPOSURE_PCT
@@ -252,14 +248,22 @@ class PositionManager:
             raise
 
     async def _load_daily_pnl_from_data_manager(self) -> None:
-        """Load daily P&L from Data Manager"""
+        """Load daily P&L and require a persisted value before trading."""
         try:
             today = datetime.now(UTC).date()
             daily_pnl = await position_client.get_daily_pnl(today.isoformat())
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
+                self._daily_pnl_refresh_stale = False
                 logger.info(f"Loaded daily P&L from Data Manager: {self.daily_pnl}")
+            else:
+                self._daily_pnl_refresh_stale = True
+                logger.critical(
+                    "No persisted daily P&L exists for today; trading remains "
+                    "blocked until the daily-loss baseline is persisted."
+                )
         except Exception as e:
+            self._daily_pnl_refresh_stale = True
             logger.warning(f"Failed to load daily P&L from Data Manager: {e}")
 
     async def _load_positions_from_exchange(self) -> None:
@@ -300,7 +304,18 @@ class PositionManager:
 
                 # Update daily P&L in Data Manager
                 today = datetime.now(UTC).date().isoformat()
-                await position_client.update_daily_pnl(today, self.daily_pnl)
+                persist_result = await position_client.update_daily_pnl(
+                    today, self.daily_pnl
+                )
+                if persist_result.ok:
+                    daily_pnl_persist_failures_consecutive.set(0)
+                else:
+                    daily_pnl_persist_failures_consecutive.inc()
+                    logger.error(
+                        "Daily P&L persistence failed for %s: %s",
+                        today,
+                        persist_result.error,
+                    )
 
                 self.last_sync_time = datetime.now(UTC)
                 logger.debug("Positions synced to Data Manager")
@@ -1275,18 +1290,20 @@ class PositionManager:
     async def _refresh_daily_pnl_from_data_manager(self) -> None:
         """Refresh daily P&L from Data Manager.
 
-        #600: distinguishes "no record for today" (a legitimate None —
-        first trade of the day, self.daily_pnl correctly stays wherever it
-        was) from "refresh failed" (Data Manager outage — sets
-        self._daily_pnl_refresh_stale so check_daily_loss_limits() fails
-        CLOSED instead of silently evaluating against a stale value).
+        A missing row is treated as an untrusted baseline and fails closed.
         """
         try:
             today = datetime.now(UTC).date().isoformat()
             daily_pnl = await position_client.get_daily_pnl(today)
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
-            self._daily_pnl_refresh_stale = False
+                self._daily_pnl_refresh_stale = False
+            else:
+                self._daily_pnl_refresh_stale = True
+                logger.critical(
+                    "No persisted daily P&L exists for today; daily-loss "
+                    "risk check fails closed until a baseline is persisted."
+                )
         except Exception as e:
             logger.error(
                 f"⛔ Failed to refresh daily P&L from Data Manager — the "

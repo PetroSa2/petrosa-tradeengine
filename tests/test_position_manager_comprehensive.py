@@ -1585,3 +1585,110 @@ async def test_refresh_portfolio_value_both_absent_returns_false(position_manage
     )
     result = await position_manager._refresh_portfolio_value()
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_sync_positions_uses_position_id_for_each_journal_record(
+    position_manager,
+):
+    now = datetime.now(UTC)
+    position_manager.position_records = {
+        "position-a": {
+            "position_id": "position-a",
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "quantity": 0.1,
+            "entry_price": 50000.0,
+            "entry_time": now,
+        },
+        "position-b": {
+            "position_id": "position-b",
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "quantity": 0.2,
+            "entry_price": 50100.0,
+            "entry_time": now,
+        },
+    }
+
+    with (
+        patch(
+            "shared.mysql_client.position_client.data_manager_client._client.upsert_one",
+            new_callable=AsyncMock,
+        ) as mock_upsert,
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+            return_value=PersistResult(ok=True, operation="update_daily_pnl"),
+        ),
+    ):
+        await position_manager._sync_positions_to_data_manager()
+
+    filters = [call.kwargs["filter"] for call in mock_upsert.call_args_list]
+    assert filters == [{"position_id": "position-a"}, {"position_id": "position-b"}]
+
+
+@pytest.mark.asyncio
+async def test_exchange_truth_store_replaces_stale_startup_rows(position_manager):
+    from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
+
+    store = ExchangeTruthStore()
+    store._is_ready = True
+    store._positions = {
+        ("BTCUSDT", "LONG"): PositionSnapshot(
+            symbol="BTCUSDT",
+            side="LONG",
+            quantity=0.5,
+            entry_price=50000.0,
+            unrealized_pnl=0.0,
+        )
+    }
+    position_manager.exchange_truth_store = store
+
+    stale_rows = [
+        {
+            "position_id": f"stale-{index}",
+            "symbol": "ETHUSDT",
+            "position_side": "LONG",
+            "quantity": 1.0,
+            "entry_price": 3000.0,
+        }
+        for index in range(5)
+    ]
+    with (
+        patch(
+            "shared.mysql_client.position_client.get_open_positions",
+            new_callable=AsyncMock,
+            return_value=stale_rows,
+        ),
+        patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+    ):
+        await position_manager._load_positions_from_data_manager()
+
+    assert list(position_manager.positions) == [("BTCUSDT", "LONG")]
+    assert position_manager.positions[("BTCUSDT", "LONG")]["quantity"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_exchange_truth_store_refresh_failure_rejects_entry(
+    position_manager, sample_long_order
+):
+    with (
+        patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "refresh_failure"

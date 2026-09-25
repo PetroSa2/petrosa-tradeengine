@@ -243,20 +243,38 @@ class DataManagerPositionClient:
     async def upsert_position(self, position_data: dict[str, Any]) -> PersistResult:
         """Upsert a position record; returns PersistResult."""
         sym = str(position_data.get("symbol", ""))
-        pos_side = str(position_data.get("position_side", "LONG"))
+        position_id = position_data.get("position_id")
+        if not position_id:
+            logger.error("Cannot upsert position without position_id: %s", sym)
+            return self._make_result(
+                False,
+                ValueError("position_id is required"),
+                operation="upsert_position",
+                symbol=sym,
+                position_id="",
+            )
         try:
             await self.data_manager_client._client.upsert_one(
                 database="mysql",
                 collection="positions",
-                filter={"symbol": sym, "position_side": pos_side, "status": "open"},
+                filter={"position_id": position_id},
                 record=position_data,
             )
-            logger.info("Upserted position %s %s via Data Manager", sym, pos_side)
-            return self._make_result(True, operation="upsert_position", symbol=sym)
-        except Exception as exc:
-            logger.error("Failed to upsert position %s %s: %s", sym, pos_side, exc)
+            logger.info("Upserted position %s via Data Manager", position_id)
             return self._make_result(
-                False, exc, operation="upsert_position", symbol=sym
+                True,
+                operation="upsert_position",
+                symbol=sym,
+                position_id=str(position_id),
+            )
+        except Exception as exc:
+            logger.error("Failed to upsert position %s: %s", position_id, exc)
+            return self._make_result(
+                False,
+                exc,
+                operation="upsert_position",
+                symbol=sym,
+                position_id=str(position_id),
             )
 
     async def close_position(

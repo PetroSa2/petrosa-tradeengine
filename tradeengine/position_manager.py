@@ -1200,7 +1200,7 @@ class PositionManager:
             )
             return False
 
-        if not await self._refresh_positions_from_data_manager():
+        if await self._refresh_positions_from_data_manager() is False:
             self.rejection_reason = "refresh_failure"
             logger.error(
                 "⛔ RISK REJECTION: Failed to refresh live positions for %s",

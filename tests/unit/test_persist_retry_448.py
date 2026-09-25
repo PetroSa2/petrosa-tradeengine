@@ -158,7 +158,11 @@ class TestDataManagerPositionClient:
             return_value={"modified_count": 1, "upserted_count": 0}
         )
         result = await client.upsert_position(
-            {"symbol": "ETHUSDT", "position_side": "LONG"}
+            {
+                "position_id": "position-1",
+                "symbol": "ETHUSDT",
+                "position_side": "LONG",
+            }
         )
         assert result.ok is True
 

@@ -51,7 +51,7 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_global",
-                params={"limit": 1},
+                limit=1,
             )
 
             if response and response.get("data"):
@@ -112,7 +112,8 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_symbols",
-                params={"filter": {"symbol": symbol}, "limit": 1},
+                filter={"symbol": symbol},
+                limit=1,
             )
 
             if response and response.get("data"):
@@ -275,12 +276,9 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_audit",
-                params={
-                    "filter": filter_params,
-                    "sort_by": "timestamp",
-                    "sort_order": "desc",
-                    "limit": limit,
-                },
+                filter=filter_params,
+                sort={"timestamp": -1},
+                limit=limit,
             )
 
             records = response.get("data", []) if response else []
@@ -305,7 +303,8 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_audit",
-                params={"filter": {"_id": audit_id}, "limit": 1},
+                filter={"_id": audit_id},
+                limit=1,
             )
 
             if response and response.get("data"):
@@ -350,12 +349,9 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_audit",
-                params={
-                    "filter": filter_dict,
-                    "sort_by": "timestamp",
-                    "sort_order": "desc",
-                    "limit": 1,
-                },
+                filter=filter_dict,
+                sort={"timestamp": -1},
+                limit=1,
             )
 
             if response and response.get("data"):
@@ -401,7 +397,8 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_symbol_side",
-                params={"filter": {"symbol": symbol, "side": side}, "limit": 1},
+                filter={"symbol": symbol, "side": side},
+                limit=1,
             )
 
             if response and response.get("data"):
@@ -542,7 +539,8 @@ class DataManagerConfigClient:
             response = await self.data_manager_client._client.query(
                 database="mongodb",
                 collection="trading_configs_strategy",
-                params={"filter": {"strategy_id": strategy_id}, "limit": 1},
+                filter={"strategy_id": strategy_id},
+                limit=1,
             )
 
             if response and response.get("data"):

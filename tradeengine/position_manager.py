@@ -57,6 +57,7 @@ class PositionManager:
 
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
+        self.position_records: dict[str, dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
         self._daily_pnl_date: date = datetime.now(UTC).date()
         self._daily_pnl_rollover_lock = asyncio.Lock()
@@ -217,21 +218,24 @@ class PositionManager:
     async def _load_positions_from_data_manager(self) -> None:
         """Load positions from Data Manager with hedge mode support"""
         try:
-            # Query all open positions from Data Manager
             positions_data = await position_client.get_open_positions()
             positions = {}
+            position_records = {}
 
             for doc in positions_data:
-                symbol = doc["symbol"]
-                # Get position_side, default to LONG for backward compatibility
+                symbol = doc.get("symbol")
+                if not symbol:
+                    continue
                 position_side = doc.get("position_side", "LONG")
                 position_key = (symbol, position_side)
 
-                positions[position_key] = {
+                position = {
                     "symbol": symbol,
                     "position_side": position_side,
                     "quantity": float(doc.get("quantity", 0.0)),
-                    "avg_price": float(doc.get("avg_price", 0.0)),
+                    "avg_price": float(
+                        doc.get("avg_price", doc.get("entry_price", 0.0))
+                    ),
                     "unrealized_pnl": float(doc.get("unrealized_pnl", 0.0)),
                     "realized_pnl": float(doc.get("realized_pnl", 0.0)),
                     "total_cost": float(doc.get("total_cost", 0.0)),
@@ -240,10 +244,26 @@ class PositionManager:
                     "last_update": doc.get("last_update", datetime.now(UTC)),
                     "status": doc.get("status", "open"),
                 }
+                if doc.get("position_id"):
+                    record = dict(doc)
+                    record.setdefault("avg_price", record.get("entry_price", 0.0))
+                    record.setdefault("last_update", record.get("entry_time"))
+                    record.setdefault("status", "open")
+                    position_records[str(doc["position_id"])] = record
+                positions[position_key] = position
 
-            self.positions = positions
+            self.position_records = position_records
+            if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+                self.positions = {}
+                self._refresh_positions_from_exchange_truth_store()
+            else:
+                self.positions = positions
             self.last_sync_time = datetime.now(UTC)
-            logger.info(f"Loaded {len(positions)} positions from Data Manager")
+            logger.info(
+                "Loaded %s position records from Data Manager; risk view has %s positions",
+                len(position_records),
+                len(self.positions),
+            )
 
         except Exception as e:
             logger.error(f"Failed to load positions from Data Manager: {e}")
@@ -341,23 +361,29 @@ class PositionManager:
         async with self.sync_lock:
             try:
                 rolled_over = await self._roll_daily_pnl_if_new_day()
-                # Sync current positions to Data Manager
-                for position_key, position in self.positions.items():
-                    symbol, position_side = position_key
-                    position_data = {
-                        "symbol": symbol,
-                        "position_side": position_side,
-                        "quantity": position["quantity"],
-                        "avg_price": position["avg_price"],
-                        "unrealized_pnl": position["unrealized_pnl"],
-                        "realized_pnl": position["realized_pnl"],
-                        "total_cost": position["total_cost"],
-                        "total_value": position["total_value"],
-                        "entry_time": position["entry_time"],
-                        "last_update": position["last_update"],
-                        "status": "open",
-                        "updated_at": datetime.now(UTC),
-                    }
+                records = list(getattr(self, "position_records", {}).values())
+                if not records:
+                    records = [
+                        position
+                        for position in self.positions.values()
+                        if position.get("position_id")
+                    ]
+
+                for record in records:
+                    position_id = record.get("position_id")
+                    if not position_id:
+                        logger.warning("Skipping position sync without position_id")
+                        continue
+                    position_data = dict(record)
+                    position_data.setdefault(
+                        "avg_price", position_data.get("entry_price", 0.0)
+                    )
+                    position_data.setdefault(
+                        "last_update",
+                        position_data.get("entry_time", datetime.now(UTC)),
+                    )
+                    position_data["status"] = "open"
+                    position_data["updated_at"] = datetime.now(UTC)
                     await position_client.upsert_position(position_data)
 
                 # The rollover helper already persisted the new-day zero.
@@ -381,6 +407,31 @@ class PositionManager:
 
             except Exception as e:
                 logger.error(f"Failed to sync positions to Data Manager: {e}")
+
+    def _refresh_positions_from_exchange_truth_store(self) -> bool:
+        """Refresh the risk view from the exchange-authoritative position store."""
+        store = self.exchange_truth_store
+        if store is None or not getattr(store, "is_ready", False):
+            return False
+
+        snapshots = store.get_positions()
+        self.positions = {
+            key: {
+                "symbol": snapshot.symbol,
+                "position_side": snapshot.side,
+                "quantity": snapshot.quantity,
+                "avg_price": snapshot.entry_price,
+                "unrealized_pnl": snapshot.unrealized_pnl,
+                "realized_pnl": 0.0,
+                "total_cost": 0.0,
+                "total_value": snapshot.quantity * snapshot.entry_price,
+                "entry_time": snapshot.updated_at,
+                "last_update": snapshot.updated_at,
+                "status": "open",
+            }
+            for key, snapshot in snapshots.items()
+        }
+        return True
 
     async def _periodic_sync(self) -> None:
         """Periodically sync positions to Data Manager"""
@@ -744,6 +795,9 @@ class PositionManager:
                 "commission_asset": result.get("commission_asset", "USDT"),
                 "commission_total": commission,
             }
+            if not hasattr(self, "position_records"):
+                self.position_records = {}
+            self.position_records[order.position_id] = dict(position_data)
 
             # AC-1 (#352): durable write with retry — a silent timeout drop here causes
             # MySQL positions table to be empty, which triggers every subsequent signal to
@@ -1146,8 +1200,13 @@ class PositionManager:
             )
             return False
 
-        # Refresh positions from Data Manager to ensure consistency
-        await self._refresh_positions_from_data_manager()
+        if await self._refresh_positions_from_data_manager() is False:
+            self.rejection_reason = "refresh_failure"
+            logger.error(
+                "⛔ RISK REJECTION: Failed to refresh live positions for %s",
+                order.symbol,
+            )
+            return False
 
         # NEW: Check absolute position size limit (from config or default)
         position_side = "LONG" if order.side == "buy" else "SHORT"
@@ -1272,10 +1331,12 @@ class PositionManager:
             )
             return False
 
-    async def _refresh_positions_from_data_manager(self) -> None:
-        """Refresh positions from Data Manager to ensure consistency across pods"""
+    async def _refresh_positions_from_data_manager(self) -> bool:
+        """Refresh the risk view from its configured authoritative source."""
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+            return self._refresh_positions_from_exchange_truth_store()
+
         try:
-            # Get all open positions from Data Manager
             positions_data = await position_client.get_open_positions()
             refreshed_positions = {}
 
@@ -1307,9 +1368,11 @@ class PositionManager:
             if refreshed_positions != self.positions:
                 logger.info("Refreshing positions from Data Manager for consistency")
                 self.positions = refreshed_positions
+            return True
 
         except Exception as e:
             logger.error(f"Failed to refresh positions from Data Manager: {e}")
+            return False
 
     async def check_daily_loss_limits(self) -> bool:
         """Check daily loss limits with distributed state"""

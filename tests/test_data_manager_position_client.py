@@ -146,9 +146,7 @@ class TestUpsertPosition:
         call_args = position_client.data_manager_client._client.upsert_one.call_args
         assert call_args.kwargs["database"] == "mysql"
         assert call_args.kwargs["collection"] == "positions"
-        assert call_args.kwargs["filter"]["symbol"] == "BTCUSDT"
-        assert call_args.kwargs["filter"]["position_side"] == "LONG"
-        assert call_args.kwargs["filter"]["status"] == "open"
+        assert call_args.kwargs["filter"] == {"position_id": "pos_123"}
         assert call_args.kwargs["record"] == position_data
 
     @pytest.mark.asyncio
@@ -160,6 +158,7 @@ class TestUpsertPosition:
         )
 
         position_data = {
+            "position_id": "pos_456",
             "symbol": "ETHUSDT",
             "position_side": "SHORT",
             "quantity": 0.01,
@@ -173,17 +172,12 @@ class TestUpsertPosition:
         # Assert
         assert result.ok is True
         call_args = position_client.data_manager_client._client.upsert_one.call_args
-        assert call_args.kwargs["filter"]["symbol"] == "ETHUSDT"
-        assert call_args.kwargs["filter"]["position_side"] == "SHORT"
+        assert call_args.kwargs["filter"] == {"position_id": "pos_456"}
 
     @pytest.mark.asyncio
-    async def test_upsert_position_default_long(self, position_client):
+    async def test_upsert_position_requires_position_id(self, position_client):
         """Test position upsert defaults to LONG if position_side not specified"""
         # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            return_value={"upserted_id": "test_id"}
-        )
-
         position_data = {
             "symbol": "BTCUSDT",
             "quantity": 0.001,
@@ -194,9 +188,8 @@ class TestUpsertPosition:
         result = await position_client.upsert_position(position_data)
 
         # Assert
-        assert result.ok is True
-        call_args = position_client.data_manager_client._client.upsert_one.call_args
-        assert call_args.kwargs["filter"]["position_side"] == "LONG"  # Default
+        assert result.ok is False
+        position_client.data_manager_client._client.upsert_one.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_upsert_position_failure(self, position_client):
@@ -207,6 +200,7 @@ class TestUpsertPosition:
         )
 
         position_data = {
+            "position_id": "pos_failure",
             "symbol": "BTCUSDT",
             "position_side": "LONG",
             "quantity": 0.001,
@@ -324,6 +318,7 @@ class TestPositionContractRequests:
         )
 
         position_data = {
+            "position_id": "pos_contract",
             "symbol": "BTCUSDT",
             "position_side": "LONG",
             "quantity": 0.001,

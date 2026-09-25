@@ -233,6 +233,7 @@ class StrategyPositionManager:
                 "entry_price": entry_price,
                 "entry_time": datetime.now(UTC),
                 "entry_order_id": entry_order_id,
+                "position_id": order.position_id,
                 "take_profit_price": take_profit_price,
                 "stop_loss_price": stop_loss_price,
                 # AC3 of #424: these must hold real Binance algo-order IDs,

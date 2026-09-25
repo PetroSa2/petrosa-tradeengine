@@ -210,6 +210,14 @@ position_persist_failed_total = Counter(
     ["symbol", "position_side", "operation", "reason"],
 )
 
+# Position-close persistence failures are tracked separately because a close
+# write can leave realized P&L and the exchange state out of sync.
+position_close_persist_failures_total = Counter(
+    "tradeengine_position_close_persist_failures_total",
+    "Position close persistence failures queued for retry",
+    ["symbol", "position_side"],
+)
+
 # #480 — StrategyPositionManager ghost evictions. A strategy position is a
 # "ghost" when StrategyPositionManager has it open but no matching position
 # exists in the ExchangeTruthStore. The reconciler removes ghosts older than

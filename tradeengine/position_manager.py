@@ -6,6 +6,7 @@ management using Data Manager API and MongoDB for coordination only.
 import asyncio
 import logging
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -31,6 +32,7 @@ from tradeengine.metrics import (
     daily_pnl_persist_failures_consecutive,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
+    position_close_persist_failures_total,
     position_commission_usd,
     position_duration_seconds,
     position_entry_price,
@@ -47,6 +49,7 @@ from tradeengine.metrics import (
     total_realized_pnl_usd,
     total_unrealized_pnl_usd,
 )
+from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,7 @@ class PositionManager:
             None  # Set by check_position_limits on rejection
         )
         self._portfolio_exposure_refresh_failed = False
+        self._recorded_exit_order_ids: set[str] = set()
         # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
         # UserDataStreamConsumer starts; None until then.
         self.exchange_truth_store: ExchangeTruthStore | None = None
@@ -524,6 +528,7 @@ class PositionManager:
             is_adding_to_position = (
                 position_side == "LONG" and order.side == "buy"
             ) or (position_side == "SHORT" and order.side == "sell")
+            durable_close_recorded = False
 
             if is_adding_to_position:
                 # Add to position (opening or increasing)
@@ -563,8 +568,24 @@ class PositionManager:
                         )
 
                     position["realized_pnl"] += realized_pnl
-                    await self._roll_daily_pnl_if_new_day()
-                    self.daily_pnl += realized_pnl
+                    if order.position_id and order.position_id in self.position_records:
+                        durable_close_recorded = (
+                            await self.record_position_close(
+                                position_id=order.position_id,
+                                exit_price=fill_price,
+                                exit_qty=fill_quantity,
+                                exit_order_id=str(result.get("order_id", "")) or None,
+                                exit_time=datetime.now(UTC),
+                                close_reason="reduce_only"
+                                if order.reduce_only
+                                else "signal_reduce",
+                                commission=float(result.get("commission", 0.0) or 0.0),
+                            )
+                            is not None
+                        )
+                    if not durable_close_recorded:
+                        await self._roll_daily_pnl_if_new_day()
+                        self.daily_pnl += realized_pnl
 
                     # Update position
                     position["quantity"] -= fill_quantity
@@ -601,9 +622,10 @@ class PositionManager:
                             f"daily_pnl=${self.daily_pnl:.2f}"
                         )
 
-                        await self._close_position_in_data_manager(
-                            position_key, position
-                        )
+                        if not durable_close_recorded:
+                            await self._close_position_in_data_manager(
+                                position_key, position
+                            )
                         del self.positions[position_key]
                         return
 
@@ -694,9 +716,16 @@ class PositionManager:
                 position_side,
                 {
                     "status": "closed",
-                    "last_update": datetime.now(UTC),
-                    "closed_at": datetime.now(UTC),
-                    "final_realized_pnl": position["realized_pnl"],
+                    "exit_price": position.get(
+                        "last_price", position.get("avg_price", 0.0)
+                    ),
+                    "exit_time": datetime.now(UTC),
+                    "pnl": position["realized_pnl"],
+                    "pnl_pct": 0.0,
+                    "pnl_after_fees": position["realized_pnl"],
+                    "duration_seconds": 0,
+                    "close_reason": "signal_reduce",
+                    "final_commission": 0.0,
                 },
             )
             logger.info(
@@ -915,80 +944,205 @@ class PositionManager:
     async def close_position_record(
         self, position_id: str, exit_result: dict[str, Any]
     ) -> None:
-        """Update position record on closure with dual persistence and metrics
+        """Compatibility wrapper for the fill-aware close routine."""
+        if position_id not in self.position_records:
+            # Older callers provide the complete position snapshot inline. Keep
+            # those callers working while routing all persistence through the
+            # position-id keyed implementation.
+            self.position_records[position_id] = {
+                "position_id": position_id,
+                "strategy_id": exit_result.get("strategy_id", "unknown"),
+                "exchange": exit_result.get("exchange", "binance"),
+                "symbol": exit_result.get("symbol", ""),
+                "position_side": exit_result.get("position_side", "LONG"),
+                "entry_price": exit_result.get("entry_price", 0.0),
+                "quantity": exit_result.get("quantity", 0.0),
+                "entry_time": exit_result.get("entry_time", datetime.now(UTC)),
+                "commission_total": exit_result.get("entry_commission", 0.0),
+                "status": "open",
+            }
+        await self.record_position_close(
+            position_id=position_id,
+            exit_price=exit_result.get("exit_price", 0.0),
+            exit_qty=exit_result.get("quantity", 0.0),
+            exit_order_id=exit_result.get("order_id")
+            or exit_result.get("exit_order_id"),
+            exit_time=exit_result.get("exit_time", datetime.now(UTC)),
+            close_reason=exit_result.get(
+                "close_reason", exit_result.get("reason", "manual")
+            ),
+            commission=exit_result.get(
+                "exit_commission", exit_result.get("commission", 0.0)
+            ),
+        )
 
-        Supports hedge mode with proper PNL calculation for LONG and SHORT positions.
+    async def record_position_close(
+        self,
+        position_id: str,
+        exit_price: float,
+        exit_qty: float,
+        exit_order_id: str | None,
+        exit_time: datetime | None,
+        close_reason: str,
+        commission: float = 0.0,
+    ) -> dict[str, Any] | None:
+        """Record a full or partial exchange fill against a position row.
+
+        The operation is keyed by ``position_id`` and is idempotent on the
+        exchange fill order id. Persistence failures remain best-effort: the
+        durable update is placed on the existing retry queue and never blocks
+        the order path.
         """
         try:
-            # Calculate closure data
-            exit_price = exit_result.get("exit_price", 0.0)
-            exit_time = exit_result.get("exit_time", datetime.now(UTC))
-            entry_price = exit_result.get("entry_price", 0.0)
-            quantity = exit_result.get("quantity", 0.0)
-            entry_time = exit_result.get("entry_time", exit_time)
-            position_side = exit_result.get("position_side", "LONG")
+            if exit_order_id and str(exit_order_id) in self._recorded_exit_order_ids:
+                return None
+            record = self.position_records.get(position_id)
+            if record is None:
+                record = await position_client.get_position(position_id)
+            if not record:
+                logger.error("Position %s not found for close fill", position_id)
+                return None
 
-            # Calculate PnL (use provided values if already calculated, else calculate)
-            if "pnl" in exit_result and "pnl_pct" in exit_result:
-                # Already calculated (e.g., from OCO completion)
-                pnl = exit_result["pnl"]
-                pnl_pct = exit_result["pnl_pct"]
-                pnl_after_fees = exit_result.get("pnl_after_fees")
-            else:
-                # Calculate based on position side (hedge-mode aware)
-                if position_side == "LONG":
-                    pnl = (exit_price - entry_price) * quantity
-                else:  # SHORT
-                    pnl = (entry_price - exit_price) * quantity
-
-                pnl_pct = (
-                    (pnl / (entry_price * quantity) * 100)
-                    if entry_price > 0 and quantity > 0
-                    else 0.0
+            entry_price = float(
+                record.get("entry_price", record.get("avg_price", 0.0)) or 0.0
+            )
+            position_side = str(record.get("position_side", "LONG"))
+            current_qty = float(
+                record.get("quantity", record.get("entry_quantity", 0.0)) or 0.0
+            )
+            close_qty = min(max(float(exit_qty or 0.0), 0.0), current_qty)
+            if close_qty <= 0.0:
+                return None
+            exit_price = float(exit_price or 0.0)
+            commission = float(commission or 0.0)
+            gross_pnl = (
+                (exit_price - entry_price) * close_qty
+                if position_side == "LONG"
+                else (entry_price - exit_price) * close_qty
+            )
+            previous_pnl = float(
+                record.get("pnl", record.get("realized_pnl", 0.0)) or 0.0
+            )
+            previous_commission = float(record.get("final_commission", 0.0) or 0.0)
+            cumulative_pnl = previous_pnl + gross_pnl
+            cumulative_commission = previous_commission + commission
+            remaining_qty = max(current_qty - close_qty, 0.0)
+            status = "closed" if remaining_qty <= 1e-12 else "open"
+            raw_entry_time = record.get("entry_time")
+            entry_time = (
+                raw_entry_time
+                if isinstance(raw_entry_time, datetime)
+                else (exit_time or datetime.now(UTC))
+            )
+            effective_exit_time = exit_time or datetime.now(UTC)
+            if isinstance(entry_time, str):
+                entry_time = datetime.fromisoformat(
+                    str(entry_time).replace("Z", "+00:00")
                 )
-
-                # Get commissions
-                entry_commission = exit_result.get("entry_commission", 0.0)
-                exit_commission = exit_result.get("exit_commission", 0.0)
-                total_commission = entry_commission + exit_commission
-                pnl_after_fees = pnl - total_commission
-
-            # Calculate duration
-            duration_seconds = int((exit_time - entry_time).total_seconds())
-
-            # Get commissions (handle both cases)
-            entry_commission = exit_result.get("entry_commission", 0.0)
-            exit_commission = exit_result.get("exit_commission", 0.0)
-
+            if isinstance(effective_exit_time, str):
+                effective_exit_time = datetime.fromisoformat(
+                    str(effective_exit_time).replace("Z", "+00:00")
+                )
+            duration_seconds = max(
+                int((effective_exit_time - entry_time).total_seconds()), 0
+            )
+            original_qty = float(
+                record.get(
+                    "entry_quantity", record.get("original_quantity", current_qty)
+                )
+                or current_qty
+            )
+            pnl_pct = (
+                cumulative_pnl / (entry_price * original_qty) * 100
+                if entry_price > 0 and original_qty > 0
+                else 0.0
+            )
             update_data = {
-                "status": "closed",
+                "status": status,
+                "quantity": remaining_qty,
                 "exit_price": exit_price,
-                "exit_time": exit_time,
-                "exit_order_id": exit_result.get("order_id"),
-                "exit_trade_ids": exit_result.get("trade_ids", []),
-                "pnl": pnl,
+                "exit_time": effective_exit_time,
+                "exit_order_id": exit_order_id,
+                "pnl": cumulative_pnl,
                 "pnl_pct": pnl_pct,
-                "pnl_after_fees": pnl_after_fees,
+                "pnl_after_fees": cumulative_pnl
+                - float(record.get("commission_total", 0.0) or 0.0)
+                - cumulative_commission,
                 "duration_seconds": duration_seconds,
-                "close_reason": exit_result.get("close_reason", "manual"),
-                "final_commission": exit_commission,
+                "close_reason": close_reason,
+                "final_commission": cumulative_commission,
             }
 
-            # Update Data Manager
+            record.update(update_data)
+            self.position_records[position_id] = record
+            if exit_order_id:
+                self._recorded_exit_order_ids.add(str(exit_order_id))
+
             try:
-                await position_client.update_position(position_id, update_data)
-                logger.info(f"Position {position_id} closed via Data Manager")
-            except Exception as data_manager_error:
-                logger.error(
-                    f"Failed to close position via Data Manager: {data_manager_error}"
-                )
+                result = await position_client.update_position(position_id, update_data)
+            except Exception as persist_error:
+                result = SimpleNamespace(ok=False, error=str(persist_error))
+            if getattr(result, "ok", True) is False:
+                self._queue_close_retry(position_id, record, update_data, result)
 
-            # Export metrics
-            position_data = {**exit_result, **update_data}
+            await self._roll_daily_pnl_if_new_day()
+            self.daily_pnl += gross_pnl
+            await position_client.update_daily_pnl(
+                datetime.now(UTC).date().isoformat(), self.daily_pnl
+            )
+            total_daily_pnl_usd.labels(exchange=record.get("exchange", "binance")).set(
+                self.daily_pnl
+            )
+
+            position_data = {**record, **update_data, "gross_pnl": gross_pnl}
             await self._export_position_closed_metrics(position_data)
-
+            if status == "closed":
+                positions_closed_total.labels(
+                    strategy_id=record.get("strategy_id", "unknown"),
+                    symbol=record.get("symbol", "unknown"),
+                    position_side=position_side,
+                    close_reason=close_reason,
+                    exchange=record.get("exchange", "binance"),
+                ).inc()
+            return position_data
         except Exception as e:
-            logger.error(f"Error closing position record: {e}")
+            logger.error("Error recording position close %s: %s", position_id, e)
+            return None
+
+    def _queue_close_retry(
+        self,
+        position_id: str,
+        record: dict[str, Any],
+        update_data: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Queue a failed close update without raising into order flow."""
+        symbol = str(record.get("symbol", "unknown"))
+        side = str(record.get("position_side", "unknown"))
+        position_close_persist_failures_total.labels(
+            symbol=symbol, position_side=side
+        ).inc()
+        logger.error(
+            "Position close persistence failed for %s: %s",
+            position_id,
+            getattr(result, "error", result),
+        )
+        try:
+            data = dict(update_data)
+            data["_retry_position_id"] = position_id
+            persist_retry_queue.enqueue(
+                PendingWrite(
+                    operation="update_position",
+                    data=data,
+                    symbol=symbol,
+                    position_id=position_id,
+                    last_error=str(getattr(result, "error", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to enqueue close persistence retry for %s: %s", position_id, exc
+            )
 
     async def _export_position_opened_metrics(
         self, position_data: dict[str, Any]

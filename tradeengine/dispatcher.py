@@ -1787,6 +1787,7 @@ class OCOManager:
             self.logger.info(f"  📊 Quantity: {exit_quantity}")
 
             # Step 1: Fetch filled order details from Binance
+            order_details: dict[str, Any] = {}
             try:
                 order_details = self.exchange.client.futures_get_order(
                     symbol=symbol, orderId=filled_order_id
@@ -1863,6 +1864,21 @@ class OCOManager:
                     filled_order_id=filled_order_id,
                     close_reason=close_reason,
                 )
+
+                # Persist the real exchange fill against the durable position
+                # row. The strategy-position id is only a virtual attribution
+                # key, while OCO ``position_id`` is the MySQL row key.
+                position_manager = getattr(dispatcher, "position_manager", None)
+                if owning_oco.get("position_id") and position_manager is not None:
+                    await position_manager.record_position_close(
+                        position_id=str(owning_oco["position_id"]),
+                        exit_price=exit_price,
+                        exit_qty=filled_quantity,
+                        exit_order_id=str(filled_order_id),
+                        exit_time=datetime.now(UTC),
+                        close_reason=close_reason,
+                        commission=float(order_details.get("commission", 0.0) or 0.0),
+                    )
 
             # Step 4: Cancel the paired order (TP if SL filled, SL if TP filled)
             other_order_id = (
@@ -2048,6 +2064,9 @@ class Dispatcher:
         # NEW: Order to strategy position mapping for OCO attribution
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
+        # Strategy positions are virtual; retain the durable exchange-position
+        # id needed by the close persistence path.
+        self.strategy_position_to_position: dict[str, str] = {}
 
         # #546: exchange order id -> Signal, registered synchronously the instant
         # execute_order() returns an exchange order_id — well before
@@ -3129,6 +3148,10 @@ class Dispatcher:
                             self.order_to_strategy_position[order.order_id] = (
                                 strategy_position_id
                             )
+                            if order.position_id:
+                                self.strategy_position_to_position[
+                                    strategy_position_id
+                                ] = order.position_id
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
@@ -4030,6 +4053,58 @@ class Dispatcher:
         if exch_order_id:
             self.exchange_order_id_to_signal.pop(str(exch_order_id), None)
 
+    async def _record_reduce_only_fill(self, order_obj: dict[str, Any]) -> None:
+        """Persist a conditional/reduce-only FILLED event immediately.
+
+        The OCO poll remains the reconciliation owner, but the user-data
+        stream is the first source that sees many fills. The position manager's
+        exit-order idempotency makes both observations safe.
+        """
+        manager = getattr(self, "position_manager", None)
+        oco_manager = getattr(self, "oco_manager", None)
+        if manager is None or oco_manager is None:
+            return
+        order_id = str(order_obj.get("i", ""))
+        pair_match: dict[str, Any] | None = None
+        pairs_by_key = getattr(oco_manager, "active_oco_pairs", {})
+        for pairs in pairs_by_key.values():
+            candidates = pairs if isinstance(pairs, list) else [pairs]
+            for pair in candidates:
+                if order_id in {
+                    str(pair.get("sl_order_id", "")),
+                    str(pair.get("tp_order_id", "")),
+                }:
+                    pair_match = pair
+                    break
+            if pair_match is not None:
+                break
+        if not pair_match or not pair_match.get("position_id"):
+            return
+
+        def _number(value: Any, fallback: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        order_type = str(order_obj.get("o", "")).upper()
+        close_reason = "take_profit" if "TAKE_PROFIT" in order_type else "stop_loss"
+        timestamp = order_obj.get("T")
+        exit_time = datetime.now(UTC)
+        if isinstance(timestamp, int | float):
+            exit_time = datetime.fromtimestamp(
+                timestamp / 1000 if timestamp > 1e12 else timestamp, tz=UTC
+            )
+        await manager.record_position_close(
+            position_id=str(pair_match["position_id"]),
+            exit_price=_number(order_obj.get("L"), _number(order_obj.get("ap"))),
+            exit_qty=_number(order_obj.get("z"), _number(order_obj.get("q"))),
+            exit_order_id=order_id,
+            exit_time=exit_time,
+            close_reason=close_reason,
+            commission=_number(order_obj.get("n")),
+        )
+
     async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
         """Publish a `filled` execution event for an entry fill (#531).
 
@@ -4058,6 +4133,7 @@ class Dispatcher:
                 "STOP",
                 "TAKE_PROFIT",
             ):
+                await self._record_reduce_only_fill(order_obj)
                 # #534 (H6 of #977): a FILLED SL/TP leg is the exact signal the
                 # 2s poll waits for. When the WS-wake flag is on, nudge the
                 # OCO monitor so it re-polls immediately instead of waiting up
@@ -5565,15 +5641,30 @@ class Dispatcher:
             except Exception as e:
                 self.logger.error(f"❌ ERROR CLOSING POSITION: {e}")
 
-            # Step 3: Clean up position record
-            try:
-                if position_id:
-                    await self.position_manager.close_position_record(
-                        position_id, {"reason": reason, "manual_close": True}
+            # Step 3: Persist the actual exchange fill. Do not mark a row
+            # closed from the requested quantity or a zero placeholder price.
+            if position_closed and position_id:
+                try:
+                    fill_price = close_result.get("fill_price")
+                    if fill_price is None:
+                        fill_price = close_result.get("average_price")
+                    if fill_price is None:
+                        fill_price = close_result.get("price")
+                    filled_qty = close_result.get("amount")
+                    if filled_qty is None:
+                        filled_qty = close_result.get("filled_amount", quantity)
+                    await self.position_manager.record_position_close(
+                        position_id=position_id,
+                        exit_price=float(fill_price or 0.0),
+                        exit_qty=float(filled_qty or quantity),
+                        exit_order_id=str(close_result.get("order_id", "")) or None,
+                        exit_time=close_result.get("timestamp") or datetime.now(UTC),
+                        close_reason=reason,
+                        commission=float(close_result.get("commission", 0.0) or 0.0),
                     )
                     self.logger.info("✅ POSITION RECORD UPDATED")
-            except Exception as e:
-                self.logger.error(f"❌ ERROR UPDATING POSITION RECORD: {e}")
+                except Exception as e:
+                    self.logger.error(f"❌ ERROR UPDATING POSITION RECORD: {e}")
 
             return {
                 "position_closed": position_closed,
@@ -5692,8 +5783,13 @@ class Dispatcher:
         OCO-aware close path (cancels protective orders + market-closes).
         """
         strategy_position_id = pos["strategy_position_id"]
+        # CIO addresses the virtual strategy position; persistence is keyed by
+        # the exchange position created from the original signal.
+        position_id = self.strategy_position_to_position.get(
+            strategy_position_id, pos.get("position_id", strategy_position_id)
+        )
         close_result = await self.close_position_with_cleanup(
-            position_id=strategy_position_id,
+            position_id=position_id,
             symbol=pos["symbol"],
             position_side=pos["side"],
             quantity=pos["entry_quantity"],

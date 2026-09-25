@@ -5785,7 +5785,7 @@ class Dispatcher:
         strategy_position_id = pos["strategy_position_id"]
         # CIO addresses the virtual strategy position; persistence is keyed by
         # the exchange position created from the original signal.
-        position_id = self.strategy_position_to_position.get(
+        position_id = getattr(self, "strategy_position_to_position", {}).get(
             strategy_position_id, pos.get("position_id", strategy_position_id)
         )
         close_result = await self.close_position_with_cleanup(

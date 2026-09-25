@@ -5,7 +5,7 @@ management using Data Manager API and MongoDB for coordination only.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -58,6 +58,8 @@ class PositionManager:
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
         self.daily_pnl: float = 0.0
+        self._daily_pnl_date: date = datetime.now(UTC).date()
+        self._daily_pnl_rollover_lock = asyncio.Lock()
         self._daily_pnl_refresh_stale: bool = True
         self.max_position_size_pct: float = MAX_POSITION_SIZE_PCT
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
@@ -251,6 +253,7 @@ class PositionManager:
         """Load daily P&L and require a persisted value before trading."""
         try:
             today = datetime.now(UTC).date()
+            self._daily_pnl_date = today
             daily_pnl = await position_client.get_daily_pnl(today.isoformat())
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
@@ -265,6 +268,60 @@ class PositionManager:
         except Exception as e:
             self._daily_pnl_refresh_stale = True
             logger.warning(f"Failed to load daily P&L from Data Manager: {e}")
+
+    async def _roll_daily_pnl_if_new_day(self, *, force: bool = False) -> bool:
+        """Close the previous UTC day and establish a zero baseline for today.
+
+        The dedicated lock serializes rollover decisions without taking
+        ``sync_lock``. The periodic sync can therefore call this while the
+        position update path is active without creating a lock cycle.
+        """
+        today = datetime.now(UTC).date()
+        async with self._daily_pnl_rollover_lock:
+            if self._daily_pnl_date == today and not force:
+                return False
+
+            previous_date = self._daily_pnl_date
+            previous_pnl = self.daily_pnl
+            previous_write_ok = True
+            current_write_ok = True
+
+            if previous_date != today and previous_date is not None:
+                try:
+                    result = await position_client.update_daily_pnl(
+                        previous_date.isoformat(), previous_pnl
+                    )
+                    previous_write_ok = getattr(result, "ok", True) is not False
+                except Exception as exc:
+                    previous_write_ok = False
+                    logger.error(
+                        "Failed to persist closing daily P&L for %s: %s",
+                        previous_date,
+                        exc,
+                    )
+
+            self.daily_pnl = 0.0
+            self._daily_pnl_date = today
+
+            try:
+                result = await position_client.update_daily_pnl(today.isoformat(), 0.0)
+                current_write_ok = getattr(result, "ok", True) is not False
+            except Exception as exc:
+                current_write_ok = False
+                logger.error(
+                    "Failed to persist opening daily P&L baseline for %s: %s",
+                    today,
+                    exc,
+                )
+
+            self._daily_pnl_refresh_stale = not (previous_write_ok and current_write_ok)
+            logger.info(
+                "Daily P&L rolled from %s to %s; previous=%s, baseline=0.0",
+                previous_date,
+                today,
+                previous_pnl,
+            )
+            return True
 
     async def _load_positions_from_exchange(self) -> None:
         """Load positions from Binance API as fallback"""
@@ -283,6 +340,7 @@ class PositionManager:
         """Sync current positions to Data Manager with hedge mode support"""
         async with self.sync_lock:
             try:
+                rolled_over = await self._roll_daily_pnl_if_new_day()
                 # Sync current positions to Data Manager
                 for position_key, position in self.positions.items():
                     symbol, position_side = position_key
@@ -302,20 +360,21 @@ class PositionManager:
                     }
                     await position_client.upsert_position(position_data)
 
-                # Update daily P&L in Data Manager
-                today = datetime.now(UTC).date().isoformat()
-                persist_result = await position_client.update_daily_pnl(
-                    today, self.daily_pnl
-                )
-                if persist_result.ok:
-                    daily_pnl_persist_failures_consecutive.set(0)
-                else:
-                    daily_pnl_persist_failures_consecutive.inc()
-                    logger.error(
-                        "Daily P&L persistence failed for %s: %s",
-                        today,
-                        persist_result.error,
+                # The rollover helper already persisted the new-day zero.
+                if not rolled_over:
+                    today = datetime.now(UTC).date().isoformat()
+                    persist_result = await position_client.update_daily_pnl(
+                        today, self.daily_pnl
                     )
+                    if persist_result.ok:
+                        daily_pnl_persist_failures_consecutive.set(0)
+                    else:
+                        daily_pnl_persist_failures_consecutive.inc()
+                        logger.error(
+                            "Daily P&L persistence failed for %s: %s",
+                            today,
+                            persist_result.error,
+                        )
 
                 self.last_sync_time = datetime.now(UTC)
                 logger.debug("Positions synced to Data Manager")
@@ -452,6 +511,7 @@ class PositionManager:
                         )
 
                     position["realized_pnl"] += realized_pnl
+                    await self._roll_daily_pnl_if_new_day()
                     self.daily_pnl += realized_pnl
 
                     # Update position
@@ -1253,6 +1313,7 @@ class PositionManager:
 
     async def check_daily_loss_limits(self) -> bool:
         """Check daily loss limits with distributed state"""
+        await self._roll_daily_pnl_if_new_day()
         if not RISK_MANAGEMENT_ENABLED:
             return True
 
@@ -1293,6 +1354,8 @@ class PositionManager:
         A missing row is treated as an untrusted baseline and fails closed.
         """
         try:
+            if await self._roll_daily_pnl_if_new_day():
+                return
             today = datetime.now(UTC).date().isoformat()
             daily_pnl = await position_client.get_daily_pnl(today)
             if daily_pnl is not None:
@@ -1543,16 +1606,8 @@ class PositionManager:
         }
 
     async def reset_daily_pnl(self) -> None:
-        """Reset daily P&L (call at start of new day)"""
-        self.daily_pnl = 0.0
-        logger.info("Daily P&L reset")
-
-        # Sync to Data Manager
-        try:
-            today = datetime.now(UTC).date().isoformat()
-            await position_client.update_daily_pnl(today, 0.0)
-        except Exception as e:
-            logger.error(f"Failed to reset daily P&L in Data Manager: {e}")
+        """Compatibility wrapper for the rollover helper's forced reset."""
+        await self._roll_daily_pnl_if_new_day(force=True)
 
     def set_portfolio_value(self, value: float) -> None:
         """Set total portfolio value"""

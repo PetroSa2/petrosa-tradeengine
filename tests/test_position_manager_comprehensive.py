@@ -9,7 +9,7 @@ Tests cover:
 - Position closing and cleanup
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -677,6 +677,131 @@ async def test_daily_pnl_persist_failure_is_logged_and_counted(
 
     assert "database unavailable" in caplog.text
     assert daily_pnl_persist_failures_consecutive._value.get() == 1
+
+
+@pytest.mark.asyncio
+async def test_daily_pnl_rollover_closes_previous_day_before_zero_baseline(
+    position_manager,
+):
+    position_manager._daily_pnl_date = date(2026, 9, 25)
+    position_manager.daily_pnl = -250.0
+    current_day = datetime(2026, 9, 26, tzinfo=UTC)
+
+    with (
+        patch("tradeengine.position_manager.datetime") as mock_datetime,
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+        ) as mock_update,
+    ):
+        mock_datetime.now.return_value = current_day
+        mock_update.side_effect = [MagicMock(ok=True), MagicMock(ok=True)]
+
+        await position_manager._roll_daily_pnl_if_new_day()
+
+    assert position_manager.daily_pnl == 0.0
+    assert position_manager._daily_pnl_date == date(2026, 9, 26)
+    assert mock_update.call_args_list[0].args == ("2026-09-25", -250.0)
+    assert mock_update.call_args_list[1].args == ("2026-09-26", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_daily_pnl_rollover_sync_does_not_carry_previous_value(
+    position_manager,
+):
+    position_manager._daily_pnl_date = date(2026, 9, 25)
+    position_manager.daily_pnl = -250.0
+    current_day = datetime(2026, 9, 26, tzinfo=UTC)
+
+    with (
+        patch("tradeengine.position_manager.datetime") as mock_datetime,
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+        ) as mock_update,
+    ):
+        mock_datetime.now.return_value = current_day
+        mock_update.side_effect = [MagicMock(ok=True), MagicMock(ok=True)]
+
+        await position_manager._sync_positions_to_data_manager()
+
+    assert mock_update.call_args_list == [
+        (("2026-09-25", -250.0),),
+        (("2026-09-26", 0.0),),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_daily_pnl_rollover_fill_counts_against_new_day(
+    position_manager,
+):
+    position_manager._daily_pnl_date = date(2026, 9, 25)
+    position_manager.daily_pnl = 500.0
+    current_day = datetime(2026, 9, 25, tzinfo=UTC)
+    position_manager.positions[("BTCUSDT", "LONG")] = {
+        "symbol": "BTCUSDT",
+        "position_side": "LONG",
+        "quantity": 1.0,
+        "avg_price": 500.0,
+        "unrealized_pnl": 0.0,
+        "realized_pnl": 0.0,
+        "total_cost": 500.0,
+        "total_value": 500.0,
+        "entry_time": current_day,
+        "last_update": current_day,
+    }
+    close_order = TradeOrder(
+        position_id="test-long-pos-1",
+        symbol="BTCUSDT",
+        side="sell",
+        type="market",
+        amount=1.0,
+        target_price=200.0,
+        position_side="LONG",
+        exchange="binance",
+    )
+
+    with (
+        patch("tradeengine.position_manager.datetime") as mock_datetime,
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+        ) as mock_update,
+        patch(
+            "shared.mysql_client.position_client.close_position",
+            new_callable=AsyncMock,
+        ),
+    ):
+        mock_datetime.now.return_value = datetime(2026, 9, 26, tzinfo=UTC)
+        mock_update.side_effect = [MagicMock(ok=True), MagicMock(ok=True)]
+
+        await position_manager.update_position(
+            close_order, {"fill_price": 200.0, "amount": 1.0}
+        )
+
+    assert position_manager.daily_pnl == -300.0
+
+
+@pytest.mark.asyncio
+async def test_daily_pnl_rollover_is_idempotent(position_manager):
+    position_manager._daily_pnl_date = date(2026, 9, 25)
+    position_manager.daily_pnl = -250.0
+    current_day = datetime(2026, 9, 26, tzinfo=UTC)
+
+    with (
+        patch("tradeengine.position_manager.datetime") as mock_datetime,
+        patch(
+            "shared.mysql_client.position_client.update_daily_pnl",
+            new_callable=AsyncMock,
+        ) as mock_update,
+    ):
+        mock_datetime.now.return_value = current_day
+        mock_update.side_effect = [MagicMock(ok=True), MagicMock(ok=True)]
+
+        assert await position_manager._roll_daily_pnl_if_new_day() is True
+        assert await position_manager._roll_daily_pnl_if_new_day() is False
+
+    assert mock_update.call_count == 2
 
 
 @pytest.mark.asyncio

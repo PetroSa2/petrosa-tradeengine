@@ -17,6 +17,7 @@ from shared.constants import (
     OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER,
     OCO_CANCEL_RETRY_BASE_DELAY,
     OCO_CANCEL_RETRY_MAX_DELAY,
+    TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
 )
 from shared.distributed_lock import distributed_lock_manager
@@ -2354,6 +2355,20 @@ class Dispatcher:
                 )
             return {"status": "error", "error": str(e)}
 
+    def _get_existing_position_quantity(self, position_key: tuple[str, str]) -> float:
+        """Return the live quantity used by the accumulation cooldown."""
+        exchange_truth_store = getattr(
+            self.position_manager, "exchange_truth_store", None
+        )
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+            if exchange_truth_store is None:
+                return 0.0
+            snapshot = exchange_truth_store.get_positions().get(position_key)
+            return abs(snapshot.quantity) if snapshot else 0.0
+
+        local_position = self.position_manager.positions.get(position_key)
+        return float(local_position.get("quantity", 0.0)) if local_position else 0.0
+
     def _generate_signal_id(self, signal: Signal) -> str:
         """Generate a unique ID for a signal for deduplication.
 
@@ -2560,42 +2575,36 @@ class Dispatcher:
                 position_side = "LONG" if signal.action == "buy" else "SHORT"
                 position_key = (signal.symbol, position_side)
 
-                if position_key in self.position_manager.positions:
-                    existing_quantity = self.position_manager.positions[position_key][
-                        "quantity"
-                    ]
+                existing_quantity = self._get_existing_position_quantity(position_key)
 
-                    if existing_quantity > 0:  # Position exists
-                        # Check cooldown
-                        if position_key in self.last_accumulation_time:
-                            from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
+                if (
+                    existing_quantity > 0
+                    and position_key in self.last_accumulation_time
+                ):
+                    from shared.constants import ACCUMULATION_COOLDOWN_SECONDS
 
-                            elapsed = (
-                                time.time() - self.last_accumulation_time[position_key]
-                            )
+                    elapsed = time.time() - self.last_accumulation_time[position_key]
 
-                            if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
-                                remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
-                                self.logger.info(
-                                    f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
-                                    f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
-                                )
-                                span.set_attribute("signal.rejected", True)
-                                span.set_attribute(
-                                    "rejection.reason", "accumulation_cooldown"
-                                )
-                                span.set_status(trace.Status(trace.StatusCode.OK))
-                                await self._emit_execution_event_from_signal(
-                                    signal,
-                                    event_type="rejected",
-                                    reason="accumulation_cooldown",
-                                    extra={"remaining_sec": int(remaining)},
-                                    rejection_source="stale_signal",
-                                )
-                                return {
-                                    "status": "rejected",
-                                    "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
-                                }
+                    if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
+                        remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
+                        self.logger.info(
+                            f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
+                            f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
+                        )
+                        span.set_attribute("signal.rejected", True)
+                        span.set_attribute("rejection.reason", "accumulation_cooldown")
+                        span.set_status(trace.Status(trace.StatusCode.OK))
+                        await self._emit_execution_event_from_signal(
+                            signal,
+                            event_type="rejected",
+                            reason="accumulation_cooldown",
+                            extra={"remaining_sec": int(remaining)},
+                            rejection_source="stale_signal",
+                        )
+                        return {
+                            "status": "rejected",
+                            "reason": f"Accumulation cooldown active ({remaining:.0f}s/{ACCUMULATION_COOLDOWN_SECONDS}s)",
+                        }
 
                 # Log signal processing
                 self.logger.info(
@@ -2685,7 +2694,9 @@ class Dispatcher:
                         "partially_filled",
                         "NEW",
                     ):
-                        if position_key in self.position_manager.positions:
+                        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+                            self.last_accumulation_time[position_key] = time.time()
+                        elif position_key in self.position_manager.positions:
                             if (
                                 self.position_manager.positions[position_key][
                                     "quantity"

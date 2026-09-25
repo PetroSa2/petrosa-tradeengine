@@ -77,6 +77,7 @@ class PositionManager:
         self.rejection_reason: str | None = (
             None  # Set by check_position_limits on rejection
         )
+        self._portfolio_exposure_refresh_failed = False
         # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
         # UserDataStreamConsumer starts; None until then.
         self.exchange_truth_store: ExchangeTruthStore | None = None
@@ -1257,6 +1258,14 @@ class PositionManager:
 
         # Check portfolio exposure limit
         current_exposure = self._calculate_portfolio_exposure()
+        if self._portfolio_exposure_refresh_failed:
+            self.rejection_reason = "refresh_failure"
+            logger.error(
+                "⛔ RISK REJECTION: Could not determine exchange position notional "
+                "for %s — failing closed",
+                order.symbol,
+            )
+            return False
         if current_exposure > self.max_portfolio_exposure_pct:
             logger.warning(
                 f"Portfolio exposure {current_exposure:.2%} exceeds limit "
@@ -1450,6 +1459,29 @@ class PositionManager:
         if self.total_portfolio_value <= 0:
             return 1.0
 
+        self._portfolio_exposure_refresh_failed = False
+
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+            store = self.exchange_truth_store
+            if store is None or not store.is_ready:
+                self._portfolio_exposure_refresh_failed = True
+                return 1.0
+
+            total_notional = 0.0
+            for snapshot in store.get_positions().values():
+                if abs(snapshot.quantity) < 1e-9:
+                    continue
+
+                notional = abs(snapshot.notional)
+                if notional <= 0 and snapshot.mark_price > 0:
+                    notional = abs(snapshot.quantity) * snapshot.mark_price
+                if notional <= 0:
+                    self._portfolio_exposure_refresh_failed = True
+                    return 1.0
+                total_notional += notional
+
+            return total_notional / self.total_portfolio_value
+
         total_exposure = 0.0
 
         for position in self.positions.values():
@@ -1528,6 +1560,8 @@ class PositionManager:
                     "position_side": v.side,
                     "quantity": v.quantity,
                     "avg_price": v.entry_price,
+                    "mark_price": v.mark_price,
+                    "notional": v.notional,
                     "unrealized_pnl": v.unrealized_pnl,
                     "realized_pnl": 0.0,
                     "total_cost": 0.0,

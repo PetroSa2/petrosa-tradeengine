@@ -2357,7 +2357,9 @@ class Dispatcher:
 
     def _get_existing_position_quantity(self, position_key: tuple[str, str]) -> float:
         """Return the live quantity used by the accumulation cooldown."""
-        exchange_truth_store = self.position_manager.exchange_truth_store
+        exchange_truth_store = getattr(
+            self.position_manager, "exchange_truth_store", None
+        )
         if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
             if exchange_truth_store is None:
                 return 0.0

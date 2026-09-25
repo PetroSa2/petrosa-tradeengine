@@ -7,6 +7,7 @@ from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import OrderType, Signal, StrategyMode
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
+from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
 
 
 @pytest.fixture
@@ -76,6 +77,30 @@ async def test_process_signal_error(
         result = await dispatcher.process_signal(sample_signal)
         assert result["status"] == "error"
         assert "error" in result
+
+
+def test_accumulation_cooldown_uses_exchange_truth_over_stale_rows(
+    dispatcher: Dispatcher,
+) -> None:
+    store = ExchangeTruthStore()
+    store._is_ready = True
+    store._positions = {
+        ("BTCUSDT", "LONG"): PositionSnapshot(
+            symbol="BTCUSDT",
+            side="LONG",
+            quantity=0.1,
+            entry_price=50000.0,
+            unrealized_pnl=0.0,
+        )
+    }
+    dispatcher.position_manager.exchange_truth_store = store
+    dispatcher.position_manager.positions = {("ETHUSDT", "LONG"): {"quantity": 1.0}}
+
+    with patch("tradeengine.dispatcher.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"):
+        assert dispatcher._get_existing_position_quantity(
+            ("BTCUSDT", "LONG")
+        ) == pytest.approx(0.1)
+        assert dispatcher._get_existing_position_quantity(("ETHUSDT", "LONG")) == 0.0
 
 
 @pytest.mark.asyncio

@@ -912,6 +912,150 @@ async def test_check_position_limits_portfolio_exposure_exceeded(
 
 
 @pytest.mark.asyncio
+async def test_exchange_truth_notional_enforces_portfolio_exposure(
+    position_manager, sample_long_order
+):
+    from tradeengine.exchange_truth_store import ExchangeTruthStore
+
+    store = ExchangeTruthStore()
+    await store.seed_from_rest(
+        [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.02",
+                "entryPrice": "50000",
+                "markPrice": "50000",
+                "notional": "1000",
+            }
+        ],
+        [],
+    )
+    position_manager.exchange_truth_store = store
+    position_manager.total_portfolio_value = 1000.0
+    position_manager.max_portfolio_exposure_pct = 0.5
+
+    with (
+        patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=100.0,
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "portfolio_exposure"
+
+
+@pytest.mark.asyncio
+async def test_exchange_truth_missing_price_fails_closed(
+    position_manager, sample_long_order
+):
+    from tradeengine.exchange_truth_store import ExchangeTruthStore
+
+    store = ExchangeTruthStore()
+    await store.seed_from_rest(
+        [
+            {
+                "symbol": "BTCUSDT",
+                "positionSide": "LONG",
+                "positionAmt": "0.02",
+                "entryPrice": "50000",
+                "markPrice": "0",
+                "notional": "0",
+            }
+        ],
+        [],
+    )
+    position_manager.exchange_truth_store = store
+
+    with (
+        patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=100.0,
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "refresh_failure"
+
+
+@pytest.mark.asyncio
+async def test_exchange_truth_empty_store_ignores_stale_local_rows(
+    position_manager, sample_long_order
+):
+    from tradeengine.exchange_truth_store import ExchangeTruthStore
+
+    store = ExchangeTruthStore()
+    await store.seed_from_rest([], [])
+    position_manager.exchange_truth_store = store
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {
+            "quantity": 0.1,
+            "avg_price": 50000.0,
+        }
+    }
+
+    with (
+        patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=100.0,
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is True
+    assert position_manager.rejection_reason is None
+    assert position_manager._calculate_portfolio_exposure() == 0.0
+
+
+@pytest.mark.asyncio
 async def test_calculate_portfolio_exposure(position_manager):
     """Test portfolio exposure calculation"""
     position_manager.total_portfolio_value = 10000.0

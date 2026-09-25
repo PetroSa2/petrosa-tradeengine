@@ -72,6 +72,8 @@ class PositionSnapshot:
     quantity: float
     entry_price: float
     unrealized_pnl: float
+    mark_price: float = 0.0
+    notional: float = 0.0
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -152,6 +154,9 @@ class ExchangeTruthStore:
                 qty = float(p.get("pa", 0))
                 entry = float(p.get("ep", 0))
                 upnl = float(p.get("up", 0))
+                previous = self._positions.get((symbol, side))
+                mark_price = float(p.get("mp", p.get("markPrice", 0)) or 0)
+                notional = float(p.get("notional", 0) or 0)
                 if abs(qty) < 1e-9:
                     self._positions.pop((symbol, side), None)
                 else:
@@ -161,6 +166,9 @@ class ExchangeTruthStore:
                         quantity=qty,
                         entry_price=entry,
                         unrealized_pnl=upnl,
+                        mark_price=mark_price
+                        or (previous.mark_price if previous else 0.0),
+                        notional=notional or (previous.notional if previous else 0.0),
                     )
             self._last_updated = datetime.now(UTC)
             self._is_ready = True
@@ -220,6 +228,8 @@ class ExchangeTruthStore:
                     quantity=qty,
                     entry_price=float(p.get("entryPrice", 0)),
                     unrealized_pnl=float(p.get("unrealizedProfit", 0)),
+                    mark_price=float(p.get("markPrice", 0) or 0),
+                    notional=float(p.get("notional", 0) or 0),
                 )
             self._open_orders.clear()
             for o in orders:
@@ -261,6 +271,8 @@ class ExchangeTruthStore:
                     quantity=qty,
                     entry_price=float(p.get("entryPrice", 0)),
                     unrealized_pnl=float(p.get("unrealizedProfit", 0)),
+                    mark_price=float(p.get("markPrice", 0) or 0),
+                    notional=float(p.get("notional", 0) or 0),
                 )
             self._open_orders.clear()
             for o in orders:

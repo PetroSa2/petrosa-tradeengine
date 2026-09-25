@@ -90,7 +90,7 @@ class BaseDataManagerClient:
       let callers tell an idempotent ``INSERT IGNORE`` no-op apart from a
       genuine write failure when ``inserted_count`` is 0)
     - ``insert``      → ``{"inserted_count": int}``
-    - ``update_one``  → ``{"modified_count": int}``
+    - ``update_one``  → ``{"updated_count": int, "modified_count": int}``
     - ``upsert_one``  → ``{"modified_count", "upserted_count", "upserted_id"}``
     - ``delete_one``  → ``{"deleted_count": int}``
     - ``delete``      → ``{"deleted_count": int}``
@@ -215,12 +215,29 @@ class BaseDataManagerClient:
         return {"status": "healthy" if body else "unhealthy", "raw": body}
 
     async def query(
-        self, database: str, collection: str, **kwargs: Any
+        self,
+        database: str,
+        collection: str,
+        *,
+        filter: dict[str, Any] | None = None,
+        sort: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Query records via `POST /api/v1/data/query`."""
+        """Query records with only keys supported by data-manager.
+
+        The explicit keyword-only signature rejects unsupported arguments rather
+        than silently dropping them from the request body.
+        """
         body: dict[str, Any] = {"database": database, "collection": collection}
-        for key in ("filter", "sort", "limit", "offset", "fields"):
-            value = kwargs.get(key)
+        for key, value in (
+            ("filter", filter),
+            ("sort", sort),
+            ("limit", limit),
+            ("offset", offset),
+            ("fields", fields),
+        ):
             if value is not None:
                 body[key] = value
         resp = await self._retry_request("POST", "/api/v1/data/query", json_body=body)
@@ -300,7 +317,10 @@ class BaseDataManagerClient:
         resp = await self._retry_request(
             "PUT", f"/api/v1/{database}/{collection}", json_body=body
         )
-        return {"modified_count": int(resp.get("modified_count", 0) or 0)}
+        updated_count = int(
+            resp.get("updated_count", resp.get("modified_count", 0)) or 0
+        )
+        return {"updated_count": updated_count, "modified_count": updated_count}
 
     async def upsert_one(
         self,

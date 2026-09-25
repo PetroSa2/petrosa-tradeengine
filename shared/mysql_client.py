@@ -178,9 +178,12 @@ class DataManagerPositionClient:
                 database="mysql",
                 collection="positions",
                 filter={"position_id": position_id},
-                update={"$set": update_data},
+                update=update_data,
             )
-            ok = response.get("modified_count", 0) > 0
+            updated_count = int(
+                response.get("updated_count", response.get("modified_count", 0)) or 0
+            )
+            ok = updated_count > 0
             if not ok:
                 logger.warning("No position found to update: %s", position_id)
             else:
@@ -209,9 +212,12 @@ class DataManagerPositionClient:
                 database="mysql",
                 collection="positions",
                 filter={"position_id": position_id},
-                update={"$set": update_data},
+                update=update_data,
             )
-            ok = response.get("modified_count", 0) > 0
+            updated_count = int(
+                response.get("updated_count", response.get("modified_count", 0)) or 0
+            )
+            ok = updated_count > 0
             if not ok:
                 logger.warning(
                     "No position found to update risk orders: %s", position_id
@@ -266,9 +272,12 @@ class DataManagerPositionClient:
                     "position_side": position_side,
                     "status": "open",
                 },
-                update={"$set": update_data},
+                update=update_data,
             )
-            ok = response.get("modified_count", 0) > 0
+            updated_count = int(
+                response.get("updated_count", response.get("modified_count", 0)) or 0
+            )
+            ok = updated_count > 0
             if not ok:
                 logger.warning(
                     "No open position found to close: %s %s", symbol, position_side
@@ -322,11 +331,8 @@ class DataManagerPositionClient:
         response = await self.data_manager_client._client.query(
             database="mysql",
             collection="positions",
-            params={
-                "filter": filter_dict,
-                "sort_by": "entry_time",
-                "sort_order": "desc",
-            },
+            filter=filter_dict,
+            sort={"entry_time": -1},
         )
         positions = response.get("data", []) if response else []
         logger.info("Retrieved %d open positions via Data Manager", len(positions))
@@ -345,7 +351,8 @@ class DataManagerPositionClient:
             response = await self.data_manager_client._client.query(
                 database="mysql",
                 collection="daily_pnl",
-                params={"filter": {"date": date}, "limit": 1},
+                filter={"date": date},
+                limit=1,
             )
             if response and response.get("data"):
                 return response["data"][0].get("daily_pnl")

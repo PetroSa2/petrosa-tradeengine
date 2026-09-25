@@ -12,6 +12,7 @@ These tests prove:
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -235,6 +236,85 @@ async def test_query_returns_data_list() -> None:
 
     assert len(result["data"]) == 2
     assert result["pagination"] == {"total": 2}
+
+
+@pytest.mark.asyncio
+async def test_query_sends_supported_filters_in_json_body() -> None:
+    """Query filters must reach data-manager instead of being silently dropped."""
+
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": []})
+
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+    _install_transport(client, handler)
+
+    await client.query(
+        "mysql",
+        "positions",
+        filter={"status": "open"},
+        sort={"entry_time": -1},
+        limit=10,
+    )
+    await client.close()
+
+    assert captured["body"] == {
+        "database": "mysql",
+        "collection": "positions",
+        "filter": {"status": "open"},
+        "sort": {"entry_time": -1},
+        "limit": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_rejects_unsupported_keyword() -> None:
+    """Unsupported query options must fail loudly rather than disappear."""
+
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+
+    with pytest.raises(TypeError):
+        query_method: Any = client.query
+        await query_method(
+            "mysql",
+            "positions",
+            params={"filter": {"status": "open"}},
+        )
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [({"updated_count": 3}, 3), ({"modified_count": 2}, 2)],
+)
+async def test_update_one_normalizes_data_manager_count(
+    response: dict[str, int], expected: int
+) -> None:
+    """Use data-manager's updated_count while retaining the legacy fallback."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PUT"
+        assert request.url.path == "/api/v1/mysql/positions"
+        assert json.loads(request.content)["data"] == {"status": "closed"}
+        return httpx.Response(200, json=response)
+
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+    _install_transport(client, handler)
+
+    result = await client.update_one(
+        "mysql",
+        "positions",
+        {"position_id": "position-1"},
+        {"status": "closed"},
+    )
+    await client.close()
+
+    assert result["updated_count"] == expected
+    assert result["modified_count"] == expected
 
 
 @pytest.mark.asyncio

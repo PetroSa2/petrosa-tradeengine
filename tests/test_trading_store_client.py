@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,6 +47,8 @@ async def test_update_daily_pnl_uses_typed_endpoint_and_returns_failure():
     assert result.ok is True
     assert request.await_args.args == ("PUT", "/api/v1/trading/daily-pnl/2026-09-25")
     assert request.await_args.kwargs["json"]["daily_pnl"] == -12.5
+    updated_at = request.await_args.kwargs["json"]["updated_at"]
+    assert datetime.fromisoformat(updated_at).tzinfo is not None
 
     request.side_effect = APIError("unavailable", status_code=503)
     result = await client.update_daily_pnl("2026-09-25", -12.5)

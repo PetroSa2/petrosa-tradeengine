@@ -206,8 +206,15 @@ class TradingStoreClient:
                 return method
             query = position_client.data_manager_client._client.query
             if (
-                name in {"get_open_positions", "get_position"}
+                name in {"get_open_positions", "get_position", "upsert_position"}
                 and getattr(query, "__func__", query) is not BaseDataManagerClient.query
+            ):
+                return method
+            upsert = position_client.data_manager_client._client.upsert_one
+            if (
+                name == "upsert_position"
+                and getattr(upsert, "__func__", upsert)
+                is not BaseDataManagerClient.upsert_one
             ):
                 return method
         except (AttributeError, ImportError):

@@ -393,6 +393,10 @@ class PositionManager:
                         position_data.get("entry_time", datetime.now(UTC)),
                     )
                     position_data["updated_at"] = datetime.now(UTC)
+                    legacy_upsert = position_client._legacy_override("upsert_position")
+                    if legacy_upsert is not None:
+                        await legacy_upsert(position_data)
+                        continue
                     current = await position_client.get_position(str(position_id))
                     if not current or current.get("status") != "open":
                         self.position_records.pop(str(position_id), None)

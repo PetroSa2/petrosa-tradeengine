@@ -1,5 +1,6 @@
-"""
-Data Manager client for position tracking operations.
+"""LEGACY — only ``strategy_position_manager``; removed by #632.
+
+Data Manager client for strategy position tracking operations.
 
 Provides a typed interface over petrosa-data-manager HTTP API.
 All write methods return PersistResult (not bare bool) so callers can observe
@@ -241,17 +242,13 @@ class DataManagerPositionClient:
             )
 
     async def upsert_position(self, position_data: dict[str, Any]) -> PersistResult:
-        """Upsert a position record; returns PersistResult."""
-        sym = str(position_data.get("symbol", ""))
+        """Compatibility shim for pre-cutover callers; new code must not use it."""
         position_id = position_data.get("position_id")
         if not position_id:
-            logger.error("Cannot upsert position without position_id: %s", sym)
             return self._make_result(
                 False,
                 ValueError("position_id is required"),
                 operation="upsert_position",
-                symbol=sym,
-                position_id="",
             )
         try:
             await self.data_manager_client._client.upsert_one(
@@ -260,20 +257,18 @@ class DataManagerPositionClient:
                 filter={"position_id": position_id},
                 record=position_data,
             )
-            logger.info("Upserted position %s via Data Manager", position_id)
             return self._make_result(
                 True,
                 operation="upsert_position",
-                symbol=sym,
+                symbol=str(position_data.get("symbol", "")),
                 position_id=str(position_id),
             )
         except Exception as exc:
-            logger.error("Failed to upsert position %s: %s", position_id, exc)
             return self._make_result(
                 False,
                 exc,
                 operation="upsert_position",
-                symbol=sym,
+                symbol=str(position_data.get("symbol", "")),
                 position_id=str(position_id),
             )
 

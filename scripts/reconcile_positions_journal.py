@@ -27,7 +27,7 @@ from shared.constants import (
     BINANCE_TESTNET,
     UTC,
 )
-from shared.mysql_client import DataManagerPositionClient
+from shared.trading_store_client import TradingStoreClient
 
 logger = logging.getLogger("reconcile_positions_journal")
 
@@ -258,7 +258,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         raise ReconciliationError("--confirm-count is only valid with --apply")
 
     exchange_client = _build_exchange_client()
-    position_client = DataManagerPositionClient()
+    position_client = TradingStoreClient()
     await position_client.connect()
     try:
         report = await reconcile(

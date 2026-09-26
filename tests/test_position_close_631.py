@@ -36,7 +36,7 @@ async def test_full_close_records_real_pnl_and_columns():
             new_callable=AsyncMock,
         ) as update,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ),
     ):
@@ -63,7 +63,7 @@ async def test_short_loss_and_partial_close():
             new_callable=AsyncMock,
         ) as update,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ),
     ):
@@ -87,7 +87,7 @@ async def test_duplicate_exit_order_is_a_no_op():
             new_callable=AsyncMock,
         ) as update,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ),
     ):

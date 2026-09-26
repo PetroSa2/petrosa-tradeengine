@@ -222,7 +222,7 @@ class PositionManager:
     async def _load_positions_from_store(self) -> None:
         """Load positions from Data Manager with hedge mode support"""
         try:
-            positions_data = await trading_store.get_open_positions()
+            positions_data = await position_client.get_open_positions()
             positions = {}
             position_records = {}
 
@@ -282,7 +282,7 @@ class PositionManager:
         try:
             today = datetime.now(UTC).date()
             self._daily_pnl_date = today
-            daily_pnl = await trading_store.get_daily_pnl(today.isoformat())
+            daily_pnl = await position_client.get_daily_pnl(today.isoformat())
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
                 self._daily_pnl_refresh_stale = False
@@ -318,7 +318,7 @@ class PositionManager:
 
             if previous_date != today and previous_date is not None:
                 try:
-                    result = await trading_store.update_daily_pnl(
+                    result = await position_client.update_daily_pnl(
                         previous_date.isoformat(), previous_pnl
                     )
                     previous_write_ok = getattr(result, "ok", True) is not False
@@ -334,7 +334,7 @@ class PositionManager:
             self._daily_pnl_date = today
 
             try:
-                result = await trading_store.update_daily_pnl(today.isoformat(), 0.0)
+                result = await position_client.update_daily_pnl(today.isoformat(), 0.0)
                 current_write_ok = getattr(result, "ok", True) is not False
             except Exception as exc:
                 current_write_ok = False
@@ -393,7 +393,7 @@ class PositionManager:
                         position_data.get("entry_time", datetime.now(UTC)),
                     )
                     position_data["updated_at"] = datetime.now(UTC)
-                    current = await trading_store.get_position(str(position_id))
+                    current = await position_client.get_position(str(position_id))
                     if not current or current.get("status") != "open":
                         self.position_records.pop(str(position_id), None)
                         continue
@@ -408,12 +408,12 @@ class PositionManager:
                         )
                         if key in position_data
                     }
-                    await trading_store.update_position(str(position_id), mutable)
+                    await position_client.update_position(str(position_id), mutable)
 
                 # The rollover helper already persisted the new-day zero.
                 if not rolled_over:
                     today = datetime.now(UTC).date().isoformat()
-                    persist_result = await trading_store.update_daily_pnl(
+                    persist_result = await position_client.update_daily_pnl(
                         today, self.daily_pnl
                     )
                     if persist_result.ok:
@@ -732,7 +732,7 @@ class PositionManager:
         """Mark position as closed in Data Manager"""
         symbol, position_side = position_key
         try:
-            await trading_store.close_position(
+            await position_client.close_position(
                 symbol,
                 position_side,
                 {
@@ -857,7 +857,7 @@ class PositionManager:
             for _attempt in range(1, 4):
                 try:
                     result = await asyncio.wait_for(
-                        trading_store.create_position(position_data), timeout=5.0
+                        position_client.create_position(position_data), timeout=5.0
                     )
                     if result.ok:
                         logger.info(
@@ -933,7 +933,7 @@ class PositionManager:
 
             # Update Data Manager
             try:
-                await trading_store.update_position_risk_orders(
+                await position_client.update_position_risk_orders(
                     position_id, update_data
                 )
                 logger.info(
@@ -959,7 +959,7 @@ class PositionManager:
         try:
             # Try Data Manager first
             try:
-                position = await trading_store.get_position(position_id)
+                position = await position_client.get_position(position_id)
                 if position:
                     logger.debug(f"Found position {position_id} in Data Manager")
                     return position
@@ -1038,7 +1038,7 @@ class PositionManager:
                 return None
             record = self.position_records.get(position_id)
             if record is None:
-                record = await trading_store.get_position(position_id)
+                record = await position_client.get_position(position_id)
             if not record:
                 logger.error("Position %s not found for close fill", position_id)
                 return None
@@ -1119,7 +1119,7 @@ class PositionManager:
                 self._recorded_exit_order_ids.add(str(exit_order_id))
 
             try:
-                result = await trading_store.update_position(position_id, update_data)
+                result = await position_client.update_position(position_id, update_data)
             except Exception as persist_error:
                 result = SimpleNamespace(ok=False, error=str(persist_error))
             if getattr(result, "ok", True) is False:
@@ -1127,7 +1127,7 @@ class PositionManager:
 
             await self._roll_daily_pnl_if_new_day()
             self.daily_pnl += gross_pnl
-            await trading_store.update_daily_pnl(
+            await position_client.update_daily_pnl(
                 datetime.now(UTC).date().isoformat(), self.daily_pnl
             )
             total_daily_pnl_usd.labels(exchange=record.get("exchange", "binance")).set(
@@ -1540,7 +1540,7 @@ class PositionManager:
             return self._refresh_positions_from_exchange_truth_store()
 
         try:
-            positions_data = await trading_store.get_open_positions()
+            positions_data = await position_client.get_open_positions()
             refreshed_positions = {}
 
             for doc in positions_data:
@@ -1623,7 +1623,7 @@ class PositionManager:
             if await self._roll_daily_pnl_if_new_day():
                 return
             today = datetime.now(UTC).date().isoformat()
-            daily_pnl = await trading_store.get_daily_pnl(today)
+            daily_pnl = await position_client.get_daily_pnl(today)
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
                 self._daily_pnl_refresh_stale = False

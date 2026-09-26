@@ -141,9 +141,9 @@ async def check_position_stops(
     merged: dict[str, dict[str, Any]] = {}
     source_map: dict[str, str] = {}
     store_source = (
-        "mysql"
-        if position_client.__class__.__module__ == "shared.mysql_client"
-        else "store"
+        "store"
+        if position_client.__class__.__module__ == "shared.trading_store_client"
+        else "mysql"
     )
 
     for pos in memory_positions:

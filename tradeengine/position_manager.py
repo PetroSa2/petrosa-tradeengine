@@ -22,9 +22,6 @@ from shared.constants import (
     get_mongodb_connection_string,
     redact_uri,
 )
-
-# Import Data Manager position client
-from shared.mysql_client import position_client
 from shared.trading_store_client import trading_store
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
@@ -53,6 +50,7 @@ from tradeengine.metrics import (
 from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
+position_client = trading_store
 
 
 class PositionManager:
@@ -99,7 +97,7 @@ class PositionManager:
                 logger.info("Data Manager client connected for position tracking")
 
                 # Load positions from Data Manager (primary source)
-                await self._load_positions_from_data_manager()
+                await self._load_positions_from_store()
 
                 # Load daily P&L from Data Manager
                 await self._load_daily_pnl_from_store()
@@ -185,7 +183,7 @@ class PositionManager:
     async def close(self) -> None:
         """Close position manager and sync final state"""
         try:
-            await self._sync_positions_to_data_manager()
+            await self._sync_positions_to_store()
             if self.mongodb_client:
                 self.mongodb_client.close()
             await position_client.disconnect()
@@ -221,10 +219,10 @@ class PositionManager:
             self.mongodb_db = None
             raise
 
-    async def _load_positions_from_data_manager(self) -> None:
+    async def _load_positions_from_store(self) -> None:
         """Load positions from Data Manager with hedge mode support"""
         try:
-            positions_data = await position_client.get_open_positions()
+            positions_data = await trading_store.get_open_positions()
             positions = {}
             position_records = {}
 
@@ -272,8 +270,12 @@ class PositionManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to load positions from Data Manager: {e}")
+            logger.error(f"Failed to load positions from trading store: {e}")
             raise
+
+    async def _load_positions_from_data_manager(self) -> None:
+        """Backward-compatible name for callers outside the manager."""
+        await self._load_positions_from_store()
 
     async def _load_daily_pnl_from_store(self) -> None:
         """Load daily P&L and require a persisted value before trading."""
@@ -364,8 +366,8 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to load positions from exchange: {e}")
 
-    async def _sync_positions_to_data_manager(self) -> None:
-        """Sync current positions to Data Manager with hedge mode support"""
+    async def _sync_positions_to_store(self) -> None:
+        """Sync mutable position fields to the MongoDB-backed trading store."""
         async with self.sync_lock:
             try:
                 rolled_over = await self._roll_daily_pnl_if_new_day()
@@ -390,9 +392,23 @@ class PositionManager:
                         "last_update",
                         position_data.get("entry_time", datetime.now(UTC)),
                     )
-                    position_data["status"] = "open"
                     position_data["updated_at"] = datetime.now(UTC)
-                    await position_client.upsert_position(position_data)
+                    current = await trading_store.get_position(str(position_id))
+                    if not current or current.get("status") != "open":
+                        self.position_records.pop(str(position_id), None)
+                        continue
+                    mutable = {
+                        key: position_data[key]
+                        for key in (
+                            "quantity",
+                            "avg_price",
+                            "unrealized_pnl",
+                            "last_update",
+                            "updated_at",
+                        )
+                        if key in position_data
+                    }
+                    await trading_store.update_position(str(position_id), mutable)
 
                 # The rollover helper already persisted the new-day zero.
                 if not rolled_over:
@@ -411,10 +427,14 @@ class PositionManager:
                         )
 
                 self.last_sync_time = datetime.now(UTC)
-                logger.debug("Positions synced to Data Manager")
+                logger.debug("Positions synced to trading store")
 
             except Exception as e:
-                logger.error(f"Failed to sync positions to Data Manager: {e}")
+                logger.error(f"Failed to sync positions to trading store: {e}")
+
+    async def _sync_positions_to_data_manager(self) -> None:
+        """Backward-compatible name for the store sync loop."""
+        await self._sync_positions_to_store()
 
     def _refresh_positions_from_exchange_truth_store(self) -> bool:
         """Refresh the risk view from the exchange-authoritative position store."""
@@ -446,7 +466,7 @@ class PositionManager:
         while True:
             try:
                 await asyncio.sleep(30)  # Sync every 30 seconds
-                await self._sync_positions_to_data_manager()
+                await self._sync_positions_to_store()
             except Exception as e:
                 logger.error(f"Error in periodic sync: {e}")
 
@@ -689,9 +709,7 @@ class PositionManager:
             # CRITICAL FIX: Data Manager sync must NOT block risk management orders
             # Use short timeout to prevent hanging - position already updated in memory
             try:
-                await asyncio.wait_for(
-                    self._sync_positions_to_data_manager(), timeout=2.0
-                )
+                await asyncio.wait_for(self._sync_positions_to_store(), timeout=2.0)
             except TimeoutError:
                 logger.warning(
                     f"⚠️  Data Manager sync timed out for {symbol} {position_side} (non-critical, continuing)"
@@ -714,23 +732,24 @@ class PositionManager:
         """Mark position as closed in Data Manager"""
         symbol, position_side = position_key
         try:
-            await position_client.close_position(
-                symbol,
-                position_side,
-                {
-                    "status": "closed",
-                    "exit_price": position.get(
-                        "last_price", position.get("avg_price", 0.0)
-                    ),
-                    "exit_time": datetime.now(UTC),
-                    "pnl": position["realized_pnl"],
-                    "pnl_pct": 0.0,
-                    "pnl_after_fees": position["realized_pnl"],
-                    "duration_seconds": 0,
-                    "close_reason": "signal_reduce",
-                    "final_commission": 0.0,
-                },
-            )
+            position_id = position.get("position_id")
+            if position_id:
+                await trading_store.update_position(
+                    str(position_id),
+                    {
+                        "status": "closed",
+                        "exit_price": position.get(
+                            "last_price", position.get("avg_price", 0.0)
+                        ),
+                        "exit_time": datetime.now(UTC),
+                        "pnl": position["realized_pnl"],
+                        "pnl_pct": 0.0,
+                        "pnl_after_fees": position["realized_pnl"],
+                        "duration_seconds": 0,
+                        "close_reason": "signal_reduce",
+                        "final_commission": 0.0,
+                    },
+                )
             logger.info(
                 f"Position {symbol} {position_side} marked as closed in Data Manager"
             )
@@ -838,15 +857,25 @@ class PositionManager:
             _create_ok = False
             for _attempt in range(1, 4):
                 try:
-                    await asyncio.wait_for(
-                        position_client.create_position(position_data), timeout=5.0
+                    result = await asyncio.wait_for(
+                        trading_store.create_position(position_data), timeout=5.0
                     )
-                    logger.info(
-                        f"Position {order.position_id} created via Data Manager for "
-                        f"{order.symbol} {order.position_side} (attempt {_attempt})"
+                    if result.ok:
+                        logger.info(
+                            "Position %s created via trading store for %s %s (attempt %s)",
+                            order.position_id,
+                            order.symbol,
+                            order.position_side,
+                            _attempt,
+                        )
+                        _create_ok = True
+                        break
+                    logger.warning(
+                        "Trading-store position insert failed for %s (attempt %s/3): %s",
+                        order.position_id,
+                        _attempt,
+                        result.error,
                     )
-                    _create_ok = True
-                    break
                 except TimeoutError:
                     logger.warning(
                         f"⚠️  Data Manager position insert timed out for {order.position_id} "
@@ -858,6 +887,15 @@ class PositionManager:
                         f"(attempt {_attempt}/3): {data_manager_error}"
                     )
             if not _create_ok:
+                persist_retry_queue.enqueue(
+                    PendingWrite(
+                        operation="create_position",
+                        data=dict(position_data),
+                        symbol=order.symbol,
+                        position_id=order.position_id,
+                        last_error="trading-store create failed",
+                    )
+                )
                 logger.critical(
                     f"❌ CRITICAL: Position {order.position_id} ({order.symbol} {order.position_side}) "
                     f"could NOT be persisted after 3 attempts. "
@@ -896,7 +934,7 @@ class PositionManager:
 
             # Update Data Manager
             try:
-                await position_client.update_position_risk_orders(
+                await trading_store.update_position_risk_orders(
                     position_id, update_data
                 )
                 logger.info(
@@ -922,7 +960,7 @@ class PositionManager:
         try:
             # Try Data Manager first
             try:
-                position = await position_client.get_position(position_id)
+                position = await trading_store.get_position(position_id)
                 if position:
                     logger.debug(f"Found position {position_id} in Data Manager")
                     return position
@@ -1001,7 +1039,7 @@ class PositionManager:
                 return None
             record = self.position_records.get(position_id)
             if record is None:
-                record = await position_client.get_position(position_id)
+                record = await trading_store.get_position(position_id)
             if not record:
                 logger.error("Position %s not found for close fill", position_id)
                 return None
@@ -1082,7 +1120,7 @@ class PositionManager:
                 self._recorded_exit_order_ids.add(str(exit_order_id))
 
             try:
-                result = await position_client.update_position(position_id, update_data)
+                result = await trading_store.update_position(position_id, update_data)
             except Exception as persist_error:
                 result = SimpleNamespace(ok=False, error=str(persist_error))
             if getattr(result, "ok", True) is False:
@@ -1090,7 +1128,7 @@ class PositionManager:
 
             await self._roll_daily_pnl_if_new_day()
             self.daily_pnl += gross_pnl
-            await position_client.update_daily_pnl(
+            await trading_store.update_daily_pnl(
                 datetime.now(UTC).date().isoformat(), self.daily_pnl
             )
             total_daily_pnl_usd.labels(exchange=record.get("exchange", "binance")).set(
@@ -1503,7 +1541,7 @@ class PositionManager:
             return self._refresh_positions_from_exchange_truth_store()
 
         try:
-            positions_data = await position_client.get_open_positions()
+            positions_data = await trading_store.get_open_positions()
             refreshed_positions = {}
 
             for doc in positions_data:

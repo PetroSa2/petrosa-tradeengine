@@ -131,12 +131,12 @@ async def check_position_stops(
         memory_positions = []
 
     try:
-        mysql_positions: list[
+        store_positions: list[
             dict[str, Any]
         ] = await position_client.get_open_positions()
     except Exception as exc:
-        logger.error("Failed to get MySQL positions: %s", exc)
-        mysql_positions = []
+        logger.error("Failed to get trading-store positions: %s", exc)
+        store_positions = []
 
     merged: dict[str, dict[str, Any]] = {}
     source_map: dict[str, str] = {}
@@ -148,7 +148,7 @@ async def check_position_stops(
         merged[pid] = dict(pos)
         source_map[pid] = "memory"
 
-    for pos in mysql_positions:
+    for pos in store_positions:
         pid = pos.get("strategy_position_id")
         if not pid:
             continue
@@ -159,7 +159,7 @@ async def check_position_stops(
             source_map[pid] = "both"
         else:
             merged[pid] = dict(pos)
-            source_map[pid] = "mysql"
+            source_map[pid] = "store"
 
     result_positions: list[PositionStopStatus] = []
     divergences: list[StopsDivergence] = []

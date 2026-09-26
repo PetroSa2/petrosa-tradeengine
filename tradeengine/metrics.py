@@ -513,6 +513,54 @@ def set_naked_position_remediation_mode(mode: str) -> None:
         )
 
 
+# #651 — protective-leg lifecycle observability.
+# Effective TE_PROTECTIVE_LEG_MODE (one series set to 1). Alert on
+# {mode="close_position"} == 1 if the rollback lever is left on by accident.
+protective_leg_mode_status = Gauge(
+    "tradeengine_protective_leg_mode_status",
+    "Effective protective-leg placement mode (1 = active mode). explicit_qty "
+    "places quantity-sized legs; close_position is the pre-#651 rollback.",
+    ["mode"],
+)
+
+_PROTECTIVE_LEG_MODES = ("explicit_qty", "close_position")
+
+
+def set_protective_leg_mode(mode: str) -> None:
+    """Set the protective-leg mode gauge (#651); unknown -> explicit_qty."""
+    normalized = (mode or "").lower().strip()
+    if normalized not in _PROTECTIVE_LEG_MODES:
+        normalized = "explicit_qty"
+    for known in _PROTECTIVE_LEG_MODES:
+        protective_leg_mode_status.labels(mode=known).set(
+            1 if known == normalized else 0
+        )
+
+
+# A protective fill (or a leg sweep) found the hedge-mode side sign-inverted
+# (LONG with positionAmt < 0 / SHORT with positionAmt > 0). Never auto-corrected
+# — a counter-trade leaves the testnet residual in place (#566/#651). Page on
+# increase(...) > 0.
+protective_fill_inversion_total = Counter(
+    "tradeengine_protective_fill_inversion_total",
+    "Hedge-mode sides found sign-inverted after a protective fill (#651); "
+    "alert-only, never auto-traded",
+    ["symbol", "side", "source"],
+)
+
+# Leg lifecycle actions taken by ProtectiveLegManager (#651).
+#   action:  resize | resize_cancel | cancel_flat | cancel_inverted |
+#            cancel_duplicate | migrate | migrate_cancel_legacy
+#   outcome: success | failed
+# A failed resize/migrate can leave a side without a leg of that kind — alert
+# on increase(...{outcome="failed"}) > 0.
+protective_leg_sync_actions_total = Counter(
+    "tradeengine_protective_leg_sync_actions_total",
+    "Protective-leg lifecycle actions (#651)",
+    ["action", "outcome"],
+)
+
+
 # #540: the naked-position watchdog silently never started in prod because the
 # boot gate required `not simulation_enabled`, while the live deploy left
 # SIMULATION_ENABLED at its True default. `arm_only` (#999) became a no-op:
@@ -730,4 +778,14 @@ otel_algo_orders_open = meter.create_gauge(
 otel_execution_halt_active = meter.create_gauge(
     "petrosa_tradeengine_execution_halt_active",
     description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
+)
+
+# #651 — protective-leg lifecycle (OTLP dual-export).
+otel_protective_fill_inversion = meter.create_counter(
+    "tradeengine_protective_fill_inversion_total",
+    description="Hedge-mode sides found sign-inverted after a protective fill (#651) (OTLP dual-export)",
+)
+otel_protective_leg_sync_actions = meter.create_counter(
+    "tradeengine_protective_leg_sync_actions_total",
+    description="Protective-leg lifecycle actions (#651) (OTLP dual-export)",
 )

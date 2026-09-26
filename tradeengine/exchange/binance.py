@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import time
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, cast
 
 from binance import Client
@@ -28,6 +29,7 @@ from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
 from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
+from tradeengine.protective_leg_mode import CLOSE_POSITION, protective_leg_mode
 from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
@@ -504,28 +506,38 @@ class BinanceFuturesExchange:
             )
         trigger_price = adjusted_price
 
-        # AC-3 (#352): use closePosition=true so Binance auto-sweeps the order when the
-        # position closes. quantity + reduceOnly=true do NOT auto-cancel CONDITIONAL algo
-        # orders — they accumulate indefinitely as orphans.
-        params: dict[str, Any] = {
-            "symbol": order.symbol,
-            "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": FUTURE_ORDER_TYPE_STOP_MARKET,
-            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
-            # server default to bare GTE, which Binance rejects with -4509.
-            "timeInForce": TIME_IN_FORCE_GTE_GTC,
-            "closePosition": True,
-            "triggerPrice": self._format_price(
-                order.symbol, trigger_price
-            ),  # Note: triggerPrice, not stopPrice
-            "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,  # Enable price protection for stop orders
-        }
+        params: dict[str, Any]
+        if protective_leg_mode() == CLOSE_POSITION:
+            # AC-3 (#352): use closePosition=true so Binance auto-sweeps the order when the
+            # position closes. quantity + reduceOnly=true do NOT auto-cancel CONDITIONAL algo
+            # orders — they accumulate indefinitely as orphans.
+            params = {
+                "symbol": order.symbol,
+                "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
+                "type": FUTURE_ORDER_TYPE_STOP_MARKET,
+                "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+                # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
+                # server default to bare GTE, which Binance rejects with -4509.
+                "timeInForce": TIME_IN_FORCE_GTE_GTC,
+                "closePosition": True,
+                "triggerPrice": self._format_price(
+                    order.symbol, trigger_price
+                ),  # Note: triggerPrice, not stopPrice
+                "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
+                "priceProtect": True,  # Enable price protection for stop orders
+            }
 
-        # Add positionSide for hedge mode
-        if order.position_side:
-            params["positionSide"] = order.position_side
+            # Add positionSide for hedge mode
+            if order.position_side:
+                params["positionSide"] = order.position_side
+        else:
+            # #651: explicit-quantity leg (quantity == live side position). The
+            # leg lifecycle manager resizes/cancels it as the side changes.
+            params = await self._build_explicit_leg_params(
+                order,
+                order_type=FUTURE_ORDER_TYPE_STOP_MARKET,
+                trigger_price=trigger_price,
+            )
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -551,27 +563,37 @@ class BinanceFuturesExchange:
         if not is_valid:
             raise ValueError(error_msg)
 
-        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
-        params = {
-            "symbol": order.symbol,
-            "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": FUTURE_ORDER_TYPE_STOP,
-            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
-            # TIF resolves to server-side GTE and is rejected with -4509.
-            "timeInForce": TIME_IN_FORCE_GTE_GTC,
-            "closePosition": True,
-            "price": self._format_price(order.symbol, order.target_price),
-            "triggerPrice": self._format_price(
-                order.symbol, order.stop_loss
-            ),  # Note: triggerPrice, not stopPrice
-            "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,  # Enable price protection for stop orders
-        }
+        params: dict[str, Any]
+        if protective_leg_mode() == CLOSE_POSITION:
+            # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
+            params = {
+                "symbol": order.symbol,
+                "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
+                "type": FUTURE_ORDER_TYPE_STOP,
+                "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+                # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
+                # TIF resolves to server-side GTE and is rejected with -4509.
+                "timeInForce": TIME_IN_FORCE_GTE_GTC,
+                "closePosition": True,
+                "price": self._format_price(order.symbol, order.target_price),
+                "triggerPrice": self._format_price(
+                    order.symbol, order.stop_loss
+                ),  # Note: triggerPrice, not stopPrice
+                "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
+                "priceProtect": True,  # Enable price protection for stop orders
+            }
 
-        # Add positionSide for hedge mode
-        if order.position_side:
-            params["positionSide"] = order.position_side
+            # Add positionSide for hedge mode
+            if order.position_side:
+                params["positionSide"] = order.position_side
+        else:
+            # #651: explicit-quantity leg.
+            params = await self._build_explicit_leg_params(
+                order,
+                order_type=FUTURE_ORDER_TYPE_STOP,
+                trigger_price=order.stop_loss,
+                limit_price=order.target_price,
+            )
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -587,26 +609,35 @@ class BinanceFuturesExchange:
 
         if order.take_profit is None:
             raise ValueError("Take profit price required for take profit orders")
-        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
-        params: dict[str, Any] = {
-            "symbol": order.symbol,
-            "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
-            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
-            # server default to bare GTE, which Binance rejects with -4509.
-            "timeInForce": TIME_IN_FORCE_GTE_GTC,
-            "closePosition": True,
-            "triggerPrice": self._format_price(
-                order.symbol, order.take_profit
-            ),  # Note: triggerPrice, not stopPrice
-            "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,  # Enable price protection for take profit orders
-        }
+        params: dict[str, Any]
+        if protective_leg_mode() == CLOSE_POSITION:
+            # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
+            params = {
+                "symbol": order.symbol,
+                "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
+                "type": FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+                "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+                # #543: closePosition legs MUST send GTE_GTC. Omitting TIF lets the
+                # server default to bare GTE, which Binance rejects with -4509.
+                "timeInForce": TIME_IN_FORCE_GTE_GTC,
+                "closePosition": True,
+                "triggerPrice": self._format_price(
+                    order.symbol, order.take_profit
+                ),  # Note: triggerPrice, not stopPrice
+                "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
+                "priceProtect": True,  # Enable price protection for take profit orders
+            }
 
-        # Add positionSide for hedge mode
-        if order.position_side:
-            params["positionSide"] = order.position_side
+            # Add positionSide for hedge mode
+            if order.position_side:
+                params["positionSide"] = order.position_side
+        else:
+            # #651: explicit-quantity leg.
+            params = await self._build_explicit_leg_params(
+                order,
+                order_type=FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+                trigger_price=order.take_profit,
+            )
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -634,27 +665,37 @@ class BinanceFuturesExchange:
         if not is_valid:
             raise ValueError(error_msg)
 
-        # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
-        params = {
-            "symbol": order.symbol,
-            "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
-            "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
-            "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
-            # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
-            # TIF resolves to server-side GTE and is rejected with -4509.
-            "timeInForce": TIME_IN_FORCE_GTE_GTC,
-            "closePosition": True,
-            "price": self._format_price(order.symbol, order.target_price),
-            "triggerPrice": self._format_price(
-                order.symbol, order.take_profit
-            ),  # Note: triggerPrice, not stopPrice
-            "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
-            "priceProtect": True,  # Enable price protection for take profit orders
-        }
+        params: dict[str, Any]
+        if protective_leg_mode() == CLOSE_POSITION:
+            # AC-3 (#352): closePosition=true; omit quantity/reduceOnly so Binance auto-sweeps.
+            params = {
+                "symbol": order.symbol,
+                "side": SIDE_BUY if order.side == "buy" else SIDE_SELL,
+                "type": FUTURE_ORDER_TYPE_TAKE_PROFIT,
+                "algoType": "CONDITIONAL",  # Required for Binance Algo Order API
+                # #543: closePosition legs MUST send GTE_GTC (not GTC) — a bare/GTC
+                # TIF resolves to server-side GTE and is rejected with -4509.
+                "timeInForce": TIME_IN_FORCE_GTE_GTC,
+                "closePosition": True,
+                "price": self._format_price(order.symbol, order.target_price),
+                "triggerPrice": self._format_price(
+                    order.symbol, order.take_profit
+                ),  # Note: triggerPrice, not stopPrice
+                "workingType": "MARK_PRICE",  # Default to MARK_PRICE for Algo compatibility
+                "priceProtect": True,  # Enable price protection for take profit orders
+            }
 
-        # Add positionSide for hedge mode
-        if order.position_side:
-            params["positionSide"] = order.position_side
+            # Add positionSide for hedge mode
+            if order.position_side:
+                params["positionSide"] = order.position_side
+        else:
+            # #651: explicit-quantity leg.
+            params = await self._build_explicit_leg_params(
+                order,
+                order_type=FUTURE_ORDER_TYPE_TAKE_PROFIT,
+                trigger_price=order.take_profit,
+                limit_price=order.target_price,
+            )
 
         result = await self._execute_with_retry(self._call_algo_order_api, **params)
         if not isinstance(result, dict):
@@ -681,6 +722,314 @@ class BinanceFuturesExchange:
             "post", "algoOrder", signed=True, data=p
         )
         return cast(dict[str, Any], result)
+
+    # ------------------------------------------------------------------
+    # #651: explicit-quantity protective legs
+    # ------------------------------------------------------------------
+
+    def _lot_size_limits(self, symbol: str) -> tuple[Decimal, Decimal] | None:
+        """Return ``(step_size, min_qty)`` from the LOT_SIZE filter, if known."""
+        info = (getattr(self, "symbol_info", None) or {}).get(symbol)
+        if not info:
+            return None
+        lot = next(
+            (f for f in info.get("filters", []) if f.get("filterType") == "LOT_SIZE"),
+            None,
+        )
+        if not lot:
+            return None
+        try:
+            return Decimal(str(lot["stepSize"])), Decimal(str(lot["minQty"]))
+        except (KeyError, InvalidOperation):
+            return None
+
+    def _floor_quantity_to_step(self, symbol: str, quantity: float) -> float:
+        """Round ``quantity`` DOWN to the symbol's LOT_SIZE step.
+
+        A protective leg must never close more than the side holds, so the
+        rounding is always towards zero (``_format_quantity`` rounds to
+        nearest and could round a quantity up past the position).
+        """
+        limits = self._lot_size_limits(symbol)
+        if limits is None:
+            return float(quantity)
+        step, _ = limits
+        if step <= 0:
+            return float(quantity)
+        try:
+            q = Decimal(str(quantity))
+        except InvalidOperation:
+            return 0.0
+        floored = (q / step).to_integral_value(rounding=ROUND_DOWN) * step
+        return float(floored)
+
+    def _check_min_leg_quantity(self, symbol: str, quantity: float) -> None:
+        """Refuse a protective leg below LOT_SIZE minQty (Binance would reject it)."""
+        if quantity <= 0:
+            raise ValueError(
+                f"protective_leg_quantity_below_min: {symbol} quantity={quantity} "
+                "(rounds down to zero at the LOT_SIZE step)"
+            )
+        limits = self._lot_size_limits(symbol)
+        if limits is not None and Decimal(str(quantity)) < limits[1]:
+            raise ValueError(
+                f"protective_leg_quantity_below_min: {symbol} quantity={quantity} "
+                f"< minQty={limits[1]}"
+            )
+
+    async def _fetch_side_position_amt(
+        self, symbol: str, position_side: str | None
+    ) -> float | None:
+        """Signed ``positionAmt`` of one symbol side from positionRisk.
+
+        Returns ``None`` when the lookup failed (unknown), ``0.0`` when the
+        side holds nothing, otherwise the signed amount. One-way accounts use
+        the ``BOTH`` row.
+        """
+        if self.client is None:
+            return None
+        try:
+            rows = await asyncio.to_thread(
+                self.client.futures_position_information, symbol=symbol
+            )
+        except Exception as exc:
+            logger.warning(
+                "#651: positionRisk lookup failed for %s %s: %s",
+                symbol,
+                position_side,
+                exc,
+            )
+            return None
+        if not isinstance(rows, list):
+            return None
+        target = str(position_side or "BOTH").upper()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("symbol", "")).upper() != symbol.upper():
+                continue
+            if str(row.get("positionSide", "BOTH")).upper() != target:
+                continue
+            try:
+                return float(row.get("positionAmt", 0) or 0)
+            except (TypeError, ValueError):
+                return None
+        return 0.0
+
+    async def _resolve_protective_leg_quantity(self, order: TradeOrder) -> float:
+        """Quantity for an explicit-quantity protective leg (#651).
+
+        The leg covers the WHOLE live side (every strategy contribution on
+        ``symbol``/``positionSide``), mirroring what ``closePosition`` meant
+        but without the testnet residual over-close. When positionRisk is
+        unreadable, flat (the entry fill has not propagated yet — the #445
+        race) or inverted, fall back to the caller's quantity; the leg
+        lifecycle manager converges the leg to the side on its next sync.
+        The result is floored to the LOT_SIZE step so the leg never exceeds
+        the position.
+        """
+        requested = float(order.amount or 0.0)
+        live_amt = await self._fetch_side_position_amt(
+            order.symbol, order.position_side
+        )
+        quantity = requested
+        if live_amt is not None and live_amt != 0:
+            position_side = str(order.position_side or "").upper()
+            if position_side == "LONG":
+                healthy = live_amt > 0
+            elif position_side == "SHORT":
+                healthy = live_amt < 0
+            else:
+                # One-way mode: a SELL leg protects a long, a BUY leg a short.
+                healthy = live_amt > 0 if order.side == "sell" else live_amt < 0
+            if healthy:
+                quantity = abs(live_amt)
+            else:
+                logger.warning(
+                    "#651: %s %s positionAmt=%s is sign-inverted; sizing the "
+                    "protective leg from the requested quantity %s instead",
+                    order.symbol,
+                    order.position_side,
+                    live_amt,
+                    requested,
+                )
+        quantity = self._floor_quantity_to_step(order.symbol, quantity)
+        self._check_min_leg_quantity(order.symbol, quantity)
+        if abs(quantity - requested) > 1e-12:
+            logger.info(
+                "#651: protective leg for %s %s sized to side quantity %s "
+                "(requested %s, live positionAmt %s)",
+                order.symbol,
+                order.position_side,
+                quantity,
+                requested,
+                live_amt,
+            )
+        return quantity
+
+    def _explicit_leg_params(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        position_side: str | None,
+        order_type: str,
+        quantity: float,
+        trigger_price: float,
+        limit_price: float | None = None,
+    ) -> dict[str, Any]:
+        """Algo-order params for an explicit-quantity protective leg (#651).
+
+        No ``closePosition``. In hedge mode ``positionSide`` + the closing
+        ``side`` make the order reduce-only by construction (Binance rejects
+        ``reduceOnly`` together with ``positionSide``); in one-way mode
+        ``reduceOnly`` is sent so the leg can never open a reverse position.
+        ``timeInForce`` is GTC — GTE_GTC is only valid with closePosition.
+        """
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "type": order_type,
+            "algoType": "CONDITIONAL",
+            "timeInForce": TIME_IN_FORCE_GTC,
+            "quantity": self._format_quantity(symbol, quantity),
+        }
+        if limit_price is not None:
+            params["price"] = self._format_price(symbol, limit_price)
+        params["triggerPrice"] = self._format_price(symbol, trigger_price)
+        params["workingType"] = "MARK_PRICE"
+        params["priceProtect"] = True
+        if position_side:
+            params["positionSide"] = position_side
+        else:
+            params["reduceOnly"] = True
+        return params
+
+    async def _build_explicit_leg_params(
+        self,
+        order: TradeOrder,
+        *,
+        order_type: str,
+        trigger_price: float | None,
+        limit_price: float | None = None,
+    ) -> dict[str, Any]:
+        if trigger_price is None:
+            raise ValueError("Trigger price required for protective leg")
+        quantity = await self._resolve_protective_leg_quantity(order)
+        return self._explicit_leg_params(
+            symbol=order.symbol,
+            side=SIDE_BUY if order.side == "buy" else SIDE_SELL,
+            position_side=order.position_side,
+            order_type=order_type,
+            quantity=quantity,
+            trigger_price=trigger_price,
+            limit_price=limit_price,
+        )
+
+    async def place_protective_leg(
+        self,
+        *,
+        symbol: str,
+        position_side: str | None,
+        side: str,
+        order_type: str,
+        quantity: float,
+        trigger_price: float,
+        limit_price: float | None = None,
+    ) -> dict[str, Any]:
+        """Place one explicit-quantity protective leg at an EXACT trigger (#651).
+
+        Used by the leg lifecycle manager to resize or migrate an existing
+        leg. Unlike ``execute()``, no engine-side price policy (#503 clamp,
+        #424 safety floor) is applied: the trigger of a live leg was already
+        accepted by Binance, and re-running the floor on a resize would refuse
+        a stop the market has drifted towards and leave the side naked.
+        ``side`` is the Binance side (``BUY``/``SELL``). Returns the raw algo
+        order response (``algoId`` ...). Raises on failure.
+        """
+        if not self.initialized:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        qty = self._floor_quantity_to_step(symbol, quantity)
+        self._check_min_leg_quantity(symbol, qty)
+        params = self._explicit_leg_params(
+            symbol=symbol,
+            side=str(side).upper(),
+            position_side=position_side,
+            order_type=str(order_type).upper(),
+            quantity=qty,
+            trigger_price=trigger_price,
+            limit_price=limit_price,
+        )
+        result = await self._execute_with_retry(self._call_algo_order_api, **params)
+        if not isinstance(result, dict):
+            raise RuntimeError(
+                "Binance Futures API did not return a dict for protective leg"
+            )
+        return result
+
+    async def _find_matching_open_explicit_leg(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """#651: after an ambiguous placement failure (timeout, -1007 ...),
+        look for the leg we tried to place among the open algo orders.
+
+        An explicit-quantity leg is NOT deduplicated by Binance the way a
+        closePosition leg is (-4130), so blindly retrying a placement that
+        actually landed would stack two full-size legs on the side — if both
+        triggered, the side would be over-closed into a sign inversion.
+        """
+        symbol = str(params.get("symbol") or "")
+        try:
+            open_orders = await self.get_open_algo_orders(symbol=symbol)
+        except Exception as exc:
+            logger.warning(
+                "#651: could not verify placement for %s before retry: %s",
+                symbol,
+                exc,
+            )
+            return None
+        want_side = str(params.get("side") or "").upper()
+        want_ps = str(params.get("positionSide") or "BOTH").upper()
+        want_type = str(params.get("type") or "").upper()
+        try:
+            want_qty = float(params.get("quantity") or 0)
+            want_trigger = float(params.get("triggerPrice") or 0)
+        except (TypeError, ValueError):
+            return None
+        for o in open_orders or []:
+            if not isinstance(o, dict):
+                continue
+            try:
+                if str(o.get("symbol", "")).upper() != symbol.upper():
+                    continue
+                if str(o.get("side", "")).upper() != want_side:
+                    continue
+                if str(o.get("positionSide", "BOTH")).upper() != want_ps:
+                    continue
+                if str(o.get("orderType") or o.get("type") or "").upper() != want_type:
+                    continue
+                if o.get("closePosition") in (True, "true", "True"):
+                    continue
+                if abs(float(o.get("quantity") or 0) - want_qty) > 1e-12:
+                    continue
+                if abs(float(o.get("triggerPrice") or 0) - want_trigger) > 1e-12:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            logger.warning(
+                "#651: placement of %s %s %s %s leg errored but an identical leg "
+                "(algoId=%s) is live — treating it as the placement result instead "
+                "of retrying (prevents a duplicate full-size leg)",
+                symbol,
+                want_ps,
+                want_type,
+                want_qty,
+                o.get("algoId"),
+            )
+            return {**o, "reconciled": True}
+        return None
 
     async def _reconcile_4130_against_truth(
         self,
@@ -815,6 +1164,14 @@ class BinanceFuturesExchange:
         # retry_succeeded vs retry_failed.
         saw_4130 = False
         is_algo_order = kwargs.get("closePosition") in (True, "true", "True")
+        # #651: an explicit-quantity protective leg (algo endpoint, quantity,
+        # no closePosition) is verified against open algo orders after an
+        # ambiguous failure instead of being blindly retried.
+        is_explicit_leg = (
+            not is_algo_order
+            and kwargs.get("algoType") == "CONDITIONAL"
+            and kwargs.get("quantity") is not None
+        )
         symbol_for_metric = str(kwargs.get("symbol") or "unknown")
 
         for attempt in range(MAX_RETRY_ATTEMPTS):
@@ -922,6 +1279,10 @@ class BinanceFuturesExchange:
                             "algoStatus": "ALREADY_EXISTS",
                             "reconciled": True,
                             "matched_order": payload,
+                            # #650: the match may come from /openOrders (a
+                            # standard order) — record the real leg kind so
+                            # the OCO cancel path routes to the right endpoint.
+                            "_is_algo_order": payload.get("algoId") is not None,
                         }
 
                     if outcome == "conflicting_order_detected" and payload is not None:
@@ -1006,6 +1367,11 @@ class BinanceFuturesExchange:
                 last_exception = e
             except Exception as e:
                 last_exception = e
+
+            if is_explicit_leg:
+                existing_leg = await self._find_matching_open_explicit_leg(kwargs)
+                if existing_leg is not None:
+                    return existing_leg
 
             if attempt < MAX_RETRY_ATTEMPTS - 1:
                 wait_time = RETRY_DELAY * (RETRY_BACKOFF_MULTIPLIER**attempt)
@@ -1490,7 +1856,7 @@ class BinanceFuturesExchange:
 
     def _format_quantity(self, symbol: str, quantity: float) -> str:
         """Format quantity according to symbol precision"""
-        if symbol not in self.symbol_info:
+        if symbol not in (getattr(self, "symbol_info", None) or {}):
             return str(quantity)
 
         # Find LOT_SIZE filter
@@ -1543,6 +1909,11 @@ class BinanceFuturesExchange:
         order_id = result.get("orderId") or result.get("algoId")
         status = result.get("status") or result.get("algoStatus", "NEW")
         order_type = result.get("type") or result.get("orderType")
+        # #650: record whether the exchange id is an algo id (POST
+        # /fapi/v1/algoOrder answers with ``algoId``; standard orders never
+        # carry it) so the OCO surviving-leg cancel routes to the matching
+        # endpoint instead of guessing.
+        is_algo_order = bool(result.get("_is_algo_order", "algoId" in result))
 
         # #501: derive the true fill price for MARKET orders.
         # A Binance FUTURES MARKET response returns price="0.00000000" and carries
@@ -1562,6 +1933,7 @@ class BinanceFuturesExchange:
         return {
             "order_id": str(order_id) if order_id else None,
             "status": status,
+            "is_algo_order": is_algo_order,
             "side": result.get("side"),
             "type": order_type,
             "amount": total_qty or order.amount,

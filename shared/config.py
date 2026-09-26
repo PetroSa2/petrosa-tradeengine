@@ -61,6 +61,27 @@ class Settings(BaseSettings):
     # on testnet. Rollback: unset TE_OCO_WS_WAKE_ENABLED (or set false).
     te_oco_ws_wake_enabled: bool = False
 
+    # #651: how protective SL/TP legs are placed. "explicit_qty" (default)
+    # sends an explicit quantity equal to the live side position (no
+    # closePosition) and runs the leg lifecycle manager (resize on size
+    # change, cancel when the side is flat). "close_position" restores the
+    # pre-#651 closePosition=true/GTE_GTC legs byte-for-byte (rollback lever).
+    # Read through tradeengine.protective_leg_mode.protective_leg_mode().
+    te_protective_leg_mode: str = "explicit_qty"
+    # #651: periodic full leg-lifecycle sweep interval, in seconds. Event
+    # triggers (fills, closes, ACCOUNT_UPDATE) run a side sync immediately;
+    # this sweep is the backstop.
+    te_protective_leg_sync_interval_sec: float = 30.0
+    # #651: a leg younger than this is never cancelled because its side reads
+    # flat — Binance positionRisk can lag a fresh entry fill by a few seconds.
+    te_protective_leg_flat_grace_sec: float = 30.0
+    # #651: in explicit_qty mode, replace legacy closePosition legs on a
+    # healthy side with explicit-quantity legs at the same trigger price
+    # (new leg placed first; the legacy leg is only cancelled once the
+    # replacement is live). Legacy legs keep the residual over-close defect
+    # until they are migrated.
+    te_protective_leg_migrate_legacy: bool = True
+
     # Redis Configuration (for caching)
     redis_url: str | None = None
     redis_password: str | None = None

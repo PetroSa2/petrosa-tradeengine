@@ -4,6 +4,10 @@ Tests for issue #352 source-code acceptance criteria.
 AC-1: position write retries 3 times before logging CRITICAL (no silent drop)
 AC-2: OCO dedup guard — second placement on same exchange position is rejected
 AC-3: closePosition=true on all algo SL/TP orders (no quantity/reduceOnly)
+      — since #651 this is the TE_PROTECTIVE_LEG_MODE=close_position rollback
+      mode; the AC-3/#543 classes below pin that mode and act as its
+      regression net (explicit_qty, the new default, is covered in
+      tests/test_protective_legs_651.py).
 AC-4: reconcile_from_exchange registers orphaned orders individually (no zip() loss)
 AC-5: NATS consumer subscribes with queue group 'tradeengine-workers'
 """
@@ -137,6 +141,11 @@ class TestAC2OcoDedupGuard:
 class TestAC3ClosePositionFlag:
     """All algo orders must use closePosition=True; no quantity or reduceOnly."""
 
+    @pytest.fixture(autouse=True)
+    def _close_position_mode(self, monkeypatch):
+        # #651: closePosition legs are the rollback mode now.
+        monkeypatch.setenv("TE_PROTECTIVE_LEG_MODE", "close_position")
+
     def _make_binance(self):
         from tradeengine.exchange.binance import BinanceFuturesExchange
 
@@ -244,6 +253,11 @@ class TestAC3ClosePositionFlag:
 
 class TestIssue543GteGtcTimeInForce:
     """All four closePosition algo builders must send timeInForce=GTE_GTC."""
+
+    @pytest.fixture(autouse=True)
+    def _close_position_mode(self, monkeypatch):
+        # #651: closePosition legs are the rollback mode now.
+        monkeypatch.setenv("TE_PROTECTIVE_LEG_MODE", "close_position")
 
     def _make_binance(self):
         from tradeengine.exchange.binance import BinanceFuturesExchange

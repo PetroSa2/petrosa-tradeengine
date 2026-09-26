@@ -73,7 +73,7 @@ class PositionStopStatus(BaseModel):
         "position_closed",
         "close_failed",
     ]
-    source: Literal["memory", "mysql", "both"]
+    source: Literal["memory", "mysql", "store", "both"]
 
 
 class StopsDivergence(BaseModel):
@@ -140,6 +140,11 @@ async def check_position_stops(
 
     merged: dict[str, dict[str, Any]] = {}
     source_map: dict[str, str] = {}
+    store_source = (
+        "mysql"
+        if position_client.__class__.__module__ == "shared.mysql_client"
+        else "store"
+    )
 
     for pos in memory_positions:
         pid = pos.get("strategy_position_id")
@@ -159,7 +164,7 @@ async def check_position_stops(
             source_map[pid] = "both"
         else:
             merged[pid] = dict(pos)
-            source_map[pid] = "store"
+            source_map[pid] = store_source
 
     result_positions: list[PositionStopStatus] = []
     divergences: list[StopsDivergence] = []

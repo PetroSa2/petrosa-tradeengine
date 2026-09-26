@@ -732,24 +732,23 @@ class PositionManager:
         """Mark position as closed in Data Manager"""
         symbol, position_side = position_key
         try:
-            position_id = position.get("position_id")
-            if position_id:
-                await trading_store.update_position(
-                    str(position_id),
-                    {
-                        "status": "closed",
-                        "exit_price": position.get(
-                            "last_price", position.get("avg_price", 0.0)
-                        ),
-                        "exit_time": datetime.now(UTC),
-                        "pnl": position["realized_pnl"],
-                        "pnl_pct": 0.0,
-                        "pnl_after_fees": position["realized_pnl"],
-                        "duration_seconds": 0,
-                        "close_reason": "signal_reduce",
-                        "final_commission": 0.0,
-                    },
-                )
+            await trading_store.close_position(
+                symbol,
+                position_side,
+                {
+                    "status": "closed",
+                    "exit_price": position.get(
+                        "last_price", position.get("avg_price", 0.0)
+                    ),
+                    "exit_time": datetime.now(UTC),
+                    "pnl": position["realized_pnl"],
+                    "pnl_pct": 0.0,
+                    "pnl_after_fees": position["realized_pnl"],
+                    "duration_seconds": 0,
+                    "close_reason": "signal_reduce",
+                    "final_commission": 0.0,
+                },
+            )
             logger.info(
                 f"Position {symbol} {position_side} marked as closed in Data Manager"
             )

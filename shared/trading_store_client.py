@@ -61,6 +61,9 @@ class TradingStoreClient:
 
     async def get_open_positions(self) -> list[dict[str, object]]:
         """Read every open position, following the cursor returned by the API."""
+        legacy = self._legacy_override("get_open_positions")
+        if legacy is not None:
+            return await legacy()
         rows: list[dict[str, object]] = []
         cursor: str | None = ""
         while True:
@@ -80,6 +83,9 @@ class TradingStoreClient:
 
     async def get_position(self, position_id: str) -> dict[str, object] | None:
         """Return one position, treating a missing id as an empty result."""
+        legacy = self._legacy_override("get_position")
+        if legacy is not None:
+            return await legacy(position_id)
         try:
             response = await self.data_manager_client._client.request(
                 "GET", f"/api/v1/trading/positions/{position_id}"
@@ -165,7 +171,28 @@ class TradingStoreClient:
         self, position_id: str, fields: dict[str, object]
     ) -> PersistResult:
         """Patch risk-order fields without adding defaults."""
+        legacy = self._legacy_override("update_position_risk_orders")
+        if legacy is not None:
+            return await legacy(position_id, fields)
         return await self.update_position(position_id, fields)
+
+    async def close_position(
+        self, symbol: str, position_side: str, fields: dict[str, object]
+    ) -> PersistResult:
+        """Close the matching open position through its id-based patch endpoint."""
+        legacy = self._legacy_override("close_position")
+        if legacy is not None:
+            return await legacy(symbol, position_side, fields)
+        rows = await self.get_open_positions()
+        for row in rows:
+            if (
+                row.get("symbol") == symbol
+                and row.get("position_side") == position_side
+            ):
+                return await self.update_position(str(row["position_id"]), fields)
+        return PersistResult(
+            ok=False, error="position not found", operation="close_position"
+        )
 
     @staticmethod
     def _legacy_override(name: str) -> object | None:

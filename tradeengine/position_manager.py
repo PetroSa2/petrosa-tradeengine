@@ -25,6 +25,7 @@ from shared.constants import (
 
 # Import Data Manager position client
 from shared.mysql_client import position_client
+from shared.trading_store_client import trading_store
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     algo_orders_open,
@@ -101,7 +102,7 @@ class PositionManager:
                 await self._load_positions_from_data_manager()
 
                 # Load daily P&L from Data Manager
-                await self._load_daily_pnl_from_data_manager()
+                await self._load_daily_pnl_from_store()
 
                 # Fetch initial portfolio value from exchange
                 await self._refresh_portfolio_value()
@@ -274,16 +275,18 @@ class PositionManager:
             logger.error(f"Failed to load positions from Data Manager: {e}")
             raise
 
-    async def _load_daily_pnl_from_data_manager(self) -> None:
+    async def _load_daily_pnl_from_store(self) -> None:
         """Load daily P&L and require a persisted value before trading."""
         try:
             today = datetime.now(UTC).date()
             self._daily_pnl_date = today
-            daily_pnl = await position_client.get_daily_pnl(today.isoformat())
+            daily_pnl = await trading_store.get_daily_pnl(today.isoformat())
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
                 self._daily_pnl_refresh_stale = False
-                logger.info(f"Loaded daily P&L from Data Manager: {self.daily_pnl}")
+                logger.info(
+                    "Loaded daily P&L from MongoDB trading store: %s", self.daily_pnl
+                )
             else:
                 self._daily_pnl_refresh_stale = True
                 logger.critical(
@@ -313,7 +316,7 @@ class PositionManager:
 
             if previous_date != today and previous_date is not None:
                 try:
-                    result = await position_client.update_daily_pnl(
+                    result = await trading_store.update_daily_pnl(
                         previous_date.isoformat(), previous_pnl
                     )
                     previous_write_ok = getattr(result, "ok", True) is not False
@@ -329,7 +332,7 @@ class PositionManager:
             self._daily_pnl_date = today
 
             try:
-                result = await position_client.update_daily_pnl(today.isoformat(), 0.0)
+                result = await trading_store.update_daily_pnl(today.isoformat(), 0.0)
                 current_write_ok = getattr(result, "ok", True) is not False
             except Exception as exc:
                 current_write_ok = False
@@ -394,7 +397,7 @@ class PositionManager:
                 # The rollover helper already persisted the new-day zero.
                 if not rolled_over:
                     today = datetime.now(UTC).date().isoformat()
-                    persist_result = await position_client.update_daily_pnl(
+                    persist_result = await trading_store.update_daily_pnl(
                         today, self.daily_pnl
                     )
                     if persist_result.ok:
@@ -402,7 +405,7 @@ class PositionManager:
                     else:
                         daily_pnl_persist_failures_consecutive.inc()
                         logger.error(
-                            "Daily P&L persistence failed for %s: %s",
+                            "Daily P&L persistence failed for %s (store=mongodb): %s",
                             today,
                             persist_result.error,
                         )
@@ -1551,7 +1554,7 @@ class PositionManager:
             return False
 
         # Refresh daily P&L from Data Manager
-        await self._refresh_daily_pnl_from_data_manager()
+        await self._refresh_daily_pnl_from_store()
 
         # #600: a failed refresh must not leave the kill-switch evaluating
         # against a stale/zero daily_pnl — fail CLOSED (reject new entries)
@@ -1574,8 +1577,8 @@ class PositionManager:
 
         return True
 
-    async def _refresh_daily_pnl_from_data_manager(self) -> None:
-        """Refresh daily P&L from Data Manager.
+    async def _refresh_daily_pnl_from_store(self) -> None:
+        """Refresh daily P&L from the MongoDB-backed trading store.
 
         A missing row is treated as an untrusted baseline and fails closed.
         """
@@ -1583,7 +1586,7 @@ class PositionManager:
             if await self._roll_daily_pnl_if_new_day():
                 return
             today = datetime.now(UTC).date().isoformat()
-            daily_pnl = await position_client.get_daily_pnl(today)
+            daily_pnl = await trading_store.get_daily_pnl(today)
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
                 self._daily_pnl_refresh_stale = False
@@ -1595,7 +1598,7 @@ class PositionManager:
                 )
         except Exception as e:
             logger.error(
-                f"⛔ Failed to refresh daily P&L from Data Manager — the "
+                f"⛔ Failed to refresh daily P&L from MongoDB trading store — the "
                 f"daily-loss kill-switch will fail CLOSED until refresh "
                 f"succeeds again: {e}"
             )

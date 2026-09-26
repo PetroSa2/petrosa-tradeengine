@@ -356,49 +356,6 @@ class DataManagerPositionClient:
         logger.info("Retrieved %d open positions via Data Manager", len(positions))
         return positions
 
-    async def get_daily_pnl(self, date: str) -> float | None:
-        """Return today's realized P&L, or None if no record exists yet.
-
-        Raises on a genuine query/connection failure (#600) so the caller
-        can distinguish "no data recorded yet" (a legitimate None — first
-        trade of the day) from "Data Manager is unreachable" — the two were
-        previously indistinguishable, which let the daily-loss kill-switch
-        silently evaluate against a stale/zero P&L during an outage.
-        """
-        try:
-            response = await self.data_manager_client._client.query(
-                database="mysql",
-                collection="daily_pnl",
-                filter={"date": date},
-                limit=1,
-            )
-            if response and response.get("data"):
-                return response["data"][0].get("daily_pnl")
-            return None
-        except Exception as exc:
-            logger.error("Failed to get daily P&L for %s: %s", date, exc)
-            raise
-
-    async def update_daily_pnl(self, date: str, daily_pnl: float) -> PersistResult:
-        try:
-            await self.data_manager_client._client.upsert_one(
-                database="mysql",
-                collection="daily_pnl",
-                filter={"date": date},
-                record={
-                    "date": date,
-                    "daily_pnl": daily_pnl,
-                    "updated_at": datetime.now(UTC).isoformat(),
-                },
-            )
-            logger.info(
-                "Updated daily P&L for %s: %s via Data Manager", date, daily_pnl
-            )
-            return self._make_result(True, operation="update_daily_pnl")
-        except Exception as exc:
-            logger.error("Failed to update daily P&L for %s: %s", date, exc)
-            return self._make_result(False, exc, operation="update_daily_pnl")
-
     async def health_check(self) -> dict[str, Any]:
         try:
             health = await self.data_manager_client._client.health()

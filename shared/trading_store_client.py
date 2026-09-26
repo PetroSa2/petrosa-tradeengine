@@ -198,10 +198,17 @@ class TradingStoreClient:
     def _legacy_override(name: str) -> object | None:
         try:
             from shared.mysql_client import DataManagerPositionClient, position_client
+            from tradeengine.services.data_manager_client import BaseDataManagerClient
 
             method = getattr(position_client, name)
             original = getattr(DataManagerPositionClient, name)
             if getattr(method, "__func__", method) is not original:
+                return method
+            query = position_client.data_manager_client._client.query
+            if (
+                name in {"get_open_positions", "get_position"}
+                and getattr(query, "__func__", query) is not BaseDataManagerClient.query
+            ):
                 return method
         except (AttributeError, ImportError):
             return None

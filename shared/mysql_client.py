@@ -241,6 +241,37 @@ class DataManagerPositionClient:
                 position_id=position_id,
             )
 
+    async def upsert_position(self, position_data: dict[str, Any]) -> PersistResult:
+        """Compatibility shim for pre-cutover callers; new code must not use it."""
+        position_id = position_data.get("position_id")
+        if not position_id:
+            return self._make_result(
+                False,
+                ValueError("position_id is required"),
+                operation="upsert_position",
+            )
+        try:
+            await self.data_manager_client._client.upsert_one(
+                database="mysql",
+                collection="positions",
+                filter={"position_id": position_id},
+                record=position_data,
+            )
+            return self._make_result(
+                True,
+                operation="upsert_position",
+                symbol=str(position_data.get("symbol", "")),
+                position_id=str(position_id),
+            )
+        except Exception as exc:
+            return self._make_result(
+                False,
+                exc,
+                operation="upsert_position",
+                symbol=str(position_data.get("symbol", "")),
+                position_id=str(position_id),
+            )
+
     async def close_position(
         self, symbol: str, position_side: str, update_data: dict[str, Any]
     ) -> PersistResult:

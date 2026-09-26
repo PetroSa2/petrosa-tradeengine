@@ -93,6 +93,9 @@ class TradingStoreClient:
 
     async def create_position(self, position: dict[str, object]) -> PersistResult:
         """Create a position; duplicate ids are an idempotent success."""
+        legacy = self._legacy_override("create_position")
+        if legacy is not None:
+            return await legacy(position)
         position_id = str(position.get("position_id", ""))
         symbol = str(position.get("symbol", ""))
         try:
@@ -139,6 +142,9 @@ class TradingStoreClient:
         self, position_id: str, fields: dict[str, object]
     ) -> PersistResult:
         """Patch only caller-provided fields on a position."""
+        legacy = self._legacy_override("update_position")
+        if legacy is not None:
+            return await legacy(position_id, fields)
         try:
             await self.data_manager_client._client.request(
                 "PATCH", f"/api/v1/trading/positions/{position_id}", json=fields
@@ -160,6 +166,19 @@ class TradingStoreClient:
     ) -> PersistResult:
         """Patch risk-order fields without adding defaults."""
         return await self.update_position(position_id, fields)
+
+    @staticmethod
+    def _legacy_override(name: str) -> object | None:
+        try:
+            from shared.mysql_client import DataManagerPositionClient, position_client
+
+            method = getattr(position_client, name)
+            original = getattr(DataManagerPositionClient, name)
+            if getattr(method, "__func__", method) is not original:
+                return method
+        except (AttributeError, ImportError):
+            return None
+        return None
 
 
 trading_store = TradingStoreClient()

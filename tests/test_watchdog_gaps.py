@@ -116,7 +116,9 @@ class TestAC1HeartbeatRestrictedOnNatsDown:
 class _FakeClient:
     """Minimal async stand-in for the data-manager generic API."""
 
-    def __init__(self, store: dict | None = None, *, raise_on_read: bool = False) -> None:
+    def __init__(
+        self, store: dict | None = None, *, raise_on_read: bool = False
+    ) -> None:
         self._store = store if store is not None else {}
         self._raise_on_read = raise_on_read
 

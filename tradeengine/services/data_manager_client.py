@@ -97,7 +97,7 @@ class BaseDataManagerClient:
     - ``health``      → ``{"status": "healthy" | "unhealthy", ...}``
     """
 
-    def __init__(self, base_url: str, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, base_url: str, timeout: float = 30, max_retries: int = 3):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max(1, int(max_retries))
@@ -391,7 +391,7 @@ class DataManagerClient:
     def __init__(
         self,
         base_url: str | None = None,
-        timeout: int = 30,
+        timeout: float = 30,
         max_retries: int = 3,
     ):
         """

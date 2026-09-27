@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field
 from tradeengine.defaults import FAIL_SAFE_PARAMETERS
 from tradeengine.metrics import (
     last_heartbeat_received_timestamp,
+    restricted_mode_persist_failures_total,
     restricted_mode_status,
 )
+from tradeengine.services.data_manager_client import DataManagerClient
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +75,7 @@ class HeartbeatMonitor:
         timeout: float | None = None,
         recovery_threshold: int | None = None,
         persist_enabled: bool | None = None,
-        state_db: Any = None,
+        client: Any = None,
     ):
         self.nats_url = nats_url
         self.subject = subject
@@ -96,10 +98,7 @@ class HeartbeatMonitor:
         if persist_enabled is None:
             persist_enabled = _resolve_persist_enabled()
         self.persist_enabled: bool = persist_enabled
-        #: Optional motor AsyncIOMotorDatabase handle. Injected by the dispatcher
-        #: (reusing the already-booted distributed-lock MongoDB connection) or in
-        #: tests. Resolved lazily at start() when not provided.
-        self._state_db: Any = state_db
+        self._client: Any = client or DataManagerClient()._client
 
     async def start(self) -> None:
         """Start the monitor and subscribe to heartbeats."""
@@ -204,25 +203,6 @@ class HeartbeatMonitor:
             # not resurrect a stale restricted state.
             await self._persist_state(False)
 
-    async def _resolve_state_db(self) -> Any:
-        """Return the MongoDB handle for persistence, or ``None`` if unavailable.
-
-        Prefers an injected handle; otherwise reuses the already-booted
-        distributed-lock MongoDB connection (dispatcher initializes it before
-        starting the heartbeat monitor). Never raises.
-        """
-        if self._state_db is not None:
-            return self._state_db
-        try:
-            from shared.distributed_lock import distributed_lock_manager
-
-            await distributed_lock_manager._ensure_mongodb_connected()
-            self._state_db = distributed_lock_manager.mongodb_db
-        except Exception as e:  # pragma: no cover - defensive
-            logger.warning(f"HeartbeatMonitor could not resolve state DB: {e}")
-            self._state_db = None
-        return self._state_db
-
     async def _persist_state(self, restricted: bool) -> None:
         """Persist the current restricted-mode flag to durable storage.
 
@@ -233,19 +213,18 @@ class HeartbeatMonitor:
         if not self.persist_enabled:
             return
         try:
-            db = await self._resolve_state_db()
-            if db is None:
-                logger.warning(
-                    "HeartbeatMonitor: no MongoDB handle; restricted_mode "
-                    f"transition to {restricted} not persisted."
-                )
-                return
-            await db[HEARTBEAT_STATE_COLLECTION].update_one(
-                {"_id": HEARTBEAT_STATE_DOC_ID},
-                {"$set": {"restricted_mode": restricted, "updated_at": time.time()}},
-                upsert=True,
+            await self._client.upsert_one(
+                database="mongodb",
+                collection=HEARTBEAT_STATE_COLLECTION,
+                filter={"service": HEARTBEAT_STATE_DOC_ID},
+                record={
+                    "service": HEARTBEAT_STATE_DOC_ID,
+                    "restricted_mode": restricted,
+                    "updated_at": time.time(),
+                },
             )
         except Exception as e:
+            restricted_mode_persist_failures_total.inc()
             logger.error(f"HeartbeatMonitor failed to persist restricted_mode: {e}")
 
     async def _restore_state(self) -> None:
@@ -264,31 +243,34 @@ class HeartbeatMonitor:
         if not self.persist_enabled:
             return
         try:
-            db = await self._resolve_state_db()
-            if db is None:
-                # Cannot verify last-known state -> fail closed.
-                self.restricted_mode = True
-                logger.critical(
-                    "🚨 HeartbeatMonitor: restricted_mode state UNVERIFIABLE at "
-                    "boot (no MongoDB handle) — defaulting to RESTRICTED (fail-safe)."
+            response = await self._client.query(
+                database="mongodb",
+                collection=HEARTBEAT_STATE_COLLECTION,
+                filter={"service": HEARTBEAT_STATE_DOC_ID},
+                limit=1,
+            )
+            records = response.get("data", [])
+            doc = records[0] if records else None
+            if doc is None:
+                response = await self._client.query(
+                    database="mongodb",
+                    collection=HEARTBEAT_STATE_COLLECTION,
+                    filter={"_id": HEARTBEAT_STATE_DOC_ID},
+                    limit=1,
                 )
-            else:
-                doc = await db[HEARTBEAT_STATE_COLLECTION].find_one(
-                    {"_id": HEARTBEAT_STATE_DOC_ID}
-                )
-                if doc is None:
-                    # No prior state persisted — genuine first boot, stay NORMAL.
-                    self.restricted_mode = False
-                    logger.info(
-                        "HeartbeatMonitor: no persisted restricted_mode state; "
-                        "starting in NORMAL mode."
-                    )
-                else:
+                records = response.get("data", [])
+                doc = records[0] if records else None
+                if doc is not None:
                     self.restricted_mode = bool(doc.get("restricted_mode", True))
-                    logger.info(
-                        "HeartbeatMonitor: restored restricted_mode="
-                        f"{self.restricted_mode} from durable store."
-                    )
+                    await self._persist_state(self.restricted_mode)
+                else:
+                    self.restricted_mode = False
+            else:
+                self.restricted_mode = bool(doc.get("restricted_mode", True))
+            logger.info(
+                "HeartbeatMonitor: restored restricted_mode="
+                f"{self.restricted_mode} from durable store."
+            )
         except Exception as e:
             # Any read error means we cannot verify the state -> fail closed.
             self.restricted_mode = True

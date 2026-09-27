@@ -16,6 +16,11 @@ OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
+restricted_mode_persist_failures_total = Counter(
+    "tradeengine_restricted_mode_persist_failures_total",
+    "Restricted-mode state persistence failures",
+)
+
 # Position Lifecycle Metrics
 positions_opened_total = Counter(
     "tradeengine_positions_opened_total",

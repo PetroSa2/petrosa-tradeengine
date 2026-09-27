@@ -113,42 +113,25 @@ class TestAC1HeartbeatRestrictedOnNatsDown:
 # ---------------------------------------------------------------------------
 
 
-class _FakeCollection:
-    """Minimal async stand-in for a motor collection backed by a dict.
+class _FakeClient:
+    """Minimal async stand-in for the data-manager generic API."""
 
-    Supports the two operations HeartbeatMonitor uses: ``update_one`` (with
-    ``$set`` + ``upsert``) and ``find_one`` by ``_id``. Optionally raises to
-    simulate an unreadable / unreachable store (fail-safe path).
-    """
-
-    def __init__(self, store: dict, *, raise_on_read: bool = False) -> None:
-        self._store = store
+    def __init__(self, store: dict | None = None, *, raise_on_read: bool = False) -> None:
+        self._store = store if store is not None else {}
         self._raise_on_read = raise_on_read
 
-    async def update_one(self, filt, update, upsert=False):  # noqa: ANN001
-        doc = self._store.setdefault(filt["_id"], {"_id": filt["_id"]})
-        doc.update(update["$set"])
+    async def upsert_one(self, database, collection, filter, record):  # noqa: ANN001
+        key = filter.get("service", filter.get("_id"))
+        self._store[key] = {**self._store.get(key, {}), **record}
 
-    async def find_one(self, filt):  # noqa: ANN001
+    async def query(self, database, collection, *, filter, limit):  # noqa: ANN001
         if self._raise_on_read:
             raise RuntimeError("simulated MongoDB read failure")
-        return self._store.get(filt["_id"])
-
-
-class _FakeDB:
-    """Async db handle returning a shared _FakeCollection per name."""
-
-    def __init__(self, *, raise_on_read: bool = False) -> None:
-        self._store: dict = {}
-        self._raise_on_read = raise_on_read
-        self._cols: dict = {}
-
-    def __getitem__(self, name):  # noqa: ANN001
-        if name not in self._cols:
-            self._cols[name] = _FakeCollection(
-                self._store, raise_on_read=self._raise_on_read
-            )
-        return self._cols[name]
+        if "service" in filter:
+            doc = self._store.get(filter["service"])
+        else:
+            doc = self._store.get(filter["_id"])
+        return {"data": [doc] if doc is not None else []}
 
 
 class TestAC2HeartbeatStateRestoredOnRestart:
@@ -163,13 +146,13 @@ class TestAC2HeartbeatStateRestoredOnRestart:
 
     @pytest.mark.asyncio
     async def test_restart_restores_restricted_state(self) -> None:
-        db = _FakeDB()
+        client = _FakeClient()
         with patch("nats.connect", new_callable=AsyncMock):
             first = HeartbeatMonitor(
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await first._enter_restricted_mode()
             assert first.is_restricted() is True
@@ -180,7 +163,7 @@ class TestAC2HeartbeatStateRestoredOnRestart:
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await fresh.start()
             # The fresh instance RESTORED the prior restricted state.
@@ -193,13 +176,13 @@ class TestAC2HeartbeatStateRestoredOnRestart:
     @pytest.mark.asyncio
     async def test_boot_fails_closed_when_state_unverifiable(self) -> None:
         # Store raises on read -> state cannot be verified -> fail closed.
-        db = _FakeDB(raise_on_read=True)
+        client = _FakeClient(raise_on_read=True)
         with patch("nats.connect", new_callable=AsyncMock):
             monitor = HeartbeatMonitor(
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await monitor.start()
             assert monitor.restricted_mode is True
@@ -208,19 +191,15 @@ class TestAC2HeartbeatStateRestoredOnRestart:
             await monitor.stop()
 
     @pytest.mark.asyncio
-    async def test_boot_fails_closed_when_no_state_handle(self) -> None:
-        # No handle resolvable -> unverifiable -> fail closed.
+    async def test_boot_fails_closed_when_client_errors(self) -> None:
         with patch("nats.connect", new_callable=AsyncMock):
             monitor = HeartbeatMonitor(
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=None,
+                client=_FakeClient(raise_on_read=True),
             )
-            with patch.object(
-                monitor, "_resolve_state_db", new_callable=AsyncMock, return_value=None
-            ):
-                await monitor.start()
+            await monitor.start()
             assert monitor.restricted_mode is True
             assert _gauge_value(restricted_mode_status) == 1
             await monitor.stop()
@@ -228,13 +207,13 @@ class TestAC2HeartbeatStateRestoredOnRestart:
     @pytest.mark.asyncio
     async def test_fresh_boot_no_prior_state_starts_normal(self) -> None:
         # Empty store, readable -> genuine first boot -> NORMAL.
-        db = _FakeDB()
+        client = _FakeClient()
         with patch("nats.connect", new_callable=AsyncMock):
             monitor = HeartbeatMonitor(
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await monitor.start()
             assert monitor.restricted_mode is False
@@ -267,13 +246,13 @@ class TestAC2HeartbeatStateRestoredOnRestart:
     @pytest.mark.asyncio
     async def test_recovery_persists_normal_state(self) -> None:
         # Exiting restricted mode persists NORMAL so a later restart stays NORMAL.
-        db = _FakeDB()
+        client = _FakeClient()
         with patch("nats.connect", new_callable=AsyncMock):
             first = HeartbeatMonitor(
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await first._enter_restricted_mode()
             await first._exit_restricted_mode()
@@ -283,7 +262,7 @@ class TestAC2HeartbeatStateRestoredOnRestart:
                 nats_url="nats://localhost:4222",
                 subject="cio.heartbeat",
                 persist_enabled=True,
-                state_db=db,
+                client=client,
             )
             await fresh.start()
             assert fresh.restricted_mode is False

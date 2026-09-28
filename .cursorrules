@@ -227,9 +227,13 @@ make k8s-clean
 - `BINANCE_API_SECRET`: Binance API secret
 - `JWT_SECRET_KEY`: JWT signing secret
 
+## Data pillars
+
+MongoDB is the operational store: every live-path read and write goes to MongoDB. MySQL holds a historic reference copy only (statistical analysis, backtesting, research) and is never read on the live path.
+
+`petrosa-data-manager` is the only service that connects to any database; every other service reads and writes data exclusively through the data-manager API.
+
 #### Data Extractor
-- `DB_ADAPTER`: Database adapter (mysql, mongodb)
-- `MYSQL_URI`: MySQL connection string
 - `BINANCE_API_KEY`: Binance API key
 - `BINANCE_API_SECRET`: Binance API secret
 

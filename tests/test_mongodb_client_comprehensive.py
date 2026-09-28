@@ -144,7 +144,7 @@ class TestDataManagerConfigClientGlobalConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"upserted_id": "global"}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": True}
 
             result = await mongodb_client.upsert_global_config(config)
             assert result is True
@@ -160,7 +160,7 @@ class TestDataManagerConfigClientGlobalConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"modified_count": 1}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": False}
 
             result = await mongodb_client.upsert_global_config(config)
             assert result is True
@@ -310,7 +310,7 @@ class TestDataManagerConfigClientSymbolConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"upserted_id": "test_id"}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": True}
 
             result = await mongodb_client.upsert_symbol_config("BTCUSDT", config)
             assert result is True
@@ -327,7 +327,7 @@ class TestDataManagerConfigClientSymbolConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"modified_count": 1}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": False}
 
             result = await mongodb_client.upsert_symbol_config("BTCUSDT", config)
             assert result is True
@@ -503,7 +503,7 @@ class TestDataManagerConfigClientSymbolSideConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"upserted_id": "test_id"}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": True}
 
             result = await mongodb_client.set_symbol_side_config(config)
             assert result is True
@@ -523,7 +523,7 @@ class TestDataManagerConfigClientSymbolSideConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"modified_count": 1}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": False}
 
             result = await mongodb_client.set_symbol_side_config(config)
             assert result is True
@@ -810,7 +810,7 @@ class TestDataManagerConfigClientStrategyConfig:
             "upsert_one",
             new_callable=AsyncMock,
         ) as mock_upsert:
-            mock_upsert.return_value = {"upserted_id": "strategy_cfg"}
+            mock_upsert.return_value = {"updated_count": 1, "upserted": True}
 
             result = await mongodb_client.upsert_strategy_config(config)
             assert result is True

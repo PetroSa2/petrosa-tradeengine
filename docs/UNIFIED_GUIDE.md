@@ -107,8 +107,8 @@ JWT_SECRET_KEY=your-jwt-secret
 
 #### Data Extractor
 ```bash
-DB_ADAPTER=mysql
-MYSQL_URI=mysql+pymysql://user:pass@mysql:3306/binance_data
+Use the data-manager API for all live-path reads and writes. MongoDB is the
+operational store; MySQL is a historic reference copy for offline analysis.
 BINANCE_API_KEY=your-api-key
 BINANCE_API_SECRET=your-api-secret
 ```

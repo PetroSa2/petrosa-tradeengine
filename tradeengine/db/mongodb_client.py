@@ -85,7 +85,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
+            if response.get("updated_count", 0) > 0 or response.get("upserted") is True:
                 logger.info("✓ Upserted global trading configuration via Data Manager")
                 return True
             else:
@@ -150,7 +150,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
+            if response.get("updated_count", 0) > 0 or response.get("upserted") is True:
                 logger.info(f"✓ Upserted symbol config for {symbol} via Data Manager")
                 return True
             else:
@@ -463,7 +463,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
+            if response.get("updated_count", 0) > 0 or response.get("upserted") is True:
                 logger.info(
                     f"✓ Upserted symbol-side config for {symbol}-{side} via Data Manager"
                 )
@@ -580,7 +580,7 @@ class DataManagerConfigClient:
                 record=config_dict,
             )
 
-            if response.get("upserted_id") or (response.get("modified_count", 0) > 0):
+            if response.get("updated_count", 0) > 0 or response.get("upserted") is True:
                 logger.info(
                     f"✓ Upserted strategy config for {strategy_id} via Data Manager"
                 )

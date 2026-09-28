@@ -1,6 +1,6 @@
 """
 Position Manager - Tracks positions and enforces risk limits with distributed state
-management using Data Manager API and MongoDB for coordination only.
+management using the data-manager API backed by MongoDB.
 """
 
 import asyncio
@@ -55,7 +55,7 @@ position_client = trading_store
 
 class PositionManager:
     """Manages trading positions and risk limits with distributed state management
-    using Data Manager API for persistence and MongoDB for coordination only."""
+    using the data-manager API backed by MongoDB."""
 
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
@@ -86,9 +86,9 @@ class PositionManager:
         self.exchange_truth_store: ExchangeTruthStore | None = None
 
     async def initialize(self) -> None:
-        """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
+        """Initialize position manager with the data-manager API backed by MongoDB."""
         try:
-            # Initialize MongoDB connection for distributed coordination only
+            # Initialize the data-manager-backed MongoDB operational store
             await self._initialize_mongodb()
 
             # Initialize Data Manager connection for position persistence

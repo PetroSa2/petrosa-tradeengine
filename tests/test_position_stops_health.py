@@ -736,3 +736,21 @@ async def test_484_alarm_publish_exception_never_breaks_endpoint():
 
     assert resp.violation_count == 1
     assert resp.alarms_emitted == 1
+
+
+@pytest.mark.asyncio
+async def test_get_mode_never_places_or_closes_orders():
+    """The GET handler's read-only mode reports gaps without remediation."""
+    pos = _pos(
+        sl_order_id=None,
+        tp_order_id=None,
+        stop_loss_price=45000.0,
+        take_profit_price=55000.0,
+    )
+    spm, pc, exc, pub = _mocks(memory=[pos])
+
+    resp = await check_position_stops(spm, pc, exc, pub, remediate=False)
+
+    assert resp.violation_count == 1
+    exc.execute.assert_not_called()
+    spm.close_strategy_position.assert_not_called()

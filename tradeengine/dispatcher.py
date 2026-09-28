@@ -2452,7 +2452,7 @@ class Dispatcher:
                 await self.heartbeat_monitor.start()
 
             # CRITICAL FIX: Initialize strategy position manager in background
-            # MySQL connection attempts can take 3+ minutes and will block startup
+            # Data-manager connection attempts can take 3+ minutes and will block startup
             # Move to background task so NATS consumer can start immediately
             import asyncio
 
@@ -2466,12 +2466,12 @@ class Dispatcher:
                     self.logger.info(
                         "✅ Strategy position manager initialized successfully"
                     )
-                except Exception as mysql_error:
+                except Exception as store_error:
                     self.logger.warning(
-                        f"⚠️ Strategy position manager initialization failed (MySQL unavailable): {mysql_error}"
+                        f"⚠️ Strategy position manager initialization failed (data-manager unavailable): {store_error}"
                     )
                     self.logger.warning(
-                        "Positions will still work via MongoDB fallback"
+                        "Position tracking remains available through data-manager (MongoDB)"
                     )
 
             # Start initialization in background (don't await)
@@ -5025,10 +5025,17 @@ class Dispatcher:
                 _PROTECTIVE_TYPES = frozenset(
                     {"STOP_MARKET", "STOP", "TAKE_PROFIT_MARKET", "TAKE_PROFIT"}
                 )
+                requested_side = str(order.position_side or "").upper()
+                if requested_side not in {"LONG", "SHORT", "BOTH"}:
+                    requested_side = (
+                        "LONG" if str(order.side).lower() == "buy" else "SHORT"
+                    )
                 existing_protective = [
                     o
                     for o in self.user_data_consumer.store.get_open_orders(order.symbol)
                     if o.order_type.upper() in _PROTECTIVE_TYPES
+                    and str(getattr(o, "position_side", "BOTH") or "BOTH").upper()
+                    in {requested_side, "BOTH"}
                 ]
                 if existing_protective:
                     order_placement_skipped_total.labels(reason="already_armed").inc()
@@ -5949,9 +5956,14 @@ class Dispatcher:
 
             # Step 1: Cancel associated OCO orders first
             oco_cancelled = False
-            if position_id in self.oco_manager.active_oco_pairs:
-                self.logger.info(f"🔄 CANCELLING OCO ORDERS FOR POSITION {position_id}")
-                oco_cancelled = await self.oco_manager.cancel_oco_pair(position_id)
+            exchange_position_key = f"{symbol}_{position_side}"
+            if exchange_position_key in self.oco_manager.active_oco_pairs:
+                self.logger.info(
+                    f"🔄 CANCELLING OCO ORDERS FOR POSITION {exchange_position_key}"
+                )
+                oco_cancelled = await self.oco_manager.cancel_oco_pair(
+                    position_id="", symbol=symbol, position_side=position_side
+                )
                 if oco_cancelled:
                     self.logger.info("✅ OCO ORDERS CANCELLED SUCCESSFULLY")
                 else:

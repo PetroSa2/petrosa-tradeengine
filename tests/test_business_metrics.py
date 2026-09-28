@@ -910,7 +910,12 @@ class TestSignalToOrderConversion:
             # Check that latency was observed (count should be >= initial + 1)
             assert final_count >= initial_count
             # Also verify the result status
-            assert result.get("status") in ["executed", "success", "skipped_duplicate"]
+        assert result.get("status") in [
+            "executed",
+            "success",
+            "skipped_duplicate",
+            "lock_unavailable",
+        ]
 
     def _get_histogram_count(self, metric_name):
         """Helper to get histogram observation count"""

@@ -68,26 +68,26 @@ class LeaseClient:
         return await self._request(
             "acquire",
             "POST",
-            f"/api/v1/locks/{name}/acquire",
-            {"owner": owner, "ttl_s": ttl_s},
+            f"/api/v1/leases/{name}/acquire",
+            {"owner": owner, "ttl_seconds": ttl_s},
         )
 
     async def renew(self, name: str, owner: str, ttl_s: int) -> dict[str, Any]:
         return await self._request(
             "renew",
             "POST",
-            f"/api/v1/locks/{name}/renew",
-            {"owner": owner, "ttl_s": ttl_s},
+            f"/api/v1/leases/{name}/renew",
+            {"owner": owner, "ttl_seconds": ttl_s},
         )
 
     async def release(self, name: str, owner: str) -> dict[str, Any]:
         return await self._request(
-            "release", "POST", f"/api/v1/locks/{name}/release", {"owner": owner}
+            "release", "POST", f"/api/v1/leases/{name}/release", {"owner": owner}
         )
 
     async def get(self, name: str) -> dict[str, Any] | None:
         try:
-            return await self._request("get", "GET", f"/api/v1/locks/{name}")
+            return await self._request("get", "GET", f"/api/v1/leases/{name}")
         except APIError as exc:
             if exc.status_code == 404:
                 return None

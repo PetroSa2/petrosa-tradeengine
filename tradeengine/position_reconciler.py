@@ -244,8 +244,22 @@ def _order_is_reduce_only(order: dict[str, Any]) -> bool:
     """Treat both ``reduceOnly=True`` and ``closePosition=True`` as
     reduce-only — Binance uses ``closePosition`` for sweep-everything
     SL/TP and ``reduceOnly`` for sized stops; either flag protects the
-    position from further accumulation."""
-    return bool(order.get("reduceOnly")) or bool(order.get("closePosition"))
+    position from further accumulation.
+
+    #651: in hedge mode an order on ``positionSide=LONG`` with ``side=SELL``
+    (or ``SHORT``/``BUY``) can only reduce that side — Binance rejects the
+    ``reduceOnly`` flag together with ``positionSide``, so the explicit-
+    quantity protective legs carry ``reduceOnly=false`` and
+    ``closePosition=false``. Without this they would read as "unhedged" and
+    the naked-position remediator would stack a second pair every cycle.
+    """
+    if bool(order.get("reduceOnly")) or bool(order.get("closePosition")):
+        return True
+    position_side = str(order.get("positionSide", "BOTH")).upper()
+    side = str(order.get("side", "")).upper()
+    return (position_side == "LONG" and side == "SELL") or (
+        position_side == "SHORT" and side == "BUY"
+    )
 
 
 def _is_malformed_sign(side: str, position_amt: float) -> bool:

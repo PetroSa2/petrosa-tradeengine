@@ -119,6 +119,16 @@ class ExchangeTruthStore:
         # FILLED status. Used by the dispatcher to publish a `filled`
         # execution event for entry fills — the highest-fidelity fill signal.
         self._on_fill = on_fill
+        # #651: optional sync callback invoked with the (symbol, side) keys
+        # whose position quantity changed in an ACCOUNT_UPDATE, so the
+        # protective-leg manager can resize/cancel legs promptly.
+        self._on_position_change: Callable[[list[tuple[str, str]]], None] | None = None
+
+    def set_on_position_change(
+        self, callback: Callable[[list[tuple[str, str]]], None] | None
+    ) -> None:
+        """Register (or clear) the position-change callback (#651)."""
+        self._on_position_change = callback
 
     def set_on_fill(
         self, on_fill: Callable[[dict[str, Any]], Awaitable[None]] | None
@@ -147,6 +157,7 @@ class ExchangeTruthStore:
     async def update_positions_from_account_update(self, event: dict[str, Any]) -> None:
         """Apply an ACCOUNT_UPDATE WS event to the positions snapshot."""
         positions = event.get("a", {}).get("P", []) or event.get("P", [])
+        changed: list[tuple[str, str]] = []
         async with self._lock:
             for p in positions:
                 symbol = p.get("s", "")
@@ -155,6 +166,9 @@ class ExchangeTruthStore:
                 entry = float(p.get("ep", 0))
                 upnl = float(p.get("up", 0))
                 previous = self._positions.get((symbol, side))
+                previous_qty = previous.quantity if previous is not None else 0.0
+                if abs(previous_qty - qty) > 1e-12:
+                    changed.append((symbol, side))
                 mark_price = float(p.get("mp", p.get("markPrice", 0)) or 0)
                 notional = float(p.get("notional", 0) or 0)
                 if abs(qty) < 1e-9:
@@ -172,6 +186,13 @@ class ExchangeTruthStore:
                     )
             self._last_updated = datetime.now(UTC)
             self._is_ready = True
+
+        # #651: notify OUTSIDE the lock; best-effort, never disturbs the store.
+        if changed and self._on_position_change is not None:
+            try:
+                self._on_position_change(changed)
+            except Exception:
+                logger.exception("ExchangeTruthStore position-change callback failed")
 
     async def update_order_from_trade_update(self, event: dict[str, Any]) -> None:
         """Apply an ORDER_TRADE_UPDATE WS event to the open-orders snapshot."""

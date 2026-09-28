@@ -43,7 +43,7 @@ import profiler_init  # noqa: F401 - Auto-initializes if ENABLE_PROFILER=true
 from contracts.order import TradeOrder
 from shared.audit import audit_logger
 from shared.config import Settings
-from shared.mysql_client import position_client
+from shared.trading_store_client import trading_store as position_client
 from tradeengine.api_config_routes import (
     router as config_router,
     set_config_manager,
@@ -215,7 +215,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # production — enqueued 0-insert/failed writes sat forever and were
         # never actually retried).
         try:
-            from shared.mysql_client import position_client
+            from shared.trading_store_client import trading_store as position_client
             from tradeengine.services.persist_retry_queue import (
                 persist_retry_queue,
                 register_default_handlers,

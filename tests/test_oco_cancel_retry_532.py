@@ -21,6 +21,11 @@ Guardrails asserted (must not reintroduce):
 - #504 — no same-price cancel spin: a terminal/gone leg is not looped over.
 - #490 (``-1102``) — algo cancels are not routed through ``/order``; this path
   uses ``futures_cancel_order`` for the standard SL/TP legs only.
+
+Since #650 the cancel endpoint is chosen from the leg kind recorded on the
+pair (``sl_is_algo`` / ``tp_is_algo``). The pairs below are explicitly
+*standard* legs, so they keep exercising the ``futures_cancel_order`` retry
+path; the algo-leg equivalents live in ``tests/test_oco_algo_cancel_650.py``.
 - Idempotency — a retry after the leg actually cancelled is a no-op, not an
   error.
 
@@ -72,6 +77,9 @@ def _make_oco_info(
         "quantity": 0.001,
         "sl_order_id": sl_order_id,
         "tp_order_id": tp_order_id,
+        # #650: standard (non-algo) legs -> futures_cancel_order path.
+        "sl_is_algo": False,
+        "tp_is_algo": False,
         "symbol": symbol,
         "position_side": position_side,
         "status": status,
@@ -248,10 +256,10 @@ async def test_exhaustion_keeps_pair_tracked_and_alerts(
 async def test_cancel_uses_futures_cancel_order_not_algo_order_path(
     oco_manager: OCOManager, exchange: RetryFakeExchange, _no_real_backoff: AsyncMock
 ) -> None:
-    """#490 (-1102): the surviving-leg cancel must go through
-    ``futures_cancel_order`` (standard order path), never the raw ``/order``
-    algo route. Also asserts #504: exactly one cancel per successful attempt
-    (no same-price spin)."""
+    """#490 (-1102) / #650 AC2: a STANDARD surviving leg is cancelled through
+    ``futures_cancel_order`` (standard order path), never the raw algo route.
+    Also asserts #504: exactly one cancel per successful attempt (no
+    same-price spin)."""
     key = "BTCUSDT_LONG"
     oco_manager.active_oco_pairs[key] = [
         _make_oco_info(sl_order_id="SL1", tp_order_id="TP1")

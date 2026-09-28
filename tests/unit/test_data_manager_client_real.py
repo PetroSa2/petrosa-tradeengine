@@ -318,13 +318,22 @@ async def test_update_one_normalizes_data_manager_count(
 
 
 @pytest.mark.asyncio
-async def test_upsert_one_returns_real_counts_never_placeholder() -> None:
-    """upsert_one must surface real counts; upserted_id may be synthesized but never 'placeholder'."""
+@pytest.mark.parametrize(
+    ("response", "expected_count", "expected_upserted"),
+    [
+        ({"updated_count": 1, "upserted": True}, 1, True),
+        ({"updated_count": 1, "upserted": False}, 1, False),
+    ],
+)
+async def test_upsert_one_matches_gateway_response(
+    response: dict[str, object], expected_count: int, expected_upserted: bool
+) -> None:
+    """Map the gateway's insert/update response without inventing Mongo fields."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"modified_count": 0, "upserted_count": 1},
+            json=response,
         )
 
     client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
@@ -333,10 +342,11 @@ async def test_upsert_one_returns_real_counts_never_placeholder() -> None:
     result = await client.upsert_one("mongodb", "trading_configs_global", {}, {"x": 1})
     await client.close()
 
-    assert result["upserted_count"] == 1
-    assert result["modified_count"] == 0
-    assert result["upserted_id"] != "placeholder"
-    assert result["upserted_id"], "must surface a non-empty id when upsert occurred"
+    assert result["updated_count"] == expected_count
+    assert result["upserted"] is expected_upserted
+    assert result["modified_count"] is None
+    assert result["upserted_count"] is None
+    assert result["upserted_id"] is None
 
 
 @pytest.mark.asyncio

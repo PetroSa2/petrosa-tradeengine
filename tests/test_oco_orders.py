@@ -71,6 +71,12 @@ def mock_exchange():
 
     exchange.client.futures_cancel_order = mock_cancel_order
 
+    # #650: protective legs are algo orders; the OCO surviving-leg cancel
+    # routes them through cancel_algo_order (DELETE /fapi/v1/algoOrder).
+    exchange.cancel_algo_order = AsyncMock(
+        side_effect=lambda symbol, algo_id: {"order_id": algo_id, "status": "CANCELED"}
+    )
+
     # Mock get open orders
     exchange.client.futures_get_open_orders = Mock(return_value=[])
 
@@ -1234,6 +1240,9 @@ async def test_cancel_other_order_2013_cleans_local_state(oco_manager, mock_exch
             "position_id": "pos-abc",
             "sl_order_id": "sl-111",
             "tp_order_id": "tp-222",
+            # #650: standard legs -> futures_cancel_order path
+            "sl_is_algo": False,
+            "tp_is_algo": False,
             "symbol": "BTCUSDT",
             "position_side": "LONG",
             "status": "active",
@@ -1301,6 +1310,9 @@ async def test_cancel_other_order_2011_cleans_local_state(oco_manager, mock_exch
             "position_id": "pos-2011",
             "sl_order_id": "sl-444",
             "tp_order_id": "tp-555",
+            # #650: standard legs -> futures_cancel_order path
+            "sl_is_algo": False,
+            "tp_is_algo": False,
             "symbol": "BTCUSDT",
             "position_side": "SHORT",
             "status": "active",

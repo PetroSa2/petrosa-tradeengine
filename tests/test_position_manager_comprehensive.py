@@ -18,6 +18,7 @@ from contracts.order import TradeOrder
 from shared.constants import UTC
 from shared.mysql_client import DataManagerPositionClient
 from shared.retry import PersistResult
+from shared.trading_store_client import TradingStoreClient
 from tradeengine.metrics import daily_pnl_persist_failures_consecutive
 from tradeengine.position_manager import PositionManager
 
@@ -543,7 +544,7 @@ async def test_check_daily_loss_limits_within_limit(position_manager):
     position_manager.daily_pnl = -400.0  # -4% loss (within 5% limit)
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=-400.0,
     ):
@@ -559,7 +560,7 @@ async def test_check_daily_loss_limits_exceeded(position_manager):
     position_manager.daily_pnl = -600.0  # -6% loss (exceeds 5% limit)
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=-600.0,
     ):
@@ -581,7 +582,7 @@ async def test_check_daily_loss_limits_fails_closed_on_refresh_error(
     position_manager.daily_pnl = 0.0  # stale/initial value
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         side_effect=Exception("Data Manager unreachable"),
     ):
@@ -601,7 +602,7 @@ async def test_check_daily_loss_limits_recovers_after_refresh_error(
     position_manager._daily_pnl_refresh_stale = True
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=-100.0,
     ):
@@ -616,11 +617,11 @@ async def test_empty_daily_pnl_refresh_stays_stale(position_manager):
     position_manager._daily_pnl_refresh_stale = False
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=None,
     ):
-        await position_manager._refresh_daily_pnl_from_data_manager()
+        await position_manager._refresh_daily_pnl_from_store()
 
     assert position_manager.daily_pnl == -125.0
     assert position_manager._daily_pnl_refresh_stale is True
@@ -629,11 +630,11 @@ async def test_empty_daily_pnl_refresh_stays_stale(position_manager):
 @pytest.mark.asyncio
 async def test_populated_daily_pnl_restores_after_restart(position_manager):
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=-321.5,
     ):
-        await position_manager._load_daily_pnl_from_data_manager()
+        await position_manager._load_daily_pnl_from_store()
 
     assert position_manager.daily_pnl == pytest.approx(-321.5)
     assert position_manager._daily_pnl_refresh_stale is False
@@ -644,7 +645,7 @@ async def test_missing_daily_pnl_blocks_daily_loss_check(position_manager):
     position_manager._daily_pnl_refresh_stale = False
 
     with patch(
-        "shared.mysql_client.position_client.get_daily_pnl",
+        "tradeengine.position_manager.trading_store.get_daily_pnl",
         new_callable=AsyncMock,
         return_value=None,
     ):
@@ -667,7 +668,7 @@ async def test_daily_pnl_persist_failure_is_logged_and_counted(
 
     with (
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
             return_value=failure,
         ),
@@ -690,7 +691,7 @@ async def test_daily_pnl_rollover_closes_previous_day_before_zero_baseline(
     with (
         patch("tradeengine.position_manager.datetime") as mock_datetime,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ) as mock_update,
     ):
@@ -716,7 +717,7 @@ async def test_daily_pnl_rollover_sync_does_not_carry_previous_value(
     with (
         patch("tradeengine.position_manager.datetime") as mock_datetime,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ) as mock_update,
     ):
@@ -764,7 +765,7 @@ async def test_daily_pnl_rollover_fill_counts_against_new_day(
     with (
         patch("tradeengine.position_manager.datetime") as mock_datetime,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ) as mock_update,
         patch(
@@ -791,7 +792,7 @@ async def test_daily_pnl_rollover_is_idempotent(position_manager):
     with (
         patch("tradeengine.position_manager.datetime") as mock_datetime,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ) as mock_update,
     ):
@@ -806,8 +807,8 @@ async def test_daily_pnl_rollover_is_idempotent(position_manager):
 
 @pytest.mark.asyncio
 async def test_update_daily_pnl_returns_failure_and_logs_exception(caplog):
-    client = DataManagerPositionClient()
-    client.data_manager_client._client.upsert_one = AsyncMock(
+    client = TradingStoreClient()
+    client.data_manager_client._client.request = AsyncMock(
         side_effect=RuntimeError("database unavailable")
     )
 
@@ -1555,7 +1556,7 @@ class TestPositionManagerHelperMethods:
         """Test resetting daily PnL"""
         position_manager.daily_pnl = 100.0
         with patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
         ):
             await position_manager.reset_daily_pnl()
@@ -1761,7 +1762,7 @@ async def test_sync_positions_uses_position_id_for_each_journal_record(
             new_callable=AsyncMock,
         ) as mock_upsert,
         patch(
-            "shared.mysql_client.position_client.update_daily_pnl",
+            "tradeengine.position_manager.trading_store.update_daily_pnl",
             new_callable=AsyncMock,
             return_value=PersistResult(ok=True, operation="update_daily_pnl"),
         ),

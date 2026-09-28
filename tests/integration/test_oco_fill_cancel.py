@@ -155,6 +155,11 @@ class FakeExchange:
             self._order_details[orderId]["status"] = "CANCELED"
         return {"orderId": orderId, "status": "CANCELED"}
 
+    async def cancel_algo_order(self, symbol: str, algo_id: str) -> dict[str, Any]:
+        """Cancel an algo (conditional) order by algoId (#650: the OCO
+        surviving-leg cancel routes protective legs here)."""
+        return self.cancel_order_sync(symbol=symbol, orderId=algo_id)
+
     def get_order(self, symbol: str, orderId: str) -> dict[str, Any]:
         """
         Get order details (used by position closing logic).

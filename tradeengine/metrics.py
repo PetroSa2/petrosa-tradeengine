@@ -16,6 +16,11 @@ OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
+restricted_mode_persist_failures_total = Counter(
+    "tradeengine_restricted_mode_persist_failures_total",
+    "Restricted-mode state persistence failures",
+)
+
 # Position Lifecycle Metrics
 positions_opened_total = Counter(
     "tradeengine_positions_opened_total",
@@ -208,6 +213,14 @@ position_persist_failed_total = Counter(
     "petrosa_tradeengine_position_persist_failed_total",
     "Position write failures after retry exhaustion (position may diverge from Binance state)",
     ["symbol", "position_side", "operation", "reason"],
+)
+
+# Position-close persistence failures are tracked separately because a close
+# write can leave realized P&L and the exchange state out of sync.
+position_close_persist_failures_total = Counter(
+    "tradeengine_position_close_persist_failures_total",
+    "Position close persistence failures queued for retry",
+    ["symbol", "position_side"],
 )
 
 # #480 — StrategyPositionManager ghost evictions. A strategy position is a
@@ -505,6 +518,54 @@ def set_naked_position_remediation_mode(mode: str) -> None:
         )
 
 
+# #651 — protective-leg lifecycle observability.
+# Effective TE_PROTECTIVE_LEG_MODE (one series set to 1). Alert on
+# {mode="close_position"} == 1 if the rollback lever is left on by accident.
+protective_leg_mode_status = Gauge(
+    "tradeengine_protective_leg_mode_status",
+    "Effective protective-leg placement mode (1 = active mode). explicit_qty "
+    "places quantity-sized legs; close_position is the pre-#651 rollback.",
+    ["mode"],
+)
+
+_PROTECTIVE_LEG_MODES = ("explicit_qty", "close_position")
+
+
+def set_protective_leg_mode(mode: str) -> None:
+    """Set the protective-leg mode gauge (#651); unknown -> explicit_qty."""
+    normalized = (mode or "").lower().strip()
+    if normalized not in _PROTECTIVE_LEG_MODES:
+        normalized = "explicit_qty"
+    for known in _PROTECTIVE_LEG_MODES:
+        protective_leg_mode_status.labels(mode=known).set(
+            1 if known == normalized else 0
+        )
+
+
+# A protective fill (or a leg sweep) found the hedge-mode side sign-inverted
+# (LONG with positionAmt < 0 / SHORT with positionAmt > 0). Never auto-corrected
+# — a counter-trade leaves the testnet residual in place (#566/#651). Page on
+# increase(...) > 0.
+protective_fill_inversion_total = Counter(
+    "tradeengine_protective_fill_inversion_total",
+    "Hedge-mode sides found sign-inverted after a protective fill (#651); "
+    "alert-only, never auto-traded",
+    ["symbol", "side", "source"],
+)
+
+# Leg lifecycle actions taken by ProtectiveLegManager (#651).
+#   action:  resize | resize_cancel | cancel_flat | cancel_inverted |
+#            cancel_duplicate | migrate | migrate_cancel_legacy
+#   outcome: success | failed
+# A failed resize/migrate can leave a side without a leg of that kind — alert
+# on increase(...{outcome="failed"}) > 0.
+protective_leg_sync_actions_total = Counter(
+    "tradeengine_protective_leg_sync_actions_total",
+    "Protective-leg lifecycle actions (#651)",
+    ["action", "outcome"],
+)
+
+
 # #540: the naked-position watchdog silently never started in prod because the
 # boot gate required `not simulation_enabled`, while the live deploy left
 # SIMULATION_ENABLED at its True default. `arm_only` (#999) became a no-op:
@@ -576,6 +637,12 @@ algo_orders_open = Gauge(
     "tradeengine_algo_orders_open",
     "Currently-open algo (closePosition TP/SL) orders per symbol",
     ["symbol"],
+)
+
+oco_exit_pnl_unknown_total = Counter(
+    "tradeengine_oco_exit_pnl_unknown_total",
+    "OCO exits whose exchange fill could not be resolved for P&L",
+    ["symbol", "close_reason"],
 )
 
 # `execution_halt_active` — backs the "TradeEngine in execution halt mode"
@@ -722,4 +789,14 @@ otel_algo_orders_open = meter.create_gauge(
 otel_execution_halt_active = meter.create_gauge(
     "petrosa_tradeengine_execution_halt_active",
     description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
+)
+
+# #651 — protective-leg lifecycle (OTLP dual-export).
+otel_protective_fill_inversion = meter.create_counter(
+    "tradeengine_protective_fill_inversion_total",
+    description="Hedge-mode sides found sign-inverted after a protective fill (#651) (OTLP dual-export)",
+)
+otel_protective_leg_sync_actions = meter.create_counter(
+    "tradeengine_protective_leg_sync_actions_total",
+    description="Protective-leg lifecycle actions (#651) (OTLP dual-export)",
 )

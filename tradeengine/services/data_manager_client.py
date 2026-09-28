@@ -91,13 +91,14 @@ class BaseDataManagerClient:
       genuine write failure when ``inserted_count`` is 0)
     - ``insert``      → ``{"inserted_count": int}``
     - ``update_one``  → ``{"updated_count": int, "modified_count": int}``
-    - ``upsert_one``  → ``{"modified_count", "upserted_count", "upserted_id"}``
+    - ``upsert_one``  → ``{"updated_count": int, "upserted": bool,
+      "modified_count": None, "upserted_count": None, "upserted_id": None}``
     - ``delete_one``  → ``{"deleted_count": int}``
     - ``delete``      → ``{"deleted_count": int}``
     - ``health``      → ``{"status": "healthy" | "unhealthy", ...}``
     """
 
-    def __init__(self, base_url: str, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, base_url: str, timeout: float = 30, max_retries: int = 3):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max(1, int(max_retries))
@@ -329,20 +330,26 @@ class BaseDataManagerClient:
         filter: dict[str, Any],
         record: dict[str, Any],
     ) -> dict[str, Any]:
-        """Upsert via `PUT /api/v1/{database}/{collection}` (upsert=True)."""
+        """Upsert via the gateway's generic PUT endpoint.
+
+        The gateway reports the total number of affected records as
+        ``updated_count`` and whether an insert occurred as ``upserted``. It
+        does not return MongoDB's ``modified_count``, ``upserted_count``, or
+        ``upserted_id`` fields, so those legacy fields remain explicitly
+        unknown rather than being fabricated as zero or a synthetic id.
+        """
         body = {"filter": filter, "data": record, "upsert": True}
         resp = await self._retry_request(
             "PUT", f"/api/v1/{database}/{collection}", json_body=body
         )
-        modified_count = int(resp.get("modified_count", 0) or 0)
-        upserted_count = int(resp.get("upserted_count", 0) or 0)
-        upserted_id = resp.get("upserted_id")
-        if upserted_id is None and upserted_count > 0:
-            upserted_id = f"{collection}-upsert-{upserted_count}"
+        updated_count = int(resp.get("updated_count", 0) or 0)
+        upserted = resp.get("upserted")
         return {
-            "modified_count": modified_count,
-            "upserted_count": upserted_count,
-            "upserted_id": upserted_id,
+            "updated_count": updated_count,
+            "upserted": upserted if isinstance(upserted, bool) else None,
+            "modified_count": None,
+            "upserted_count": None,
+            "upserted_id": None,
         }
 
     async def delete_one(
@@ -391,7 +398,7 @@ class DataManagerClient:
     def __init__(
         self,
         base_url: str | None = None,
-        timeout: int = 30,
+        timeout: float = 30,
         max_retries: int = 3,
     ):
         """
@@ -474,10 +481,7 @@ class DataManagerClient:
                 record=config_dict,
             )
 
-            if (
-                result.get("modified_count", 0) > 0
-                or result.get("upserted_count", 0) > 0
-            ):
+            if result.get("updated_count", 0) > 0 or result.get("upserted") is True:
                 self._logger.info("Updated global trading config")
                 return True
             return False
@@ -540,10 +544,7 @@ class DataManagerClient:
                 record=config_dict,
             )
 
-            if (
-                result.get("modified_count", 0) > 0
-                or result.get("upserted_count", 0) > 0
-            ):
+            if result.get("updated_count", 0) > 0 or result.get("upserted") is True:
                 self._logger.info(f"Updated symbol config for {config.symbol}")
                 return True
             return False
@@ -610,10 +611,7 @@ class DataManagerClient:
                 record=config_dict,
             )
 
-            if (
-                result.get("modified_count", 0) > 0
-                or result.get("upserted_count", 0) > 0
-            ):
+            if result.get("updated_count", 0) > 0 or result.get("upserted") is True:
                 self._logger.info(
                     f"Updated symbol-side config for {config.symbol}-{config.side}"
                 )
@@ -732,10 +730,7 @@ class DataManagerClient:
                 record=status_dict,
             )
 
-            if (
-                result.get("modified_count", 0) > 0
-                or result.get("upserted_count", 0) > 0
-            ):
+            if result.get("updated_count", 0) > 0 or result.get("upserted") is True:
                 self._logger.debug(
                     f"Updated leverage status for {status.symbol}: "
                     f"configured={status.configured_leverage}, "

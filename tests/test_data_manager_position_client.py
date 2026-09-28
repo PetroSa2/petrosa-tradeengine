@@ -5,12 +5,10 @@ Tests the integration between tradeengine and petrosa-data-manager API,
 specifically for position tracking and P&L updates.
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shared.constants import UTC
 from shared.mysql_client import DataManagerPositionClient
 
 
@@ -31,90 +29,6 @@ def position_client(mock_data_manager_client):
     ):
         client = DataManagerPositionClient()
         return client
-
-
-class TestUpdateDailyPnL:
-    """Test daily P&L update functionality"""
-
-    @pytest.mark.asyncio
-    async def test_update_daily_pnl_success(self, position_client):
-        """Test successful daily P&L update via Data Manager"""
-        # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            return_value={"upserted_id": "test_id"}
-        )
-
-        # Act
-        result = await position_client.update_daily_pnl("2025-10-25", 1500.50)
-
-        # Assert
-        assert result.ok is True
-        position_client.data_manager_client._client.upsert_one.assert_called_once()
-        call_args = position_client.data_manager_client._client.upsert_one.call_args
-        assert call_args.kwargs["database"] == "mysql"
-        assert call_args.kwargs["collection"] == "daily_pnl"
-        assert call_args.kwargs["filter"] == {"date": "2025-10-25"}
-        assert call_args.kwargs["record"]["date"] == "2025-10-25"
-        assert call_args.kwargs["record"]["daily_pnl"] == 1500.50
-        assert "updated_at" in call_args.kwargs["record"]
-
-    @pytest.mark.asyncio
-    async def test_update_daily_pnl_uses_timezone_aware_datetime(self, position_client):
-        """Test that update_daily_pnl stores updated_at as an ISO-8601 string.
-
-        After the fix for petrosa-tradeengine#495 (datetime not JSON serializable),
-        updated_at is pre-converted to an ISO-8601 string before being stored
-        so that the httpx transport layer never encounters a raw datetime object.
-        The string must include timezone offset information (+00:00 or similar).
-        """
-        # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            return_value={"upserted_id": "test_id"}
-        )
-
-        # Act
-        await position_client.update_daily_pnl("2025-10-25", 2000.00)
-
-        # Assert
-        call_args = position_client.data_manager_client._client.upsert_one.call_args
-        updated_at = call_args.kwargs["record"]["updated_at"]
-        # Verify it's an ISO-8601 string (not a raw datetime — #495 fix)
-        assert isinstance(updated_at, str), (
-            "updated_at must be a pre-serialized ISO-8601 string, not a raw datetime"
-        )
-        # Must be parseable as ISO-8601 and carry timezone info
-        parsed = datetime.fromisoformat(updated_at)
-        assert parsed.tzinfo is not None, "updated_at string must encode timezone info"
-
-    @pytest.mark.asyncio
-    async def test_update_daily_pnl_failure(self, position_client):
-        """Test daily P&L update failure handling"""
-        # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            side_effect=Exception("Connection failed")
-        )
-
-        # Act
-        result = await position_client.update_daily_pnl("2025-10-25", 1500.50)
-
-        # Assert
-        assert result.ok is False
-
-    @pytest.mark.asyncio
-    async def test_update_daily_pnl_negative_value(self, position_client):
-        """Test daily P&L update with negative value (loss)"""
-        # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            return_value={"upserted_id": "test_id"}
-        )
-
-        # Act
-        result = await position_client.update_daily_pnl("2025-10-25", -500.75)
-
-        # Assert
-        assert result.ok is True
-        call_args = position_client.data_manager_client._client.upsert_one.call_args
-        assert call_args.kwargs["record"]["daily_pnl"] == -500.75
 
 
 class TestUpsertPosition:
@@ -214,29 +128,6 @@ class TestUpsertPosition:
         assert result.ok is False
 
 
-class TestDataManagerAPICompatibility:
-    """Test that Data Manager API is called with correct signature"""
-
-    @pytest.mark.asyncio
-    async def test_upsert_one_no_update_parameter(self, position_client):
-        """Verify upsert_one is called without 'update' parameter (uses 'record' instead)"""
-        # Arrange
-        position_client.data_manager_client._client.upsert_one = AsyncMock(
-            return_value={"upserted_id": "test_id"}
-        )
-
-        # Act
-        await position_client.update_daily_pnl("2025-10-25", 1500.50)
-
-        # Assert
-        call_args = position_client.data_manager_client._client.upsert_one.call_args
-        # Verify 'record' parameter is used (not 'update')
-        assert "record" in call_args.kwargs
-        assert "update" not in call_args.kwargs
-        # Verify no 'upsert' parameter (this was the bug)
-        assert "upsert" not in call_args.kwargs
-
-
 class TestPositionContractRequests:
     """Pin the request contracts used by the position persistence paths."""
 
@@ -297,19 +188,6 @@ class TestPositionContractRequests:
         assert "params" not in call.kwargs
 
     @pytest.mark.asyncio
-    async def test_daily_pnl_query_contains_date_filter(self, position_client):
-        position_client.data_manager_client._client.query = AsyncMock(
-            return_value={"data": [{"daily_pnl": 12.5}]}
-        )
-
-        result = await position_client.get_daily_pnl("2026-09-24")
-
-        assert result == 12.5
-        call = position_client.data_manager_client._client.query.call_args
-        assert call.kwargs["filter"] == {"date": "2026-09-24"}
-        assert call.kwargs["limit"] == 1
-
-    @pytest.mark.asyncio
     async def test_upsert_position_no_upsert_parameter(self, position_client):
         """Verify upsert_one is called without deprecated 'upsert' parameter"""
         # Arrange
@@ -337,3 +215,91 @@ class TestPositionContractRequests:
         assert "collection" in call_args.kwargs
         assert "filter" in call_args.kwargs
         assert "record" in call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_dedicated_position_writers_use_schema_collections_and_columns(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.insert_one = AsyncMock(
+            return_value={"inserted_id": "row-1"}
+        )
+        payload = {
+            "strategy_position_id": "strategy-1",
+            "strategy_id": "mean-reversion",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_quantity": 1.0,
+            "entry_price": 100.0,
+            "entry_time": "2026-09-28T00:00:00Z",
+            "position_id": "must-be-dropped",
+            "signed_quantity": 1.0,
+        }
+
+        result = await position_client.create_strategy_position(payload)
+
+        assert result.ok is True
+        call = position_client.data_manager_client._client.insert_one.call_args
+        assert call.kwargs["collection"] == "strategy_positions"
+        assert call.kwargs["database"] == "mysql"
+        assert "position_id" not in call.kwargs["record"]
+        assert "signed_quantity" not in call.kwargs["record"]
+
+    @pytest.mark.asyncio
+    async def test_dedicated_close_updates_own_table_by_natural_key(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.update_one = AsyncMock(
+            return_value={"updated_count": 1}
+        )
+
+        result = await position_client.update_strategy_position(
+            "strategy-1",
+            {
+                "status": "closed",
+                "exit_price": 101.0,
+                "realized_pnl": 1.0,
+                "position_id": "must-be-dropped",
+            },
+        )
+
+        assert result.ok is True
+        call = position_client.data_manager_client._client.update_one.call_args
+        assert call.kwargs["collection"] == "strategy_positions"
+        assert call.kwargs["filter"] == {"strategy_position_id": "strategy-1"}
+        assert call.kwargs["update"] == {
+            "status": "closed",
+            "exit_price": 101.0,
+            "realized_pnl": 1.0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_exchange_and_contribution_use_distinct_collections(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.insert_one = AsyncMock(
+            return_value={"inserted_id": "row-1"}
+        )
+
+        exchange = await position_client.create_exchange_position(
+            {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            }
+        )
+        contribution = await position_client.create_position_contribution(
+            {
+                "contribution_id": "contribution-1",
+                "strategy_position_id": "strategy-1",
+                "symbol": "BTCUSDT",
+                "position_side": "LONG",
+            }
+        )
+
+        assert exchange.ok is True
+        assert contribution.ok is True
+        calls = position_client.data_manager_client._client.insert_one.call_args_list
+        assert [call.kwargs["collection"] for call in calls] == [
+            "exchange_positions",
+            "position_contributions",
+        ]

@@ -1,5 +1,6 @@
-"""
-Data Manager client for position tracking operations.
+"""LEGACY — only ``strategy_position_manager``; removed by #632.
+
+Data Manager client for strategy position tracking operations.
 
 Provides a typed interface over petrosa-data-manager HTTP API.
 All write methods return PersistResult (not bare bool) so callers can observe
@@ -93,6 +94,207 @@ class DataManagerPositionClient:
     # ------------------------------------------------------------------
     # Write methods — all return PersistResult
     # ------------------------------------------------------------------
+
+    # Column names mirror scripts/create_strategy_positions_table.sql, which is
+    # the checked-in copy of the strategy-positions-schema-job DDL.
+    _STRATEGY_POSITION_COLUMNS = frozenset(
+        {
+            "strategy_position_id",
+            "strategy_id",
+            "signal_id",
+            "symbol",
+            "side",
+            "entry_quantity",
+            "entry_price",
+            "entry_time",
+            "entry_order_id",
+            "take_profit_price",
+            "stop_loss_price",
+            "tp_order_id",
+            "sl_order_id",
+            "status",
+            "exit_quantity",
+            "exit_price",
+            "exit_time",
+            "exit_order_id",
+            "close_reason",
+            "realized_pnl",
+            "realized_pnl_pct",
+            "commission_total",
+            "exchange_position_key",
+            "strategy_metadata",
+        }
+    )
+    _EXCHANGE_POSITION_COLUMNS = frozenset(
+        {
+            "exchange_position_key",
+            "symbol",
+            "side",
+            "current_quantity",
+            "weighted_avg_price",
+            "unrealized_pnl",
+            "first_entry_time",
+            "last_update_time",
+            "status",
+            "contributing_strategies",
+            "total_contributions",
+        }
+    )
+    _CONTRIBUTION_COLUMNS = frozenset(
+        {
+            "contribution_id",
+            "strategy_position_id",
+            "exchange_position_key",
+            "strategy_id",
+            "symbol",
+            "position_side",
+            "contribution_quantity",
+            "contribution_entry_price",
+            "contribution_time",
+            "position_sequence",
+            "exchange_quantity_before",
+            "exchange_quantity_after",
+            "status",
+            "close_reason",
+            "exit_time",
+            "exit_price",
+            "contribution_pnl",
+            "contribution_pnl_pct",
+        }
+    )
+
+    @staticmethod
+    def _columns(data: dict[str, Any], columns: frozenset[str]) -> dict[str, Any]:
+        return {key: value for key, value in data.items() if key in columns}
+
+    async def _create_dedicated(
+        self,
+        collection: str,
+        data: dict[str, Any],
+        key: str,
+        columns: frozenset[str],
+        operation: str,
+    ) -> PersistResult:
+        record = self._columns(data, columns)
+        identifier = str(record.get(key, ""))
+        symbol = str(record.get("symbol", ""))
+        try:
+            response = await self.data_manager_client._client.insert_one(
+                database="mysql", collection=collection, record=record
+            )
+            inserted = bool(
+                response.get("inserted_id") or response.get("inserted_count", 0)
+            )
+            duplicate = int(response.get("duplicates", 0) or 0) > 0
+            return self._make_result(
+                inserted or duplicate,
+                operation=operation,
+                symbol=symbol,
+                position_id=identifier,
+            )
+        except Exception as exc:
+            logger.error("Failed to create %s %s: %s", collection, identifier, exc)
+            return self._make_result(
+                False, exc, operation=operation, symbol=symbol, position_id=identifier
+            )
+
+    async def _update_dedicated(
+        self,
+        collection: str,
+        key: str,
+        value: str,
+        data: dict[str, Any],
+        columns: frozenset[str],
+        operation: str,
+    ) -> PersistResult:
+        update = self._columns(data, columns)
+        try:
+            response = await self.data_manager_client._client.update_one(
+                database="mysql",
+                collection=collection,
+                filter={key: value},
+                update=update,
+            )
+            count = int(
+                response.get("updated_count", response.get("modified_count", 0)) or 0
+            )
+            return self._make_result(
+                count > 0, operation=operation, position_id=str(value)
+            )
+        except Exception as exc:
+            logger.error("Failed to update %s %s=%s: %s", collection, key, value, exc)
+            return self._make_result(
+                False, exc, operation=operation, position_id=str(value)
+            )
+
+    async def create_strategy_position(
+        self, position_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "strategy_positions",
+            position_data,
+            "strategy_position_id",
+            self._STRATEGY_POSITION_COLUMNS,
+            "create_strategy_position",
+        )
+
+    async def update_strategy_position(
+        self, strategy_position_id: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "strategy_positions",
+            "strategy_position_id",
+            strategy_position_id,
+            update_data,
+            self._STRATEGY_POSITION_COLUMNS,
+            "update_strategy_position",
+        )
+
+    async def create_exchange_position(
+        self, position_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "exchange_positions",
+            position_data,
+            "exchange_position_key",
+            self._EXCHANGE_POSITION_COLUMNS,
+            "create_exchange_position",
+        )
+
+    async def update_exchange_position(
+        self, exchange_position_key: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "exchange_positions",
+            "exchange_position_key",
+            exchange_position_key,
+            update_data,
+            self._EXCHANGE_POSITION_COLUMNS,
+            "update_exchange_position",
+        )
+
+    async def create_position_contribution(
+        self, contribution_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "position_contributions",
+            contribution_data,
+            "contribution_id",
+            self._CONTRIBUTION_COLUMNS,
+            "create_position_contribution",
+        )
+
+    async def update_position_contribution(
+        self, contribution_id: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "position_contributions",
+            "contribution_id",
+            contribution_id,
+            update_data,
+            self._CONTRIBUTION_COLUMNS,
+            "update_position_contribution",
+        )
 
     async def create_position(self, position_data: dict[str, Any]) -> PersistResult:
         """Insert a position record; returns PersistResult."""
@@ -241,17 +443,13 @@ class DataManagerPositionClient:
             )
 
     async def upsert_position(self, position_data: dict[str, Any]) -> PersistResult:
-        """Upsert a position record; returns PersistResult."""
-        sym = str(position_data.get("symbol", ""))
+        """Compatibility shim for pre-cutover callers; new code must not use it."""
         position_id = position_data.get("position_id")
         if not position_id:
-            logger.error("Cannot upsert position without position_id: %s", sym)
             return self._make_result(
                 False,
                 ValueError("position_id is required"),
                 operation="upsert_position",
-                symbol=sym,
-                position_id="",
             )
         try:
             await self.data_manager_client._client.upsert_one(
@@ -260,20 +458,18 @@ class DataManagerPositionClient:
                 filter={"position_id": position_id},
                 record=position_data,
             )
-            logger.info("Upserted position %s via Data Manager", position_id)
             return self._make_result(
                 True,
                 operation="upsert_position",
-                symbol=sym,
+                symbol=str(position_data.get("symbol", "")),
                 position_id=str(position_id),
             )
         except Exception as exc:
-            logger.error("Failed to upsert position %s: %s", position_id, exc)
             return self._make_result(
                 False,
                 exc,
                 operation="upsert_position",
-                symbol=sym,
+                symbol=str(position_data.get("symbol", "")),
                 position_id=str(position_id),
             )
 
@@ -355,49 +551,6 @@ class DataManagerPositionClient:
         positions = response.get("data", []) if response else []
         logger.info("Retrieved %d open positions via Data Manager", len(positions))
         return positions
-
-    async def get_daily_pnl(self, date: str) -> float | None:
-        """Return today's realized P&L, or None if no record exists yet.
-
-        Raises on a genuine query/connection failure (#600) so the caller
-        can distinguish "no data recorded yet" (a legitimate None — first
-        trade of the day) from "Data Manager is unreachable" — the two were
-        previously indistinguishable, which let the daily-loss kill-switch
-        silently evaluate against a stale/zero P&L during an outage.
-        """
-        try:
-            response = await self.data_manager_client._client.query(
-                database="mysql",
-                collection="daily_pnl",
-                filter={"date": date},
-                limit=1,
-            )
-            if response and response.get("data"):
-                return response["data"][0].get("daily_pnl")
-            return None
-        except Exception as exc:
-            logger.error("Failed to get daily P&L for %s: %s", date, exc)
-            raise
-
-    async def update_daily_pnl(self, date: str, daily_pnl: float) -> PersistResult:
-        try:
-            await self.data_manager_client._client.upsert_one(
-                database="mysql",
-                collection="daily_pnl",
-                filter={"date": date},
-                record={
-                    "date": date,
-                    "daily_pnl": daily_pnl,
-                    "updated_at": datetime.now(UTC).isoformat(),
-                },
-            )
-            logger.info(
-                "Updated daily P&L for %s: %s via Data Manager", date, daily_pnl
-            )
-            return self._make_result(True, operation="update_daily_pnl")
-        except Exception as exc:
-            logger.error("Failed to update daily P&L for %s: %s", date, exc)
-            return self._make_result(False, exc, operation="update_daily_pnl")
 
     async def health_check(self) -> dict[str, Any]:
         try:

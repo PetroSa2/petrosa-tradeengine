@@ -153,6 +153,9 @@ class TestOCOPNLCalculation:
         oco_manager.active_oco_pairs[position_id] = {
             "sl_order_id": 12345,
             "tp_order_id": 67890,
+            # #650: standard legs -> futures_cancel_order path
+            "sl_is_algo": False,
+            "tp_is_algo": False,
             "symbol": "BTCUSDT",
             "status": "active",
         }
@@ -186,6 +189,9 @@ class TestOCOPNLCalculation:
         oco_manager.active_oco_pairs[position_id] = {
             "sl_order_id": 12345,
             "tp_order_id": 67890,
+            # #650: standard legs -> futures_cancel_order path
+            "sl_is_algo": False,
+            "tp_is_algo": False,
             "symbol": "BTCUSDT",
             "status": "active",
         }

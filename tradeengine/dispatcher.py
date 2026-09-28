@@ -20,7 +20,11 @@ from shared.constants import (
     TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
 )
-from shared.distributed_lock import distributed_lock_manager
+from shared.distributed_lock import (
+    LockHeldError,
+    LockUnavailableError,
+    distributed_lock_manager,
+)
 from shared.logger import get_logger
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
@@ -30,6 +34,7 @@ from tradeengine.metrics import (
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
     oco_cancel_retry_exhausted_total,
+    oco_exit_pnl_unknown_total,
     oco_pair_age_seconds,
     order_execution_latency_seconds,
     order_failures_total,
@@ -44,6 +49,8 @@ from tradeengine.metrics import (
 )
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
+from tradeengine.protective_leg_mode import protective_leg_mode
+from tradeengine.protective_legs import ProtectiveLegManager
 from tradeengine.services.alert_publisher import alert_publisher
 from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
@@ -140,6 +147,86 @@ class OCOManager:
         # the full 2s poll interval. The poll still performs all cancel/close
         # decisions — this event only shortens latency (poll is the backstop).
         self._oco_wake_event: asyncio.Event = asyncio.Event()
+        # #651: one lock per exchange side ("SYMBOL_SIDE"), shared by the OCO
+        # monitor, pair placement/cancel and the protective-leg lifecycle
+        # manager. A leg resize cancels and re-places a leg (new algoId); the
+        # monitor must never observe the old id gone before the pair is
+        # re-pointed, or it would treat the resize as a fill.
+        self._side_locks: dict[str, asyncio.Lock] = {}
+
+    def side_lock(self, exchange_position_key: str) -> asyncio.Lock:
+        """#651: the per-side lock (created on first use)."""
+        lock = self._side_locks.get(exchange_position_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._side_locks[exchange_position_key] = lock
+        return lock
+
+    @staticmethod
+    def _leg_is_algo(oco_info: dict[str, Any], leg: str) -> bool:
+        """#650: whether an OCO leg is an algo (conditional) order.
+
+        Recorded when the pair is placed (from the placement response) or
+        reconciled (``/openAlgoOrders`` source) — never guessed from the id.
+        A record without the flag predates #650; every protective leg this
+        engine has placed since #352 goes through ``POST /fapi/v1/algoOrder``,
+        so it is treated as algo.
+        """
+        flag = oco_info.get(f"{leg}_is_algo")
+        return True if flag is None else bool(flag)
+
+    async def _cancel_leg_by_kind(
+        self, symbol: str, order_id: str, is_algo: bool
+    ) -> Any:
+        """#650: cancel one OCO leg through the endpoint matching its kind.
+
+        Algo legs: ``cancel_algo_order`` (``DELETE /fapi/v1/algoOrder`` by
+        ``algoId``). Standard legs: ``futures_cancel_order`` (``DELETE
+        /fapi/v1/order`` by ``orderId``). Asking the standard endpoint about an
+        algo leg answers ``-2011`` although the leg is live — the orphaned-SL
+        defect this routing fixes.
+        """
+        if is_algo:
+            return await self.exchange.cancel_algo_order(symbol, order_id)
+        return await asyncio.to_thread(
+            self.exchange.client.futures_cancel_order,
+            symbol=symbol,
+            orderId=order_id,
+        )
+
+    @staticmethod
+    def _cancel_error_is_gone(exc: BaseException, is_algo: bool) -> bool:
+        """#650: does a cancel error mean "this leg is no longer open"?
+
+        Only trusted because the error came from the endpoint that matches the
+        leg kind (see ``_cancel_leg_by_kind``). The algo endpoint also answers
+        ``-4029`` for an algo order that no longer exists (#490).
+        """
+        codes = (-2011, -2013, -4029) if is_algo else (-2011, -2013)
+        code = getattr(exc, "code", None)
+        if isinstance(code, int) and code in codes:
+            return True
+        text = str(exc)
+        if any(f"code={c}" in text for c in codes):
+            return True
+        lowered = text.lower()
+        return "unknown order sent" in lowered or "order does not exist" in lowered
+
+    def _notify_leg_manager(
+        self,
+        symbol: str | None,
+        position_side: str | None,
+        filled_order_id: str | None = None,
+    ) -> None:
+        """#651: hand a protective fill to the leg lifecycle manager
+        (post-fill inversion guard + side sync). Non-blocking, never raises."""
+        manager = getattr(self.dispatcher, "protective_leg_manager", None)
+        if manager is None:
+            return
+        try:
+            manager.on_protective_fill(symbol, position_side, filled_order_id)
+        except Exception:
+            self.logger.debug("#651: leg-manager notify failed", exc_info=True)
 
     def notify_oco_leg_fill(self, symbol: str, order_id: str) -> None:
         """#534 (H6 of #977): wake _monitor_orders when a FILLED SL/TP leg
@@ -258,6 +345,35 @@ class OCOManager:
         take_profit_price: float,
         strategy_position_id: str | None = None,  # NEW: Link to strategy position
         entry_price: float | None = None,  # NEW: Strategy's entry price for P&L calc
+    ) -> dict[str, Any]:
+        """Place an OCO SL/TP pair under the per-side lock (#651).
+
+        The lock keeps the leg lifecycle manager from resizing a leg of a pair
+        that is only half-placed (the pair would then be registered with a
+        cancelled leg id).
+        """
+        async with self.side_lock(f"{symbol}_{position_side}"):
+            return await self._place_oco_orders_locked(
+                position_id=position_id,
+                symbol=symbol,
+                position_side=position_side,
+                quantity=quantity,
+                stop_loss_price=stop_loss_price,
+                take_profit_price=take_profit_price,
+                strategy_position_id=strategy_position_id,
+                entry_price=entry_price,
+            )
+
+    async def _place_oco_orders_locked(
+        self,
+        position_id: str,
+        symbol: str,
+        position_side: str,
+        quantity: float,
+        stop_loss_price: float,
+        take_profit_price: float,
+        strategy_position_id: str | None = None,
+        entry_price: float | None = None,
     ) -> dict[str, Any]:
         """
         Place SL/TP orders that will cancel each other (OCO behavior)
@@ -515,6 +631,12 @@ class OCOManager:
                     "quantity": float(quantity) if quantity is not None else 0.0,
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
+                    # #650: leg kind from the placement response (algoId vs
+                    # orderId) so the surviving-leg cancel uses the matching
+                    # endpoint. Protective legs go through POST algoOrder, so a
+                    # response without the flag (test doubles) means algo.
+                    "sl_is_algo": bool(sl_result.get("is_algo_order", True)),
+                    "tp_is_algo": bool(tp_result.get("is_algo_order", True)),
                     "symbol": symbol,
                     "position_side": position_side,
                     "status": "active",
@@ -535,29 +657,35 @@ class OCOManager:
                     f"sl_order_id={sl_order_id}, tp_order_id={tp_order_id}"
                 )
 
-                # Export metrics
-                from tradeengine.metrics import (
-                    active_oco_pairs_per_position,
-                    strategy_oco_placed_total,
-                )
-                from tradeengine.strategy_position_manager import (
-                    strategy_position_manager,
-                )
-
-                # Get strategy_id from position manager
-                if strategy_position_id and strategy_position_manager:
-                    strategy_pos = strategy_position_manager.get_strategy_position(
-                        strategy_position_id
+                # Export metrics. #651: best-effort — a metrics failure here
+                # used to fall into the outer except and return "error" for a
+                # pair that IS live, which sent the caller into the individual
+                # SL/TP fallback and stacked a duplicate pair on the side.
+                try:
+                    from tradeengine.metrics import (
+                        active_oco_pairs_per_position,
+                        strategy_oco_placed_total,
                     )
-                    if strategy_pos:
-                        strat_id = strategy_pos.get("strategy_id", "unknown")
-                        strategy_oco_placed_total.labels(
-                            strategy_id=strat_id, symbol=symbol, exchange="binance"
-                        ).inc()
+                    from tradeengine.strategy_position_manager import (
+                        strategy_position_manager,
+                    )
 
-                active_oco_pairs_per_position.labels(
-                    symbol=symbol, position_side=position_side, exchange="binance"
-                ).set(len(self.active_oco_pairs[exchange_position_key]))
+                    # Get strategy_id from position manager
+                    if strategy_position_id and strategy_position_manager:
+                        strategy_pos = strategy_position_manager.get_strategy_position(
+                            strategy_position_id
+                        )
+                        if strategy_pos:
+                            strat_id = strategy_pos.get("strategy_id", "unknown")
+                            strategy_oco_placed_total.labels(
+                                strategy_id=strat_id, symbol=symbol, exchange="binance"
+                            ).inc()
+
+                    active_oco_pairs_per_position.labels(
+                        symbol=symbol, position_side=position_side, exchange="binance"
+                    ).set(len(self.active_oco_pairs[exchange_position_key]))
+                except Exception:
+                    self.logger.debug("OCO placement metrics failed", exc_info=True)
 
                 # Start monitoring if not already active
                 if not self.monitoring_active:
@@ -696,6 +824,18 @@ class OCOManager:
             return {"status": "error", "error": str(e)}
 
     async def cancel_oco_pair(
+        self, position_id: str, symbol: str = None, position_side: str = None
+    ) -> bool:
+        """Cancel all OCO pairs of a position under the per-side lock (#651)."""
+        lock_key = (
+            f"{symbol}_{position_side}" if symbol and position_side else position_id
+        )
+        async with self.side_lock(lock_key):
+            return await self._cancel_oco_pair_locked(
+                position_id, symbol=symbol, position_side=position_side
+            )
+
+    async def _cancel_oco_pair_locked(
         self, position_id: str, symbol: str = None, position_side: str = None
     ) -> bool:
         """
@@ -916,10 +1056,20 @@ class OCOManager:
                 f"INFO: Order externally closed (null order_id), cleaning up local state: "
                 f"position={position_id}, cancel_type={cancel_type}"
             )
+            oco_info["surviving_leg_gone"] = True
             self._mark_oco_completed(
                 found_key, position_id, sl_order_id, tp_order_id, close_reason
             )
             return True, close_reason
+
+        # #650: route the surviving-leg cancel by the leg kind recorded on the
+        # pair. Protective legs are algo orders (POST /fapi/v1/algoOrder); the
+        # standard /order endpoint answers -2011 for them even while they are
+        # live, which used to be read as "already gone" and left the sibling
+        # SL orphaned (DOTUSDT 2026-09-26).
+        cancel_leg = "tp" if order_to_cancel == tp_order_id else "sl"
+        cancel_is_algo = self._leg_is_algo(oco_info, cancel_leg)
+        cancel_endpoint = "algo" if cancel_is_algo else "standard"
 
         # #532 (H4 of #977): bounded retry with capped exponential backoff around
         # the surviving-leg cancellation. A single transient network blip or a
@@ -930,23 +1080,22 @@ class OCOManager:
         # success and never retried (respects #504 no same-price spin: we do not
         # loop on a leg that is genuinely gone). Setting OCO_CANCEL_RETRY_ATTEMPTS=1
         # restores the pre-#532 single-attempt behaviour (rollback lever).
+        # #650: "terminal" is only trusted from the endpoint matching the leg kind.
         max_attempts = max(1, OCO_CANCEL_RETRY_ATTEMPTS)
         last_error_label = "unknown"
         for attempt in range(1, max_attempts + 1):
             try:
-                # Cancel the other order. NOTE: futures_cancel_order is the
-                # standard-order path used for SL/TP legs here; algo-order
-                # cancels go through the algoOrder endpoint elsewhere (#490 /
-                # -1102 — do NOT route algo cancels through /order).
-                cancel_result = self.exchange.client.futures_cancel_order(
-                    symbol=oco_info["symbol"], orderId=order_to_cancel
+                cancel_result = await self._cancel_leg_by_kind(
+                    oco_info["symbol"], order_to_cancel, cancel_is_algo
                 )
 
                 if cancel_result:
                     self.logger.info(
                         f"Order cancelled successfully: order_type={cancel_type}, "
-                        f"order_id={order_to_cancel} (attempt {attempt}/{max_attempts})"
+                        f"order_id={order_to_cancel}, endpoint={cancel_endpoint} "
+                        f"(attempt {attempt}/{max_attempts})"
                     )
+                    oco_info["surviving_leg_gone"] = True
                     # Update status in the correct location
                     if found_key and found_key in self.active_oco_pairs:
                         # Find and update the matching OCO pair in the list
@@ -985,25 +1134,17 @@ class OCOManager:
                 )
 
             except Exception as e:
-                # Terminal: order already cancelled/filled or unknown. Idempotent
-                # no-op — a retry after the leg actually cancelled must NOT error.
-                if "code=-2011" in str(e) or "Unknown order sent" in str(e):
+                # Terminal: the leg is already cancelled/filled (or was closed
+                # externally, e.g. across a pod restart). Idempotent no-op — a
+                # retry after the leg actually cancelled must NOT error. #650:
+                # trusted only because the matching endpoint answered.
+                if self._cancel_error_is_gone(e, cancel_is_algo):
                     self.logger.warning(
-                        f"⚠️ {cancel_type} order already closed or unknown "
+                        f"⚠️ {cancel_type} order {order_to_cancel} already closed "
+                        f"or unknown per the {cancel_endpoint} endpoint "
                         f"(likely filled/cancelled): {e}"
                     )
-                    self._mark_oco_completed(
-                        found_key, position_id, sl_order_id, tp_order_id, close_reason
-                    )
-                    return True, close_reason
-
-                # Terminal: ghost order filled/cancelled externally (e.g. after
-                # pod restart). Also idempotent no-op success.
-                if "code=-2013" in str(e) or "Order does not exist" in str(e):
-                    self.logger.info(
-                        f"INFO: Order externally closed, cleaning up local state: "
-                        f"position={position_id}, cancel_type={cancel_type}, error={e}"
-                    )
+                    oco_info["surviving_leg_gone"] = True
                     self._mark_oco_completed(
                         found_key, position_id, sl_order_id, tp_order_id, close_reason
                     )
@@ -1053,6 +1194,7 @@ class OCOManager:
                     "position_side": position_side,
                     "position_id": position_id,
                     "cancel_type": cancel_type,
+                    "cancel_endpoint": cancel_endpoint,
                     "order_to_cancel": order_to_cancel,
                     "attempts": max_attempts,
                     "last_error": last_error_label,
@@ -1195,6 +1337,10 @@ class OCOManager:
                     "quantity": float(sl_o.get("quantity", sl_o.get("origQty", 0))),
                     "sl_order_id": sl_id,
                     "tp_order_id": tp_id,
+                    # #650: leg kind from the scan source (/openAlgoOrders rows
+                    # carry algoId; the /openOrders fallback carries orderId).
+                    "sl_is_algo": "algoId" in sl_o,
+                    "tp_is_algo": "algoId" in tp_o,
                     "symbol": sym,
                     "position_side": pos_side,
                     "status": "active",
@@ -1515,195 +1661,7 @@ class OCOManager:
             self.active_oco_pairs or self.pending_entries
         ):
             try:
-                # #371: Drive deferred-OCO triggers for CONDITIONAL entries that have FILLED.
-                await self._check_pending_entries()
-
-                # Check each exchange position's OCO pairs
-                for exchange_position_key, oco_list in list(
-                    self.active_oco_pairs.items()
-                ):
-                    if not oco_list:
-                        continue
-
-                    # Get symbol for batch query
-                    symbol = oco_list[0]["symbol"] if oco_list else None
-                    if not symbol:
-                        continue
-
-                    # #972: publish OCO pair age (seconds since the pair entered
-                    # active_oco_pairs). Set every cycle for each active pair so a
-                    # stuck/stale pair (>300s) is visible in Grafana. Dual-export
-                    # (prometheus + OTel) per the #415/#497 pattern. Guarded so a
-                    # malformed created_at can never abort the monitor cycle.
-                    _now = time.time()
-                    for _oco in oco_list:
-                        if _oco.get("status") != "active":
-                            continue
-                        try:
-                            _created = self._coerce_created_at(
-                                _oco.get("created_at"), _now
-                            )
-                            _age = _now - _created
-                            oco_pair_age_seconds.labels(
-                                symbol=_oco["symbol"],
-                                position_side=_oco["position_side"],
-                            ).set(_age)
-                            otel_oco_pair_age_seconds.set(
-                                _age,
-                                {
-                                    "symbol": _oco["symbol"],
-                                    "position_side": _oco["position_side"],
-                                },
-                            )
-                        except Exception as _age_err:  # pragma: no cover - defensive
-                            self.logger.debug(
-                                "oco_pair_age_seconds update skipped for "
-                                f"{_oco.get('symbol')} {_oco.get('position_side')}: {_age_err}"
-                            )
-
-                    # Query all open orders for this symbol once
-                    # Use the robust combined list (Standard + Algo) to avoid ghost orders
-                    open_order_ids = await self.exchange.get_all_open_orders(
-                        symbol=symbol
-                    )
-
-                    # Check each OCO pair in this position
-                    for oco_info in oco_list:
-                        if oco_info["status"] != "active":
-                            continue
-
-                        sl_order_id = oco_info["sl_order_id"]
-                        tp_order_id = oco_info["tp_order_id"]
-
-                        # AC-4 (#352): orphaned entries have one side set to None.
-                        # Cancel whichever order still exists and mark completed.
-                        if oco_info.get("orphaned"):
-                            live_id = sl_order_id or tp_order_id
-                            # #490: route by the side that actually carries the
-                            # live order, using the algo-ness recorded at scan
-                            # time — never re-classify by id length.
-                            live_is_algo = (
-                                oco_info.get("sl_is_algo")
-                                if sl_order_id
-                                else oco_info.get("tp_is_algo")
-                            )
-                            if live_id and live_id in open_order_ids:
-                                await self._cancel_orphaned_order(
-                                    symbol, live_id, bool(live_is_algo)
-                                )
-                            oco_info["status"] = "completed"
-                            continue
-
-                        # Check if orders still exist
-                        sl_exists = sl_order_id in open_order_ids
-                        tp_exists = tp_order_id in open_order_ids
-
-                        # Determine which order filled
-                        filled_order_id = None
-                        close_reason = "unknown"
-
-                        if not sl_exists and tp_exists:
-                            # Stop loss filled
-                            filled_order_id = sl_order_id
-                            close_reason = "stop_loss"
-                            self.logger.info(
-                                f"🔴 SL TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
-                            )
-                        elif sl_exists and not tp_exists:
-                            # Take profit filled
-                            filled_order_id = tp_order_id
-                            close_reason = "take_profit"
-                            self.logger.info(
-                                f"🟢 TP TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
-                            )
-                        elif not sl_exists and not tp_exists:
-                            # Both gone - OCO completed
-                            self.logger.info(
-                                f"✅ OCO completed for strategy {oco_info.get('strategy_position_id')}"
-                            )
-                            oco_info["status"] = "completed"
-                            continue
-
-                        # If an order filled, cancel the other order and close the strategy position
-                        if filled_order_id:
-                            try:
-                                # Cancel the other order (OCO behavior)
-                                # Note: position_id is legacy parameter (not used by _close_position_on_oco_completion)
-                                # but kept for consistency with function signature
-                                position_id = oco_info.get("position_id", "")
-                                (
-                                    cancel_success,
-                                    cancel_reason,
-                                ) = await self.cancel_other_order(
-                                    position_id=position_id,
-                                    filled_order_id=filled_order_id,
-                                    symbol=oco_info["symbol"],
-                                    position_side=oco_info["position_side"],
-                                )
-
-                                if cancel_success:
-                                    self.logger.info(
-                                        f"✅ OCO cancellation successful: {cancel_reason}"
-                                    )
-                                else:
-                                    # Handle cancellation failure cases
-                                    # If cancellation fails because order already filled, this indicates
-                                    # a race condition where both SL and TP triggered simultaneously
-                                    # If cancellation fails for other reasons, log warning but proceed
-                                    # with position close to avoid leaving orphaned positions
-                                    if (
-                                        "already filled" in cancel_reason.lower()
-                                        or "not found" in cancel_reason.lower()
-                                    ):
-                                        self.logger.warning(
-                                            f"⚠️  OCO cancellation failed (order may already be filled): {cancel_reason}"
-                                        )
-                                    else:
-                                        self.logger.warning(
-                                            f"⚠️  OCO cancellation failed: {cancel_reason}. Proceeding with position close."
-                                        )
-
-                                # Close position with strategy attribution
-                                # Note: We proceed with position close even if cancellation failed to avoid
-                                # leaving orphaned positions. The exchange will handle any remaining orders.
-                                await self._close_position_on_oco_completion(
-                                    position_id=position_id,  # Legacy parameter, not used by function
-                                    filled_order_id=filled_order_id,
-                                    close_reason=close_reason,
-                                    oco_info=oco_info,
-                                    dispatcher=self.dispatcher,
-                                )
-                            except Exception as e:
-                                self.logger.error(
-                                    f"❌ Failed to process OCO completion: {e}"
-                                )
-
-                # Clean up completed OCO pairs
-                for exchange_position_key in list(self.active_oco_pairs.keys()):
-                    # #972: drop the age gauge series for pairs leaving the active
-                    # set (completed/cancelled/externally-closed) so they don't
-                    # report a frozen age forever. Remove the (symbol,
-                    # position_side) series when no active pair remains for it.
-                    active_pairs = [
-                        oco
-                        for oco in self.active_oco_pairs[exchange_position_key]
-                        if oco["status"] == "active"
-                    ]
-                    _active_label_pairs = {
-                        (oco["symbol"], oco["position_side"]) for oco in active_pairs
-                    }
-                    for _oco in self.active_oco_pairs[exchange_position_key]:
-                        _label_pair = (_oco["symbol"], _oco["position_side"])
-                        if _oco["status"] != "active" and (
-                            _label_pair not in _active_label_pairs
-                        ):
-                            self._remove_oco_pair_age_series(*_label_pair)
-
-                    if active_pairs:
-                        self.active_oco_pairs[exchange_position_key] = active_pairs
-                    else:
-                        # No active pairs left, remove the key
-                        del self.active_oco_pairs[exchange_position_key]
+                await self._monitor_iteration()
 
                 # Wait before next check. #534: when the WS-wake flag is on,
                 # sleep is interruptible — a FILLED SL/TP leg observed on the
@@ -1725,6 +1683,304 @@ class OCOManager:
                 await asyncio.sleep(5)  # Wait longer on error
 
         self.logger.info("🔍 ORDER MONITORING STOPPED")
+
+    async def _monitor_iteration(self) -> None:
+        """One OCO monitor pass (split out of ``_monitor_orders`` for #651)."""
+        # #371: Drive deferred-OCO triggers for CONDITIONAL entries that have FILLED.
+        await self._check_pending_entries()
+
+        # Check each exchange position's OCO pairs. #651: under the per-side
+        # lock, so a concurrent leg resize (cancel + re-place = new algoId)
+        # is never observed half-done and mistaken for a fill.
+        for exchange_position_key in list(self.active_oco_pairs.keys()):
+            async with self.side_lock(exchange_position_key):
+                await self._monitor_position_key(exchange_position_key)
+
+        # Clean up completed OCO pairs
+        for exchange_position_key in list(self.active_oco_pairs.keys()):
+            # #972: drop the age gauge series for pairs leaving the active
+            # set (completed/cancelled/externally-closed) so they don't
+            # report a frozen age forever. Remove the (symbol,
+            # position_side) series when no active pair remains for it.
+            active_pairs = [
+                oco
+                for oco in self.active_oco_pairs[exchange_position_key]
+                if oco["status"] == "active"
+            ]
+            _active_label_pairs = {
+                (oco["symbol"], oco["position_side"]) for oco in active_pairs
+            }
+            for _oco in self.active_oco_pairs[exchange_position_key]:
+                _label_pair = (_oco["symbol"], _oco["position_side"])
+                if _oco["status"] != "active" and (
+                    _label_pair not in _active_label_pairs
+                ):
+                    self._remove_oco_pair_age_series(*_label_pair)
+
+            if active_pairs:
+                self.active_oco_pairs[exchange_position_key] = active_pairs
+            else:
+                # No active pairs left, remove the key
+                del self.active_oco_pairs[exchange_position_key]
+
+    async def _monitor_position_key(self, exchange_position_key: str) -> None:
+        """Check the OCO pairs of one exchange side (caller holds its lock)."""
+        oco_list = self.active_oco_pairs.get(exchange_position_key) or []
+        if not oco_list:
+            return
+
+        # Get symbol for batch query
+        symbol = oco_list[0]["symbol"] if oco_list else None
+        if not symbol:
+            return
+
+        # #972: publish OCO pair age (seconds since the pair entered
+        # active_oco_pairs). Set every cycle for each active pair so a
+        # stuck/stale pair (>300s) is visible in Grafana. Dual-export
+        # (prometheus + OTel) per the #415/#497 pattern. Guarded so a
+        # malformed created_at can never abort the monitor cycle.
+        _now = time.time()
+        for _oco in oco_list:
+            if _oco.get("status") != "active":
+                continue
+            try:
+                _created = self._coerce_created_at(_oco.get("created_at"), _now)
+                _age = _now - _created
+                oco_pair_age_seconds.labels(
+                    symbol=_oco["symbol"],
+                    position_side=_oco["position_side"],
+                ).set(_age)
+                otel_oco_pair_age_seconds.set(
+                    _age,
+                    {
+                        "symbol": _oco["symbol"],
+                        "position_side": _oco["position_side"],
+                    },
+                )
+            except Exception as _age_err:  # pragma: no cover - defensive
+                self.logger.debug(
+                    "oco_pair_age_seconds update skipped for "
+                    f"{_oco.get('symbol')} {_oco.get('position_side')}: {_age_err}"
+                )
+
+        # Query all open orders for this symbol once
+        # Use the robust combined list (Standard + Algo) to avoid ghost orders
+        open_order_ids = await self.exchange.get_all_open_orders(symbol=symbol)
+
+        # Check each OCO pair in this position
+        for oco_info in oco_list:
+            if oco_info["status"] != "active":
+                continue
+
+            sl_order_id = oco_info["sl_order_id"]
+            tp_order_id = oco_info["tp_order_id"]
+
+            # AC-4 (#352): orphaned entries have one side set to None.
+            # Cancel whichever order still exists and mark completed.
+            if oco_info.get("orphaned"):
+                live_id = sl_order_id or tp_order_id
+                # #490: route by the side that actually carries the
+                # live order, using the algo-ness recorded at scan
+                # time — never re-classify by id length.
+                live_is_algo = (
+                    oco_info.get("sl_is_algo")
+                    if sl_order_id
+                    else oco_info.get("tp_is_algo")
+                )
+                if live_id and live_id in open_order_ids:
+                    await self._cancel_orphaned_order(
+                        symbol, live_id, bool(live_is_algo)
+                    )
+                oco_info["status"] = "completed"
+                continue
+
+            # Check if orders still exist
+            sl_exists = sl_order_id in open_order_ids
+            tp_exists = tp_order_id in open_order_ids
+
+            # Determine which order filled
+            filled_order_id = None
+            close_reason = "unknown"
+
+            if not sl_exists and tp_exists:
+                # Stop loss filled
+                filled_order_id = sl_order_id
+                close_reason = "stop_loss"
+                self.logger.info(
+                    f"🔴 SL TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
+                )
+            elif sl_exists and not tp_exists:
+                # Take profit filled
+                filled_order_id = tp_order_id
+                close_reason = "take_profit"
+                self.logger.info(
+                    f"🟢 TP TRIGGERED for strategy {oco_info.get('strategy_position_id')}"
+                )
+            elif not sl_exists and not tp_exists:
+                # Both gone - OCO completed
+                self.logger.info(
+                    f"✅ OCO completed for strategy {oco_info.get('strategy_position_id')}"
+                )
+                oco_info["status"] = "completed"
+                # #651: both legs vanished (a fill racing the sibling cancel,
+                # or Binance swept them) — let the leg manager re-check the side.
+                self._notify_leg_manager(
+                    oco_info.get("symbol"), oco_info.get("position_side")
+                )
+                continue
+
+            # If an order filled, cancel the other order and close the strategy position
+            if filled_order_id:
+                try:
+                    # Cancel the other order (OCO behavior)
+                    # Note: position_id is legacy parameter (not used by _close_position_on_oco_completion)
+                    # but kept for consistency with function signature
+                    position_id = oco_info.get("position_id", "")
+                    (
+                        cancel_success,
+                        cancel_reason,
+                    ) = await self.cancel_other_order(
+                        position_id=position_id,
+                        filled_order_id=filled_order_id,
+                        symbol=oco_info["symbol"],
+                        position_side=oco_info["position_side"],
+                    )
+
+                    if cancel_success:
+                        self.logger.info(
+                            f"✅ OCO cancellation successful: {cancel_reason}"
+                        )
+                    else:
+                        # Handle cancellation failure cases
+                        # If cancellation fails because order already filled, this indicates
+                        # a race condition where both SL and TP triggered simultaneously
+                        # If cancellation fails for other reasons, log warning but proceed
+                        # with position close to avoid leaving orphaned positions
+                        if (
+                            "already filled" in cancel_reason.lower()
+                            or "not found" in cancel_reason.lower()
+                        ):
+                            self.logger.warning(
+                                f"⚠️  OCO cancellation failed (order may already be filled): {cancel_reason}"
+                            )
+                        else:
+                            self.logger.warning(
+                                f"⚠️  OCO cancellation failed: {cancel_reason}. Proceeding with position close."
+                            )
+
+                    # Close position with strategy attribution
+                    # Note: We proceed with position close even if cancellation failed to avoid
+                    # leaving orphaned positions. The exchange will handle any remaining orders.
+                    await self._close_position_on_oco_completion(
+                        position_id=position_id,  # Legacy parameter, not used by function
+                        filled_order_id=filled_order_id,
+                        close_reason=close_reason,
+                        oco_info=oco_info,
+                        dispatcher=self.dispatcher,
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to process OCO completion: {e}")
+                finally:
+                    # #651: post-fill inversion guard + side sync. Runs even
+                    # when the close bookkeeping above failed.
+                    self._notify_leg_manager(
+                        oco_info.get("symbol"),
+                        oco_info.get("position_side"),
+                        filled_order_id,
+                    )
+
+    def _resolve_strategy_position_id(
+        self, oco_info: dict[str, Any], filled_order_id: str
+    ) -> str | None:
+        """#650: find the strategy position an OCO fill belongs to when the
+        pair itself carries no ``strategy_position_id`` (pairs rebuilt by
+        ``reconcile_from_exchange`` after a restart, pairs placed before the
+        strategy position was mapped).
+
+        Lookup order, all against open strategy positions:
+        1. a position whose recorded SL/TP id is the filled algo id or its
+           sibling (``set_strategy_position_orders`` stores the real algo ids
+           after OCO placement, #424);
+        2. the dispatcher's strategy-position -> durable-position mapping for
+           the pair's ``position_id``;
+        3. the only open strategy position on the pair's exchange side — the
+           protective legs cover the whole side, so the fill closed it.
+        """
+        from tradeengine.strategy_position_manager import (
+            strategy_position_manager as _spm,
+        )
+
+        positions = getattr(_spm, "strategy_positions", None)
+        if not isinstance(positions, dict) or not positions:
+            return None
+        open_positions = {
+            spid: pos
+            for spid, pos in positions.items()
+            if isinstance(pos, dict) and pos.get("status") == "open"
+        }
+        leg_ids = {
+            str(x)
+            for x in (
+                filled_order_id,
+                oco_info.get("sl_order_id"),
+                oco_info.get("tp_order_id"),
+            )
+            if x
+        }
+        for spid, pos in open_positions.items():
+            if (
+                str(pos.get("sl_order_id") or "") in leg_ids
+                or str(pos.get("tp_order_id") or "") in leg_ids
+            ):
+                return str(spid)
+
+        pair_position_id = oco_info.get("position_id")
+        mapping = getattr(self.dispatcher, "strategy_position_to_position", None)
+        if pair_position_id and isinstance(mapping, dict):
+            for spid, durable_id in mapping.items():
+                if durable_id == pair_position_id and spid in open_positions:
+                    return str(spid)
+
+        side_key = f"{oco_info.get('symbol')}_{oco_info.get('position_side')}"
+        on_side = [
+            spid
+            for spid, pos in open_positions.items()
+            if pos.get("exchange_position_key") == side_key
+        ]
+        if len(on_side) == 1:
+            return str(on_side[0])
+        return None
+
+    def _fetch_oco_exit_details(
+        self, symbol: str, filled_order_id: str, owning_oco: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Resolve an OCO fill through the endpoint matching its leg kind.
+
+        Binance assigns an ``algoId`` to conditional legs, but the actual fill is
+        a standard order identified by ``actualOrderId``.  Asking the standard
+        endpoint for the algo id returns no fill and used to make every fallback
+        look like a zero-P&L close.
+        """
+        client = self.exchange.client
+        leg_kind = (
+            "tp" if str(filled_order_id) == str(owning_oco.get("tp_order_id")) else "sl"
+        )
+        is_algo = self._leg_is_algo(owning_oco, leg_kind)
+        if not is_algo:
+            return client.futures_get_order(symbol=symbol, orderId=filled_order_id)
+
+        algo_order = client._request_futures_api(
+            "get",
+            "algoOrder",
+            signed=True,
+            data={"symbol": symbol, "algoId": filled_order_id},
+        )
+        if isinstance(algo_order, list):
+            algo_order = algo_order[0] if algo_order else {}
+        actual_order_id = algo_order.get("actualOrderId")
+        if not actual_order_id:
+            raise LookupError(f"algo order {filled_order_id} has no actualOrderId")
+        return client.futures_get_order(symbol=symbol, orderId=actual_order_id)
 
     async def _close_position_on_oco_completion(
         self,
@@ -1757,6 +2013,18 @@ class OCOManager:
             # NEW: Find which strategy's OCO filled
             owning_oco = oco_info  # This is already the owning OCO from _monitor_orders
             strategy_position_id = owning_oco.get("strategy_position_id")
+            if not strategy_position_id:
+                # #650: reconciled / unmapped pairs carry no strategy id —
+                # resolve it from the filled algo id instead of giving up.
+                strategy_position_id = self._resolve_strategy_position_id(
+                    owning_oco, filled_order_id
+                )
+                if strategy_position_id:
+                    owning_oco["strategy_position_id"] = strategy_position_id
+                    self.logger.info(
+                        f"  🔎 Resolved strategy position {strategy_position_id} "
+                        f"for fill {filled_order_id} (pair had none)"
+                    )
 
             # Use robust float conversion for all numeric fields from stored state
             try:
@@ -1776,112 +2044,167 @@ class OCOManager:
             except (ValueError, TypeError):
                 exit_quantity = 0.0
 
-            if not strategy_position_id:
-                self.logger.error(
-                    f"❌ No strategy_position_id in OCO info for {filled_order_id}"
-                )
-                return
-
-            self.logger.info(f"  🎯 Owning Strategy Position: {strategy_position_id}")
-            self.logger.info(f"  📍 Entry Price: ${entry_price:,.2f}")
-            self.logger.info(f"  📊 Quantity: {exit_quantity}")
-
-            # Step 1: Fetch filled order details from Binance
-            try:
-                order_details = self.exchange.client.futures_get_order(
-                    symbol=symbol, orderId=filled_order_id
-                )
-
-                # Extract exit data
-                exit_price = float(order_details.get("avgPrice", 0))
-                filled_quantity = float(order_details.get("executedQty", 0))
-
-                self.logger.info(f"  📤 Exit Price: ${exit_price:,.2f}")
-                self.logger.info(f"  📤 Filled Quantity: {filled_quantity}")
-
-            except Exception as e:
-                self.logger.error(f"❌ Failed to fetch order details: {e}")
-                # Use strategy's quantity from OCO info
-                exit_price = entry_price  # Fallback
-                filled_quantity = exit_quantity
-                self.logger.warning("Using fallback values")
-
-            # Step 2: Calculate P&L using THIS strategy's entry price
-            if position_side == "LONG":
-                pnl = (exit_price - entry_price) * filled_quantity
-            else:  # SHORT
-                pnl = (entry_price - exit_price) * filled_quantity
-
-            pnl_pct = (
-                (pnl / (entry_price * filled_quantity) * 100)
-                if entry_price > 0 and filled_quantity > 0
-                else 0.0
-            )
-
-            self.logger.info("  💰 P&L Calculation:")
-            self.logger.info(f"     Entry: ${entry_price:,.2f}")
-            self.logger.info(f"     Exit: ${exit_price:,.2f}")
-            self.logger.info(f"     Quantity: {filled_quantity}")
-            self.logger.info(f"     Gross P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%)")
-
-            # Step 3: Close ONLY this strategy's position
-            from tradeengine.strategy_position_manager import strategy_position_manager
-
-            # Get strategy_id from position manager
             strategy_id = "unknown"
-            if strategy_position_manager:
-                # Get the position to extract strategy_id
-                strategy_pos = strategy_position_manager.get_strategy_position(
-                    strategy_position_id
-                )
-                if strategy_pos:
-                    strategy_id = strategy_pos.get("strategy_id", "unknown")
+            pnl = 0.0
+            pnl_unknown = False
 
-                closure = await strategy_position_manager.close_strategy_position(
-                    strategy_position_id=strategy_position_id,
-                    exit_price=exit_price,
-                    exit_quantity=filled_quantity,
-                    close_reason=close_reason,
-                    exit_order_id=filled_order_id,
+            if not strategy_position_id:
+                # #650: never return early here — the paired-leg cancel and the
+                # completion bookkeeping below must still run. The side's ghost
+                # strategy rows (if any) are evicted by the #480 reconciler.
+                self.logger.warning(
+                    f"⚠️ No strategy position attributable to OCO fill "
+                    f"{filled_order_id} ({exchange_position_key}, pair "
+                    f"position_id={owning_oco.get('position_id')}) — skipping "
+                    f"strategy close/P&L; protective-leg cleanup continues"
                 )
-
+            else:
                 self.logger.info(
-                    f"✅ Strategy position {strategy_position_id} ({strategy_id}) closed: {close_reason}, P&L: ${pnl:,.2f}"
+                    f"  🎯 Owning Strategy Position: {strategy_position_id}"
+                )
+                self.logger.info(f"  📍 Entry Price: ${entry_price:,.2f}")
+                self.logger.info(f"  📊 Quantity: {exit_quantity}")
+
+                # Step 1: Fetch filled order details from Binance
+                order_details: dict[str, Any] = {}
+                try:
+                    order_details = self._fetch_oco_exit_details(
+                        symbol, filled_order_id, owning_oco
+                    )
+
+                    # Extract exit data
+                    exit_price = float(order_details.get("avgPrice", 0))
+                    filled_quantity = float(order_details.get("executedQty", 0))
+
+                    self.logger.info(f"  📤 Exit Price: ${exit_price:,.2f}")
+                    self.logger.info(f"  📤 Filled Quantity: {filled_quantity}")
+
+                except Exception as e:
+                    self.logger.warning(
+                        "⚠️ Unable to resolve OCO exit fill %s: %s; recording "
+                        "pnl_unknown instead of zero",
+                        filled_order_id,
+                        e,
+                    )
+                    pnl_unknown = True
+                    exit_price = None
+                    filled_quantity = exit_quantity
+
+                # Step 2: Calculate P&L using THIS strategy's entry price
+                if pnl_unknown:
+                    pnl = None
+                elif position_side == "LONG":
+                    pnl = (exit_price - entry_price) * filled_quantity
+                else:  # SHORT
+                    pnl = (entry_price - exit_price) * filled_quantity
+
+                pnl_pct = (
+                    (pnl / (entry_price * filled_quantity) * 100)
+                    if pnl is not None and entry_price > 0 and filled_quantity > 0
+                    else 0.0
                 )
 
-                # #531: publish a `filled` execution event for the OCO exit.
-                # This is the only place with the real exit fill (price, qty,
-                # PnL) fetched from futures_get_order. Best-effort: a NATS or
-                # publisher failure must never propagate into the close path.
-                await self._emit_oco_exit_filled_event(
-                    closure=closure or {},
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    exit_price=exit_price,
-                    filled_quantity=filled_quantity,
-                    pnl=pnl,
-                    filled_order_id=filled_order_id,
-                    close_reason=close_reason,
+                self.logger.info("  💰 P&L Calculation:")
+                self.logger.info(f"     Entry: ${entry_price:,.2f}")
+                if exit_price is None:
+                    self.logger.info("     Exit: unknown")
+                else:
+                    self.logger.info(f"     Exit: ${exit_price:,.2f}")
+                self.logger.info(f"     Quantity: {filled_quantity}")
+                if pnl is None:
+                    self.logger.info("     Gross P&L: unknown")
+                else:
+                    self.logger.info(f"     Gross P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%)")
+
+                # Step 3: Close ONLY this strategy's position
+                from tradeengine.strategy_position_manager import (
+                    strategy_position_manager,
                 )
+
+                # Get strategy_id from position manager
+                if strategy_position_manager:
+                    # Get the position to extract strategy_id
+                    strategy_pos = strategy_position_manager.get_strategy_position(
+                        strategy_position_id
+                    )
+                    if strategy_pos:
+                        strategy_id = strategy_pos.get("strategy_id", "unknown")
+
+                    closure = await strategy_position_manager.close_strategy_position(
+                        strategy_position_id=strategy_position_id,
+                        exit_price=exit_price,
+                        exit_quantity=filled_quantity,
+                        close_reason=close_reason,
+                        exit_order_id=filled_order_id,
+                        pnl_unknown=pnl_unknown,
+                    )
+
+                    self.logger.info(
+                        f"✅ Strategy position {strategy_position_id} ({strategy_id}) "
+                        f"closed: {close_reason}, P&L: "
+                        f"{'unknown' if pnl is None else f'${pnl:,.2f}'}"
+                    )
+
+                    # #531: publish a `filled` execution event for the OCO exit.
+                    # This is the only place with the real exit fill (price, qty,
+                    # PnL) fetched from futures_get_order. Best-effort: a NATS or
+                    # publisher failure must never propagate into the close path.
+                    await self._emit_oco_exit_filled_event(
+                        closure=closure or {},
+                        strategy_id=strategy_id,
+                        symbol=symbol,
+                        exit_price=exit_price,
+                        filled_quantity=filled_quantity,
+                        pnl=pnl,
+                        filled_order_id=filled_order_id,
+                        close_reason=close_reason,
+                    )
+
+                    # Persist the real exchange fill against the durable position
+                    # row. The strategy-position id is only a virtual attribution
+                    # key, while OCO ``position_id`` is the MySQL row key.
+                    position_manager = getattr(dispatcher, "position_manager", None)
+                    if owning_oco.get("position_id") and position_manager is not None:
+                        await position_manager.record_position_close(
+                            position_id=str(owning_oco["position_id"]),
+                            exit_price=exit_price,
+                            exit_qty=filled_quantity,
+                            exit_order_id=str(filled_order_id),
+                            exit_time=datetime.now(UTC),
+                            close_reason=close_reason,
+                            commission=float(
+                                order_details.get("commission", 0.0) or 0.0
+                            ),
+                            pnl_unknown=pnl_unknown,
+                        )
 
             # Step 4: Cancel the paired order (TP if SL filled, SL if TP filled)
-            other_order_id = (
-                owning_oco["sl_order_id"]
-                if filled_order_id == owning_oco["tp_order_id"]
-                else owning_oco["tp_order_id"]
-            )
+            other_leg = "sl" if filled_order_id == owning_oco["tp_order_id"] else "tp"
+            other_order_id = owning_oco.get(f"{other_leg}_order_id")
 
-            try:
-                # #490: cancel_order signature is (symbol, order_id) — the args
-                # were swapped here, the same defect that produced -1102 on the
-                # orphan path. Algo orders fall through to the algo-cancel
-                # fallback inside cancel_order (triggered on -2011/-4132).
-                await self.exchange.cancel_order(symbol, other_order_id)
-                self.logger.info(f"✅ Cancelled paired order: {other_order_id}")
-            except Exception as e:
-                self.logger.warning(
-                    f"⚠️ Failed to cancel paired order {other_order_id}: {e}"
-                )
+            if owning_oco.get("surviving_leg_gone"):
+                # cancel_other_order already confirmed the sibling gone through
+                # the endpoint matching its kind (#650) — no second cancel.
+                pass
+            elif other_order_id:
+                other_is_algo = self._leg_is_algo(owning_oco, other_leg)
+                try:
+                    # #650: route by leg kind (see cancel_other_order). The old
+                    # cancel_order() call tried /order first and depended on
+                    # its -2011 fallback to reach the algo endpoint.
+                    await self._cancel_leg_by_kind(
+                        symbol, other_order_id, other_is_algo
+                    )
+                    self.logger.info(f"✅ Cancelled paired order: {other_order_id}")
+                except Exception as e:
+                    if self._cancel_error_is_gone(e, other_is_algo):
+                        self.logger.info(
+                            f"Paired order {other_order_id} already gone: {e}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"⚠️ Failed to cancel paired order {other_order_id}: {e}"
+                        )
 
             # Step 5: Mark this OCO as completed
             owning_oco["status"] = "completed"
@@ -1903,9 +2226,16 @@ class OCOManager:
                     strategy_id=strategy_id, symbol=symbol, exchange="binance"
                 ).inc()
 
-            strategy_pnl_realized.labels(
-                strategy_id=strategy_id, close_reason=close_reason, exchange="binance"
-            ).observe(pnl)
+            if pnl_unknown:
+                oco_exit_pnl_unknown_total.labels(
+                    symbol=symbol, close_reason=close_reason
+                ).inc()
+            elif strategy_position_id:
+                strategy_pnl_realized.labels(
+                    strategy_id=strategy_id,
+                    close_reason=close_reason,
+                    exchange="binance",
+                ).observe(pnl)
 
             # Update active OCO pairs gauge
             if exchange_position_key in self.active_oco_pairs:
@@ -1921,7 +2251,8 @@ class OCOManager:
                 ).set(active_count)
 
             self.logger.info(
-                f"✅ STRATEGY {strategy_position_id} CLOSED: {close_reason}, P&L: ${pnl:,.2f}"
+                f"✅ STRATEGY {strategy_position_id} CLOSED: {close_reason}, P&L: "
+                f"{'unknown' if pnl is None else f'${pnl:,.2f}'}"
             )
 
         except Exception as e:
@@ -2017,6 +2348,16 @@ class Dispatcher:
         # Initialize OCO Manager for SL/TP order management
         self.oco_manager = OCOManager(exchange, self.logger, self)
 
+        # #651: lifecycle manager for explicit-quantity protective legs
+        # (resize on side-size change, cancel when flat, inversion guard).
+        # Started in initialize() once the OCO pairs are reconciled.
+        self.protective_leg_manager = ProtectiveLegManager(
+            exchange,
+            self.oco_manager,
+            logger_=self.logger,
+            on_leg_replaced=self._on_protective_leg_replaced,
+        )
+
         # Initialize Leverage Bound Guard (FR64, P6.4)
         self.leverage_bound_guard = LeverageBoundGuard()
 
@@ -2048,6 +2389,9 @@ class Dispatcher:
         # NEW: Order to strategy position mapping for OCO attribution
         # Format: {order_id: strategy_position_id} - maps orders to their strategy positions
         self.order_to_strategy_position: dict[str, str] = {}
+        # Strategy positions are virtual; retain the durable exchange-position
+        # id needed by the close persistence path.
+        self.strategy_position_to_position: dict[str, str] = {}
 
         # #546: exchange order id -> Signal, registered synchronously the instant
         # execute_order() returns an exchange order_id — well before
@@ -2107,7 +2451,7 @@ class Dispatcher:
                 await self.heartbeat_monitor.start()
 
             # CRITICAL FIX: Initialize strategy position manager in background
-            # MySQL connection attempts can take 3+ minutes and will block startup
+            # Data-manager connection attempts can take 3+ minutes and will block startup
             # Move to background task so NATS consumer can start immediately
             import asyncio
 
@@ -2121,12 +2465,12 @@ class Dispatcher:
                     self.logger.info(
                         "✅ Strategy position manager initialized successfully"
                     )
-                except Exception as mysql_error:
+                except Exception as store_error:
                     self.logger.warning(
-                        f"⚠️ Strategy position manager initialization failed (MySQL unavailable): {mysql_error}"
+                        f"⚠️ Strategy position manager initialization failed (data-manager unavailable): {store_error}"
                     )
                     self.logger.warning(
-                        "Positions will still work via MongoDB fallback"
+                        "Position tracking remains available through data-manager (MongoDB)"
                     )
 
             # Start initialization in background (don't await)
@@ -2160,6 +2504,26 @@ class Dispatcher:
                         f"⚠️ OCO reconciliation failed (non-fatal): {reconcile_err}"
                     )
 
+            # #651: protective-leg lifecycle. The startup sweep runs after the
+            # OCO reconciliation (so tracked pairs are known): it cancels legs
+            # left on flat sides, resizes/dedups explicit legs and migrates
+            # legacy closePosition legs; then the event/periodic loop starts.
+            _leg_mode = protective_leg_mode()
+            try:
+                from tradeengine.metrics import set_protective_leg_mode
+
+                set_protective_leg_mode(_leg_mode)
+            except Exception:
+                self.logger.debug("protective-leg mode metric failed", exc_info=True)
+            self.logger.info(f"🛡️ Protective-leg mode: {_leg_mode} (#651)")
+            if self.exchange and getattr(self.exchange, "client", None) is not None:
+                try:
+                    await self.protective_leg_manager.start()
+                except Exception as leg_err:
+                    self.logger.warning(
+                        f"⚠️ Protective-leg manager failed to start (non-fatal): {leg_err}"
+                    )
+
             if self.exchange and self.exchange.client:
                 # #531: wire the entry-fill callback so ORDER_TRADE_UPDATE
                 # FILLED events on the user-data stream publish a `filled`
@@ -2168,6 +2532,14 @@ class Dispatcher:
                 self.user_data_consumer = UserDataStreamConsumer(
                     self.exchange, on_fill=self._on_user_data_fill
                 )
+                # #651: ACCOUNT_UPDATE position changes schedule a protective-
+                # leg sync for the changed sides (resize/cancel promptly, even
+                # for changes made outside the engine).
+                _set_pos_cb = getattr(
+                    self.user_data_consumer.store, "set_on_position_change", None
+                )
+                if callable(_set_pos_cb):
+                    _set_pos_cb(self._on_exchange_position_change)
                 await self.user_data_consumer.start()
                 # AC2/AC4 (#459 — 446-C): inject the live ExchangeTruthStore into
                 # PositionManager and StrategyPositionManager so risk reads can
@@ -2210,6 +2582,9 @@ class Dispatcher:
         try:
             if self.heartbeat_monitor is not None:
                 await self.heartbeat_monitor.stop()
+            _leg_manager = getattr(self, "protective_leg_manager", None)
+            if _leg_manager is not None:
+                await _leg_manager.stop()
             if self.strategy_position_reconciler is not None:
                 await self.strategy_position_reconciler.stop()
             if self.user_data_consumer is not None:
@@ -2653,26 +3028,48 @@ class Dispatcher:
                                 order,
                             )
                         )
+                    except LockHeldError:
+                        self.logger.info(
+                            f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
+                            f"Signal already being processed by another pod - SKIPPING"
+                        )
+                        signals_processed.labels(
+                            status="skipped_duplicate", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.skipped", True)
+                        span.set_attribute("skip.reason", "lock_acquisition_failed")
+                        span.set_status(trace.Status(trace.StatusCode.OK))
+                        return {
+                            "status": "skipped_duplicate",
+                            "reason": "Signal already being processed by another pod",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
+                    except LockUnavailableError as lock_error:
+                        self.logger.error("🔒 LOCK SERVICE UNAVAILABLE: %s", lock_error)
+                        signals_processed.labels(
+                            status="lock_unavailable", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.skipped", True)
+                        span.set_attribute("skip.reason", "lock_unavailable")
+                        span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, str(lock_error))
+                        )
+                        return {
+                            "status": "lock_unavailable",
+                            "reason": "Lease service unavailable within latency budget",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
                     except Exception as lock_error:
-                        if "Failed to acquire lock" in str(lock_error):
-                            self.logger.info(
-                                f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
-                                f"Signal already being processed by another pod - SKIPPING"
-                            )
-                            signals_processed.labels(
-                                status="skipped_duplicate", action=signal.action
-                            ).inc()
-                            span.set_attribute("signal.skipped", True)
-                            span.set_attribute("skip.reason", "lock_acquisition_failed")
-                            span.set_status(trace.Status(trace.StatusCode.OK))
-                            return {
-                                "status": "skipped_duplicate",
-                                "reason": "Signal already being processed by another pod",
-                                "signal_fingerprint": signal_fingerprint,
-                            }
-                        else:
-                            # Re-raise other lock-related errors
+                        if "Failed to acquire lock" not in str(lock_error):
                             raise
+                        signals_processed.labels(
+                            status="skipped_duplicate", action=signal.action
+                        ).inc()
+                        return {
+                            "status": "skipped_duplicate",
+                            "reason": "Signal already being processed by another pod",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
 
                     result["execution_result"] = execution_result
                     _exec_status = execution_result.get("status", "unknown")
@@ -3129,6 +3526,10 @@ class Dispatcher:
                             self.order_to_strategy_position[order.order_id] = (
                                 strategy_position_id
                             )
+                            if order.position_id:
+                                self.strategy_position_to_position[
+                                    strategy_position_id
+                                ] = order.position_id
                             self.logger.info(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
@@ -4030,6 +4431,125 @@ class Dispatcher:
         if exch_order_id:
             self.exchange_order_id_to_signal.pop(str(exch_order_id), None)
 
+    def _request_leg_sync(
+        self, symbol: str | None, position_side: str | None, reason: str
+    ) -> None:
+        """#651: schedule a protective-leg sync for one side (non-blocking)."""
+        manager = getattr(self, "protective_leg_manager", None)
+        if manager is None:
+            return
+        try:
+            manager.request_sync(symbol, position_side, reason=reason)
+        except Exception:
+            self.logger.debug("#651: leg sync request failed", exc_info=True)
+
+    def _on_exchange_position_change(self, keys: list[tuple[str, str]]) -> None:
+        """#651: user-data ACCOUNT_UPDATE changed these (symbol, side) positions."""
+        for symbol, side in keys:
+            self._request_leg_sync(symbol, side, "account_update")
+
+    async def _on_protective_leg_replaced(
+        self, symbol: str, position_side: str, kind: str, old_id: str, new_id: str
+    ) -> None:
+        """#651: a leg was resized/migrated/deduplicated (its algoId changed).
+
+        Re-point the strategy-position and durable position records at the new
+        id; otherwise /positions/stops-health would see a stale id and re-arm
+        the side with a second, full-size leg.
+        """
+        field = "sl_order_id" if kind == "SL" else "tp_order_id"
+        for spid, pos in list(
+            getattr(strategy_position_manager, "strategy_positions", {}).items()
+        ):
+            if str(pos.get(field) or "") != str(old_id):
+                continue
+            try:
+                await strategy_position_manager.set_strategy_position_orders(
+                    strategy_position_id=spid,
+                    **{field: str(new_id)},
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "#651: could not re-point %s of strategy position %s: %s",
+                    field,
+                    spid,
+                    exc,
+                )
+        risk_field = "stop_loss_order_id" if kind == "SL" else "take_profit_order_id"
+        for pair in self.oco_manager.active_oco_pairs.get(
+            f"{symbol}_{position_side}", []
+        ):
+            position_id = str(pair.get("position_id") or "")
+            if (
+                str(pair.get(field) or "") != str(new_id)
+                or not position_id
+                or position_id.startswith("reconciled")
+            ):
+                continue
+            try:
+                await self.position_manager.update_position_risk_orders(
+                    position_id, **{risk_field: str(new_id)}
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "#651: could not re-point %s of position %s: %s",
+                    risk_field,
+                    position_id,
+                    exc,
+                )
+
+    async def _record_reduce_only_fill(self, order_obj: dict[str, Any]) -> None:
+        """Persist a conditional/reduce-only FILLED event immediately.
+
+        The OCO poll remains the reconciliation owner, but the user-data
+        stream is the first source that sees many fills. The position manager's
+        exit-order idempotency makes both observations safe.
+        """
+        manager = getattr(self, "position_manager", None)
+        oco_manager = getattr(self, "oco_manager", None)
+        if manager is None or oco_manager is None:
+            return
+        order_id = str(order_obj.get("i", ""))
+        pair_match: dict[str, Any] | None = None
+        pairs_by_key = getattr(oco_manager, "active_oco_pairs", {})
+        for pairs in pairs_by_key.values():
+            candidates = pairs if isinstance(pairs, list) else [pairs]
+            for pair in candidates:
+                if order_id in {
+                    str(pair.get("sl_order_id", "")),
+                    str(pair.get("tp_order_id", "")),
+                }:
+                    pair_match = pair
+                    break
+            if pair_match is not None:
+                break
+        if not pair_match or not pair_match.get("position_id"):
+            return
+
+        def _number(value: Any, fallback: float = 0.0) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        order_type = str(order_obj.get("o", "")).upper()
+        close_reason = "take_profit" if "TAKE_PROFIT" in order_type else "stop_loss"
+        timestamp = order_obj.get("T")
+        exit_time = datetime.now(UTC)
+        if isinstance(timestamp, int | float):
+            exit_time = datetime.fromtimestamp(
+                timestamp / 1000 if timestamp > 1e12 else timestamp, tz=UTC
+            )
+        await manager.record_position_close(
+            position_id=str(pair_match["position_id"]),
+            exit_price=_number(order_obj.get("L"), _number(order_obj.get("ap"))),
+            exit_qty=_number(order_obj.get("z"), _number(order_obj.get("q"))),
+            exit_order_id=order_id,
+            exit_time=exit_time,
+            close_reason=close_reason,
+            commission=_number(order_obj.get("n")),
+        )
+
     async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
         """Publish a `filled` execution event for an entry fill (#531).
 
@@ -4058,6 +4578,15 @@ class Dispatcher:
                 "STOP",
                 "TAKE_PROFIT",
             ):
+                await self._record_reduce_only_fill(order_obj)
+                # #651: a closing fill can shrink, flatten or (testnet
+                # residual) invert the side — run the post-fill inversion
+                # guard and a leg sync for it. Non-blocking.
+                _leg_manager = getattr(self, "protective_leg_manager", None)
+                if _leg_manager is not None:
+                    _leg_manager.on_protective_fill(
+                        symbol, order_obj.get("ps"), order_id
+                    )
                 # #534 (H6 of #977): a FILLED SL/TP leg is the exact signal the
                 # 2s poll waits for. When the WS-wake flag is on, nudge the
                 # OCO monitor so it re-polls immediately instead of waiting up
@@ -4858,12 +5387,21 @@ class Dispatcher:
                                 strategy_position_id,
                                 exc,
                             )
-                elif oco_result.get("error") == "duplicate_oco":
+                elif (
+                    oco_result.get("error") == "duplicate_oco"
+                    or oco_result.get("status") == "skipped_exchange_pair_exists"
+                ):
                     # Position already has an active OCO pair — expected when multiple
                     # strategies accumulate into the same exchange position.
                     # The existing OCO protects the full exchange position; placing
                     # additional individual SL/TP orders would consume algo order slots
                     # and push towards the Binance 10-order-per-symbol limit.
+                    # #651: the #550 exchange-truth dedup ("skipped_exchange_pair_
+                    # exists") is the same situation. It used to fall through to
+                    # the individual-order fallback below, which with explicit-
+                    # quantity legs would stack a second full-size pair on the
+                    # side. The leg manager resizes the existing pair to the new
+                    # side quantity instead (sync requested in the finally below).
                     strategy_label = strategy_position_id or order.order_id or "unknown"
                     self.logger.info(
                         f"✅ OCO CONSOLIDATED: {order.symbol} "
@@ -4936,6 +5474,11 @@ class Dispatcher:
             )
             # Re-raise to trigger atomic rollback in caller
             raise
+        finally:
+            # #651: every fill that reaches here changed the side size (an
+            # entry, a consolidating add, or a reduce-only close). Converge the
+            # explicit-quantity legs to the new side quantity.
+            self._request_leg_sync(order.symbol, order.position_side, "risk_management")
 
     async def _place_individual_risk_orders(
         self, order: TradeOrder, result: dict[str, Any]
@@ -5413,6 +5956,8 @@ class Dispatcher:
                     strategy_close_blocked_no_exchange_position_total.labels(
                         symbol=symbol, side=position_side
                     ).inc()
+                    # #651: the side is flat — clear any legs left on it.
+                    self._request_leg_sync(symbol, position_side, f"close:{reason}")
                     return {
                         "position_closed": False,
                         "oco_cancelled": oco_cancelled,
@@ -5499,6 +6044,8 @@ class Dispatcher:
                             side=position_side,
                             outcome="skipped_flat",
                         ).inc()
+                        # #651: the side is flat — clear any legs left on it.
+                        self._request_leg_sync(symbol, position_side, f"close:{reason}")
                         return {
                             "position_closed": False,
                             "oco_cancelled": oco_cancelled,
@@ -5577,15 +6124,35 @@ class Dispatcher:
             except Exception as e:
                 self.logger.error(f"❌ ERROR CLOSING POSITION: {e}")
 
-            # Step 3: Clean up position record
-            try:
-                if position_id:
-                    await self.position_manager.close_position_record(
-                        position_id, {"reason": reason, "manual_close": True}
+            # #651: the close shrank or flattened the side — resize or cancel
+            # its explicit-quantity legs (the follow-up passes absorb
+            # positionRisk lag after the MARKET fill).
+            self._request_leg_sync(symbol, position_side, f"close:{reason}")
+
+            # Step 3: Persist the actual exchange fill. Do not mark a row
+            # closed from the requested quantity or a zero placeholder price.
+            if position_closed and position_id:
+                try:
+                    fill_price = close_result.get("fill_price")
+                    if fill_price is None:
+                        fill_price = close_result.get("average_price")
+                    if fill_price is None:
+                        fill_price = close_result.get("price")
+                    filled_qty = close_result.get("amount")
+                    if filled_qty is None:
+                        filled_qty = close_result.get("filled_amount", quantity)
+                    await self.position_manager.record_position_close(
+                        position_id=position_id,
+                        exit_price=float(fill_price or 0.0),
+                        exit_qty=float(filled_qty or quantity),
+                        exit_order_id=str(close_result.get("order_id", "")) or None,
+                        exit_time=close_result.get("timestamp") or datetime.now(UTC),
+                        close_reason=reason,
+                        commission=float(close_result.get("commission", 0.0) or 0.0),
                     )
                     self.logger.info("✅ POSITION RECORD UPDATED")
-            except Exception as e:
-                self.logger.error(f"❌ ERROR UPDATING POSITION RECORD: {e}")
+                except Exception as e:
+                    self.logger.error(f"❌ ERROR UPDATING POSITION RECORD: {e}")
 
             return {
                 "position_closed": position_closed,
@@ -5704,8 +6271,13 @@ class Dispatcher:
         OCO-aware close path (cancels protective orders + market-closes).
         """
         strategy_position_id = pos["strategy_position_id"]
+        # CIO addresses the virtual strategy position; persistence is keyed by
+        # the exchange position created from the original signal.
+        position_id = getattr(self, "strategy_position_to_position", {}).get(
+            strategy_position_id, pos.get("position_id", strategy_position_id)
+        )
         close_result = await self.close_position_with_cleanup(
-            position_id=strategy_position_id,
+            position_id=position_id,
             symbol=pos["symbol"],
             position_side=pos["side"],
             quantity=pos["entry_quantity"],
@@ -5825,6 +6397,9 @@ class Dispatcher:
                 "exchange_result": exec_result,
             }
 
+        # #651: the partial close shrank the side — shrink its legs.
+        self._request_leg_sync(pos["symbol"], pos["side"], "cio_scale_out")
+
         exit_price = float(
             exec_result.get("fill_price")
             or exec_result.get("price")
@@ -5930,6 +6505,10 @@ class Dispatcher:
             strategy_position_id=strategy_position_id,
             entry_price=entry_price,
         )
+
+        # #651: the re-armed pair was sized from this strategy's entry; the
+        # leg manager converges it to the whole side quantity.
+        self._request_leg_sync(pos["symbol"], side, "cio_modify_stops")
 
         if oco_result.get("status") == "success":
             await strategy_position_manager.set_strategy_position_orders(
@@ -6281,6 +6860,10 @@ class Dispatcher:
 
             # Stop OCO monitoring
             await self.oco_manager.stop_monitoring()
+            # #651: stop the protective-leg lifecycle loop
+            _leg_manager = getattr(self, "protective_leg_manager", None)
+            if _leg_manager is not None:
+                await _leg_manager.stop()
 
             self.logger.info("✅ DISPATCHER SHUTDOWN COMPLETE")
 

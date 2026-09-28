@@ -1,11 +1,12 @@
 """
 Position Manager - Tracks positions and enforces risk limits with distributed state
-management using Data Manager API and MongoDB for coordination only.
+management using the data-manager API backed by MongoDB.
 """
 
 import asyncio
 import logging
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
 
 from contracts.order import TradeOrder
@@ -21,9 +22,7 @@ from shared.constants import (
     get_mongodb_connection_string,
     redact_uri,
 )
-
-# Import Data Manager position client
-from shared.mysql_client import position_client
+from shared.trading_store_client import trading_store
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     algo_orders_open,
@@ -31,6 +30,7 @@ from tradeengine.metrics import (
     daily_pnl_persist_failures_consecutive,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
+    position_close_persist_failures_total,
     position_commission_usd,
     position_duration_seconds,
     position_entry_price,
@@ -47,13 +47,15 @@ from tradeengine.metrics import (
     total_realized_pnl_usd,
     total_unrealized_pnl_usd,
 )
+from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
+position_client = trading_store
 
 
 class PositionManager:
     """Manages trading positions and risk limits with distributed state management
-    using Data Manager API for persistence and MongoDB for coordination only."""
+    using the data-manager API backed by MongoDB."""
 
     def __init__(self, exchange: Any = None) -> None:
         self.positions: dict[tuple[str, str], dict[str, Any]] = {}
@@ -78,14 +80,15 @@ class PositionManager:
             None  # Set by check_position_limits on rejection
         )
         self._portfolio_exposure_refresh_failed = False
+        self._recorded_exit_order_ids: set[str] = set()
         # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
         # UserDataStreamConsumer starts; None until then.
         self.exchange_truth_store: ExchangeTruthStore | None = None
 
     async def initialize(self) -> None:
-        """Initialize position manager with Data Manager API for persistence and MongoDB for coordination"""
+        """Initialize position manager with the data-manager API backed by MongoDB."""
         try:
-            # Initialize MongoDB connection for distributed coordination only
+            # Initialize the data-manager-backed MongoDB operational store
             await self._initialize_mongodb()
 
             # Initialize Data Manager connection for position persistence
@@ -94,10 +97,10 @@ class PositionManager:
                 logger.info("Data Manager client connected for position tracking")
 
                 # Load positions from Data Manager (primary source)
-                await self._load_positions_from_data_manager()
+                await self._load_positions_from_store()
 
                 # Load daily P&L from Data Manager
-                await self._load_daily_pnl_from_data_manager()
+                await self._load_daily_pnl_from_store()
 
                 # Fetch initial portfolio value from exchange
                 await self._refresh_portfolio_value()
@@ -180,7 +183,7 @@ class PositionManager:
     async def close(self) -> None:
         """Close position manager and sync final state"""
         try:
-            await self._sync_positions_to_data_manager()
+            await self._sync_positions_to_store()
             if self.mongodb_client:
                 self.mongodb_client.close()
             await position_client.disconnect()
@@ -216,7 +219,7 @@ class PositionManager:
             self.mongodb_db = None
             raise
 
-    async def _load_positions_from_data_manager(self) -> None:
+    async def _load_positions_from_store(self) -> None:
         """Load positions from Data Manager with hedge mode support"""
         try:
             positions_data = await position_client.get_open_positions()
@@ -267,10 +270,14 @@ class PositionManager:
             )
 
         except Exception as e:
-            logger.error(f"Failed to load positions from Data Manager: {e}")
+            logger.error(f"Failed to load positions from trading store: {e}")
             raise
 
-    async def _load_daily_pnl_from_data_manager(self) -> None:
+    async def _load_positions_from_data_manager(self) -> None:
+        """Backward-compatible name for callers outside the manager."""
+        await self._load_positions_from_store()
+
+    async def _load_daily_pnl_from_store(self) -> None:
         """Load daily P&L and require a persisted value before trading."""
         try:
             today = datetime.now(UTC).date()
@@ -279,7 +286,9 @@ class PositionManager:
             if daily_pnl is not None:
                 self.daily_pnl = float(daily_pnl)
                 self._daily_pnl_refresh_stale = False
-                logger.info(f"Loaded daily P&L from Data Manager: {self.daily_pnl}")
+                logger.info(
+                    "Loaded daily P&L from MongoDB trading store: %s", self.daily_pnl
+                )
             else:
                 self._daily_pnl_refresh_stale = True
                 logger.critical(
@@ -357,8 +366,8 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Failed to load positions from exchange: {e}")
 
-    async def _sync_positions_to_data_manager(self) -> None:
-        """Sync current positions to Data Manager with hedge mode support"""
+    async def _sync_positions_to_store(self) -> None:
+        """Sync mutable position fields to the MongoDB-backed trading store."""
         async with self.sync_lock:
             try:
                 rolled_over = await self._roll_daily_pnl_if_new_day()
@@ -383,9 +392,27 @@ class PositionManager:
                         "last_update",
                         position_data.get("entry_time", datetime.now(UTC)),
                     )
-                    position_data["status"] = "open"
                     position_data["updated_at"] = datetime.now(UTC)
-                    await position_client.upsert_position(position_data)
+                    legacy_upsert = position_client._legacy_override("upsert_position")
+                    if legacy_upsert is not None:
+                        await legacy_upsert(position_data)
+                        continue
+                    current = await position_client.get_position(str(position_id))
+                    if not current or current.get("status") != "open":
+                        self.position_records.pop(str(position_id), None)
+                        continue
+                    mutable = {
+                        key: position_data[key]
+                        for key in (
+                            "quantity",
+                            "avg_price",
+                            "unrealized_pnl",
+                            "last_update",
+                            "updated_at",
+                        )
+                        if key in position_data
+                    }
+                    await position_client.update_position(str(position_id), mutable)
 
                 # The rollover helper already persisted the new-day zero.
                 if not rolled_over:
@@ -398,16 +425,20 @@ class PositionManager:
                     else:
                         daily_pnl_persist_failures_consecutive.inc()
                         logger.error(
-                            "Daily P&L persistence failed for %s: %s",
+                            "Daily P&L persistence failed for %s (store=mongodb): %s",
                             today,
                             persist_result.error,
                         )
 
                 self.last_sync_time = datetime.now(UTC)
-                logger.debug("Positions synced to Data Manager")
+                logger.debug("Positions synced to trading store")
 
             except Exception as e:
-                logger.error(f"Failed to sync positions to Data Manager: {e}")
+                logger.error(f"Failed to sync positions to trading store: {e}")
+
+    async def _sync_positions_to_data_manager(self) -> None:
+        """Backward-compatible name for the store sync loop."""
+        await self._sync_positions_to_store()
 
     def _refresh_positions_from_exchange_truth_store(self) -> bool:
         """Refresh the risk view from the exchange-authoritative position store."""
@@ -439,7 +470,7 @@ class PositionManager:
         while True:
             try:
                 await asyncio.sleep(30)  # Sync every 30 seconds
-                await self._sync_positions_to_data_manager()
+                await self._sync_positions_to_store()
             except Exception as e:
                 logger.error(f"Error in periodic sync: {e}")
 
@@ -524,6 +555,7 @@ class PositionManager:
             is_adding_to_position = (
                 position_side == "LONG" and order.side == "buy"
             ) or (position_side == "SHORT" and order.side == "sell")
+            durable_close_recorded = False
 
             if is_adding_to_position:
                 # Add to position (opening or increasing)
@@ -563,8 +595,24 @@ class PositionManager:
                         )
 
                     position["realized_pnl"] += realized_pnl
-                    await self._roll_daily_pnl_if_new_day()
-                    self.daily_pnl += realized_pnl
+                    if order.position_id and order.position_id in self.position_records:
+                        durable_close_recorded = (
+                            await self.record_position_close(
+                                position_id=order.position_id,
+                                exit_price=fill_price,
+                                exit_qty=fill_quantity,
+                                exit_order_id=str(result.get("order_id", "")) or None,
+                                exit_time=datetime.now(UTC),
+                                close_reason="reduce_only"
+                                if order.reduce_only
+                                else "signal_reduce",
+                                commission=float(result.get("commission", 0.0) or 0.0),
+                            )
+                            is not None
+                        )
+                    if not durable_close_recorded:
+                        await self._roll_daily_pnl_if_new_day()
+                        self.daily_pnl += realized_pnl
 
                     # Update position
                     position["quantity"] -= fill_quantity
@@ -601,9 +649,10 @@ class PositionManager:
                             f"daily_pnl=${self.daily_pnl:.2f}"
                         )
 
-                        await self._close_position_in_data_manager(
-                            position_key, position
-                        )
+                        if not durable_close_recorded:
+                            await self._close_position_in_data_manager(
+                                position_key, position
+                            )
                         del self.positions[position_key]
                         return
 
@@ -664,9 +713,7 @@ class PositionManager:
             # CRITICAL FIX: Data Manager sync must NOT block risk management orders
             # Use short timeout to prevent hanging - position already updated in memory
             try:
-                await asyncio.wait_for(
-                    self._sync_positions_to_data_manager(), timeout=2.0
-                )
+                await asyncio.wait_for(self._sync_positions_to_store(), timeout=2.0)
             except TimeoutError:
                 logger.warning(
                     f"⚠️  Data Manager sync timed out for {symbol} {position_side} (non-critical, continuing)"
@@ -694,9 +741,16 @@ class PositionManager:
                 position_side,
                 {
                     "status": "closed",
-                    "last_update": datetime.now(UTC),
-                    "closed_at": datetime.now(UTC),
-                    "final_realized_pnl": position["realized_pnl"],
+                    "exit_price": position.get(
+                        "last_price", position.get("avg_price", 0.0)
+                    ),
+                    "exit_time": datetime.now(UTC),
+                    "pnl": position["realized_pnl"],
+                    "pnl_pct": 0.0,
+                    "pnl_after_fees": position["realized_pnl"],
+                    "duration_seconds": 0,
+                    "close_reason": "signal_reduce",
+                    "final_commission": 0.0,
                 },
             )
             logger.info(
@@ -806,15 +860,25 @@ class PositionManager:
             _create_ok = False
             for _attempt in range(1, 4):
                 try:
-                    await asyncio.wait_for(
+                    result = await asyncio.wait_for(
                         position_client.create_position(position_data), timeout=5.0
                     )
-                    logger.info(
-                        f"Position {order.position_id} created via Data Manager for "
-                        f"{order.symbol} {order.position_side} (attempt {_attempt})"
+                    if result.ok:
+                        logger.info(
+                            "Position %s created via trading store for %s %s (attempt %s)",
+                            order.position_id,
+                            order.symbol,
+                            order.position_side,
+                            _attempt,
+                        )
+                        _create_ok = True
+                        break
+                    logger.warning(
+                        "Trading-store position insert failed for %s (attempt %s/3): %s",
+                        order.position_id,
+                        _attempt,
+                        result.error,
                     )
-                    _create_ok = True
-                    break
                 except TimeoutError:
                     logger.warning(
                         f"⚠️  Data Manager position insert timed out for {order.position_id} "
@@ -826,6 +890,15 @@ class PositionManager:
                         f"(attempt {_attempt}/3): {data_manager_error}"
                     )
             if not _create_ok:
+                persist_retry_queue.enqueue(
+                    PendingWrite(
+                        operation="create_position",
+                        data=dict(position_data),
+                        symbol=order.symbol,
+                        position_id=order.position_id,
+                        last_error="trading-store create failed",
+                    )
+                )
                 logger.critical(
                     f"❌ CRITICAL: Position {order.position_id} ({order.symbol} {order.position_side}) "
                     f"could NOT be persisted after 3 attempts. "
@@ -915,80 +988,218 @@ class PositionManager:
     async def close_position_record(
         self, position_id: str, exit_result: dict[str, Any]
     ) -> None:
-        """Update position record on closure with dual persistence and metrics
+        """Compatibility wrapper for the fill-aware close routine."""
+        if position_id not in self.position_records:
+            # Older callers provide the complete position snapshot inline. Keep
+            # those callers working while routing all persistence through the
+            # position-id keyed implementation.
+            self.position_records[position_id] = {
+                "position_id": position_id,
+                "strategy_id": exit_result.get("strategy_id", "unknown"),
+                "exchange": exit_result.get("exchange", "binance"),
+                "symbol": exit_result.get("symbol", ""),
+                "position_side": exit_result.get("position_side", "LONG"),
+                "entry_price": exit_result.get("entry_price", 0.0),
+                "quantity": exit_result.get("quantity", 0.0),
+                "entry_time": exit_result.get("entry_time", datetime.now(UTC)),
+                "commission_total": exit_result.get("entry_commission", 0.0),
+                "status": "open",
+            }
+        await self.record_position_close(
+            position_id=position_id,
+            exit_price=exit_result.get("exit_price", 0.0),
+            exit_qty=exit_result.get("quantity", 0.0),
+            exit_order_id=exit_result.get("order_id")
+            or exit_result.get("exit_order_id"),
+            exit_time=exit_result.get("exit_time", datetime.now(UTC)),
+            close_reason=exit_result.get(
+                "close_reason", exit_result.get("reason", "manual")
+            ),
+            commission=exit_result.get(
+                "exit_commission", exit_result.get("commission", 0.0)
+            ),
+        )
 
-        Supports hedge mode with proper PNL calculation for LONG and SHORT positions.
+    async def record_position_close(
+        self,
+        position_id: str,
+        exit_price: float | None,
+        exit_qty: float,
+        exit_order_id: str | None,
+        exit_time: datetime | None,
+        close_reason: str,
+        commission: float = 0.0,
+        pnl_unknown: bool = False,
+    ) -> dict[str, Any] | None:
+        """Record a full or partial exchange fill against a position row.
+
+        The operation is keyed by ``position_id`` and is idempotent on the
+        exchange fill order id. Persistence failures remain best-effort: the
+        durable update is placed on the existing retry queue and never blocks
+        the order path.
         """
         try:
-            # Calculate closure data
-            exit_price = exit_result.get("exit_price", 0.0)
-            exit_time = exit_result.get("exit_time", datetime.now(UTC))
-            entry_price = exit_result.get("entry_price", 0.0)
-            quantity = exit_result.get("quantity", 0.0)
-            entry_time = exit_result.get("entry_time", exit_time)
-            position_side = exit_result.get("position_side", "LONG")
+            if exit_order_id and str(exit_order_id) in self._recorded_exit_order_ids:
+                return None
+            record = self.position_records.get(position_id)
+            if record is None:
+                record = await position_client.get_position(position_id)
+            if not record:
+                logger.error("Position %s not found for close fill", position_id)
+                return None
 
-            # Calculate PnL (use provided values if already calculated, else calculate)
-            if "pnl" in exit_result and "pnl_pct" in exit_result:
-                # Already calculated (e.g., from OCO completion)
-                pnl = exit_result["pnl"]
-                pnl_pct = exit_result["pnl_pct"]
-                pnl_after_fees = exit_result.get("pnl_after_fees")
-            else:
-                # Calculate based on position side (hedge-mode aware)
-                if position_side == "LONG":
-                    pnl = (exit_price - entry_price) * quantity
-                else:  # SHORT
-                    pnl = (entry_price - exit_price) * quantity
-
-                pnl_pct = (
-                    (pnl / (entry_price * quantity) * 100)
-                    if entry_price > 0 and quantity > 0
+            entry_price = float(
+                record.get("entry_price", record.get("avg_price", 0.0)) or 0.0
+            )
+            position_side = str(record.get("position_side", "LONG"))
+            current_qty = float(
+                record.get("quantity", record.get("entry_quantity", 0.0)) or 0.0
+            )
+            close_qty = min(max(float(exit_qty or 0.0), 0.0), current_qty)
+            if close_qty <= 0.0:
+                return None
+            exit_price = float(exit_price) if exit_price is not None else None
+            commission = float(commission or 0.0)
+            gross_pnl = (
+                None
+                if pnl_unknown
+                else (
+                    (exit_price - entry_price) * close_qty
+                    if position_side == "LONG"
+                    else (entry_price - exit_price) * close_qty
+                )
+            )
+            previous_pnl = float(
+                record.get("pnl", record.get("realized_pnl", 0.0)) or 0.0
+            )
+            previous_commission = float(record.get("final_commission", 0.0) or 0.0)
+            cumulative_pnl = None if pnl_unknown else previous_pnl + gross_pnl
+            cumulative_commission = previous_commission + commission
+            remaining_qty = max(current_qty - close_qty, 0.0)
+            status = "closed" if remaining_qty <= 1e-12 else "open"
+            raw_entry_time = record.get("entry_time")
+            entry_time = (
+                raw_entry_time
+                if isinstance(raw_entry_time, datetime)
+                else (exit_time or datetime.now(UTC))
+            )
+            effective_exit_time = exit_time or datetime.now(UTC)
+            if isinstance(entry_time, str):
+                entry_time = datetime.fromisoformat(
+                    str(entry_time).replace("Z", "+00:00")
+                )
+            if isinstance(effective_exit_time, str):
+                effective_exit_time = datetime.fromisoformat(
+                    str(effective_exit_time).replace("Z", "+00:00")
+                )
+            duration_seconds = max(
+                int((effective_exit_time - entry_time).total_seconds()), 0
+            )
+            original_qty = float(
+                record.get(
+                    "entry_quantity", record.get("original_quantity", current_qty)
+                )
+                or current_qty
+            )
+            pnl_pct = (
+                (
+                    cumulative_pnl / (entry_price * original_qty) * 100
+                    if entry_price > 0 and original_qty > 0
                     else 0.0
                 )
-
-                # Get commissions
-                entry_commission = exit_result.get("entry_commission", 0.0)
-                exit_commission = exit_result.get("exit_commission", 0.0)
-                total_commission = entry_commission + exit_commission
-                pnl_after_fees = pnl - total_commission
-
-            # Calculate duration
-            duration_seconds = int((exit_time - entry_time).total_seconds())
-
-            # Get commissions (handle both cases)
-            entry_commission = exit_result.get("entry_commission", 0.0)
-            exit_commission = exit_result.get("exit_commission", 0.0)
-
+                if cumulative_pnl is not None
+                else None
+            )
             update_data = {
-                "status": "closed",
+                "status": status,
+                "quantity": remaining_qty,
                 "exit_price": exit_price,
-                "exit_time": exit_time,
-                "exit_order_id": exit_result.get("order_id"),
-                "exit_trade_ids": exit_result.get("trade_ids", []),
-                "pnl": pnl,
+                "exit_time": effective_exit_time,
+                "exit_order_id": exit_order_id,
+                "pnl": cumulative_pnl,
                 "pnl_pct": pnl_pct,
-                "pnl_after_fees": pnl_after_fees,
+                "pnl_after_fees": None
+                if cumulative_pnl is None
+                else cumulative_pnl
+                - float(record.get("commission_total", 0.0) or 0.0)
+                - cumulative_commission,
                 "duration_seconds": duration_seconds,
-                "close_reason": exit_result.get("close_reason", "manual"),
-                "final_commission": exit_commission,
+                "close_reason": close_reason,
+                "final_commission": cumulative_commission,
+                "pnl_unknown": pnl_unknown,
             }
 
-            # Update Data Manager
+            record.update(update_data)
+            self.position_records[position_id] = record
+            if exit_order_id:
+                self._recorded_exit_order_ids.add(str(exit_order_id))
+
             try:
-                await position_client.update_position(position_id, update_data)
-                logger.info(f"Position {position_id} closed via Data Manager")
-            except Exception as data_manager_error:
-                logger.error(
-                    f"Failed to close position via Data Manager: {data_manager_error}"
+                result = await position_client.update_position(position_id, update_data)
+            except Exception as persist_error:
+                result = SimpleNamespace(ok=False, error=str(persist_error))
+            if getattr(result, "ok", True) is False:
+                self._queue_close_retry(position_id, record, update_data, result)
+
+            await self._roll_daily_pnl_if_new_day()
+            if gross_pnl is not None:
+                self.daily_pnl += gross_pnl
+                await position_client.update_daily_pnl(
+                    datetime.now(UTC).date().isoformat(), self.daily_pnl
                 )
+                total_daily_pnl_usd.labels(
+                    exchange=record.get("exchange", "binance")
+                ).set(self.daily_pnl)
 
-            # Export metrics
-            position_data = {**exit_result, **update_data}
+            position_data = {**record, **update_data, "gross_pnl": gross_pnl}
             await self._export_position_closed_metrics(position_data)
-
+            if status == "closed":
+                positions_closed_total.labels(
+                    strategy_id=record.get("strategy_id", "unknown"),
+                    symbol=record.get("symbol", "unknown"),
+                    position_side=position_side,
+                    close_reason=close_reason,
+                    exchange=record.get("exchange", "binance"),
+                ).inc()
+            return position_data
         except Exception as e:
-            logger.error(f"Error closing position record: {e}")
+            logger.error("Error recording position close %s: %s", position_id, e)
+            return None
+
+    def _queue_close_retry(
+        self,
+        position_id: str,
+        record: dict[str, Any],
+        update_data: dict[str, Any],
+        result: Any,
+    ) -> None:
+        """Queue a failed close update without raising into order flow."""
+        symbol = str(record.get("symbol", "unknown"))
+        side = str(record.get("position_side", "unknown"))
+        position_close_persist_failures_total.labels(
+            symbol=symbol, position_side=side
+        ).inc()
+        logger.error(
+            "Position close persistence failed for %s: %s",
+            position_id,
+            getattr(result, "error", result),
+        )
+        try:
+            data = dict(update_data)
+            data["_retry_position_id"] = position_id
+            persist_retry_queue.enqueue(
+                PendingWrite(
+                    operation="update_position",
+                    data=data,
+                    symbol=symbol,
+                    position_id=position_id,
+                    last_error=str(getattr(result, "error", "") or ""),
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to enqueue close persistence retry for %s: %s", position_id, exc
+            )
 
     async def _export_position_opened_metrics(
         self, position_data: dict[str, Any]
@@ -1397,7 +1608,7 @@ class PositionManager:
             return False
 
         # Refresh daily P&L from Data Manager
-        await self._refresh_daily_pnl_from_data_manager()
+        await self._refresh_daily_pnl_from_store()
 
         # #600: a failed refresh must not leave the kill-switch evaluating
         # against a stale/zero daily_pnl — fail CLOSED (reject new entries)
@@ -1420,8 +1631,8 @@ class PositionManager:
 
         return True
 
-    async def _refresh_daily_pnl_from_data_manager(self) -> None:
-        """Refresh daily P&L from Data Manager.
+    async def _refresh_daily_pnl_from_store(self) -> None:
+        """Refresh daily P&L from the MongoDB-backed trading store.
 
         A missing row is treated as an untrusted baseline and fails closed.
         """
@@ -1441,7 +1652,7 @@ class PositionManager:
                 )
         except Exception as e:
             logger.error(
-                f"⛔ Failed to refresh daily P&L from Data Manager — the "
+                f"⛔ Failed to refresh daily P&L from MongoDB trading store — the "
                 f"daily-loss kill-switch will fail CLOSED until refresh "
                 f"succeeds again: {e}"
             )

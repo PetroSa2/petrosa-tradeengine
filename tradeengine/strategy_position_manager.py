@@ -16,6 +16,7 @@ This enables:
 - Profit attribution to contributing strategies
 """
 
+import inspect
 import logging
 import uuid
 from datetime import datetime
@@ -120,6 +121,15 @@ class StrategyPositionManager:
         ] = {}  # exchange_position_key -> contributions
         # AC4 (#459 — 446-C): injected by Dispatcher after UserDataStreamConsumer starts.
         self.exchange_truth_store: ExchangeTruthStore | None = None
+
+    @staticmethod
+    async def _persist_call(
+        method_name: str, legacy_name: str, *args: Any
+    ) -> PersistResult:
+        method = getattr(position_client, method_name)
+        if not inspect.iscoroutinefunction(method):
+            method = getattr(position_client, legacy_name)
+        return await method(*args)
 
     async def initialize(self) -> None:
         """Initialize strategy position manager"""
@@ -233,6 +243,7 @@ class StrategyPositionManager:
                 "entry_price": entry_price,
                 "entry_time": datetime.now(UTC),
                 "entry_order_id": entry_order_id,
+                "position_id": order.position_id,
                 "take_profit_price": take_profit_price,
                 "stop_loss_price": stop_loss_price,
                 # AC3 of #424: these must hold real Binance algo-order IDs,
@@ -331,10 +342,11 @@ class StrategyPositionManager:
     async def close_strategy_position(
         self,
         strategy_position_id: str,
-        exit_price: float,
+        exit_price: float | None,
         exit_quantity: float | None = None,
         close_reason: str = "manual",
         exit_order_id: str | None = None,
+        pnl_unknown: bool = False,
     ) -> dict[str, Any]:
         """Close a strategy position when TP/SL triggers
 
@@ -362,13 +374,17 @@ class StrategyPositionManager:
             entry_price = position["entry_price"]
             entry_quantity = position["entry_quantity"]
 
-            if position["side"] == "LONG":
+            if pnl_unknown:
+                pnl = None
+            elif position["side"] == "LONG":
                 pnl = (exit_price - entry_price) * exit_quantity
             else:  # SHORT
                 pnl = (entry_price - exit_price) * exit_quantity
 
             pnl_pct = (
-                (pnl / (entry_price * exit_quantity)) * 100 if entry_price > 0 else 0
+                ((pnl / (entry_price * exit_quantity)) * 100 if entry_price > 0 else 0)
+                if pnl is not None
+                else None
             )
 
             # Update position
@@ -387,18 +403,23 @@ class StrategyPositionManager:
             await self._update_strategy_position_closure(strategy_position_id, position)
 
             # Update contribution
-            await self._close_contribution(
-                strategy_position_id, exit_price, pnl, pnl_pct, close_reason
-            )
+            if not pnl_unknown:
+                await self._close_contribution(
+                    strategy_position_id, exit_price, pnl, pnl_pct, close_reason
+                )
 
             # Update exchange position
             await self._reduce_exchange_position(
-                position["exchange_position_key"], exit_quantity, exit_price
+                position["exchange_position_key"],
+                exit_quantity,
+                exit_price if exit_price is not None else entry_price,
             )
 
+            pnl_text = "unknown" if pnl is None else f"${pnl:.2f}"
+            pct_text = "unknown" if pnl_pct is None else f"{pnl_pct:.2f}%"
             logger.info(
                 f"Closed strategy position {strategy_position_id}: "
-                f"{close_reason} at {exit_price}, PnL: ${pnl:.2f} ({pnl_pct:.2f}%)"
+                f"{close_reason} at {exit_price}, PnL: {pnl_text} ({pct_text})"
             )
 
             return {
@@ -422,6 +443,7 @@ class StrategyPositionManager:
                 # .remove_position) or still open at a reduced size.
                 "client_order_id": position.get("client_order_id"),
                 "position_status": position["status"],
+                "pnl_unknown": pnl_unknown,
             }
 
         except Exception as e:
@@ -465,7 +487,9 @@ class StrategyPositionManager:
 
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
         """Persist strategy position to Data Manager"""
-        result = await position_client.create_position(position)
+        result = await self._persist_call(
+            "create_strategy_position", "create_position", position
+        )
         if result.ok:
             logger.debug(
                 "Persisted strategy position %s to Data Manager",
@@ -483,7 +507,12 @@ class StrategyPositionManager:
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
         """Update strategy position closure details in Data Manager"""
-        result = await position_client.update_position(strategy_position_id, position)
+        result = await self._persist_call(
+            "update_strategy_position",
+            "update_position",
+            strategy_position_id,
+            position,
+        )
         if result.ok:
             logger.debug(
                 "Updated strategy position closure for %s via Data Manager",
@@ -576,7 +605,9 @@ class StrategyPositionManager:
     async def _persist_exchange_position(self, exchange_position_key: str) -> None:
         """Persist exchange position to Data Manager"""
         position = self.exchange_positions[exchange_position_key]
-        result = await position_client.create_position(position)
+        result = await self._persist_call(
+            "create_exchange_position", "create_position", position
+        )
         if result.failed:
             logger.error(
                 "Failed to persist exchange position %s: %s",
@@ -644,7 +675,9 @@ class StrategyPositionManager:
                 "exchange_quantity_after": qty_after,
                 "status": "active",
             }
-            result = await position_client.create_position(contribution_data)
+            result = await self._persist_call(
+                "create_position_contribution", "create_position", contribution_data
+            )
             if result.failed:
                 logger.error(
                     "Failed to persist contribution %s for %s: %s",
@@ -674,8 +707,24 @@ class StrategyPositionManager:
             "contribution_pnl_pct": pnl_pct,
             "close_reason": close_reason,
         }
-        result = await position_client.update_position(
-            strategy_position_id, update_data
+        contribution_id = next(
+            (
+                item.get("contribution_id")
+                for item in self.contributions.get(
+                    self.strategy_positions.get(strategy_position_id, {}).get(
+                        "exchange_position_key", ""
+                    ),
+                    [],
+                )
+                if item.get("strategy_position_id") == strategy_position_id
+            ),
+            strategy_position_id,
+        )
+        result = await self._persist_call(
+            "update_position_contribution",
+            "update_position",
+            str(contribution_id),
+            update_data,
         )
         if result.failed:
             logger.error(

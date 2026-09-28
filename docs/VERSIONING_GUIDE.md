@@ -209,7 +209,7 @@ kubectl get deployment -n petrosa-apps
 
 ## MySQL Integration
 
-The versioning system works seamlessly with the MySQL audit logging:
+The versioning system works seamlessly with data-manager audit logging:
 
 - Each version includes proper MySQL connection handling
 - Audit logs are versioned with the application version

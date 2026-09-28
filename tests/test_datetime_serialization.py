@@ -233,64 +233,6 @@ class TestRetryRequestDatetimeSerialization:
 
 
 # ---------------------------------------------------------------------------
-# AC1+AC3: DataManagerPositionClient.update_daily_pnl — updated_at is now str
-# ---------------------------------------------------------------------------
-
-
-class TestUpdateDailyPnLSerializesDatetime:
-    """The updated_at field in update_daily_pnl must arrive as a string (not datetime)."""
-
-    @pytest.mark.asyncio
-    async def test_updated_at_is_isoformat_string(self):
-        """AC3: update_daily_pnl stores updated_at as ISO string, not raw datetime."""
-        from shared.mysql_client import DataManagerPositionClient
-
-        mock_dm = MagicMock()
-        mock_dm._client = AsyncMock()
-        mock_dm._client.upsert_one = AsyncMock(return_value={"upserted_id": "x"})
-
-        with patch("shared.mysql_client.DataManagerClient", return_value=mock_dm):
-            client = DataManagerPositionClient()
-            client.data_manager_client = mock_dm
-
-        await client.update_daily_pnl("2026-07-02", 250.0)
-
-        call_args = mock_dm._client.upsert_one.call_args
-        updated_at = call_args.kwargs["record"]["updated_at"]
-
-        # Must be a string, not a datetime
-        assert isinstance(updated_at, str), (
-            "updated_at must be an ISO-8601 string, not a raw datetime object"
-        )
-        # Must parse as ISO-8601
-        parsed = datetime.fromisoformat(updated_at)
-        assert parsed is not None
-
-    @pytest.mark.asyncio
-    async def test_updated_at_contains_timezone_info(self):
-        """AC3: The ISO-8601 string retains timezone offset information."""
-        from shared.mysql_client import DataManagerPositionClient
-
-        mock_dm = MagicMock()
-        mock_dm._client = AsyncMock()
-        mock_dm._client.upsert_one = AsyncMock(return_value={"upserted_id": "x"})
-
-        with patch("shared.mysql_client.DataManagerClient", return_value=mock_dm):
-            client = DataManagerPositionClient()
-            client.data_manager_client = mock_dm
-
-        await client.update_daily_pnl("2026-07-02", 250.0)
-
-        call_args = mock_dm._client.upsert_one.call_args
-        updated_at = call_args.kwargs["record"]["updated_at"]
-
-        # ISO-8601 UTC string includes '+00:00' or 'Z'
-        assert "+" in updated_at or updated_at.endswith("Z") or "UTC" in updated_at, (
-            f"updated_at '{updated_at}' does not appear to have timezone info"
-        )
-
-
-# ---------------------------------------------------------------------------
 # AC1+AC3: logger.py json.dumps with default=str
 # ---------------------------------------------------------------------------
 

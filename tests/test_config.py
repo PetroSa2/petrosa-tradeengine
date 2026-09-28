@@ -15,8 +15,6 @@ class TestConfigManager:
     def __init__(self):
         self.original_env = {}
         self.test_env = {
-            "MONGODB_URI": "mongodb://localhost:27017",
-            "MONGODB_DATABASE": "test_tradeengine",
             "ENVIRONMENT": "test",
             "LOG_LEVEL": "DEBUG",
             "NATS_URL": "nats://localhost:4222",
@@ -44,24 +42,6 @@ class TestConfigManager:
             else:
                 os.environ[key] = original_value
         self.original_env.clear()
-
-
-def mock_mongodb_validation():
-    """Mock MongoDB validation functions for testing."""
-
-    def mock_validate_mongodb_config():
-        """Mock validation that always passes."""
-        pass
-
-    def mock_get_mongodb_connection_string():
-        """Mock connection string for testing."""
-        return "mongodb://localhost:27017/test_tradeengine"
-
-    return patch.multiple(
-        "shared.constants",
-        validate_mongodb_config=mock_validate_mongodb_config,
-        get_mongodb_connection_string=mock_get_mongodb_connection_string,
-    )
 
 
 def mock_nats_validation():

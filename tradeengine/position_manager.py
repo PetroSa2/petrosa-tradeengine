@@ -1,6 +1,5 @@
 """
-Position Manager - Tracks positions and enforces risk limits with distributed state
-management using the data-manager API backed by MongoDB.
+Position Manager - Tracks positions and enforces risk limits through data-manager.
 """
 
 import asyncio
@@ -19,8 +18,6 @@ from shared.constants import (
     RISK_MANAGEMENT_ENABLED,
     TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
-    get_mongodb_connection_string,
-    redact_uri,
 )
 from shared.trading_store_client import trading_store
 from tradeengine.exchange_truth_store import ExchangeTruthStore
@@ -71,8 +68,6 @@ class PositionManager:
         self.last_sync_time: datetime | None = None
         self.sync_lock = asyncio.Lock()
         self.settings = Settings()
-        self.mongodb_client: Any = None
-        self.mongodb_db: Any = None
         self.exchange = exchange
         self.portfolio_value_last_update: datetime | None = None
         self.portfolio_value_lock = asyncio.Lock()
@@ -81,16 +76,15 @@ class PositionManager:
         )
         self._portfolio_exposure_refresh_failed = False
         self._recorded_exit_order_ids: set[str] = set()
+        self._store_reachable = False
+        self._store_health_task: asyncio.Task[None] | None = None
         # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
         # UserDataStreamConsumer starts; None until then.
         self.exchange_truth_store: ExchangeTruthStore | None = None
 
     async def initialize(self) -> None:
-        """Initialize position manager with the data-manager API backed by MongoDB."""
+        """Initialize position manager with the data-manager API."""
         try:
-            # Initialize the data-manager-backed MongoDB operational store
-            await self._initialize_mongodb()
-
             # Initialize Data Manager connection for position persistence
             try:
                 await position_client.connect()
@@ -114,6 +108,7 @@ class PositionManager:
 
             # Start periodic sync to Data Manager
             asyncio.create_task(self._periodic_sync())
+            self._store_health_task = asyncio.create_task(self._store_health_loop())
 
             logger.info(
                 f"Position manager initialized with {len(self.positions)} positions via Data Manager"
@@ -184,40 +179,26 @@ class PositionManager:
         """Close position manager and sync final state"""
         try:
             await self._sync_positions_to_store()
-            if self.mongodb_client:
-                self.mongodb_client.close()
+            if self._store_health_task:
+                self._store_health_task.cancel()
+                try:
+                    await self._store_health_task
+                except asyncio.CancelledError:
+                    pass
             await position_client.disconnect()
             logger.info("Position manager closed successfully")
         except Exception as e:
             logger.error(f"Error closing position manager: {e}")
 
-    async def _initialize_mongodb(self) -> None:
-        """Initialize MongoDB connection"""
-        try:
-            import motor.motor_asyncio
-
-            # Get MongoDB connection string from constants with validation
-            from shared.constants import MONGODB_DATABASE, get_mongodb_connection_string
-
-            mongodb_url = self.settings.mongodb_uri or get_mongodb_connection_string()
-            database_name = self.settings.mongodb_database or MONGODB_DATABASE
-
-            # Ensure database_name is a string
-            if database_name is None:
-                raise ValueError("MongoDB database name is required")
-
-            self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
-            self.mongodb_db = self.mongodb_client[str(database_name)]
-
-            # Test connection
-            await self.mongodb_client.admin.command("ping")
-            logger.info(f"MongoDB connected for position manager: {mongodb_url}")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize MongoDB for position manager: {e}")
-            self.mongodb_client = None
-            self.mongodb_db = None
-            raise
+    async def _store_health_loop(self) -> None:
+        """Refresh data-manager reachability without coupling health requests to I/O."""
+        while True:
+            try:
+                health = await trading_store.health_check()
+                self._store_reachable = health.get("status") == "healthy"
+            except Exception:
+                self._store_reachable = False
+            await asyncio.sleep(30)
 
     async def _load_positions_from_store(self) -> None:
         """Load positions from Data Manager with hedge mode support"""
@@ -1910,7 +1891,8 @@ class PositionManager:
             "last_sync_time": (
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),
-            "mongodb_connected": self.mongodb_db is not None,
+            "positions_store": "data-manager",
+            "store_reachable": self._store_reachable,
         }
 
     async def reset_daily_pnl(self) -> None:
@@ -1946,10 +1928,8 @@ class PositionManager:
             "last_sync": (
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),
-            "mongodb_connected": self.mongodb_db is not None,
-            "mongodb_uri": redact_uri(
-                self.settings.mongodb_uri or get_mongodb_connection_string()
-            ),
+            "positions_store": "data-manager",
+            "store_reachable": self._store_reachable,
         }
 
 

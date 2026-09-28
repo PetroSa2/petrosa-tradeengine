@@ -27,8 +27,6 @@ K8S_CONFIG = {
     "DEFAULT_LEVERAGE": "10",
     "MARGIN_TYPE": "isolated",
     "POSITION_MODE": "hedge",
-    "MONGODB_URI": "mongodb://localhost:27017/test",
-    "MONGODB_DATABASE": "test",
 }
 
 

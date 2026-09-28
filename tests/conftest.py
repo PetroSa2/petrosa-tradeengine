@@ -13,8 +13,6 @@ os.environ["OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"] = "false"
 # Set up test environment BEFORE any imports
 os.environ.update(
     {
-        "MONGODB_URI": "mongodb://localhost:27017",
-        "MONGODB_DATABASE": "test_tradeengine",
         "ENVIRONMENT": "test",
         "LOG_LEVEL": "DEBUG",
         "NATS_URL": "nats://localhost:4222",
@@ -306,9 +304,8 @@ def get_real_configure_logging():
 
 @pytest.fixture
 def mock_mongodb_client(mock_mongodb_client_session):
-    """Mock MongoDB client for testing."""
-    with patch("pymongo.MongoClient", return_value=mock_mongodb_client_session):
-        yield mock_mongodb_client_session
+    """Mock data-manager client for tests that still use this fixture name."""
+    yield mock_mongodb_client_session
 
 
 @pytest.fixture
@@ -386,7 +383,6 @@ def mock_binance_client():
 def mock_environment_variables():
     """Mock environment variables for testing."""
     test_vars = {
-        "MONGODB_URI": "mongodb://localhost:27017/test_db",
         "NATS_URL": "nats://localhost:4222",
         "ENVIRONMENT": "test",
         "LOG_LEVEL": "DEBUG",

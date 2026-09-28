@@ -11,12 +11,9 @@ from typing import Any
 from prometheus_client import Counter, Histogram
 
 from shared.config import Settings
-from shared.constants import get_mongodb_connection_string
 from tradeengine.services.data_manager_client import APIError, BaseDataManagerClient
 
 logger = logging.getLogger(__name__)
-
-__all__ = ["get_mongodb_connection_string"]
 
 LOCK_RECONNECT_MIN_BACKOFF_SECONDS = 1.0
 LOCK_RECONNECT_MAX_BACKOFF_SECONDS = 30.0

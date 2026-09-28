@@ -21,6 +21,21 @@ class TradingStoreClient:
     async def disconnect(self) -> None:
         await self.data_manager_client.disconnect()
 
+    async def health_check(self) -> dict[str, object]:
+        """Return data-manager health without exposing the underlying client."""
+        try:
+            health = await self.data_manager_client._client.health()
+            return {
+                "status": "healthy"
+                if health.get("status") == "healthy"
+                else "unhealthy",
+                "service": "data-manager",
+                "details": health,
+            }
+        except Exception as exc:
+            logger.error("Data Manager health check failed: %s", exc)
+            return {"status": "unhealthy", "service": "data-manager", "error": str(exc)}
+
     async def get_daily_pnl(self, date: str) -> float | None:
         """Return the MongoDB daily-P&L row, treating a missing row as empty."""
         try:

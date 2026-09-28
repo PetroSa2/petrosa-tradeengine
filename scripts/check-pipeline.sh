@@ -86,10 +86,6 @@ check_dependencies() {
         missing_packages+=("fastapi")
     fi
 
-    if ! python -c "import motor" 2>/dev/null; then
-        missing_packages+=("motor")
-    fi
-
     if ! python -c "import pytest" 2>/dev/null; then
         missing_packages+=("pytest")
     fi
@@ -263,31 +259,10 @@ check_scripts() {
         missing_scripts+=("local-pipeline.sh")
     fi
 
-    if [ ! -f "scripts/setup-mongodb.sh" ]; then
-        missing_scripts+=("setup-mongodb.sh")
-    fi
-
     if [ ${#missing_scripts[@]} -ne 0 ]; then
         print_warning "Missing scripts: ${missing_scripts[*]}"
     else
         print_success "Scripts are present"
-    fi
-}
-
-# Function to check MongoDB setup
-check_mongodb_setup() {
-    print_status "Checking MongoDB setup..."
-
-    if ! command_exists mongosh; then
-        print_warning "mongosh not found - MongoDB setup will be manual"
-        return 0
-    fi
-
-    # Try to connect to MongoDB
-    if mongosh --eval "db.adminCommand('ping')" >/dev/null 2>&1; then
-        print_success "MongoDB is accessible"
-    else
-        print_warning "MongoDB is not accessible - run 'make setup-mongodb'"
     fi
 }
 
@@ -336,9 +311,6 @@ run_comprehensive_check() {
     # Check scripts
     check_scripts
 
-    # Check MongoDB setup
-    check_mongodb_setup
-
     # Summary
     echo ""
     if [ $errors -eq 0 ]; then
@@ -374,14 +346,11 @@ main() {
             check_application_code
             check_tests
             ;;
-        mongodb)
-            check_mongodb_setup
-            ;;
         all)
             run_comprehensive_check
             ;;
         *)
-            echo "Usage: $0 [python|deps|docker|k8s|code|mongodb|all]"
+            echo "Usage: $0 [python|deps|docker|k8s|code|all]"
             echo ""
             echo "Check specific components:"
             echo "  python   - Check Python environment"
@@ -389,7 +358,6 @@ main() {
             echo "  docker   - Check Docker"
             echo "  k8s      - Check Kubernetes"
             echo "  code     - Check application code"
-            echo "  mongodb  - Check MongoDB setup"
             echo "  all      - Run comprehensive check (default)"
             exit 1
             ;;

@@ -170,10 +170,6 @@ class TestAC2CheckPositionLimits:
         pm.sync_lock = asyncio.Lock()
         pm.exchange = None
         pm.settings = MagicMock()
-        pm.settings.mongodb_uri = None
-        pm.settings.mongodb_database = None
-        pm.mongodb_db = None
-        pm.mongodb_client = None
         pm.last_sync_time = None
         return pm
 

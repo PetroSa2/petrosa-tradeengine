@@ -103,13 +103,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     consumer_task = None  # Keep reference to prevent garbage collection
 
     try:
-        # Validate MongoDB configuration first - fail catastrophically if not configured
-        logger.info("Validating MongoDB configuration...")
-        from shared.constants import validate_mongodb_config
-
-        validate_mongodb_config()
-        logger.info("✅ MongoDB configuration validated successfully")
-
         # Initialize trading configuration manager
         logger.info("Initializing trading configuration manager...")
 
@@ -656,21 +649,12 @@ async def root() -> dict[str, Any]:
 async def health_check() -> HealthResponse:
     """Comprehensive health check endpoint with distributed state info"""
     try:
-        # Validate MongoDB configuration in health check
-        from shared.constants import validate_mongodb_config
-
-        validate_mongodb_config()
-
         # Check component health
         components = {
             "dispatcher": await dispatcher.health_check(),
             "binance_exchange": await binance_exchange.health_check(),
             "simulator_exchange": await simulator_exchange.health_check(),
             "audit_logger": audit_logger.health(),
-            "mongodb_config": {
-                "status": "healthy",
-                "configured": True,
-            },
         }
 
         # Determine overall status
@@ -736,8 +720,8 @@ async def get_distributed_state() -> dict[str, Any]:
                 "position_manager": position_manager_health,
                 "pod_id": distributed_lock_manager.pod_id,
                 "is_leader": distributed_lock_manager.is_leader,
-                "database_connected": position_manager_health.get(
-                    "database_connected", False
+                "store_reachable": position_manager_health.get(
+                    "store_reachable", False
                 ),
             },
             "timestamp": datetime.now(UTC).isoformat() + "Z",
@@ -755,11 +739,6 @@ async def readiness_check() -> dict[str, Any]:
     error information if any component is not healthy.
     """
     try:
-        # Validate MongoDB configuration first
-        from shared.constants import validate_mongodb_config
-
-        validate_mongodb_config()
-
         # AC2 (#451): Gate readiness on boot probe result
         _probe_result = getattr(app.state, "dm_boot_probe_result", None)
         if _probe_result is not None and not _probe_result.success:

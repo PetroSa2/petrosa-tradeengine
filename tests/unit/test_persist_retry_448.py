@@ -347,7 +347,7 @@ class TestDataManagerPositionClient:
         assert result.ok is True
         assert result.extra == {"idempotent_duplicate": True, "read_verified": True}
         mock_base.query.assert_awaited_once_with(
-            database="mysql",
+            database="mongodb",
             collection="positions",
             filter={"position_id": "legacy-dup"},
             limit=1,

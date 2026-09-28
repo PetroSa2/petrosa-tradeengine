@@ -54,7 +54,6 @@ async def test_lifespan_startup_calls_setup_telemetry():
     # Mock all heavy dependencies
     with (
         patch("tradeengine.api.setup_telemetry", side_effect=track_setup),
-        patch("shared.constants.validate_mongodb_config"),
         patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
@@ -103,7 +102,6 @@ async def test_lifespan_shutdown_calls_flush_telemetry():
     with (
         patch("tradeengine.api.setup_telemetry", return_value=True),
         patch("tradeengine.api.flush_telemetry", side_effect=track_flush),
-        patch("shared.constants.validate_mongodb_config"),
         patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
@@ -163,7 +161,6 @@ async def test_lifespan_logs_configured_message():
     try:
         with (
             patch("tradeengine.api.setup_telemetry", return_value=True),
-            patch("shared.constants.validate_mongodb_config"),
             patch("tradeengine.config_manager.TradingConfigManager") as MockConfig,
             patch.object(api_module, "binance_exchange") as mock_binance,
             patch.object(api_module, "simulator_exchange") as mock_sim,
@@ -225,8 +222,9 @@ async def test_lifespan_error_path_without_watchdog():
     try:
         with (
             patch("tradeengine.api.setup_telemetry", return_value=True),
-            patch(
-                "shared.constants.validate_mongodb_config",
+            patch.object(
+                api_module,
+                "TradingConfigManager",
                 side_effect=Exception("Test"),
             ),
             patch.object(api_module, "binance_exchange") as mock_binance,
@@ -273,7 +271,6 @@ async def test_lifespan_wires_exchange_truth_store_into_position_reconciler():
 
     with (
         patch("tradeengine.api.setup_telemetry", return_value=True),
-        patch("shared.constants.validate_mongodb_config"),
         patch.object(api_module, "TradingConfigManager") as MockConfig,
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,

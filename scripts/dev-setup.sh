@@ -46,9 +46,6 @@ LOG_LEVEL=DEBUG
 API_HOST=0.0.0.0
 API_PORT=8000
 
-# Database Configuration
-MONGODB_URL=mongodb://localhost:27017/petrosa
-
 # NATS Configuration
 NATS_SERVERS=nats://localhost:4222
 

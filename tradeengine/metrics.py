@@ -639,6 +639,12 @@ algo_orders_open = Gauge(
     ["symbol"],
 )
 
+oco_exit_pnl_unknown_total = Counter(
+    "tradeengine_oco_exit_pnl_unknown_total",
+    "OCO exits whose exchange fill could not be resolved for P&L",
+    ["symbol", "close_reason"],
+)
+
 # `execution_halt_active` — backs the "TradeEngine in execution halt mode"
 # alert. Per #569's AC, a decision was required on whether this is the same
 # concept as the existing `tradeengine_restricted_mode_status` gauge.

@@ -34,6 +34,7 @@ from tradeengine.metrics import (
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
     oco_cancel_retry_exhausted_total,
+    oco_exit_pnl_unknown_total,
     oco_pair_age_seconds,
     order_execution_latency_seconds,
     order_failures_total,
@@ -1950,6 +1951,37 @@ class OCOManager:
             return str(on_side[0])
         return None
 
+    def _fetch_oco_exit_details(
+        self, symbol: str, filled_order_id: str, owning_oco: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Resolve an OCO fill through the endpoint matching its leg kind.
+
+        Binance assigns an ``algoId`` to conditional legs, but the actual fill is
+        a standard order identified by ``actualOrderId``.  Asking the standard
+        endpoint for the algo id returns no fill and used to make every fallback
+        look like a zero-P&L close.
+        """
+        client = self.exchange.client
+        leg_kind = (
+            "tp" if str(filled_order_id) == str(owning_oco.get("tp_order_id")) else "sl"
+        )
+        is_algo = self._leg_is_algo(owning_oco, leg_kind)
+        if not is_algo:
+            return client.futures_get_order(symbol=symbol, orderId=filled_order_id)
+
+        algo_order = client._request_futures_api(
+            "get",
+            "algoOrder",
+            signed=True,
+            data={"symbol": symbol, "algoId": filled_order_id},
+        )
+        if isinstance(algo_order, list):
+            algo_order = algo_order[0] if algo_order else {}
+        actual_order_id = algo_order.get("actualOrderId")
+        if not actual_order_id:
+            raise LookupError(f"algo order {filled_order_id} has no actualOrderId")
+        return client.futures_get_order(symbol=symbol, orderId=actual_order_id)
+
     async def _close_position_on_oco_completion(
         self,
         position_id: str,
@@ -2014,6 +2046,7 @@ class OCOManager:
 
             strategy_id = "unknown"
             pnl = 0.0
+            pnl_unknown = False
 
             if not strategy_position_id:
                 # #650: never return early here — the paired-leg cancel and the
@@ -2035,8 +2068,8 @@ class OCOManager:
                 # Step 1: Fetch filled order details from Binance
                 order_details: dict[str, Any] = {}
                 try:
-                    order_details = self.exchange.client.futures_get_order(
-                        symbol=symbol, orderId=filled_order_id
+                    order_details = self._fetch_oco_exit_details(
+                        symbol, filled_order_id, owning_oco
                     )
 
                     # Extract exit data
@@ -2047,21 +2080,27 @@ class OCOManager:
                     self.logger.info(f"  📤 Filled Quantity: {filled_quantity}")
 
                 except Exception as e:
-                    self.logger.error(f"❌ Failed to fetch order details: {e}")
-                    # Use strategy's quantity from OCO info
-                    exit_price = entry_price  # Fallback
+                    self.logger.warning(
+                        "⚠️ Unable to resolve OCO exit fill %s: %s; recording "
+                        "pnl_unknown instead of zero",
+                        filled_order_id,
+                        e,
+                    )
+                    pnl_unknown = True
+                    exit_price = None
                     filled_quantity = exit_quantity
-                    self.logger.warning("Using fallback values")
 
                 # Step 2: Calculate P&L using THIS strategy's entry price
-                if position_side == "LONG":
+                if pnl_unknown:
+                    pnl = None
+                elif position_side == "LONG":
                     pnl = (exit_price - entry_price) * filled_quantity
                 else:  # SHORT
                     pnl = (entry_price - exit_price) * filled_quantity
 
                 pnl_pct = (
                     (pnl / (entry_price * filled_quantity) * 100)
-                    if entry_price > 0 and filled_quantity > 0
+                    if pnl is not None and entry_price > 0 and filled_quantity > 0
                     else 0.0
                 )
 
@@ -2069,7 +2108,10 @@ class OCOManager:
                 self.logger.info(f"     Entry: ${entry_price:,.2f}")
                 self.logger.info(f"     Exit: ${exit_price:,.2f}")
                 self.logger.info(f"     Quantity: {filled_quantity}")
-                self.logger.info(f"     Gross P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%)")
+                if pnl is None:
+                    self.logger.info("     Gross P&L: unknown")
+                else:
+                    self.logger.info(f"     Gross P&L: ${pnl:,.2f} ({pnl_pct:+.2f}%)")
 
                 # Step 3: Close ONLY this strategy's position
                 from tradeengine.strategy_position_manager import (
@@ -2091,10 +2133,13 @@ class OCOManager:
                         exit_quantity=filled_quantity,
                         close_reason=close_reason,
                         exit_order_id=filled_order_id,
+                        pnl_unknown=pnl_unknown,
                     )
 
                     self.logger.info(
-                        f"✅ Strategy position {strategy_position_id} ({strategy_id}) closed: {close_reason}, P&L: ${pnl:,.2f}"
+                        f"✅ Strategy position {strategy_position_id} ({strategy_id}) "
+                        f"closed: {close_reason}, P&L: "
+                        f"{'unknown' if pnl is None else f'${pnl:,.2f}'}"
                     )
 
                     # #531: publish a `filled` execution event for the OCO exit.
@@ -2127,6 +2172,7 @@ class OCOManager:
                             commission=float(
                                 order_details.get("commission", 0.0) or 0.0
                             ),
+                            pnl_unknown=pnl_unknown,
                         )
 
             # Step 4: Cancel the paired order (TP if SL filled, SL if TP filled)
@@ -2177,7 +2223,11 @@ class OCOManager:
                     strategy_id=strategy_id, symbol=symbol, exchange="binance"
                 ).inc()
 
-            if strategy_position_id:
+            if pnl_unknown:
+                oco_exit_pnl_unknown_total.labels(
+                    symbol=symbol, close_reason=close_reason
+                ).inc()
+            elif strategy_position_id:
                 strategy_pnl_realized.labels(
                     strategy_id=strategy_id,
                     close_reason=close_reason,
@@ -2198,7 +2248,8 @@ class OCOManager:
                 ).set(active_count)
 
             self.logger.info(
-                f"✅ STRATEGY {strategy_position_id} CLOSED: {close_reason}, P&L: ${pnl:,.2f}"
+                f"✅ STRATEGY {strategy_position_id} CLOSED: {close_reason}, P&L: "
+                f"{'unknown' if pnl is None else f'${pnl:,.2f}'}"
             )
 
         except Exception as e:

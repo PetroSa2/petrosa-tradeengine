@@ -466,7 +466,7 @@ class StrategyPositionManager:
 
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
         """Persist strategy position to Data Manager"""
-        result = await position_client.create_position(position)
+        result = await position_client.create_strategy_position(position)
         if result.ok:
             logger.debug(
                 "Persisted strategy position %s to Data Manager",
@@ -484,7 +484,7 @@ class StrategyPositionManager:
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
         """Update strategy position closure details in Data Manager"""
-        result = await position_client.update_position(strategy_position_id, position)
+        result = await position_client.update_strategy_position(strategy_position_id, position)
         if result.ok:
             logger.debug(
                 "Updated strategy position closure for %s via Data Manager",
@@ -577,7 +577,7 @@ class StrategyPositionManager:
     async def _persist_exchange_position(self, exchange_position_key: str) -> None:
         """Persist exchange position to Data Manager"""
         position = self.exchange_positions[exchange_position_key]
-        result = await position_client.create_position(position)
+        result = await position_client.create_exchange_position(position)
         if result.failed:
             logger.error(
                 "Failed to persist exchange position %s: %s",
@@ -645,7 +645,7 @@ class StrategyPositionManager:
                 "exchange_quantity_after": qty_after,
                 "status": "active",
             }
-            result = await position_client.create_position(contribution_data)
+            result = await position_client.create_position_contribution(contribution_data)
             if result.failed:
                 logger.error(
                     "Failed to persist contribution %s for %s: %s",
@@ -675,8 +675,21 @@ class StrategyPositionManager:
             "contribution_pnl_pct": pnl_pct,
             "close_reason": close_reason,
         }
-        result = await position_client.update_position(
-            strategy_position_id, update_data
+        contribution_id = next(
+            (
+                item.get("contribution_id")
+                for item in self.contributions.get(
+                    self.strategy_positions.get(strategy_position_id, {}).get(
+                        "exchange_position_key", ""
+                    ),
+                    [],
+                )
+                if item.get("strategy_position_id") == strategy_position_id
+            ),
+            strategy_position_id,
+        )
+        result = await position_client.update_position_contribution(
+            str(contribution_id), update_data
         )
         if result.failed:
             logger.error(

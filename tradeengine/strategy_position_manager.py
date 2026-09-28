@@ -484,7 +484,9 @@ class StrategyPositionManager:
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
         """Update strategy position closure details in Data Manager"""
-        result = await position_client.update_strategy_position(strategy_position_id, position)
+        result = await position_client.update_strategy_position(
+            strategy_position_id, position
+        )
         if result.ok:
             logger.debug(
                 "Updated strategy position closure for %s via Data Manager",
@@ -645,7 +647,9 @@ class StrategyPositionManager:
                 "exchange_quantity_after": qty_after,
                 "status": "active",
             }
-            result = await position_client.create_position_contribution(contribution_data)
+            result = await position_client.create_position_contribution(
+                contribution_data
+            )
             if result.failed:
                 logger.error(
                     "Failed to persist contribution %s for %s: %s",

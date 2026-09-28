@@ -245,7 +245,9 @@ class TestPositionContractRequests:
         assert "signed_quantity" not in call.kwargs["record"]
 
     @pytest.mark.asyncio
-    async def test_dedicated_close_updates_own_table_by_natural_key(self, position_client):
+    async def test_dedicated_close_updates_own_table_by_natural_key(
+        self, position_client
+    ):
         position_client.data_manager_client._client.update_one = AsyncMock(
             return_value={"updated_count": 1}
         )
@@ -271,13 +273,19 @@ class TestPositionContractRequests:
         }
 
     @pytest.mark.asyncio
-    async def test_exchange_and_contribution_use_distinct_collections(self, position_client):
+    async def test_exchange_and_contribution_use_distinct_collections(
+        self, position_client
+    ):
         position_client.data_manager_client._client.insert_one = AsyncMock(
             return_value={"inserted_id": "row-1"}
         )
 
         exchange = await position_client.create_exchange_position(
-            {"exchange_position_key": "BTCUSDT_LONG", "symbol": "BTCUSDT", "side": "LONG"}
+            {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            }
         )
         contribution = await position_client.create_position_contribution(
             {

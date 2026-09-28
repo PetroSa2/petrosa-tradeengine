@@ -20,7 +20,11 @@ from shared.constants import (
     TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
 )
-from shared.distributed_lock import distributed_lock_manager
+from shared.distributed_lock import (
+    LockHeldError,
+    LockUnavailableError,
+    distributed_lock_manager,
+)
 from shared.logger import get_logger
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
@@ -2970,26 +2974,48 @@ class Dispatcher:
                                 order,
                             )
                         )
+                    except LockHeldError:
+                        self.logger.info(
+                            f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
+                            f"Signal already being processed by another pod - SKIPPING"
+                        )
+                        signals_processed.labels(
+                            status="skipped_duplicate", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.skipped", True)
+                        span.set_attribute("skip.reason", "lock_acquisition_failed")
+                        span.set_status(trace.Status(trace.StatusCode.OK))
+                        return {
+                            "status": "skipped_duplicate",
+                            "reason": "Signal already being processed by another pod",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
+                    except LockUnavailableError as lock_error:
+                        self.logger.error("🔒 LOCK SERVICE UNAVAILABLE: %s", lock_error)
+                        signals_processed.labels(
+                            status="lock_unavailable", action=signal.action
+                        ).inc()
+                        span.set_attribute("signal.skipped", True)
+                        span.set_attribute("skip.reason", "lock_unavailable")
+                        span.set_status(
+                            trace.Status(trace.StatusCode.ERROR, str(lock_error))
+                        )
+                        return {
+                            "status": "lock_unavailable",
+                            "reason": "Lease service unavailable within latency budget",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
                     except Exception as lock_error:
-                        if "Failed to acquire lock" in str(lock_error):
-                            self.logger.info(
-                                f"🔒 LOCK ACQUISITION FAILED: {signal.strategy_id} | "
-                                f"Signal already being processed by another pod - SKIPPING"
-                            )
-                            signals_processed.labels(
-                                status="skipped_duplicate", action=signal.action
-                            ).inc()
-                            span.set_attribute("signal.skipped", True)
-                            span.set_attribute("skip.reason", "lock_acquisition_failed")
-                            span.set_status(trace.Status(trace.StatusCode.OK))
-                            return {
-                                "status": "skipped_duplicate",
-                                "reason": "Signal already being processed by another pod",
-                                "signal_fingerprint": signal_fingerprint,
-                            }
-                        else:
-                            # Re-raise other lock-related errors
+                        if "Failed to acquire lock" not in str(lock_error):
                             raise
+                        signals_processed.labels(
+                            status="skipped_duplicate", action=signal.action
+                        ).inc()
+                        return {
+                            "status": "skipped_duplicate",
+                            "reason": "Signal already being processed by another pod",
+                            "signal_fingerprint": signal_fingerprint,
+                        }
 
                     result["execution_result"] = execution_result
                     _exec_status = execution_result.get("status", "unknown")

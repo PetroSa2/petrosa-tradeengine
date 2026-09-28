@@ -102,6 +102,31 @@ async def test_skip_when_take_profit_market_already_armed():
 
 
 @pytest.mark.asyncio
+async def test_hedge_side_does_not_skip_for_opposite_side():
+    """A LONG protective leg must not suppress a SHORT placement."""
+    armed_long = OrderSnapshot(
+        symbol="BTCUSDT",
+        order_id="99999",
+        side="SELL",
+        order_type="STOP_MARKET",
+        status="NEW",
+        quantity=0.1,
+        price=44000.0,
+        position_side="LONG",
+    )
+    d = _make_dispatcher_with_store([armed_long])
+    order = _make_order(side="sell", position_side="SHORT")
+
+    with (
+        patch("tradeengine.dispatcher.order_placement_skipped_total") as mock_ctr,
+        patch.object(d, "_place_individual_risk_orders", new_callable=AsyncMock),
+    ):
+        await d._place_risk_management_orders(order, _FILL_RESULT)
+
+    mock_ctr.labels.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_placement_proceeds_when_no_protective_order():
     """AC3: no armed order on exchange → skip guard does not fire."""
     d = _make_dispatcher_with_store([])  # empty exchange state

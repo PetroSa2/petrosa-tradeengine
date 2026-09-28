@@ -1220,6 +1220,7 @@ class BinanceFuturesExchange:
                         -4131,  # PERCENT_PRICE filter violation - price too far from market
                         -4164,  # MIN_NOTIONAL validation error
                         -1102,  # Mandatory parameter 'symbol' was not sent, was empty/null, or malformed
+                        -2021,  # Immediate trigger; re-anchor/clamp upstream
                     ]
                 ):
                     # Log the non-retryable error with details

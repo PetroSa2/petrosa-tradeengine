@@ -88,7 +88,7 @@ class PositionManager:
     async def initialize(self) -> None:
         """Initialize position manager with the data-manager API backed by MongoDB."""
         try:
-            # Initialize MongoDB connection for distributed coordination only
+            # Initialize the data-manager-backed MongoDB operational store
             await self._initialize_mongodb()
 
             # Initialize Data Manager connection for position persistence

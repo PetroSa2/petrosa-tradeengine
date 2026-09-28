@@ -23,9 +23,7 @@ def test_algo_exit_uses_actual_order_id_for_fill_lookup():
     )
 
     assert details["avgPrice"] == "95.0"
-    client.futures_get_order.assert_called_once_with(
-        symbol="BTCUSDT", orderId="9001"
-    )
+    client.futures_get_order.assert_called_once_with(symbol="BTCUSDT", orderId="9001")
 
 
 @pytest.mark.asyncio

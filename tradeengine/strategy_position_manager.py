@@ -342,10 +342,11 @@ class StrategyPositionManager:
     async def close_strategy_position(
         self,
         strategy_position_id: str,
-        exit_price: float,
+        exit_price: float | None,
         exit_quantity: float | None = None,
         close_reason: str = "manual",
         exit_order_id: str | None = None,
+        pnl_unknown: bool = False,
     ) -> dict[str, Any]:
         """Close a strategy position when TP/SL triggers
 
@@ -373,13 +374,17 @@ class StrategyPositionManager:
             entry_price = position["entry_price"]
             entry_quantity = position["entry_quantity"]
 
-            if position["side"] == "LONG":
+            if pnl_unknown:
+                pnl = None
+            elif position["side"] == "LONG":
                 pnl = (exit_price - entry_price) * exit_quantity
             else:  # SHORT
                 pnl = (entry_price - exit_price) * exit_quantity
 
             pnl_pct = (
-                (pnl / (entry_price * exit_quantity)) * 100 if entry_price > 0 else 0
+                ((pnl / (entry_price * exit_quantity)) * 100 if entry_price > 0 else 0)
+                if pnl is not None
+                else None
             )
 
             # Update position
@@ -398,18 +403,23 @@ class StrategyPositionManager:
             await self._update_strategy_position_closure(strategy_position_id, position)
 
             # Update contribution
-            await self._close_contribution(
-                strategy_position_id, exit_price, pnl, pnl_pct, close_reason
-            )
+            if not pnl_unknown:
+                await self._close_contribution(
+                    strategy_position_id, exit_price, pnl, pnl_pct, close_reason
+                )
 
             # Update exchange position
             await self._reduce_exchange_position(
-                position["exchange_position_key"], exit_quantity, exit_price
+                position["exchange_position_key"],
+                exit_quantity,
+                exit_price if exit_price is not None else entry_price,
             )
 
+            pnl_text = "unknown" if pnl is None else f"${pnl:.2f}"
+            pct_text = "unknown" if pnl_pct is None else f"{pnl_pct:.2f}%"
             logger.info(
                 f"Closed strategy position {strategy_position_id}: "
-                f"{close_reason} at {exit_price}, PnL: ${pnl:.2f} ({pnl_pct:.2f}%)"
+                f"{close_reason} at {exit_price}, PnL: {pnl_text} ({pct_text})"
             )
 
             return {
@@ -433,6 +443,7 @@ class StrategyPositionManager:
                 # .remove_position) or still open at a reduced size.
                 "client_order_id": position.get("client_order_id"),
                 "position_status": position["status"],
+                "pnl_unknown": pnl_unknown,
             }
 
         except Exception as e:

@@ -2397,6 +2397,16 @@ class BinanceFuturesExchange:
             logger.error(f"Failed to get open algo orders: {e}")
             raise
 
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """Get standard open orders with their type and hedge-mode side."""
+        if not self.initialized:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        return list(
+            await asyncio.to_thread(self.client.futures_get_open_orders, symbol=symbol)
+        )
+
     async def get_all_open_orders(self, symbol: str | None = None) -> set[str]:
         """Combine standard and algo open orders into a single set of IDs
 

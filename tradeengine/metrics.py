@@ -16,6 +16,18 @@ OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
+leverage_mismatch = Gauge(
+    "tradeengine_leverage_mismatch",
+    "Whether the exchange leverage differed from the target at the last check",
+    ["symbol"],
+)
+
+leverage_change_failures_total = Counter(
+    "tradeengine_leverage_change_failures_total",
+    "Failed exchange leverage changes",
+    ["symbol", "code"],
+)
+
 restricted_mode_persist_failures_total = Counter(
     "tradeengine_restricted_mode_persist_failures_total",
     "Restricted-mode state persistence failures",

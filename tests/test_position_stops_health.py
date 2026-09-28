@@ -126,14 +126,38 @@ async def test_exchange_truth_counts_protected_partial_and_unprotected():
         {"symbol": "LTCUSDT", "positionAmt": "2", "positionSide": "LONG"},
     ]
     orders = [
-        {"symbol": "BTCUSDT", "type": "STOP_MARKET", "side": "SELL", "positionSide": "LONG", "orderId": 1},
-        {"symbol": "BTCUSDT", "type": "TAKE_PROFIT_MARKET", "side": "SELL", "positionSide": "LONG", "orderId": 2},
-        {"symbol": "ETHUSDT", "type": "STOP_MARKET", "side": "BUY", "positionSide": "SHORT", "orderId": 3},
+        {
+            "symbol": "BTCUSDT",
+            "type": "STOP_MARKET",
+            "side": "SELL",
+            "positionSide": "LONG",
+            "orderId": 1,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "type": "TAKE_PROFIT_MARKET",
+            "side": "SELL",
+            "positionSide": "LONG",
+            "orderId": 2,
+        },
+        {
+            "symbol": "ETHUSDT",
+            "type": "STOP_MARKET",
+            "side": "BUY",
+            "positionSide": "SHORT",
+            "orderId": 3,
+        },
     ]
-    response = await check_position_stops(MagicMock(), MagicMock(), _ExchangeTruth(positions, orders), MagicMock())
+    response = await check_position_stops(
+        MagicMock(), MagicMock(), _ExchangeTruth(positions, orders), MagicMock()
+    )
     assert response.total_checked == 3
     assert response.violation_count == 2
-    assert [item.status for item in response.positions] == ["protected", "partial", "unprotected"]
+    assert [item.status for item in response.positions] == [
+        "protected",
+        "partial",
+        "unprotected",
+    ]
 
 
 @pytest.mark.asyncio
@@ -141,7 +165,9 @@ async def test_exchange_truth_marks_sign_mismatch_malformed():
     exchange = _ExchangeTruth(
         [{"symbol": "BTCUSDT", "positionAmt": "-1", "positionSide": "LONG"}], []
     )
-    response = await check_position_stops(MagicMock(), MagicMock(), exchange, MagicMock())
+    response = await check_position_stops(
+        MagicMock(), MagicMock(), exchange, MagicMock()
+    )
     assert response.total_checked == 1
     assert response.violation_count == 1
     assert response.positions[0].status == "malformed"
@@ -152,7 +178,9 @@ async def test_exchange_truth_ignores_empty_store():
     exchange = _ExchangeTruth(
         [{"symbol": "BTCUSDT", "positionAmt": "1", "positionSide": "LONG"}], []
     )
-    response = await check_position_stops(MagicMock(), MagicMock(), exchange, MagicMock())
+    response = await check_position_stops(
+        MagicMock(), MagicMock(), exchange, MagicMock()
+    )
     assert response.total_checked == 1
 
 

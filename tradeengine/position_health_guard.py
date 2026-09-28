@@ -62,8 +62,15 @@ class PositionStopStatus(BaseModel):
     sl_order_id: str | None
     tp_order_id: str | None
     status: Literal[
-        "healthy", "missing_sl", "missing_tp", "missing_both", "unknown",
-        "protected", "partial", "unprotected", "malformed",
+        "healthy",
+        "missing_sl",
+        "missing_tp",
+        "missing_both",
+        "unknown",
+        "protected",
+        "partial",
+        "unprotected",
+        "malformed",
     ]
     remediation_outcome: Literal[
         "none",
@@ -123,19 +130,22 @@ def _exchange_position_key(position: dict[str, Any]) -> tuple[str, str]:
     return symbol, side
 
 
-def _protective_order_flags(order: dict[str, Any], position_side: str) -> tuple[bool, bool]:
+def _protective_order_flags(
+    order: dict[str, Any], position_side: str
+) -> tuple[bool, bool]:
     order_type = str(order.get("type") or order.get("orderType") or "").upper()
     is_sl = order_type in {"STOP", "STOP_MARKET"}
     is_tp = order_type in {"TAKE_PROFIT", "TAKE_PROFIT_MARKET"}
     expected_side = "SELL" if position_side == "LONG" else "BUY"
-    valid = (
-        str(order.get("side", "")).upper() == expected_side
-        and str(order.get("positionSide", position_side)).upper() in {position_side, "BOTH"}
-    )
+    valid = str(order.get("side", "")).upper() == expected_side and str(
+        order.get("positionSide", position_side)
+    ).upper() in {position_side, "BOTH"}
     return is_sl and valid, is_tp and valid
 
 
-async def _check_exchange_positions(exchange: Any) -> PositionStopsHealthResponse | None:
+async def _check_exchange_positions(
+    exchange: Any,
+) -> PositionStopsHealthResponse | None:
     if exchange is None or not hasattr(type(exchange), "get_position_info"):
         return None
     raw_positions = await exchange.get_position_info()
@@ -145,8 +155,16 @@ async def _check_exchange_positions(exchange: Any) -> PositionStopsHealthRespons
         symbol, _ = _exchange_position_key(position)
         if symbol in orders_by_symbol:
             continue
-        standard = await exchange.get_open_orders(symbol=symbol) if hasattr(exchange, "get_open_orders") else []
-        algo = await exchange.get_open_algo_orders(symbol=symbol) if hasattr(exchange, "get_open_algo_orders") else []
+        standard = (
+            await exchange.get_open_orders(symbol=symbol)
+            if hasattr(exchange, "get_open_orders")
+            else []
+        )
+        algo = (
+            await exchange.get_open_algo_orders(symbol=symbol)
+            if hasattr(exchange, "get_open_algo_orders")
+            else []
+        )
         orders_by_symbol[symbol] = [*standard, *algo]
 
     result: list[PositionStopStatus] = []
@@ -156,23 +174,49 @@ async def _check_exchange_positions(exchange: Any) -> PositionStopsHealthRespons
         symbol, side = _exchange_position_key(position)
         amount = float(position.get("positionAmt", 0) or 0)
         malformed = (side == "LONG" and amount < 0) or (side == "SHORT" and amount > 0)
-        matching = [o for o in orders_by_symbol.get(symbol, []) if str(o.get("positionSide", side)).upper() in {side, "BOTH"}]
+        matching = [
+            o
+            for o in orders_by_symbol.get(symbol, [])
+            if str(o.get("positionSide", side)).upper() in {side, "BOTH"}
+        ]
         sl = next((o for o in matching if _protective_order_flags(o, side)[0]), None)
         tp = next((o for o in matching if _protective_order_flags(o, side)[1]), None)
         has_sl, has_tp = sl is not None, tp is not None
-        status = "malformed" if malformed else "protected" if has_sl and has_tp else "partial" if has_sl or has_tp else "unprotected"
+        status = (
+            "malformed"
+            if malformed
+            else "protected"
+            if has_sl and has_tp
+            else "partial"
+            if has_sl or has_tp
+            else "unprotected"
+        )
         healthy += status == "protected"
         violations += status != "protected"
-        result.append(PositionStopStatus(
-            strategy_position_id=f"exchange:{symbol}:{side}", symbol=symbol, side=side,
-            has_sl_order=has_sl, has_tp_order=has_tp,
-            sl_order_id=str((sl or {}).get("algoId") or (sl or {}).get("orderId")) if sl else None,
-            tp_order_id=str((tp or {}).get("algoId") or (tp or {}).get("orderId")) if tp else None,
-            status=status, remediation_outcome="none", source="exchange",
-        ))
+        result.append(
+            PositionStopStatus(
+                strategy_position_id=f"exchange:{symbol}:{side}",
+                symbol=symbol,
+                side=side,
+                has_sl_order=has_sl,
+                has_tp_order=has_tp,
+                sl_order_id=str((sl or {}).get("algoId") or (sl or {}).get("orderId"))
+                if sl
+                else None,
+                tp_order_id=str((tp or {}).get("algoId") or (tp or {}).get("orderId"))
+                if tp
+                else None,
+                status=status,
+                remediation_outcome="none",
+                source="exchange",
+            )
+        )
     return PositionStopsHealthResponse(
-        timestamp=datetime.now(UTC).isoformat(), total_checked=len(positions),
-        healthy_count=healthy, violation_count=violations, alarms_emitted=violations,
+        timestamp=datetime.now(UTC).isoformat(),
+        total_checked=len(positions),
+        healthy_count=healthy,
+        violation_count=violations,
+        alarms_emitted=violations,
         positions=result,
     )
 

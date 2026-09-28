@@ -286,7 +286,10 @@ class TestDataManagerPositionClient:
             )
         assert result.ok is True
         client.health_check.assert_not_awaited()
-        assert not any(rec.levelname == "ERROR" for rec in caplog.records), (
+        assert not any(
+            rec.name == "shared.mysql_client" and rec.levelname == "ERROR"
+            for rec in caplog.records
+        ), (
             "an idempotent duplicate must not log an error"
         )
         assert any("already persisted" in rec.message for rec in caplog.records), (

@@ -117,6 +117,7 @@ async def check_position_stops(
     exchange: Any,
     event_publisher: Any,
     alert_pub: Any | None = None,
+    remediate: bool = True,
 ) -> PositionStopsHealthResponse:
     # #484: alarms route through the alerts.tradeengine.> NATS path
     # (AlertsConsumer -> Telegram, petrosa_k8s#810). Default to the module
@@ -376,7 +377,7 @@ async def check_position_stops(
         # Binance algo-order ID — otherwise the stops-health endpoint will
         # claim `has_sl_order=true` while `sl_order_id` stays null, which is
         # what the 2026-06-18 testnet diagnosis surfaced.  Same for TP.
-        if not has_sl:
+        if remediate and not has_sl:
             if stop_loss_price is not None:
                 try:
                     sl_result = await exchange.execute(
@@ -416,7 +417,7 @@ async def check_position_stops(
             else:
                 close_needed = True
 
-        if not close_needed and not has_tp:
+        if remediate and not close_needed and not has_tp:
             if take_profit_price is not None:
                 try:
                     tp_result = await exchange.execute(
@@ -484,7 +485,7 @@ async def check_position_stops(
                     exc,
                 )
 
-        if close_needed:
+        if remediate and close_needed:
             outcome = "position_closed"
             try:
                 await strategy_pos_manager.close_strategy_position(

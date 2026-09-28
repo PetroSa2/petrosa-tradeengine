@@ -55,6 +55,22 @@ def _counter_value(outcome: str, symbol: str) -> float:
     )._value.get()
 
 
+@pytest.mark.asyncio
+async def test_2021_is_not_retried(exchange):
+    """Immediate-trigger errors are deterministic and must surface upstream."""
+    calls = 0
+
+    def failing_call(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise _make_api_exc(-2021, "Order would immediately trigger")
+
+    with pytest.raises(BinanceAPIException):
+        await exchange._execute_with_retry(failing_call, symbol="BTCUSDT")
+
+    assert calls == 1
+
+
 @pytest.fixture
 def exchange():
     """BinanceFuturesExchange wired with a Mock client. Reconciliation reads from

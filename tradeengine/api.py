@@ -1618,6 +1618,7 @@ async def positions_stops_health() -> PositionStopsHealthResponse:
         position_client=position_client,
         exchange=binance_exchange,
         event_publisher=execution_event_publisher,
+        remediate=False,
     )
 
 

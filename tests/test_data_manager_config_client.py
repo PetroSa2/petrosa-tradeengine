@@ -19,7 +19,7 @@ from tradeengine.services.data_manager_client import DataManagerClient
 def mock_base_client():
     """Create a mock base Data Manager client"""
     client = AsyncMock()
-    client.upsert_one = AsyncMock(return_value={"upserted_count": 1})
+    client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": True})
     client.health = AsyncMock(return_value={"status": "healthy"})
     return client
 

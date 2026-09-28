@@ -140,7 +140,7 @@ class TestDataManagerClientConfigManagement:
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"modified_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": False})
 
             result = await data_manager_client.set_global_config(config)
             assert result is True
@@ -154,7 +154,7 @@ class TestDataManagerClientConfigManagement:
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"upserted_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": True})
 
             result = await data_manager_client.set_global_config(config)
             assert result is True
@@ -168,7 +168,7 @@ class TestDataManagerClientConfigManagement:
 
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.upsert_one = AsyncMock(
-                return_value={"modified_count": 0, "upserted_count": 0}
+                return_value={"updated_count": 0, "upserted": False}
             )
 
             result = await data_manager_client.set_global_config(config)
@@ -229,7 +229,7 @@ class TestDataManagerClientConfigManagement:
         )
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"modified_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": False})
 
             result = await data_manager_client.set_symbol_config(config)
             assert result is True
@@ -344,7 +344,7 @@ class TestDataManagerClientConfigManagement:
         )
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"modified_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": False})
 
             result = await data_manager_client.set_symbol_side_config(config)
             assert result is True
@@ -616,7 +616,7 @@ class TestDataManagerClientLeverageStatus:
         )
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"modified_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": False})
 
             result = await data_manager_client.set_leverage_status(status)
             assert result is True
@@ -629,7 +629,7 @@ class TestDataManagerClientLeverageStatus:
         )
 
         with patch.object(data_manager_client, "_client") as mock_client:
-            mock_client.upsert_one = AsyncMock(return_value={"upserted_count": 1})
+            mock_client.upsert_one = AsyncMock(return_value={"updated_count": 1, "upserted": True})
 
             result = await data_manager_client.set_leverage_status(status)
             assert result is True
@@ -643,7 +643,7 @@ class TestDataManagerClientLeverageStatus:
 
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.upsert_one = AsyncMock(
-                return_value={"modified_count": 0, "upserted_count": 0}
+                return_value={"updated_count": 0, "upserted": False}
             )
 
             result = await data_manager_client.set_leverage_status(status)

@@ -1023,12 +1023,13 @@ class PositionManager:
     async def record_position_close(
         self,
         position_id: str,
-        exit_price: float,
+        exit_price: float | None,
         exit_qty: float,
         exit_order_id: str | None,
         exit_time: datetime | None,
         close_reason: str,
         commission: float = 0.0,
+        pnl_unknown: bool = False,
     ) -> dict[str, Any] | None:
         """Record a full or partial exchange fill against a position row.
 
@@ -1057,18 +1058,22 @@ class PositionManager:
             close_qty = min(max(float(exit_qty or 0.0), 0.0), current_qty)
             if close_qty <= 0.0:
                 return None
-            exit_price = float(exit_price or 0.0)
+            exit_price = float(exit_price) if exit_price is not None else None
             commission = float(commission or 0.0)
             gross_pnl = (
-                (exit_price - entry_price) * close_qty
-                if position_side == "LONG"
-                else (entry_price - exit_price) * close_qty
+                None
+                if pnl_unknown
+                else (
+                    (exit_price - entry_price) * close_qty
+                    if position_side == "LONG"
+                    else (entry_price - exit_price) * close_qty
+                )
             )
             previous_pnl = float(
                 record.get("pnl", record.get("realized_pnl", 0.0)) or 0.0
             )
             previous_commission = float(record.get("final_commission", 0.0) or 0.0)
-            cumulative_pnl = previous_pnl + gross_pnl
+            cumulative_pnl = None if pnl_unknown else previous_pnl + gross_pnl
             cumulative_commission = previous_commission + commission
             remaining_qty = max(current_qty - close_qty, 0.0)
             status = "closed" if remaining_qty <= 1e-12 else "open"
@@ -1097,9 +1102,13 @@ class PositionManager:
                 or current_qty
             )
             pnl_pct = (
-                cumulative_pnl / (entry_price * original_qty) * 100
-                if entry_price > 0 and original_qty > 0
-                else 0.0
+                (
+                    cumulative_pnl / (entry_price * original_qty) * 100
+                    if entry_price > 0 and original_qty > 0
+                    else 0.0
+                )
+                if cumulative_pnl is not None
+                else None
             )
             update_data = {
                 "status": status,
@@ -1109,12 +1118,15 @@ class PositionManager:
                 "exit_order_id": exit_order_id,
                 "pnl": cumulative_pnl,
                 "pnl_pct": pnl_pct,
-                "pnl_after_fees": cumulative_pnl
+                "pnl_after_fees": None
+                if cumulative_pnl is None
+                else cumulative_pnl
                 - float(record.get("commission_total", 0.0) or 0.0)
                 - cumulative_commission,
                 "duration_seconds": duration_seconds,
                 "close_reason": close_reason,
                 "final_commission": cumulative_commission,
+                "pnl_unknown": pnl_unknown,
             }
 
             record.update(update_data)
@@ -1130,13 +1142,14 @@ class PositionManager:
                 self._queue_close_retry(position_id, record, update_data, result)
 
             await self._roll_daily_pnl_if_new_day()
-            self.daily_pnl += gross_pnl
-            await position_client.update_daily_pnl(
-                datetime.now(UTC).date().isoformat(), self.daily_pnl
-            )
-            total_daily_pnl_usd.labels(exchange=record.get("exchange", "binance")).set(
-                self.daily_pnl
-            )
+            if gross_pnl is not None:
+                self.daily_pnl += gross_pnl
+                await position_client.update_daily_pnl(
+                    datetime.now(UTC).date().isoformat(), self.daily_pnl
+                )
+                total_daily_pnl_usd.labels(
+                    exchange=record.get("exchange", "binance")
+                ).set(self.daily_pnl)
 
             position_data = {**record, **update_data, "gross_pnl": gross_pnl}
             await self._export_position_closed_metrics(position_data)

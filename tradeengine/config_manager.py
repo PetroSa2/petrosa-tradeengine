@@ -2,8 +2,7 @@
 Trading Configuration Manager with Caching and Fallback Logic.
 
 Manages runtime trading configuration with:
-- MongoDB primary persistence
-- MySQL fallback (future)
+- Data-manager persistence
 - TTL-based caching
 - Configuration hierarchy resolution
 - Automatic default persistence
@@ -18,7 +17,6 @@ from typing import Any
 from petrosa_contracts import TradingConfig, TradingConfigAudit
 
 from shared.constants import UTC
-from tradeengine.db.mysql_config_repository import MySQLConfigRepository
 from tradeengine.defaults import (
     get_default_parameters,
     merge_parameters,
@@ -32,33 +30,23 @@ class TradingConfigManager:
     """
     Trading configuration manager with caching and dual persistence.
 
-    Configuration Resolution Priority:
-    1. Cache (if not expired)
-    2. MongoDB symbol-side config
-    3. MySQL symbol-side config (future)
-    4. MongoDB symbol config
-    5. MySQL symbol config (future)
-    6. MongoDB global config
-    7. MySQL global config (future)
-    8. Hardcoded defaults (auto-persisted to MongoDB)
+    Configuration resolution uses the data-manager-backed client and falls back
+    to hardcoded defaults when the service is unavailable.
     """
 
     def __init__(
         self,
         mongodb_client: Any | None = None,
-        mysql_repository: MySQLConfigRepository | None = None,
         cache_ttl_seconds: int = 60,
     ):
         """
         Initialize configuration manager.
 
         Args:
-            mongodb_client: MongoDB client (primary)
-            mysql_repository: MySQL repository (fallback)
+            mongodb_client: data-manager configuration client
             cache_ttl_seconds: Cache TTL in seconds (default: 60)
         """
         self.mongodb_client = mongodb_client
-        self.mysql_repository = mysql_repository
         self.cache_ttl_seconds = cache_ttl_seconds
 
         # Cache: key = f"{symbol or 'global'}:{side or 'all'}", value = (config, timestamp)
@@ -73,9 +61,6 @@ class TradingConfigManager:
         # Initialize database connections
         if self.mongodb_client:
             await self.mongodb_client.connect()
-
-        if self.mysql_repository:
-            await self.mysql_repository.connect()
 
         # Start cache refresh task
         self._running = True
@@ -96,9 +81,6 @@ class TradingConfigManager:
 
         if self.mongodb_client:
             await self.mongodb_client.disconnect()
-
-        if self.mysql_repository:
-            await self.mysql_repository.disconnect()
 
         logger.info("Trading configuration manager stopped")
 

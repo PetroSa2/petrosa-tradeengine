@@ -14,10 +14,8 @@ from shared.constants import (
     LogLevel,
     deprecation_warning,
     get_config_summary,
-    get_mongodb_connection_string,
     get_nats_connection_string,
     validate_configuration,
-    validate_mongodb_config,
     validate_nats_config,
 )
 
@@ -54,64 +52,6 @@ class TestApplicationConstants:
         assert APP_VERSION == "0.1.0"
         assert isinstance(APP_NAME, str)
         assert isinstance(APP_VERSION, str)
-
-
-class TestMongoDBValidation:
-    """Test MongoDB configuration validation"""
-
-    def test_validate_mongodb_config_missing_uri(self):
-        """Test MongoDB validation logs warning when URI is missing (Data Manager mode)"""
-        with patch("shared.constants.MONGODB_URI", None):
-            with patch("shared.constants.logger") as mock_logger:
-                validate_mongodb_config()
-                mock_logger.warning.assert_called_once()
-                assert "MongoDB URI not configured" in str(
-                    mock_logger.warning.call_args
-                )
-
-    def test_validate_mongodb_config_missing_database(self):
-        """Test MongoDB validation logs warning when database is missing (Data Manager mode)"""
-        with patch("shared.constants.MONGODB_URI", "mongodb://localhost:27017"):
-            with patch("shared.constants.MONGODB_DATABASE", None):
-                with patch("shared.constants.logger") as mock_logger:
-                    validate_mongodb_config()
-                    mock_logger.warning.assert_called_once()
-                    assert "MongoDB database not configured" in str(
-                        mock_logger.warning.call_args
-                    )
-
-    def test_validate_mongodb_config_invalid_uri_format(self):
-        """Test MongoDB validation fails with invalid URI format"""
-        with patch("shared.constants.MONGODB_URI", "invalid://localhost"):
-            with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
-                with pytest.raises(
-                    ValueError, match="Invalid MongoDB URI format"
-                ) as exc_info:
-                    validate_mongodb_config()
-                assert exc_info.value is not None
-
-    def test_validate_mongodb_config_valid(self):
-        """Test MongoDB validation succeeds with valid config"""
-        with patch("shared.constants.MONGODB_URI", "mongodb://localhost:27017"):
-            with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
-                # Should not raise
-                validate_mongodb_config()
-                assert True  # Test passes if no exception was raised
-
-    def test_validate_mongodb_config_valid_srv(self):
-        """Test MongoDB validation succeeds with valid mongodb+srv URI"""
-        with patch("shared.constants.MONGODB_URI", "mongodb+srv://cluster.mongodb.net"):
-            with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
-                # Should not raise
-                validate_mongodb_config()
-                assert True  # Test passes if no exception was raised
-
-    def test_get_mongodb_connection_string(self):
-        """Test MongoDB connection string generation"""
-        with patch("shared.constants.MONGODB_URI", "mongodb://localhost:27017"):
-            with patch("shared.constants.MONGODB_DATABASE", "petrosa"):
-                conn_str = get_mongodb_connection_string()
-                assert conn_str == "mongodb://localhost:27017/petrosa"
 
 
 class TestNATSValidation:
@@ -164,11 +104,8 @@ class TestConfigurationValidation:
             with patch("shared.constants.BINANCE_API_KEY", ""):
                 with patch("shared.constants.BINANCE_API_SECRET", "secret"):
                     with patch("shared.constants.JWT_SECRET_KEY", "jwt_key"):
-                        with patch(
-                            "shared.constants.MONGODB_URI", "mongodb://localhost"
-                        ):
-                            issues = validate_configuration()
-                            assert "BINANCE_API_KEY is required in production" in issues
+                        issues = validate_configuration()
+                        assert "BINANCE_API_KEY is required in production" in issues
 
     def test_validate_configuration_production_missing_binance_secret(self):
         """Test configuration validation in production with missing Binance secret"""
@@ -176,13 +113,8 @@ class TestConfigurationValidation:
             with patch("shared.constants.BINANCE_API_KEY", "key"):
                 with patch("shared.constants.BINANCE_API_SECRET", ""):
                     with patch("shared.constants.JWT_SECRET_KEY", "jwt_key"):
-                        with patch(
-                            "shared.constants.MONGODB_URI", "mongodb://localhost"
-                        ):
-                            issues = validate_configuration()
-                            assert (
-                                "BINANCE_API_SECRET is required in production" in issues
-                            )
+                        issues = validate_configuration()
+                        assert "BINANCE_API_SECRET is required in production" in issues
 
     def test_validate_configuration_production_default_jwt_secret(self):
         """Test configuration validation in production with default JWT secret"""
@@ -193,38 +125,24 @@ class TestConfigurationValidation:
                         "shared.constants.JWT_SECRET_KEY",
                         "your-secret-key-change-in-production",
                     ):
-                        with patch(
-                            "shared.constants.MONGODB_URI", "mongodb://localhost"
-                        ):
-                            issues = validate_configuration()
-                            assert (
-                                "JWT_SECRET_KEY must be changed in production" in issues
-                            )
-
-    def test_validate_configuration_missing_mongodb_uri(self):
-        """Test configuration validation with missing MongoDB URI"""
-        with patch("shared.constants.MONGODB_URI", None):
-            issues = validate_configuration()
-            assert "MONGODB_URI is required" in issues
+                        issues = validate_configuration()
+                        assert "JWT_SECRET_KEY must be changed in production" in issues
 
     def test_validate_configuration_nats_enabled_missing_url(self):
         """Test configuration validation with NATS enabled but URL missing"""
         with patch("shared.constants.NATS_ENABLED", True):
             with patch("shared.constants.NATS_URL", None):
-                with patch("shared.constants.MONGODB_URI", "mongodb://localhost"):
-                    issues = validate_configuration()
-                    assert "NATS_URL is required when NATS_ENABLED is true" in issues
+                issues = validate_configuration()
+                assert "NATS_URL is required when NATS_ENABLED is true" in issues
 
     def test_validate_configuration_development(self):
         """Test configuration validation in development"""
         with patch("shared.constants.ENVIRONMENT", Environment.DEVELOPMENT):
-            with patch("shared.constants.MONGODB_URI", "mongodb://localhost"):
-                with patch("shared.constants.NATS_ENABLED", False):
-                    issues = validate_configuration()
-                    # Should have no issues in development
-                    assert len(issues) == 0 or all(
-                        "production" not in issue.lower() for issue in issues
-                    )
+            with patch("shared.constants.NATS_ENABLED", False):
+                issues = validate_configuration()
+                assert len(issues) == 0 or all(
+                    "production" not in issue.lower() for issue in issues
+                )
 
 
 class TestGetConfigSummary:
@@ -236,7 +154,6 @@ class TestGetConfigSummary:
         assert isinstance(summary, dict)
         assert "app" in summary
         assert "api" in summary
-        assert "database" in summary
         assert "messaging" in summary
         assert "trading" in summary
         assert "exchange" in summary
@@ -256,12 +173,6 @@ class TestGetConfigSummary:
         assert "host" in summary["api"]
         assert "port" in summary["api"]
         assert "reload" in summary["api"]
-
-    def test_get_config_summary_database_section(self):
-        """Test database section of config summary"""
-        summary = get_config_summary()
-        assert "mongodb_url" in summary["database"]
-        assert "mongodb_database" in summary["database"]
 
     def test_get_config_summary_messaging_section(self):
         """Test messaging section of config summary"""

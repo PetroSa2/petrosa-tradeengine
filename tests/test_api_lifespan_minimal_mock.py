@@ -24,9 +24,6 @@ async def test_lifespan_configure_logging_line_executes():
     # Patch ONLY the heavy dependencies, NOT the logging functions
     # This lets the configure_logging() LINE execute and be measured
     with (
-        patch(
-            "shared.constants.validate_mongodb_config", side_effect=Exception("Skip")
-        ),
         patch.object(api_module, "binance_exchange") as mock_binance,
         patch.object(api_module, "simulator_exchange") as mock_sim,
         patch.object(api_module, "dispatcher") as mock_disp,
@@ -71,10 +68,6 @@ async def test_lifespan_success_log_line_executes():
     try:
         with (
             patch("tradeengine.api.setup_telemetry", return_value=True),
-            patch(
-                "shared.constants.validate_mongodb_config",
-                side_effect=Exception("Skip"),
-            ),
             patch.object(api_module, "binance_exchange") as mock_binance,
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
@@ -124,8 +117,9 @@ async def test_lifespan_error_log_line_executes():
     try:
         # Force an error to hit the error path
         with (
-            patch(
-                "shared.constants.validate_mongodb_config",
+            patch.object(
+                api_module,
+                "TradingConfigManager",
                 side_effect=Exception("Test error"),
             ),
             patch.object(api_module, "binance_exchange") as mock_binance,

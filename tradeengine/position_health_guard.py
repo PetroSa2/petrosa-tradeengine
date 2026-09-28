@@ -73,7 +73,7 @@ class PositionStopStatus(BaseModel):
         "position_closed",
         "close_failed",
     ]
-    source: Literal["memory", "mysql", "store", "both"]
+    source: Literal["memory", "data-manager", "store", "both"]
 
 
 class StopsDivergence(BaseModel):
@@ -144,7 +144,7 @@ async def check_position_stops(
     store_source = (
         "store"
         if position_client.__class__.__module__ == "shared.trading_store_client"
-        else "mysql"
+        else "data-manager"
     )
 
     for pos in memory_positions:

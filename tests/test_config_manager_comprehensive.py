@@ -35,20 +35,10 @@ def mock_mongodb_client():
 
 
 @pytest.fixture
-def mock_mysql_repository():
-    """Create a mock MySQL repository"""
-    repo = MagicMock()
-    repo.connect = AsyncMock()
-    repo.disconnect = AsyncMock()
-    return repo
-
-
-@pytest.fixture
-def config_manager(mock_mongodb_client, mock_mysql_repository):
+def config_manager(mock_mongodb_client):
     """Create a TradingConfigManager instance for testing"""
     return TradingConfigManager(
         mongodb_client=mock_mongodb_client,
-        mysql_repository=mock_mysql_repository,
         cache_ttl_seconds=60,
     )
 
@@ -56,15 +46,13 @@ def config_manager(mock_mongodb_client, mock_mysql_repository):
 class TestTradingConfigManagerInitialization:
     """Test TradingConfigManager initialization"""
 
-    def test_initialization(self, mock_mongodb_client, mock_mysql_repository):
+    def test_initialization(self, mock_mongodb_client):
         """Test basic initialization"""
         manager = TradingConfigManager(
             mongodb_client=mock_mongodb_client,
-            mysql_repository=mock_mysql_repository,
             cache_ttl_seconds=60,
         )
         assert manager.mongodb_client == mock_mongodb_client
-        assert manager.mysql_repository == mock_mysql_repository
         assert manager.cache_ttl_seconds == 60
         assert manager._cache == {}
         assert manager._running is False
@@ -73,7 +61,6 @@ class TestTradingConfigManagerInitialization:
         """Test initialization without clients"""
         manager = TradingConfigManager()
         assert manager.mongodb_client is None
-        assert manager.mysql_repository is None
         assert manager._cache == {}
 
     def test_initialization_custom_cache_ttl(self):
@@ -86,15 +73,12 @@ class TestTradingConfigManagerLifecycle:
     """Test start/stop lifecycle methods"""
 
     @pytest.mark.asyncio
-    async def test_start(
-        self, config_manager, mock_mongodb_client, mock_mysql_repository
-    ):
+    async def test_start(self, config_manager, mock_mongodb_client):
         """Test starting the config manager"""
         await config_manager.start()
         assert config_manager._running is True
         assert config_manager._cache_refresh_task is not None
         mock_mongodb_client.connect.assert_called_once()
-        mock_mysql_repository.connect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_start_without_clients(self):
@@ -110,7 +94,6 @@ class TestTradingConfigManagerLifecycle:
         await config_manager.stop()
         assert config_manager._running is False
         config_manager.mongodb_client.disconnect.assert_called_once()
-        config_manager.mysql_repository.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_without_start(self, config_manager):

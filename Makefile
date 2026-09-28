@@ -16,7 +16,7 @@ YELLOW := \033[0;33m
 BLUE := \033[0;34m
 NC := \033[0m # No Color
 
-.PHONY: help setup validate-python install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check setup-mongodb mongodb-status mongodb-check version-check version-info version-debug install-git-hooks test-ci-pipeline test-quality
+.PHONY: help setup validate-python install install-dev clean format lint type-check unit integration e2e test security build container deploy pipeline pre-commit pre-commit-install pre-commit-run coverage coverage-html coverage-check version-check version-info version-debug install-git-hooks test-ci-pipeline test-quality
 
 # Default target
 help:
@@ -57,17 +57,14 @@ help:
 	@echo "  deploy         - Deploy to Kubernetes cluster"
 	@echo "  pipeline       - Run complete CI/CD pipeline"
 	@echo ""
-	@echo "🗄️  Database:"
-	@echo "  setup-mongodb  - Setup MongoDB for distributed state"
-	@echo "  mongodb-status - Check MongoDB connection"
-	@echo "  mongodb-check  - Detailed MongoDB health check"
 	@echo ""
 	@echo "📊 Utilities:"
 	@echo "🔢 Version Management:"
 	@echo "  version-check  - Check VERSION_PLACEHOLDER integrity"
 	@echo "  version-info   - Show version information"
 	@echo "  version-debug  - Debug version issues"
-	@echo "  install-git-hooks - Install VERSION_PLACEHOLDER protection hooks"	@echo "  k8s-status     - Check Kubernetes deployment status"
+	@echo "  install-git-hooks - Install VERSION_PLACEHOLDER protection hooks"
+	@echo "  k8s-status     - Check Kubernetes deployment status"
 	@echo "  k8s-logs       - View Kubernetes logs"
 	@echo "  k8s-clean      - Clean up Kubernetes resources"
 
@@ -247,20 +244,6 @@ pipeline:
 	$(MAKE) container
 	@echo ""
 	@echo "✅ Pipeline completed successfully!"
-
-# MongoDB setup
-setup-mongodb:
-	@echo "🗄️  Setting up MongoDB for distributed state management..."
-	@chmod +x scripts/setup-mongodb.sh
-	@./scripts/setup-mongodb.sh
-
-mongodb-status:
-	@echo "🔍 Checking MongoDB connection..."
-	@python scripts/check-mongodb.py
-
-mongodb-check:
-	@echo "🔍 Checking MongoDB connection and collections..."
-	@python scripts/check-mongodb.py detailed
 
 # Kubernetes utilities
 KUBECONFIG ?= ../petrosa_k8s/k8s/kubeconfig.yaml

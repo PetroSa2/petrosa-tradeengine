@@ -58,7 +58,7 @@ class TestUpsertPosition:
         assert result.ok is True
         position_client.data_manager_client._client.upsert_one.assert_called_once()
         call_args = position_client.data_manager_client._client.upsert_one.call_args
-        assert call_args.kwargs["database"] == "mysql"
+        assert call_args.kwargs["database"] == "mongodb"
         assert call_args.kwargs["collection"] == "positions"
         assert call_args.kwargs["filter"] == {"position_id": "pos_123"}
         assert call_args.kwargs["record"] == position_data
@@ -240,7 +240,7 @@ class TestPositionContractRequests:
         assert result.ok is True
         call = position_client.data_manager_client._client.insert_one.call_args
         assert call.kwargs["collection"] == "strategy_positions"
-        assert call.kwargs["database"] == "mysql"
+        assert call.kwargs["database"] == "mongodb"
         assert "position_id" not in call.kwargs["record"]
         assert "signed_quantity" not in call.kwargs["record"]
 

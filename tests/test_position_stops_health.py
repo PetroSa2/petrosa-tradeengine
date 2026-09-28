@@ -182,20 +182,20 @@ async def test_missing_price_skips_to_close():
 
 
 @pytest.mark.asyncio
-async def test_mysql_only_position_detected():
-    mysql_pos = _pos(
-        spid="mysql-pos-1",
+async def test_data_manager_only_position_detected():
+    data_manager_pos = _pos(
+        spid="data-manager-pos-1",
         sl_order_id=None,
         tp_order_id="tp-1",
         stop_loss_price=45000.0,
     )
-    spm, pc, exc, pub = _mocks(memory=[], mysql=[mysql_pos])
+    spm, pc, exc, pub = _mocks(memory=[], mysql=[data_manager_pos])
 
     resp = await check_position_stops(spm, pc, exc, pub)
 
     assert resp.violation_count == 1
-    assert resp.positions[0].source == "mysql"
-    assert resp.positions[0].strategy_position_id == "mysql-pos-1"
+    assert resp.positions[0].source == "data-manager"
+    assert resp.positions[0].strategy_position_id == "data-manager-pos-1"
 
 
 @pytest.mark.asyncio

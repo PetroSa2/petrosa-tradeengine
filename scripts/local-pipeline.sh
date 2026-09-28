@@ -178,7 +178,6 @@ run_tests() {
 
     # Set test environment variables
     export ENVIRONMENT=testing
-    export MONGODB_URL=mongodb://localhost:27017
     export NATS_SERVERS=nats://localhost:4222
 
     # Run pytest with coverage

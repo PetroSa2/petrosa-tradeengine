@@ -737,7 +737,6 @@ The Trading Engine now integrates with `petrosa-data-manager` for centralized da
 DATA_MANAGER_URL=http://petrosa-data-manager:8000
 DATA_MANAGER_TIMEOUT=30
 DATA_MANAGER_MAX_RETRIES=3
-DATA_MANAGER_DATABASE=mongodb
 ```
 
 ### Data Manager Features

@@ -81,34 +81,7 @@ RETRY_BACKOFF_MULTIPLIER = float(os.getenv("RETRY_BACKOFF_MULTIPLIER", "2.0"))
 DATA_MANAGER_URL = os.getenv("DATA_MANAGER_URL", "http://petrosa-data-manager:8000")
 DATA_MANAGER_TIMEOUT = int(os.getenv("DATA_MANAGER_TIMEOUT", "30"))
 DATA_MANAGER_MAX_RETRIES = int(os.getenv("DATA_MANAGER_MAX_RETRIES", "3"))
-DATA_MANAGER_DATABASE = os.getenv("DATA_MANAGER_DATABASE", "mongodb")
 USE_DATA_MANAGER = os.getenv("USE_DATA_MANAGER", "true").lower() == "true"
-MYSQL_URI = os.getenv("MYSQL_URI", "mysql+pymysql://localhost:3306/petrosa")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "petrosa")
-MYSQL_TIMEOUT_MS = int(os.getenv("MYSQL_TIMEOUT_MS", "5000"))
-MYSQL_MAX_POOL_SIZE = int(os.getenv("MYSQL_MAX_POOL_SIZE", "10"))
-MONGODB_URI = os.getenv("MONGODB_URI")
-MONGODB_DATABASE = os.getenv("MONGODB_DATABASE")
-MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "5000"))
-MONGODB_MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "10"))
-
-
-def validate_mongodb_config() -> None:
-    if not MONGODB_URI:
-        logger.warning("MongoDB URI not configured; data persistence may be limited.")
-        return
-    if not MONGODB_DATABASE:
-        logger.warning("MongoDB database not configured; using default.")
-        return
-    if MONGODB_URI and not MONGODB_URI.startswith(("mongodb://", "mongodb+srv://")):
-        raise ValueError(f"CRITICAL: Invalid MongoDB URI format: {MONGODB_URI}")
-
-
-def get_mongodb_connection_string() -> str:
-    validate_mongodb_config()
-    if not MONGODB_URI:
-        return ""
-    return f"{MONGODB_URI}/{MONGODB_DATABASE}"
 
 
 def redact_uri(uri: str | None) -> str:
@@ -343,7 +316,6 @@ elif ENVIRONMENT == Environment.TESTING:
     LOG_LEVEL = "DEBUG"
     API_RELOAD = True
     SIMULATION_ENABLED = True
-    MONGODB_DATABASE = "petrosa_test"
     REDIS_DB = 1
 
 
@@ -356,7 +328,6 @@ def get_config_summary() -> dict[str, Any]:
             "debug": DEBUG,
         },
         "api": {"host": API_HOST, "port": API_PORT, "reload": API_RELOAD},
-        "database": {"mongodb_url": MONGODB_URI, "mongodb_database": MONGODB_DATABASE},
         "messaging": {
             "nats_enabled": NATS_ENABLED,
             "nats_url": NATS_URL,
@@ -388,8 +359,6 @@ def validate_configuration() -> list[str]:
             issues.append("BINANCE_API_SECRET is required in production")
         if JWT_SECRET_KEY == "your-secret-key-change-in-production":
             issues.append("JWT_SECRET_KEY must be changed in production")
-    if not MONGODB_URI:
-        issues.append("MONGODB_URI is required")
     if NATS_ENABLED and not NATS_URL:
         issues.append("NATS_URL is required when NATS_ENABLED is true")
     return issues

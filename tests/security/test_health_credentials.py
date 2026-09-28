@@ -88,32 +88,22 @@ class TestRedactUri:
 class TestPositionManagerHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_no_credential_leak(self) -> None:
-        from unittest.mock import MagicMock, patch
-
         from tradeengine.position_manager import PositionManager
 
         pm = PositionManager.__new__(PositionManager)
         pm.positions = {}
         pm.last_sync_time = None
-        pm.mongodb_db = None
-        pm.settings = MagicMock()
-        pm.settings.mongodb_uri = "mongodb+srv://admin:topsecret@host/db"
-
-        with patch(
-            "tradeengine.position_manager.get_mongodb_connection_string",
-            return_value="",
-        ):
-            result = await pm.health_check()
+        pm._store_reachable = False
+        result = await pm.health_check()
 
         _assert_no_secrets(result)
-        assert "mongodb_uri" in result
-        assert "topsecret" not in str(result)
+        assert result["positions_store"] == "data-manager"
 
 
 class TestDistributedLockHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_no_credential_leak(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from shared.distributed_lock import DistributedLockManager
 
@@ -126,8 +116,6 @@ class TestDistributedLockHealthCheck:
         lock.is_leader = False
         lock.lock_timeout = 30
         lock.heartbeat_interval = 10
-        lock.settings = MagicMock()
-        lock.settings.mongodb_uri = "mongodb+srv://user:hunter2@mongo.host/petrosa"
         # Lazy-reconnect bookkeeping (issue #442) — must be set here because
         # this test bypasses ``__init__`` via ``__new__``.
         lock._init_failure_count = 0
@@ -135,15 +123,10 @@ class TestDistributedLockHealthCheck:
         lock._init_backoff_seconds = 1.0
         lock._last_init_error = None
 
-        with (
-            patch(
-                "shared.distributed_lock.get_mongodb_connection_string", return_value=""
-            ),
-            patch.object(
-                DistributedLockManager,
-                "get_leader_info",
-                return_value={"leader": None, "is_leader": False},
-            ),
+        with patch.object(
+            DistributedLockManager,
+            "get_leader_info",
+            return_value={"leader": None, "is_leader": False},
         ):
             result = await lock.health_check()
 

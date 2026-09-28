@@ -180,7 +180,7 @@ class DataManagerPositionClient:
         symbol = str(record.get("symbol", ""))
         try:
             response = await self.data_manager_client._client.insert_one(
-                database="mysql", collection=collection, record=record
+                database="mongodb", collection=collection, record=record
             )
             inserted = bool(
                 response.get("inserted_id") or response.get("inserted_count", 0)
@@ -210,7 +210,7 @@ class DataManagerPositionClient:
         update = self._columns(data, columns)
         try:
             response = await self.data_manager_client._client.update_one(
-                database="mysql",
+                database="mongodb",
                 collection=collection,
                 filter={key: value},
                 update=update,
@@ -304,7 +304,7 @@ class DataManagerPositionClient:
         sym = str(position_data.get("symbol", ""))
         try:
             response = await self.data_manager_client._client.insert_one(
-                database="mysql", collection="positions", record=position_data
+                database="mongodb", collection="positions", record=position_data
             )
             inserted = bool(
                 response.get("inserted_id") or response.get("inserted_count", 0)
@@ -377,7 +377,7 @@ class DataManagerPositionClient:
         sym = str(update_data.get("symbol", ""))
         try:
             response = await self.data_manager_client._client.update_one(
-                database="mysql",
+                database="mongodb",
                 collection="positions",
                 filter={"position_id": position_id},
                 update=update_data,
@@ -411,7 +411,7 @@ class DataManagerPositionClient:
         """Update position risk orders; returns PersistResult."""
         try:
             response = await self.data_manager_client._client.update_one(
-                database="mysql",
+                database="mongodb",
                 collection="positions",
                 filter={"position_id": position_id},
                 update=update_data,
@@ -453,7 +453,7 @@ class DataManagerPositionClient:
             )
         try:
             await self.data_manager_client._client.upsert_one(
-                database="mysql",
+                database="mongodb",
                 collection="positions",
                 filter={"position_id": position_id},
                 record=position_data,
@@ -479,7 +479,7 @@ class DataManagerPositionClient:
         """Mark a position as closed; returns PersistResult."""
         try:
             response = await self.data_manager_client._client.update_one(
-                database="mysql",
+                database="mongodb",
                 collection="positions",
                 filter={
                     "symbol": symbol,
@@ -516,7 +516,7 @@ class DataManagerPositionClient:
     async def get_position(self, position_id: str) -> dict[str, Any] | None:
         try:
             response = await self.data_manager_client._client.query(
-                database="mysql",
+                database="mongodb",
                 collection="positions",
                 filter={"position_id": position_id},
                 limit=1,
@@ -543,7 +543,7 @@ class DataManagerPositionClient:
         if strategy_id:
             filter_dict["strategy_id"] = strategy_id
         response = await self.data_manager_client._client.query(
-            database="mysql",
+            database="mongodb",
             collection="positions",
             filter=filter_dict,
             sort={"entry_time": -1},

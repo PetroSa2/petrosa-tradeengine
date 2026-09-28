@@ -178,8 +178,8 @@ BINANCE_API_SECRET=your_api_secret
 JWT_SECRET_KEY=your_jwt_secret
 
 # Data Extractor
-DB_ADAPTER=mysql
-MYSQL_URI=mysql+pymysql://username:password@localhost:3306/binance_data
+Live-path storage is MongoDB through the data-manager API. MySQL is retained
+only as a historic reference for statistical analysis and backtesting.
 BINANCE_API_KEY=your_api_key
 BINANCE_API_SECRET=your_api_secret
 ```

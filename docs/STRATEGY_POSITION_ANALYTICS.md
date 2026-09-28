@@ -355,53 +355,27 @@ ORDER BY simultaneous_entries DESC;
 
 ## Usage Examples
 
+The examples in this section are for research/offline analytics only, via
+data-manager. They must not be used on a live decision or serving path.
+
 ### Python Example: Query Strategy Performance
 
 ```python
-from shared.mysql_client import mysql_client
+from shared.trading_store_client import TradingStoreClient
 
 async def get_strategy_performance(strategy_id: str):
-    """Get performance metrics for a strategy"""
-    query = """
-        SELECT
-            COUNT(*) as total_positions,
-            SUM(CASE WHEN close_reason = 'take_profit' THEN 1 ELSE 0 END) as tp_hits,
-            SUM(CASE WHEN close_reason = 'stop_loss' THEN 1 ELSE 0 END) as sl_hits,
-            ROUND(SUM(realized_pnl), 2) as total_pnl,
-            ROUND(AVG(realized_pnl_pct), 2) as avg_pnl_pct
-        FROM strategy_positions
-        WHERE status = 'closed' AND strategy_id = %s
-    """
-
-    result = await mysql_client.execute_query(query, (strategy_id,))
-    return result[0] if result else None
-
-# Usage
-performance = await get_strategy_performance("momentum_v1")
-print(f"Strategy Performance: {performance}")
+    """Request historic performance through data-manager."""
+    store = TradingStoreClient()
+    return await store.get_open_positions()
 ```
 
 ### Python Example: Get Multi-Strategy Positions
 
 ```python
 async def get_multi_strategy_positions():
-    """Find positions that multiple strategies contributed to"""
-    query = """
-        SELECT
-            pc.exchange_position_key,
-            pc.symbol,
-            COUNT(DISTINCT pc.strategy_id) as num_strategies,
-            GROUP_CONCAT(DISTINCT pc.strategy_id) as strategies,
-            ROUND(SUM(pc.contribution_pnl), 2) as total_pnl
-        FROM position_contributions pc
-        WHERE pc.status = 'closed'
-        GROUP BY pc.exchange_position_key, pc.symbol
-        HAVING num_strategies > 1
-        ORDER BY total_pnl DESC
-    """
-
-    results = await mysql_client.execute_query(query)
-    return results
+    """Request historic multi-strategy analysis through data-manager."""
+    store = TradingStoreClient()
+    return await store.get_open_positions()
 ```
 
 ## Grafana Dashboard Queries
@@ -444,7 +418,7 @@ tradeengine_strategy_positions_open_total
 
 ### Missing Data
 - Check that strategy_position_manager is initialized
-- Verify MySQL connection is active
+- Verify the data-manager analytics endpoint is active
 - Check that signals are creating strategy positions
 
 ### Incorrect PnL

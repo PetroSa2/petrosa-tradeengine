@@ -229,7 +229,10 @@ WRONG would be using weighted average ($45,667):
 
 ## Database Tracking
 
-### MongoDB (PRIMARY)
+### MongoDB operational store
+
+Position state is persisted through the data-manager API. MongoDB is the
+operational store; the historic MySQL copy is also maintained by data-manager.
 
 **Collection**: `strategy_positions`
 
@@ -265,15 +268,13 @@ WRONG would be using weighted average ($45,667):
 }
 ```
 
-### MySQL (SECONDARY BACKUP)
+### Historic analytics copy
 
-Same structure as MongoDB, synced via Data Manager API with best-effort delivery.
+The same position data is copied to MySQL by data-manager for statistical
+analysis and backtesting. It is not read on the live path.
 
-If MongoDB fails:
-1. Position updates queued
-2. Retry with exponential backoff
-3. MySQL backup continues (non-critical)
-4. Prometheus metrics still exported
+If MongoDB is unavailable, position updates are queued for retry and metrics
+continue to be exported; MySQL is not a live-path fallback.
 
 ---
 
@@ -355,10 +356,9 @@ tradeengine_active_oco_pairs_per_position > 1
 
 **Requirement**: MongoDB must be available for position tracking.
 
-**Fallback**:
+**Recovery**:
 - Queue updates for retry
 - Exponential backoff (1s, 2s, 4s)
-- MySQL backup continues
 - Metrics still exported
 
 ---
@@ -407,18 +407,12 @@ python scripts/test_multi_strategy_oco.py
 
 ### Per-Strategy Performance
 
-**Query MongoDB**:
+**Query through data-manager**:
 ```python
-from motor.motor_asyncio import AsyncIOMotorClient
+from shared.trading_store_client import TradingStoreClient
 
-client = AsyncIOMotorClient(mongodb_uri)
-db = client["petrosa"]
-
-# Get all closed positions for a strategy
-positions = await db.strategy_positions.find({
-    "strategy_id": "momentum_v1",
-    "status": "closed"
-}).to_list(None)
+store = TradingStoreClient()
+positions = await store.get_open_positions()
 
 # Calculate metrics
 tp_hits = sum(1 for p in positions if p["close_reason"] == "take_profit")
@@ -516,7 +510,7 @@ for key, pos in exchange_positions.items():
 ### Prerequisites
 
 1. MongoDB Atlas connection configured in K8s secrets
-2. `strategy_positions` table exists in MySQL (optional backup)
+2. data-manager provides the historic analytics copy
 3. Prometheus metrics endpoint exposed
 4. Grafana connected to Prometheus
 

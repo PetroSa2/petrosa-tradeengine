@@ -198,11 +198,18 @@ class DistributedLockManager:
 
     async def _leader_info_refresh_loop(self) -> None:
         while True:
-            try:
-                self._cached_leader_info = await self.get_leader_info()
-            except Exception as exc:
-                logger.debug("Leader info refresh failed: %s", exc)
+            await self._refresh_leadership_once()
             await asyncio.sleep(self.heartbeat_interval)
+
+    async def _refresh_leadership_once(self) -> None:
+        # A single failed renewal (e.g. a data-manager restart) drops
+        # leadership; without this the pod never re-acquires it.
+        if not self.is_leader:
+            await self._try_become_leader()
+        try:
+            self._cached_leader_info = await self.get_leader_info()
+        except Exception as exc:
+            logger.debug("Leader info refresh failed: %s", exc)
 
     async def get_leader_info(self) -> dict[str, Any]:
         try:

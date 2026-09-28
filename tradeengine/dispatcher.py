@@ -2366,7 +2366,8 @@ class Dispatcher:
         # before order execution, instead of the removed startup loop that
         # blindly forced 10x on every symbol regardless of any decision.
         self.leverage_manager = LeverageManager(
-            binance_client=getattr(exchange, "client", None) if exchange else None
+            binance_client=getattr(exchange, "client", None) if exchange else None,
+            cache_ttl_minutes=self.settings.te_leverage_cache_ttl_minutes,
         )
 
         # Duplicate signal detection cache
@@ -2478,6 +2479,21 @@ class Dispatcher:
             self.logger.info(
                 "Strategy position manager initialization started in background"
             )
+
+            # #634: reconcile exchange state at boot instead of trusting the
+            # pre-#599 10x values left on symbols that have not traded recently.
+            if self.exchange and getattr(self.exchange, "client", None):
+                from shared.constants import SUPPORTED_SYMBOLS
+
+                try:
+                    await self.leverage_manager.reconcile_symbols(
+                        SUPPORTED_SYMBOLS, self.settings.te_default_leverage
+                    )
+                except Exception as leverage_error:
+                    self.logger.warning(
+                        "Leverage startup reconciliation failed (non-fatal): %s",
+                        leverage_error,
+                    )
 
             # #599: the previous startup step here blindly forced 10x
             # leverage on every SUPPORTED_SYMBOLS at boot, regardless of what
@@ -3153,7 +3169,7 @@ class Dispatcher:
                 span.record_exception(e)
                 return {"status": "error", "error": str(e)}
 
-    async def _apply_order_leverage(self, order: TradeOrder) -> None:
+    async def _apply_order_leverage(self, order: TradeOrder) -> bool:
         """Apply the leverage carried on `order` before it is sent to the exchange.
 
         Fixes #599: CIO's admission-time leverage decision (Signal.leverage)
@@ -3171,7 +3187,7 @@ class Dispatcher:
             getattr(self.exchange, "client", None) if self.exchange else None
         )
         if order.simulate or not binance_client:
-            return
+            return True
 
         target_leverage = order.leverage
         if target_leverage is None:
@@ -3184,13 +3200,16 @@ class Dispatcher:
 
         try:
             self.leverage_manager.binance_client = binance_client
-            await self.leverage_manager.ensure_leverage(order.symbol, target_leverage)
+            return await self.leverage_manager.ensure_leverage(
+                order.symbol, target_leverage
+            )
         except Exception as lev_exc:
             self.logger.warning(
                 f"⚠️ Leverage application failed for {order.symbol} "
                 f"(non-fatal, order proceeds with exchange's existing "
                 f"leverage): {lev_exc}"
             )
+            return False
 
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order with distributed consensus"""
@@ -3407,7 +3426,21 @@ class Dispatcher:
             # -- #599: apply the leverage carried on the order (originating
             # from Signal.leverage / CIO's leverage arbiter) before sending
             # the order to the exchange.
-            await self._apply_order_leverage(order)
+            leverage_ok = await self._apply_order_leverage(order)
+            if not leverage_ok and self.settings.te_leverage_strict:
+                order.mark_rejected(source="exchange", reason="leverage_mismatch")
+                await self._emit_execution_event_from_order(
+                    order,
+                    {"status": "rejected"},
+                    event_type="rejected",
+                    reason="leverage_mismatch",
+                )
+                _record_orders_total("rejected", order.symbol, order.exchange)
+                return {
+                    "status": "rejected",
+                    "reason": "leverage_mismatch",
+                    "rejection_source": "exchange",
+                }
 
             # Execute order
             result = await self.execute_order(order)

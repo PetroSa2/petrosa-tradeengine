@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     # ran once at boot for every symbol regardless of what any signal
     # actually decided.
     te_default_leverage: int = 10
+    te_leverage_cache_ttl_minutes: int = 10
+    te_leverage_strict: bool = False
 
     # API Configuration (for uvicorn)
 

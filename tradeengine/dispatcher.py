@@ -2106,7 +2106,10 @@ class OCOManager:
 
                 self.logger.info("  💰 P&L Calculation:")
                 self.logger.info(f"     Entry: ${entry_price:,.2f}")
-                self.logger.info(f"     Exit: ${exit_price:,.2f}")
+                if exit_price is None:
+                    self.logger.info("     Exit: unknown")
+                else:
+                    self.logger.info(f"     Exit: ${exit_price:,.2f}")
                 self.logger.info(f"     Quantity: {filled_quantity}")
                 if pnl is None:
                     self.logger.info("     Gross P&L: unknown")

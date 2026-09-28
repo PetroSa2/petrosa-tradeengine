@@ -95,6 +95,207 @@ class DataManagerPositionClient:
     # Write methods — all return PersistResult
     # ------------------------------------------------------------------
 
+    # Column names mirror scripts/create_strategy_positions_table.sql, which is
+    # the checked-in copy of the strategy-positions-schema-job DDL.
+    _STRATEGY_POSITION_COLUMNS = frozenset(
+        {
+            "strategy_position_id",
+            "strategy_id",
+            "signal_id",
+            "symbol",
+            "side",
+            "entry_quantity",
+            "entry_price",
+            "entry_time",
+            "entry_order_id",
+            "take_profit_price",
+            "stop_loss_price",
+            "tp_order_id",
+            "sl_order_id",
+            "status",
+            "exit_quantity",
+            "exit_price",
+            "exit_time",
+            "exit_order_id",
+            "close_reason",
+            "realized_pnl",
+            "realized_pnl_pct",
+            "commission_total",
+            "exchange_position_key",
+            "strategy_metadata",
+        }
+    )
+    _EXCHANGE_POSITION_COLUMNS = frozenset(
+        {
+            "exchange_position_key",
+            "symbol",
+            "side",
+            "current_quantity",
+            "weighted_avg_price",
+            "unrealized_pnl",
+            "first_entry_time",
+            "last_update_time",
+            "status",
+            "contributing_strategies",
+            "total_contributions",
+        }
+    )
+    _CONTRIBUTION_COLUMNS = frozenset(
+        {
+            "contribution_id",
+            "strategy_position_id",
+            "exchange_position_key",
+            "strategy_id",
+            "symbol",
+            "position_side",
+            "contribution_quantity",
+            "contribution_entry_price",
+            "contribution_time",
+            "position_sequence",
+            "exchange_quantity_before",
+            "exchange_quantity_after",
+            "status",
+            "close_reason",
+            "exit_time",
+            "exit_price",
+            "contribution_pnl",
+            "contribution_pnl_pct",
+        }
+    )
+
+    @staticmethod
+    def _columns(data: dict[str, Any], columns: frozenset[str]) -> dict[str, Any]:
+        return {key: value for key, value in data.items() if key in columns}
+
+    async def _create_dedicated(
+        self,
+        collection: str,
+        data: dict[str, Any],
+        key: str,
+        columns: frozenset[str],
+        operation: str,
+    ) -> PersistResult:
+        record = self._columns(data, columns)
+        identifier = str(record.get(key, ""))
+        symbol = str(record.get("symbol", ""))
+        try:
+            response = await self.data_manager_client._client.insert_one(
+                database="mysql", collection=collection, record=record
+            )
+            inserted = bool(
+                response.get("inserted_id") or response.get("inserted_count", 0)
+            )
+            duplicate = int(response.get("duplicates", 0) or 0) > 0
+            return self._make_result(
+                inserted or duplicate,
+                operation=operation,
+                symbol=symbol,
+                position_id=identifier,
+            )
+        except Exception as exc:
+            logger.error("Failed to create %s %s: %s", collection, identifier, exc)
+            return self._make_result(
+                False, exc, operation=operation, symbol=symbol, position_id=identifier
+            )
+
+    async def _update_dedicated(
+        self,
+        collection: str,
+        key: str,
+        value: str,
+        data: dict[str, Any],
+        columns: frozenset[str],
+        operation: str,
+    ) -> PersistResult:
+        update = self._columns(data, columns)
+        try:
+            response = await self.data_manager_client._client.update_one(
+                database="mysql",
+                collection=collection,
+                filter={key: value},
+                update=update,
+            )
+            count = int(
+                response.get("updated_count", response.get("modified_count", 0)) or 0
+            )
+            return self._make_result(
+                count > 0, operation=operation, position_id=str(value)
+            )
+        except Exception as exc:
+            logger.error("Failed to update %s %s=%s: %s", collection, key, value, exc)
+            return self._make_result(
+                False, exc, operation=operation, position_id=str(value)
+            )
+
+    async def create_strategy_position(
+        self, position_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "strategy_positions",
+            position_data,
+            "strategy_position_id",
+            self._STRATEGY_POSITION_COLUMNS,
+            "create_strategy_position",
+        )
+
+    async def update_strategy_position(
+        self, strategy_position_id: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "strategy_positions",
+            "strategy_position_id",
+            strategy_position_id,
+            update_data,
+            self._STRATEGY_POSITION_COLUMNS,
+            "update_strategy_position",
+        )
+
+    async def create_exchange_position(
+        self, position_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "exchange_positions",
+            position_data,
+            "exchange_position_key",
+            self._EXCHANGE_POSITION_COLUMNS,
+            "create_exchange_position",
+        )
+
+    async def update_exchange_position(
+        self, exchange_position_key: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "exchange_positions",
+            "exchange_position_key",
+            exchange_position_key,
+            update_data,
+            self._EXCHANGE_POSITION_COLUMNS,
+            "update_exchange_position",
+        )
+
+    async def create_position_contribution(
+        self, contribution_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._create_dedicated(
+            "position_contributions",
+            contribution_data,
+            "contribution_id",
+            self._CONTRIBUTION_COLUMNS,
+            "create_position_contribution",
+        )
+
+    async def update_position_contribution(
+        self, contribution_id: str, update_data: dict[str, Any]
+    ) -> PersistResult:
+        return await self._update_dedicated(
+            "position_contributions",
+            "contribution_id",
+            contribution_id,
+            update_data,
+            self._CONTRIBUTION_COLUMNS,
+            "update_position_contribution",
+        )
+
     async def create_position(self, position_data: dict[str, Any]) -> PersistResult:
         """Insert a position record; returns PersistResult."""
         pid = str(

@@ -215,3 +215,91 @@ class TestPositionContractRequests:
         assert "collection" in call_args.kwargs
         assert "filter" in call_args.kwargs
         assert "record" in call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_dedicated_position_writers_use_schema_collections_and_columns(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.insert_one = AsyncMock(
+            return_value={"inserted_id": "row-1"}
+        )
+        payload = {
+            "strategy_position_id": "strategy-1",
+            "strategy_id": "mean-reversion",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_quantity": 1.0,
+            "entry_price": 100.0,
+            "entry_time": "2026-09-28T00:00:00Z",
+            "position_id": "must-be-dropped",
+            "signed_quantity": 1.0,
+        }
+
+        result = await position_client.create_strategy_position(payload)
+
+        assert result.ok is True
+        call = position_client.data_manager_client._client.insert_one.call_args
+        assert call.kwargs["collection"] == "strategy_positions"
+        assert call.kwargs["database"] == "mysql"
+        assert "position_id" not in call.kwargs["record"]
+        assert "signed_quantity" not in call.kwargs["record"]
+
+    @pytest.mark.asyncio
+    async def test_dedicated_close_updates_own_table_by_natural_key(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.update_one = AsyncMock(
+            return_value={"updated_count": 1}
+        )
+
+        result = await position_client.update_strategy_position(
+            "strategy-1",
+            {
+                "status": "closed",
+                "exit_price": 101.0,
+                "realized_pnl": 1.0,
+                "position_id": "must-be-dropped",
+            },
+        )
+
+        assert result.ok is True
+        call = position_client.data_manager_client._client.update_one.call_args
+        assert call.kwargs["collection"] == "strategy_positions"
+        assert call.kwargs["filter"] == {"strategy_position_id": "strategy-1"}
+        assert call.kwargs["update"] == {
+            "status": "closed",
+            "exit_price": 101.0,
+            "realized_pnl": 1.0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_exchange_and_contribution_use_distinct_collections(
+        self, position_client
+    ):
+        position_client.data_manager_client._client.insert_one = AsyncMock(
+            return_value={"inserted_id": "row-1"}
+        )
+
+        exchange = await position_client.create_exchange_position(
+            {
+                "exchange_position_key": "BTCUSDT_LONG",
+                "symbol": "BTCUSDT",
+                "side": "LONG",
+            }
+        )
+        contribution = await position_client.create_position_contribution(
+            {
+                "contribution_id": "contribution-1",
+                "strategy_position_id": "strategy-1",
+                "symbol": "BTCUSDT",
+                "position_side": "LONG",
+            }
+        )
+
+        assert exchange.ok is True
+        assert contribution.ok is True
+        calls = position_client.data_manager_client._client.insert_one.call_args_list
+        assert [call.kwargs["collection"] for call in calls] == [
+            "exchange_positions",
+            "position_contributions",
+        ]

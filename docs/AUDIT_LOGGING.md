@@ -57,12 +57,8 @@ flag to silence audit noise.
 
 ## Related modules — do not conflate
 
-A separate **MySQL-backed** `AuditLogger` lives in `shared/logger.py`. That
-class is unrelated to the in-process stub described here. It exists for
-NATS-driven persistent audit ingestion and has its own lifecycle. When wiring
-up a persistent backend for the in-process logger, decide explicitly whether to
-delegate to that module or introduce a new backend rather than collapsing the
-two.
+The former database-backed `AuditLogger` in `shared/logger.py` was removed by
+the data-pillars migration. Persist audit records through the data-manager API.
 
 ## Migrating to a persistent backend
 

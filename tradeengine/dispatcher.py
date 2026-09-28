@@ -2451,7 +2451,7 @@ class Dispatcher:
                 await self.heartbeat_monitor.start()
 
             # CRITICAL FIX: Initialize strategy position manager in background
-            # MySQL connection attempts can take 3+ minutes and will block startup
+            # Data-manager connection attempts can take 3+ minutes and will block startup
             # Move to background task so NATS consumer can start immediately
             import asyncio
 
@@ -2465,12 +2465,12 @@ class Dispatcher:
                     self.logger.info(
                         "✅ Strategy position manager initialized successfully"
                     )
-                except Exception as mysql_error:
+                except Exception as store_error:
                     self.logger.warning(
-                        f"⚠️ Strategy position manager initialization failed (MySQL unavailable): {mysql_error}"
+                        f"⚠️ Strategy position manager initialization failed (data-manager unavailable): {store_error}"
                     )
                     self.logger.warning(
-                        "Positions will still work via MongoDB fallback"
+                        "Position tracking remains available through data-manager (MongoDB)"
                     )
 
             # Start initialization in background (don't await)

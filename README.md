@@ -15,11 +15,17 @@ A modular, event-driven trading execution system focused on crypto trading. Cons
 | Service | Purpose | Input | Output | Status |
 |---------|---------|-------|--------|--------|
 | **petrosa-socket-client** | Real-time WebSocket data ingestion | Binance WebSocket API | NATS: `binance.websocket.data` | Real-time Processing |
-| **petrosa-binance-data-extractor** | Historical data extraction & gap filling | Binance REST API | MySQL (klines, funding rates, trades) | Batch Processing |
+| **petrosa-binance-data-extractor** | Historical data extraction & gap filling | Binance REST API | writes via data-manager to MongoDB | Batch Processing |
 | **petrosa-bot-ta-analysis** | Technical analysis (28 strategies) | Data Manager API | NATS: `signals.trading` | Signal Generation |
 | **petrosa-realtime-strategies** | Real-time signal generation | NATS: `binance.websocket.data` | NATS: `signals.trading` | Live Processing |
 | **petrosa-tradeengine** | Order execution & trade management | NATS: `signals.trading` | Binance Orders API, MongoDB audit | **YOU ARE HERE** |
 | **petrosa_k8s** | Centralized infrastructure | Kubernetes manifests | Cluster resources | Infrastructure |
+
+### Data pillars
+
+MongoDB is the operational store: every live-path read and write goes to MongoDB. MySQL holds a historic reference copy only (statistical analysis, backtesting, research) and is never read on the live path.
+
+`petrosa-data-manager` is the only service that connects to any database; every other service reads and writes data exclusively through the data-manager API.
 
 ### Data Flow Pipeline
 

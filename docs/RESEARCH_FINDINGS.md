@@ -6,12 +6,12 @@
 
 ### 1. position_client Provision
 
-**Location**: `shared/mysql_client.py`
+**Location**: `shared/trading_store_client.py`
 
 **Type**: `DataManagerPositionClient` class
 
 **How it works**:
-- Uses Data Manager API as proxy to MySQL
+- Uses Data Manager API for operational MongoDB data and its historic copy
 - Global instance: `position_client = DataManagerPositionClient()`
 - Imported in:
   - `tradeengine/position_manager.py`
@@ -41,7 +41,7 @@
 - `realized_pnl` - P&L calculated from entry_price
 - `close_reason` - ENUM('take_profit', 'stop_loss', 'manual', 'partial', 'liquidation')
 
-**Note**: MySQL is used as SECONDARY backup via Data Manager API
+**Note**: MySQL is a historic reference copy maintained via Data Manager API
 
 ---
 
@@ -80,11 +80,12 @@ async def _initialize_mongodb(self):
     mongodb_url = get_mongodb_connection_string()  # From K8s secret
     database_name = MONGODB_DATABASE  # From K8s secret
 
-    self.mongodb_client = motor.motor_asyncio.AsyncIOMotorClient(mongodb_url)
-    self.mongodb_db = self.mongodb_client[database_name]
+    # Historical example removed by the data-pillars migration.
+    self.mongodb_client = data_manager_client
 ```
 
-**Usage**: Distributed coordination only (not primary storage)
+**Usage**: MongoDB is the operational store. The old direct-client snippet was
+removed by the data-pillars migration.
 
 **Status**: ✅ Configured via K8s secrets/configmap
 
@@ -103,7 +104,7 @@ Signal → Dispatcher → process_signal()
          ↓
     In-memory: self.strategy_positions[id] = {...}
          ↓
-    Persist: position_client.create_position() → Data Manager → MySQL
+    Persist: position_client.create_position() → Data Manager → MongoDB (MySQL copy by data-manager)
          ↓
     Place OCO orders
          ↓
@@ -124,8 +125,8 @@ if position_id in self.active_oco_pairs:
 
 ## Implementation Plan Validation
 
-✅ **MongoDB**: Primary via Data Manager API
-✅ **MySQL**: Secondary backup via Data Manager API
+✅ **MongoDB**: Operational store via Data Manager API
+✅ **MySQL**: Historic reference copy via Data Manager API
 ✅ **position_client**: Configured and working
 ✅ **strategy_positions table**: Schema exists
 ✅ **K8s secrets**: mongodb-connection-string, MONGODB_DATABASE available

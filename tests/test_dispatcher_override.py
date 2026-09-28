@@ -12,7 +12,8 @@ async def test_dispatcher_uses_order_params_overrides():
     """
     Verifies that Dispatcher._signal_to_order correctly applies overrides from order_params.
     """
-    with patch("tradeengine.dispatcher.Settings"):
+    with patch("tradeengine.dispatcher.Settings") as mock_settings:
+        mock_settings.return_value.te_leverage_cache_ttl_minutes = 10
         dispatcher = Dispatcher()
         dispatcher.logger = MagicMock()
         dispatcher.position_manager = MagicMock()

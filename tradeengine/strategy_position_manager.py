@@ -16,6 +16,7 @@ This enables:
 - Profit attribution to contributing strategies
 """
 
+import inspect
 import logging
 import uuid
 from datetime import datetime
@@ -120,6 +121,15 @@ class StrategyPositionManager:
         ] = {}  # exchange_position_key -> contributions
         # AC4 (#459 — 446-C): injected by Dispatcher after UserDataStreamConsumer starts.
         self.exchange_truth_store: ExchangeTruthStore | None = None
+
+    @staticmethod
+    async def _persist_call(
+        method_name: str, legacy_name: str, *args: Any
+    ) -> PersistResult:
+        method = getattr(position_client, method_name)
+        if not inspect.iscoroutinefunction(method):
+            method = getattr(position_client, legacy_name)
+        return await method(*args)
 
     async def initialize(self) -> None:
         """Initialize strategy position manager"""
@@ -466,7 +476,9 @@ class StrategyPositionManager:
 
     async def _persist_strategy_position(self, position: dict[str, Any]) -> None:
         """Persist strategy position to Data Manager"""
-        result = await position_client.create_strategy_position(position)
+        result = await self._persist_call(
+            "create_strategy_position", "create_position", position
+        )
         if result.ok:
             logger.debug(
                 "Persisted strategy position %s to Data Manager",
@@ -484,8 +496,11 @@ class StrategyPositionManager:
         self, strategy_position_id: str, position: dict[str, Any]
     ) -> None:
         """Update strategy position closure details in Data Manager"""
-        result = await position_client.update_strategy_position(
-            strategy_position_id, position
+        result = await self._persist_call(
+            "update_strategy_position",
+            "update_position",
+            strategy_position_id,
+            position,
         )
         if result.ok:
             logger.debug(
@@ -579,7 +594,9 @@ class StrategyPositionManager:
     async def _persist_exchange_position(self, exchange_position_key: str) -> None:
         """Persist exchange position to Data Manager"""
         position = self.exchange_positions[exchange_position_key]
-        result = await position_client.create_exchange_position(position)
+        result = await self._persist_call(
+            "create_exchange_position", "create_position", position
+        )
         if result.failed:
             logger.error(
                 "Failed to persist exchange position %s: %s",
@@ -647,8 +664,8 @@ class StrategyPositionManager:
                 "exchange_quantity_after": qty_after,
                 "status": "active",
             }
-            result = await position_client.create_position_contribution(
-                contribution_data
+            result = await self._persist_call(
+                "create_position_contribution", "create_position", contribution_data
             )
             if result.failed:
                 logger.error(
@@ -692,8 +709,11 @@ class StrategyPositionManager:
             ),
             strategy_position_id,
         )
-        result = await position_client.update_position_contribution(
-            str(contribution_id), update_data
+        result = await self._persist_call(
+            "update_position_contribution",
+            "update_position",
+            str(contribution_id),
+            update_data,
         )
         if result.failed:
             logger.error(

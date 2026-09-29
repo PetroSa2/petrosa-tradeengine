@@ -150,7 +150,9 @@ class BaseDataManagerClient:
             try:
                 resp = await client.request(method, path, json=json_body, params=params)
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                last_exc = ConnectionError(f"connection to data-manager failed: {exc}")
+                last_exc = ConnectionError(
+                    f"connection to data-manager failed: {type(exc).__name__}: {exc!r}"
+                )
             except httpx.HTTPError as exc:
                 last_exc = APIError(f"transport error: {exc}")
             else:

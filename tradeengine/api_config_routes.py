@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from shared.constants import UTC
+from shared.data_manager_auth import data_manager_auth_headers
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.defaults import get_default_parameters, get_parameter_schema
 
@@ -939,6 +940,7 @@ async def detect_cross_service_conflicts(
                 try:
                     response = await client.get(
                         f"{SERVICE_URLS['data-manager']}/api/v1/config/application",
+                        headers=data_manager_auth_headers(),
                     )
                     if response.status_code == 200:
                         data = response.json()

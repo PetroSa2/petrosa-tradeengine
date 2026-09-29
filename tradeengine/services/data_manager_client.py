@@ -22,6 +22,7 @@ import httpx
 from petrosa_contracts import LeverageStatus, TradingConfig, TradingConfigAudit
 
 from shared.constants import UTC
+from shared.data_manager_auth import data_manager_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ class BaseDataManagerClient:
                     self._client = httpx.AsyncClient(
                         base_url=self.base_url,
                         timeout=httpx.Timeout(self.timeout),
+                        headers=data_manager_auth_headers(),
                     )
         return self._client
 

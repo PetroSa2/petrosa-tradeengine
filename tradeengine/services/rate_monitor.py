@@ -3,8 +3,10 @@ Binance Rate Limit Monitor Service.
 Captures used weight from API headers and broadcasts via NATS.
 """
 
+import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Optional
 
@@ -32,6 +34,45 @@ class RateLimitMonitor:
         self.last_weight: int = 0
         self.last_update_time: float = 0
         self.update_interval: float = 5.0  # seconds
+        self.limit_1m: int = 2400
+        self.pause_until: float = 0.0
+        self.backoff_ratio: float = 0.8
+
+    @property
+    def polling_paused(self) -> bool:
+        """Whether non-essential exchange polling is currently suspended."""
+        return time.time() < self.pause_until
+
+    async def wait_for_polling(self) -> None:
+        """Delay a non-essential poll while weight is near exhaustion or banned."""
+        if self.last_weight >= self.limit_1m * self.backoff_ratio:
+            self.pause_until = max(self.pause_until, time.time() + 1.0)
+        delay = self.pause_until - time.time()
+        if delay > 0:
+            logger.warning("Binance polling paused for %.1fs", delay)
+            await asyncio.sleep(delay)
+
+    def record_error(self, error: Exception) -> None:
+        """Pause polling after a Binance rate-limit or IP-ban response."""
+        code = getattr(error, "code", None)
+        status = getattr(error, "status_code", None)
+        text = " ".join(
+            str(value) for value in (getattr(error, "message", ""), error) if value
+        )
+        if code != -1003 and status != 418:
+            return
+        match = re.search(r"banned\s+until\s+(\d{10,})", text, re.IGNORECASE)
+        if match:
+            raw_until = int(match.group(1))
+            until = raw_until / 1000 if raw_until > 10_000_000_000 else raw_until
+            self.pause_until = max(self.pause_until, until)
+        else:
+            self.pause_until = max(self.pause_until, time.time() + 60)
+        logger.error(
+            "Binance polling paused until %.3f after error %s",
+            self.pause_until,
+            code or status,
+        )
 
     async def start(self) -> None:
         """Start the monitor and connect to NATS."""
@@ -68,6 +109,14 @@ class RateLimitMonitor:
             ):
                 self.last_weight = weight
                 self.last_update_time = now
+                try:
+                    from tradeengine.metrics import binance_used_weight_1m
+
+                    binance_used_weight_1m.labels(service="tradeengine").set(weight)
+                except (
+                    Exception
+                ):  # pragma: no cover - metrics must not break the hot path
+                    pass
                 await self._broadcast(weight)
         except (ValueError, TypeError) as e:
             logger.error(f"Failed to parse rate limit weight: {e}")

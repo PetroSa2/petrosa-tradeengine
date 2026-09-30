@@ -1,3 +1,8 @@
+> **Legacy rules, moved unchanged on 2026-09-30.** This file is the repository's previous `.cursorrules`. It was
+> written for one editor, is partly boilerplate copied between repositories, and has not been re-verified against the
+> code. `AGENTS.md` is the maintained source: where the two disagree, `AGENTS.md` and the code win. Delete sections as
+> they are found to be stale.
+
 # Cursor AI Rules for Petrosa Systems
 
 ## Repository Context

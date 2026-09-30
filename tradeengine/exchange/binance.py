@@ -1397,6 +1397,23 @@ class BinanceFuturesExchange:
             raise RuntimeError("No exception captured during retry")
         raise last_exception
 
+    async def _wait_for_nonessential_poll(self) -> None:
+        """Throttle monitoring reads without delaying order placement/cancellation."""
+        if self.rate_monitor is not None:
+            await self.rate_monitor.wait_for_polling()
+
+    async def _capture_rate_limit_response(self) -> None:
+        """Record response headers from a synchronous Binance call."""
+        if self.rate_monitor is None or self.client is None:
+            return
+        headers = getattr(getattr(self.client, "response", None), "headers", {})
+        if headers:
+            await self.rate_monitor.update_from_headers(headers)
+
+    def _record_rate_limit_error(self, error: Exception) -> None:
+        if self.rate_monitor is not None:
+            self.rate_monitor.record_error(error)
+
     def get_min_order_amount(self, symbol: str) -> dict[str, Any]:
         """Get minimum order amount for a symbol based on Binance filters"""
         if symbol not in self.symbol_info:
@@ -2345,6 +2362,7 @@ class BinanceFuturesExchange:
             await self.initialize()
 
         try:
+            await self._wait_for_nonessential_poll()
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
             # #565: offload sync REST call to a thread so the event loop stays
@@ -2354,9 +2372,11 @@ class BinanceFuturesExchange:
             positions = await asyncio.to_thread(
                 self.client.futures_position_information
             )
+            await self._capture_rate_limit_response()
             # Type cast to satisfy mypy
             return list(positions) if positions else []
         except Exception as e:
+            self._record_rate_limit_error(e)
             logger.error(f"Failed to get position info: {e}")
             raise
 
@@ -2368,6 +2388,7 @@ class BinanceFuturesExchange:
             await self.initialize()
 
         try:
+            await self._wait_for_nonessential_poll()
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
 
@@ -2387,8 +2408,10 @@ class BinanceFuturesExchange:
                 signed=True,
                 data=params,
             )
+            await self._capture_rate_limit_response()
             return cast(list[dict[str, Any]], orders) if orders else []
         except Exception as e:
+            self._record_rate_limit_error(e)
             # #600: was "return []" — indistinguishable from "genuinely zero
             # open algo orders", which let check_algo_order_limits() compute
             # open_count=0 and pass every guard during an API outage. Raise
@@ -2403,9 +2426,16 @@ class BinanceFuturesExchange:
             await self.initialize()
         if self.client is None:
             raise RuntimeError("Binance Futures client not initialized")
-        return list(
-            await asyncio.to_thread(self.client.futures_get_open_orders, symbol=symbol)
-        )
+        await self._wait_for_nonessential_poll()
+        try:
+            orders = await asyncio.to_thread(
+                self.client.futures_get_open_orders, symbol=symbol
+            )
+            await self._capture_rate_limit_response()
+            return list(orders)
+        except Exception as error:
+            self._record_rate_limit_error(error)
+            raise
 
     async def get_all_open_orders(self, symbol: str | None = None) -> set[str]:
         """Combine standard and algo open orders into a single set of IDs
@@ -2427,6 +2457,7 @@ class BinanceFuturesExchange:
             await self.initialize()
 
         try:
+            await self._wait_for_nonessential_poll()
             if self.client is None:
                 raise RuntimeError("Binance Futures client not initialized")
 
@@ -2437,6 +2468,7 @@ class BinanceFuturesExchange:
             std_orders = await asyncio.to_thread(
                 self.client.futures_get_open_orders, symbol=symbol
             )
+            await self._capture_rate_limit_response()
             order_ids = {str(o["orderId"]) for o in std_orders}
 
             # 2. Get algo open orders. #601: get_open_algo_orders (fixed by
@@ -2452,6 +2484,7 @@ class BinanceFuturesExchange:
 
             return order_ids
         except Exception as e:
+            self._record_rate_limit_error(e)
             logger.error(f"Failed to get all open orders: {e}")
             raise
 

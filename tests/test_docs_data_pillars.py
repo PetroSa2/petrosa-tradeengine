@@ -13,14 +13,14 @@ S2 = (
 
 
 def test_root_agent_docs_state_data_pillars_verbatim() -> None:
-    for name in ("README.md", ".cursorrules"):
+    for name in ("README.md", "docs/agent-rules.md"):
         content = (ROOT / name).read_text()
         assert S1 in content
         assert S2 in content
 
 
 def test_non_archived_docs_do_not_reintroduce_removed_database_language() -> None:
-    files = [ROOT / "README.md", ROOT / ".cursorrules"]
+    files = [ROOT / "README.md", ROOT / "docs/agent-rules.md"]
     files.extend(path for path in (ROOT / "docs").rglob("*") if path.is_file())
     forbidden = (
         "Dual Persistence",

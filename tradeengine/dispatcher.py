@@ -27,6 +27,7 @@ from shared.distributed_lock import (
 )
 from shared.logger import get_logger
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
+from tradeengine.execution_observability import TradeExecutionObservability
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.leverage_manager import LeverageManager
 from tradeengine.metrics import (
@@ -2344,6 +2345,7 @@ class Dispatcher:
         self.signal_aggregator = SignalAggregator()
         self.exchange = exchange
         self.logger = get_logger(__name__)
+        self.execution_observability = TradeExecutionObservability(self.logger)
 
         # Initialize OCO Manager for SL/TP order management
         self.oco_manager = OCOManager(exchange, self.logger, self)
@@ -2440,6 +2442,7 @@ class Dispatcher:
     async def initialize(self) -> None:
         """Initialize dispatcher components with distributed state management"""
         try:
+            await self.execution_observability.start()
             # Initialize distributed lock manager first
             await distributed_lock_manager.initialize()
 
@@ -2596,6 +2599,7 @@ class Dispatcher:
     async def close(self) -> None:
         """Close dispatcher components"""
         try:
+            await self.execution_observability.stop()
             if self.heartbeat_monitor is not None:
                 await self.heartbeat_monitor.stop()
             _leg_manager = getattr(self, "protective_leg_manager", None)
@@ -2911,7 +2915,7 @@ class Dispatcher:
                         )
 
                 # Enhanced logging for signal reception
-                self.logger.info(
+                self.logger.debug(
                     f"📩 SIGNAL RECEIVED: {signal.strategy_id} | "
                     f"{signal.symbol} {signal.action.upper()} @ {signal.current_price} | "
                     f"Confidence: {signal.confidence:.2%} | "
@@ -2953,7 +2957,7 @@ class Dispatcher:
 
                 # Handle hold signals
                 if signal.action == "hold":
-                    self.logger.info(
+                    self.logger.debug(
                         f"⏸️  HOLD SIGNAL FILTERED: {signal.strategy_id} | "
                         f"{signal.symbol} | No action taken"
                     )
@@ -3551,7 +3555,7 @@ class Dispatcher:
                                 ),
                                 timeout=5.0,
                             )
-                            self.logger.info(
+                            self.logger.debug(
                                 f"✅ Strategy position {strategy_position_id} created for {signal.strategy_id}"
                             )
 
@@ -3563,7 +3567,7 @@ class Dispatcher:
                                 self.strategy_position_to_position[
                                     strategy_position_id
                                 ] = order.position_id
-                            self.logger.info(
+                            self.logger.debug(
                                 f"📍 Mapped order {order.order_id} → strategy_position {strategy_position_id}"
                             )
 
@@ -4192,7 +4196,7 @@ class Dispatcher:
 
             try:
                 # Enhanced logging for order execution
-                self.logger.info(
+                self.logger.debug(
                     f"🔨 EXECUTING ORDER: {order.symbol} {order.side.upper()} "
                     f"{order.amount} @ {order.target_price} | "
                     f"Type: {order.type} | ID: {order.order_id}"
@@ -4205,7 +4209,7 @@ class Dispatcher:
                 # Execute order on Binance exchange
                 if order.simulate:
                     # Simulated order - just track locally
-                    self.logger.info(
+                    self.logger.debug(
                         f"🎭 SIMULATION MODE: Order {order.order_id} simulated"
                     )
                     result = {"status": "pending", "simulated": True}
@@ -4222,7 +4226,7 @@ class Dispatcher:
                             await self.order_manager.track_order(order, result)
 
                             # Log success with details
-                            self.logger.info(
+                            self.logger.debug(
                                 f"✅ BINANCE ORDER EXECUTED: {order.symbol} {order.side} | "
                                 f"Status: {result.get('status')} | "
                                 f"Order ID: {result.get('order_id', 'N/A')} | "
@@ -4276,7 +4280,7 @@ class Dispatcher:
                         }
                     )
 
-                self.logger.info(
+                self.logger.debug(
                     f"📊 ORDER EXECUTION COMPLETE: {order.order_id} | Status: {result.get('status')}"
                 )
 
@@ -4311,7 +4315,7 @@ class Dispatcher:
                         exchange=order.exchange,
                     ).observe(signal_latency)
 
-                    self.logger.info(
+                    self.logger.debug(
                         f"📊 ORDER LATENCY: {signal_latency:.3f}s from signal receipt to execution complete"
                     )
 
@@ -4339,6 +4343,19 @@ class Dispatcher:
                     _record_orders_total("rejected", order.symbol, order.exchange)
                 else:
                     _record_orders_total("accepted", order.symbol, order.exchange)
+
+                self.execution_observability.record_order(
+                    side=order.side,
+                    order_type=order.type,
+                    outcome=(
+                        "error"
+                        if order_status == "error"
+                        else "rejected"
+                        if order_status in ("rejected", "cancelled", "canceled")
+                        else "accepted"
+                    ),
+                    duration_seconds=execution_time,
+                )
 
                 # Update span with execution result
                 span.set_attribute("order.status", result.get("status", "unknown"))
@@ -4416,6 +4433,12 @@ class Dispatcher:
                     reason=f"order_execution_exception: {str(e)[:80]}",
                 )
                 _record_orders_total("error", order.symbol, order.exchange)
+                self.execution_observability.record_order(
+                    side=order.side,
+                    order_type=order.type,
+                    outcome="error",
+                    duration_seconds=time.time() - start_time,
+                )
                 return {"status": "error", "error": str(e)}
 
     def _register_pending_fill_signal(
@@ -4472,6 +4495,7 @@ class Dispatcher:
         if manager is None:
             return
         try:
+            self.execution_observability.record_protective_leg_action()
             manager.request_sync(symbol, position_side, reason=reason)
         except Exception:
             self.logger.debug("#651: leg sync request failed", exc_info=True)

@@ -17,13 +17,24 @@ def test_entry_walk_and_candle_classification():
     )
     assert not bounded
     assert legs[0]["qty"] == 264.676
-    assert classify_fill(legs, {"2026-09-24T04:00": {"low": 57, "high": 58}}) == "GENUINE"
-    assert classify_fill(legs, {"2026-09-24T04:00": {"low": 58, "high": 59}}) == "TESTNET_ARTIFACT"
+    assert (
+        classify_fill(legs, {"2026-09-24T04:00": {"low": 57, "high": 58}}) == "GENUINE"
+    )
+    assert (
+        classify_fill(legs, {"2026-09-24T04:00": {"low": 58, "high": 59}})
+        == "TESTNET_ARTIFACT"
+    )
 
 
 def test_trace_rejections_and_commissions_are_grouped():
     trace = group_persist_events(
-        [{"created_at": "2026-09-26T20:00:00Z", "position_id": "missing", "write_mode": "incremental"}],
+        [
+            {
+                "created_at": "2026-09-26T20:00:00Z",
+                "position_id": "missing",
+                "write_mode": "incremental",
+            }
+        ],
         [{"id": "present"}],
     )
     assert trace["days"]["2026-09-26"]["without_position"] == 1

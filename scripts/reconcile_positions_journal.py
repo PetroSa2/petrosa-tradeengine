@@ -114,7 +114,9 @@ def build_plan(
         if row_id is None:
             row_id = row.get("position_id")
         if row_id is None or str(row_id) == "":
-            raise ReconciliationError(f"open position is missing primary key id: {row!r}")
+            raise ReconciliationError(
+                f"open position is missing primary key id: {row!r}"
+            )
 
         if key not in exchange_by_key:
             phantom.append(row)
@@ -138,7 +140,11 @@ def build_plan(
         if quantity is not None:
             group["database_quantity"] += quantity
         group["database_rows"].append(
-            {"id": str(row_id), "position_id": str(row.get("position_id", "")), "quantity": quantity}
+            {
+                "id": str(row_id),
+                "position_id": str(row.get("position_id", "")),
+                "quantity": quantity,
+            }
         )
 
     by_symbol_side = {
@@ -192,10 +198,14 @@ async def reconcile(
                 row_id,
                 expected_before=before,
                 reason_code="phantom_superseded",
-                evidence_ref=str(row.get("evidence_ref", "operator-export-sha256-required")),
+                evidence_ref=str(
+                    row.get("evidence_ref", "operator-export-sha256-required")
+                ),
                 applied_by=str(row.get("applied_by", "operator-required")),
                 approved_by=str(row.get("approved_by", "operator-required")),
-                dry_run_adjustment_id=str(row.get("dry_run_adjustment_id", "operator-required")),
+                dry_run_adjustment_id=str(
+                    row.get("dry_run_adjustment_id", "operator-required")
+                ),
             )
             if hasattr(result, "ok") and not result.ok:
                 raise ReconciliationError(

@@ -62,7 +62,7 @@ def _database_client() -> Mock:
             },
         ]
     )
-    client.update_position = AsyncMock()
+    client.supersede_position = AsyncMock()
     return client
 
 
@@ -80,7 +80,7 @@ async def test_dry_run_classifies_rows_without_updates():
 
     assert report["phantom"] == 3
     assert report["live-candidate"] == 2
-    database.update_position.assert_not_called()
+    database.supersede_position.assert_not_called()
     exchange.futures_position_information.assert_called_once_with()
 
 
@@ -88,7 +88,7 @@ async def test_dry_run_classifies_rows_without_updates():
 async def test_apply_updates_each_phantom_by_position_id():
     exchange = _exchange_client()
     database = _database_client()
-    database.update_position.return_value = Mock(ok=True)
+    database.supersede_position.return_value = Mock(ok=True)
     now = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 
     report = await SCRIPT.reconcile(
@@ -100,17 +100,12 @@ async def test_apply_updates_each_phantom_by_position_id():
     )
 
     assert report["applied"] == 3
-    assert database.update_position.await_count == 3
-    for call in database.update_position.await_args_list:
-        position_id, update = call.args
+    assert database.supersede_position.await_count == 3
+    for call in database.supersede_position.await_args_list:
+        position_id = call.args[0]
         assert position_id in {"btc-1", "btc-2", "btc-3"}
-        assert update == {
-            "status": "closed",
-            "close_reason": "reconciled_no_exchange_position",
-            "exit_time": "2026-09-25T12:00:00+00:00",
-            "pnl": None,
-        }
-        assert "$set" not in update
+        assert call.kwargs["reason_code"] == "phantom_superseded"
+        assert call.kwargs["expected_before"]["position_id"] == position_id
 
 
 @pytest.mark.asyncio
@@ -126,7 +121,7 @@ async def test_confirmation_mismatch_issues_no_updates():
             confirm_count=2,
         )
 
-    database.update_position.assert_not_called()
+    database.supersede_position.assert_not_called()
 
 
 @pytest.mark.asyncio

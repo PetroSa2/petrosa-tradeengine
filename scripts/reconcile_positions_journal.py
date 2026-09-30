@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Reconcile open journal rows with the read-only Binance position snapshot.
+"""Reconcile open journal rows with Binance without inventing ledger P&L.
 
-The default is a dry-run.  ``--apply`` only closes rows whose symbol and side
-are absent from the exchange snapshot, and requires the exact phantom count
-from the reviewed dry-run via ``--confirm-count``.
+The default is a dry-run.  Apply is intentionally compatible only with the
+atomic supersede route delivered by data-manager#467.
 """
 
 from __future__ import annotations
@@ -111,9 +110,11 @@ def build_plan(
     for row in database_positions:
         key = _symbol_side(row)
         symbol, side = key
-        position_id = row.get("position_id")
-        if position_id is None or str(position_id) == "":
-            raise ReconciliationError(f"open position is missing position_id: {row!r}")
+        row_id = row.get("id")
+        if row_id is None:
+            row_id = row.get("position_id")
+        if row_id is None or str(row_id) == "":
+            raise ReconciliationError(f"open position is missing primary key id: {row!r}")
 
         if key not in exchange_by_key:
             phantom.append(row)
@@ -137,7 +138,7 @@ def build_plan(
         if quantity is not None:
             group["database_quantity"] += quantity
         group["database_rows"].append(
-            {"position_id": str(position_id), "quantity": quantity}
+            {"id": str(row_id), "position_id": str(row.get("position_id", "")), "quantity": quantity}
         )
 
     by_symbol_side = {
@@ -149,7 +150,8 @@ def build_plan(
         "live_candidates": [live_groups[key] for key in sorted(live_groups)],
         "phantom_rows": [
             {
-                "position_id": str(row["position_id"]),
+                "id": str(row.get("id", row.get("position_id", ""))),
+                "position_id": str(row.get("position_id", "")),
                 "symbol": _symbol_side(row)[0],
                 "position_side": _symbol_side(row)[1],
             }
@@ -184,18 +186,20 @@ async def reconcile(
 
         exit_time = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
         for row in phantom:
-            result = await position_client.update_position(
-                str(row["position_id"]),
-                {
-                    "status": "closed",
-                    "close_reason": "reconciled_no_exchange_position",
-                    "exit_time": exit_time,
-                    "pnl": None,
-                },
+            row_id = str(row.get("id", row.get("position_id", "")))
+            before = dict(row)
+            result = await position_client.supersede_position(
+                row_id,
+                expected_before=before,
+                reason_code="phantom_superseded",
+                evidence_ref=str(row.get("evidence_ref", "operator-export-sha256-required")),
+                applied_by=str(row.get("applied_by", "operator-required")),
+                approved_by=str(row.get("approved_by", "operator-required")),
+                dry_run_adjustment_id=str(row.get("dry_run_adjustment_id", "operator-required")),
             )
             if hasattr(result, "ok") and not result.ok:
                 raise ReconciliationError(
-                    f"update failed for position_id={row['position_id']}: {result.error}"
+                    f"supersede failed for id={row_id}: {result.error}"
                 )
         report["applied"] = phantom_count
     else:

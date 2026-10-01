@@ -120,14 +120,13 @@ Skips any position that already has both reduceOnly SL+TP — the dry-run output
 
 ## Post-fix verification
 
-After AC1-AC5 land, re-run the incident reproduction tests:
+After AC1-AC5 land, run the OCO manager tests:
 
 ```bash
-cd petrosa_k8s
-.venv/bin/python -m pytest _bmad-output/incidents/2026-05-30/reproduction_test.py -v
+.venv/bin/python -m pytest tests/test_oco_manager.py -v
 ```
 
-All four (`test_h1` through `test_h4`) MUST pass. If any still fail, file a fresh leaf — do not modify the reproduction file.
+All of them MUST pass. If any still fail, file a fresh leaf ticket.
 
 ---
 

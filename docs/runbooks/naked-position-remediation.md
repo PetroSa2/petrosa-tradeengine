@@ -211,7 +211,7 @@ earlier scan's quantity) and refuses to run `--apply` without both
 Equivalent manual alternatives referenced in #586: `scripts/close-test-position.py`
 (BTCUSDT-only, one-way-mode oriented) or `scripts/close_all_binance_positions.py`.
 
-> **This automated BMAD ticket-orchestrator run did not execute this script.**
+> **This automated ticket-orchestrator run did not execute this script.**
 > Per the hard safety constraint against autonomous live/testnet exchange
 > writes, flattening the currently-stuck LTCUSDT position (AC1 of #586) is
 > left as an explicit operator action using the command above — the code fix

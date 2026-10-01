@@ -2416,6 +2416,8 @@ class Dispatcher:
         # #480 — periodic ghost-position eviction for the strategy-layer
         # tracker.  Started after user_data_consumer wires the truth store.
         self.strategy_position_reconciler: StrategyPositionReconciler | None = None
+        self.exchange_daily_publisher: Any = None
+        self.exchange_daily_publish_task: asyncio.Task[Any] | None = None
 
         # #481 AC5 — open/close thrash circuit-breaker. Per-symbol sliding
         # window that blocks un-audited close emissions once they exceed
@@ -2592,6 +2594,20 @@ class Dispatcher:
                         recon_err,
                     )
 
+                # #693: the exchange is the source of truth for the daily ledger.
+                # The lease makes this scheduled job leader-only across replicas.
+                from tradeengine.services.data_manager_client import DataManagerClient
+                from tradeengine.services.exchange_daily_publisher import (
+                    ExchangeDailyPublisher,
+                )
+
+                self.exchange_daily_publisher = ExchangeDailyPublisher(
+                    self.exchange, DataManagerClient()
+                )
+                self.exchange_daily_publish_task = asyncio.create_task(
+                    self._exchange_daily_publish_loop()
+                )
+
             self.logger.info(
                 "Dispatcher initialized successfully with distributed state management"
             )
@@ -2602,6 +2618,15 @@ class Dispatcher:
     async def close(self) -> None:
         """Close dispatcher components"""
         try:
+            if self.exchange_daily_publish_task is not None:
+                self.exchange_daily_publish_task.cancel()
+                try:
+                    await self.exchange_daily_publish_task
+                except asyncio.CancelledError:
+                    pass
+                self.exchange_daily_publish_task = None
+            if self.exchange_daily_publisher is not None:
+                await self.exchange_daily_publisher.data_manager.disconnect()
             await self.execution_observability.stop()
             if self.heartbeat_monitor is not None:
                 await self.heartbeat_monitor.stop()
@@ -2618,6 +2643,29 @@ class Dispatcher:
             self.logger.info("Dispatcher closed successfully")
         except Exception as e:
             self.logger.error(f"Dispatcher close error: {e}")
+
+    async def _exchange_daily_publish_loop(self) -> None:
+        """Publish exchange truth on a bounded cadence while holding the leader lease."""
+        cadence = max(60, int(os.getenv("TE_LEDGER_PUBLISH_INTERVAL_SECONDS", "900")))
+        while True:
+            try:
+                await distributed_lock_manager.execute_with_lock(
+                    "tradeengine-ledger-publisher",
+                    self.exchange_daily_publisher.run_cycle,
+                )
+            except LockHeldError:
+                self.logger.debug(
+                    "Exchange ledger publish skipped: another leader owns the lease"
+                )
+            except LockUnavailableError:
+                self.logger.warning(
+                    "Exchange ledger publish skipped: leader lease unavailable"
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger.exception("Exchange ledger publisher cycle failed")
+            await asyncio.sleep(cadence)
 
     async def health_check(self) -> dict[str, Any]:
         """Check dispatcher health with distributed state info"""

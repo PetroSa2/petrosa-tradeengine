@@ -25,6 +25,16 @@ from tradeengine.services.cost_telemetry import (
     slippage_bp as tradeengine_slippage_bp,
 )
 
+ledger_publish_total = Counter(
+    "tradeengine_ledger_publish_total",
+    "Exchange ledger publish cycles by result",
+    ["result"],
+)
+ledger_publish_last_success_timestamp = Gauge(
+    "tradeengine_ledger_publish_last_success_timestamp",
+    "Unix timestamp of the last successful exchange ledger publish",
+)
+
 IDLE_CAUSES = (
     "lease_unavailable",
     "portfolio_exposure",

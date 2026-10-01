@@ -54,3 +54,46 @@ async def test_update_daily_pnl_uses_typed_endpoint_and_returns_failure():
     result = await client.update_daily_pnl("2026-09-25", -12.5)
     assert result.ok is False
     assert result.reason == "transient"
+
+
+@pytest.mark.asyncio
+async def test_supersede_position_uses_primary_key_atomic_endpoint():
+    client = TradingStoreClient()
+    request = AsyncMock()
+    client.data_manager_client._client.request = request
+
+    result = await client.supersede_position(
+        "row-1",
+        expected_before={"id": "row-1", "status": "open"},
+        reason_code="phantom_superseded",
+        evidence_ref="sha256:abc",
+        applied_by="operator",
+        approved_by="reviewer",
+        dry_run_adjustment_id="dry-1",
+    )
+
+    assert result.ok is True
+    assert request.await_args.args == ("POST", "/api/v1/ledger/positions/supersede")
+    assert request.await_args.kwargs["json"]["id"] == "row-1"
+    assert request.await_args.kwargs["json"]["expected_before"]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_supersede_position_reports_route_failure_without_retrying_elsewhere():
+    client = TradingStoreClient()
+    request = AsyncMock(side_effect=APIError("blocked", status_code=409))
+    client.data_manager_client._client.request = request
+
+    result = await client.supersede_position(
+        "row-1",
+        expected_before={},
+        reason_code="phantom_superseded",
+        evidence_ref="sha256:abc",
+        applied_by="operator",
+        approved_by="reviewer",
+        dry_run_adjustment_id="dry-1",
+    )
+
+    assert result.ok is False
+    assert result.operation == "supersede"
+    request.assert_awaited_once()

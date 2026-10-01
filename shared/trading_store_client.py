@@ -191,6 +191,42 @@ class TradingStoreClient:
             return await legacy(position_id, fields)
         return await self.update_position(position_id, fields)
 
+    async def supersede_position(
+        self,
+        row_id: str,
+        *,
+        expected_before: dict[str, object],
+        reason_code: str,
+        evidence_ref: str,
+        applied_by: str,
+        approved_by: str,
+        dry_run_adjustment_id: str,
+    ) -> PersistResult:
+        """Apply a primary-key supersede through data-manager#467 only."""
+        try:
+            await self.data_manager_client._client.request(
+                "POST",
+                "/api/v1/ledger/positions/supersede",
+                json={
+                    "id": row_id,
+                    "expected_before": expected_before,
+                    "reason_code": reason_code,
+                    "evidence_ref": evidence_ref,
+                    "applied_by": applied_by,
+                    "approved_by": approved_by,
+                    "dry_run_adjustment_id": dry_run_adjustment_id,
+                },
+            )
+            return PersistResult(ok=True, operation="supersede", position_id=row_id)
+        except Exception as exc:
+            return PersistResult(
+                ok=False,
+                error=str(exc),
+                reason="transient" if is_transient_error(exc) else "permanent",
+                operation="supersede",
+                position_id=row_id,
+            )
+
     async def close_position(
         self, symbol: str, position_side: str, fields: dict[str, object]
     ) -> PersistResult:

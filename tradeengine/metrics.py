@@ -16,6 +16,12 @@ OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
+from tradeengine.services.cost_telemetry import (
+    fee_bp_last as tradeengine_fee_bp_last,
+    fills_total as tradeengine_fills_total,
+    slippage_bp as tradeengine_slippage_bp,
+)
+
 binance_used_weight_1m = Gauge(
     "binance_used_weight_1m",
     "Binance request weight used during the current one-minute window",

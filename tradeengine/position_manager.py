@@ -65,6 +65,11 @@ class PositionManager:
         self.max_daily_loss_pct: float = MAX_DAILY_LOSS_PCT
         self.max_portfolio_exposure_pct: float = MAX_PORTFOLIO_EXPOSURE_PCT
         self.total_portfolio_value: float = 0.0  # Initialized from exchange
+        self.available_margin: float = 0.0
+        self.equity: float = 0.0
+        self.capital_base: str = "available"
+        self.capital_base_as_of: datetime | None = None
+        self._daily_loss_base: float | None = None
         self.last_sync_time: datetime | None = None
         self.sync_lock = asyncio.Lock()
         self.settings = Settings()
@@ -119,14 +124,7 @@ class PositionManager:
             await self._load_positions_from_exchange()
 
     async def _refresh_portfolio_value(self) -> bool:
-        """Fetch real-time availableBalance from Binance exchange.
-
-        Primary: availableBalance (Wallet Balance - Initial Margin - Open Order Margin).
-        Fallback: totalWalletBalance when availableBalance is absent (e.g. all margin
-        committed to open positions — the account is funded, just fully allocated).
-        Implements a 5s cache duration.
-        Returns True if update succeeded, False otherwise.
-        """
+        """Refresh account balances and select the configured capital base."""
         if not self.exchange:
             logger.warning("No exchange client configured for portfolio value refresh")
             return False
@@ -143,31 +141,54 @@ class PositionManager:
             try:
                 account_info = await self.exchange.get_account_info()
                 available_balance = account_info.get("available_balance")
-
+                total_wallet = account_info.get("total_wallet_balance")
+                margin_balance = account_info.get("total_margin_balance")
                 if available_balance is not None:
-                    self.total_portfolio_value = float(available_balance)
+                    self.available_margin = float(available_balance)
+                if margin_balance is not None:
+                    self.equity = float(margin_balance)
+                elif total_wallet is not None:
+                    self.equity = float(total_wallet)
+                    logger.warning(
+                        "total_margin_balance absent — using total_wallet_balance=%s as equity fallback",
+                        self.equity,
+                    )
+
+                self.capital_base = getattr(
+                    self.settings, "te_capital_base", "available"
+                )
+                if self.capital_base not in {"available", "equity"}:
+                    raise ValueError("te_capital_base must be 'available' or 'equity'")
+                if self.capital_base == "equity":
+                    selected_value = self.equity
+                elif available_balance is not None:
+                    selected_value = self.available_margin
+                elif total_wallet is not None:
+                    selected_value = float(total_wallet)
+                    logger.warning(
+                        "available_balance absent — using total_wallet_balance=%s as available-base fallback",
+                        selected_value,
+                    )
+                else:
+                    selected_value = 0.0
+
+                if selected_value > 0:
+                    self.total_portfolio_value = selected_value
+                    self.capital_base_as_of = now
+                    if self._daily_loss_base is None:
+                        self._daily_loss_base = selected_value
                     self.portfolio_value_last_update = now
                     logger.info(
-                        f"Dynamic portfolio value updated: ${self.total_portfolio_value:,.2f} (available balance)"
-                    )
-                    return True
-
-                # availableBalance absent from Binance response — fall back to
-                # totalWalletBalance so a fully-margined account isn't treated as
-                # empty and every order rejected. (#404)
-                total_wallet = account_info.get("total_wallet_balance")
-                if total_wallet is not None:
-                    self.total_portfolio_value = float(total_wallet)
-                    self.portfolio_value_last_update = now
-                    logger.warning(
-                        "available_balance absent from Binance account info — "
-                        f"using total_wallet_balance=${self.total_portfolio_value:,.2f} as fallback. "
-                        f"Keys present: {sorted(account_info.keys())}"
+                        "Capital base updated: base=%s value=$%.2f equity=$%.2f available_margin=$%.2f",
+                        self.capital_base,
+                        self.total_portfolio_value,
+                        self.equity,
+                        self.available_margin,
                     )
                     return True
 
                 logger.error(
-                    "Failed to extract available_balance or total_wallet_balance from "
+                    "Failed to extract account capital base from "
                     f"Binance account info. Keys present: {sorted(account_info.keys())}"
                 )
                 return False
@@ -313,6 +334,10 @@ class PositionManager:
 
             self.daily_pnl = 0.0
             self._daily_pnl_date = today
+            # The next account refresh captures the new day's base. Keeping
+            # this unset prevents yesterday's intraday balance from becoming
+            # today's loss-limit denominator.
+            self._daily_loss_base = None
 
             try:
                 result = await position_client.update_daily_pnl(today.isoformat(), 0.0)
@@ -1602,7 +1627,8 @@ class PositionManager:
             )
             return False
 
-        max_daily_loss = self.total_portfolio_value * self.max_daily_loss_pct
+        daily_loss_base = self._daily_loss_base or self.total_portfolio_value
+        max_daily_loss = daily_loss_base * self.max_daily_loss_pct
 
         if self.daily_pnl < -max_daily_loss:
             logger.warning(
@@ -1677,9 +1703,11 @@ class PositionManager:
         total_exposure = 0.0
 
         for position in self.positions.values():
-            if position["quantity"] > 0:
+            if position.get("quantity", 0) > 0:
                 # Calculate position value as percentage of portfolio
-                position_value = position["quantity"] * position["avg_price"]
+                position_value = position["quantity"] * position.get(
+                    "mark_price", position.get("avg_price", 0.0)
+                )
                 exposure_pct = position_value / self.total_portfolio_value
                 total_exposure += exposure_pct
 
@@ -1873,11 +1901,33 @@ class PositionManager:
             total_unrealized += position.get("unrealized_pnl", 0.0)
         return total_unrealized
 
+    def get_notional_summary(self) -> tuple[float, float]:
+        """Return gross and signed net notional using mark prices when present."""
+        gross = 0.0
+        net = 0.0
+        for position in self.get_positions().values():
+            quantity = abs(float(position.get("quantity", 0.0)))
+            mark_price = float(
+                position.get("mark_price")
+                or position.get("current_price")
+                or position.get("avg_price", 0.0)
+            )
+            notional = quantity * mark_price
+            signed_notional = (
+                notional
+                if str(position.get("position_side", "LONG")).upper() == "LONG"
+                else -notional
+            )
+            gross += abs(notional)
+            net += signed_notional
+        return gross, net
+
     def get_portfolio_summary(self) -> dict[str, Any]:
         """Get portfolio summary"""
         total_positions = len(self.positions)
         total_exposure = self._calculate_portfolio_exposure()
         total_unrealized = self.get_total_unrealized_pnl()
+        gross_notional, net_notional = self.get_notional_summary()
 
         return {
             "total_positions": total_positions,
@@ -1885,6 +1935,14 @@ class PositionManager:
             "daily_pnl": self.daily_pnl,
             "total_unrealized_pnl": total_unrealized,
             "portfolio_value": self.total_portfolio_value,
+            "capital_base": self.capital_base,
+            "equity": self.equity,
+            "available_margin": self.available_margin,
+            "capital_base_as_of": (
+                self.capital_base_as_of.isoformat() if self.capital_base_as_of else None
+            ),
+            "gross_notional": gross_notional,
+            "net_notional": net_notional,
             "max_position_size_pct": self.max_position_size_pct,
             "max_daily_loss_pct": self.max_daily_loss_pct,
             "max_portfolio_exposure_pct": self.max_portfolio_exposure_pct,
@@ -1902,6 +1960,8 @@ class PositionManager:
     def set_portfolio_value(self, value: float) -> None:
         """Set total portfolio value"""
         self.total_portfolio_value = value
+        if self._daily_loss_base is None:
+            self._daily_loss_base = value
         logger.info(f"Portfolio value updated to {value:.2f}")
 
     def set_risk_limits(

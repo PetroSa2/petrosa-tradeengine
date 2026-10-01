@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -133,3 +133,74 @@ def test_get_cio_portfolio_summary_flag_off_still_uses_local_journal(manager):
         summary = manager.get_cio_portfolio_summary("BTCUSDT")
 
     assert summary["open_positions_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_capital_base_defaults_to_available_and_exposes_equity():
+    exchange = MagicMock()
+    exchange.get_account_info = AsyncMock(
+        return_value={
+            "available_balance": 5572.12,
+            "total_wallet_balance": 10098.60,
+            "total_margin_balance": 10098.30,
+        }
+    )
+    manager = PositionManager(exchange=exchange)
+    manager.portfolio_value_last_update = None
+
+    assert await manager._refresh_portfolio_value() is True
+    assert manager.total_portfolio_value == 5572.12
+    assert manager.available_margin == 5572.12
+    assert manager.equity == 10098.30
+    assert manager.capital_base == "available"
+
+
+@pytest.mark.asyncio
+async def test_equity_capital_base_uses_margin_then_wallet_fallback(caplog):
+    exchange = MagicMock()
+    exchange.get_account_info = AsyncMock(
+        side_effect=[
+            {
+                "available_balance": 2000.0,
+                "total_wallet_balance": 10000.0,
+                "total_margin_balance": 10500.0,
+            },
+            {"available_balance": 2000.0, "total_wallet_balance": 10000.0},
+        ]
+    )
+    manager = PositionManager(exchange=exchange)
+    manager.settings.te_capital_base = "equity"
+
+    assert await manager._refresh_portfolio_value() is True
+    assert manager.total_portfolio_value == 10500.0
+    manager.portfolio_value_last_update = None
+    assert await manager._refresh_portfolio_value() is True
+    assert manager.total_portfolio_value == 10000.0
+    assert "total_margin_balance absent" in caplog.text
+
+
+def test_state_notional_fields_use_signed_position_sides(manager):
+    manager.available_margin = 5572.0
+    manager.equity = 10098.0
+    manager.capital_base = "equity"
+    manager.positions = {
+        ("BTCUSDT", "LONG"): {
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "quantity": 0.0144,
+            "mark_price": 60000.0,
+        },
+        ("BTCUSDT", "SHORT"): {
+            "symbol": "BTCUSDT",
+            "position_side": "SHORT",
+            "quantity": 0.0024,
+            "mark_price": 60000.0,
+        },
+    }
+
+    summary = manager.get_portfolio_summary()
+
+    assert summary["gross_notional"] == pytest.approx(1008.0)
+    assert summary["net_notional"] == pytest.approx(720.0)
+    assert summary["capital_base"] == "equity"
+    assert summary["available_margin"] == 5572.0

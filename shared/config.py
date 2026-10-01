@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     max_daily_loss_pct: float = 0.05  # 5%
     max_portfolio_exposure_pct: float = 0.8  # 80%
     risk_management_enabled: bool = True
+    te_capital_base: str = Field(
+        default="available",
+        validation_alias=AliasChoices("TE_CAPITAL_BASE", "te_capital_base"),
+    )
 
     # AC4 of #424 (2026-05-30 OCO incident): minimum stop-loss distance
     # from the live market, in percent. If an adjusted SL would land

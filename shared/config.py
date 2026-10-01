@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     # Distributed Lock Configuration
     lock_timeout_seconds: int = 60
     heartbeat_interval_seconds: int = 10
+    te_lease_safety_margin_s: float = 1.0
 
     # NATS Configuration
     nats_enabled: bool = False

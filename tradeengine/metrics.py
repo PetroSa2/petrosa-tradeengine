@@ -13,6 +13,9 @@ at the bottom of this module) is registered against the `MeterProvider` wired by
 OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 """
 
+import time
+from collections.abc import Callable
+
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -21,6 +24,63 @@ from tradeengine.services.cost_telemetry import (
     fills_total as tradeengine_fills_total,
     slippage_bp as tradeengine_slippage_bp,
 )
+
+IDLE_CAUSES = (
+    "lease_unavailable",
+    "portfolio_exposure",
+    "insufficient_margin",
+    "no_signals",
+    "cio_skip",
+    "other",
+)
+
+trading_idle_seconds = Gauge(
+    "tradeengine_trading_idle_seconds",
+    "Seconds since the last submitted order, by current blocking cause",
+    ["cause"],
+)
+trading_idle_seconds_total = Gauge(
+    "tradeengine_trading_idle_seconds_total",
+    "Cumulative idle seconds attributed to the blocking cause",
+    ["cause"],
+)
+
+
+class TradingIdleTracker:
+    """Track the current idle run and attribute each interval to its last cause."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self._last_tick = clock()
+        self._cause = "other"
+
+    @property
+    def cause(self) -> str:
+        return self._cause
+
+    def tick(self, cause: str, now: float | None = None) -> None:
+        cause = cause if cause in IDLE_CAUSES else "other"
+        current = self.clock() if now is None else now
+        elapsed = max(0.0, current - self._last_tick)
+        trading_idle_seconds_total.labels(cause=self._cause).inc(elapsed)
+        self._cause = cause
+        self._last_tick = current
+        trading_idle_seconds.labels(cause=cause).set(0.0)
+        for other in IDLE_CAUSES:
+            if other != cause:
+                trading_idle_seconds.labels(cause=other).set(0.0)
+
+    def observe(self, now: float | None = None) -> None:
+        current = self.clock() if now is None else now
+        trading_idle_seconds.labels(cause=self._cause).set(
+            max(0.0, current - self._last_tick)
+        )
+
+    def order_submitted(self) -> None:
+        self._last_tick = self.clock()
+        for cause in IDLE_CAUSES:
+            trading_idle_seconds.labels(cause=cause).set(0.0)
+
 
 binance_used_weight_1m = Gauge(
     "binance_used_weight_1m",

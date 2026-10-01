@@ -31,6 +31,7 @@ from tradeengine.execution_observability import TradeExecutionObservability
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.leverage_manager import LeverageManager
 from tradeengine.metrics import (
+    TradingIdleTracker,
     atomic_rollback_failed_total,
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
@@ -2347,6 +2348,7 @@ class Dispatcher:
         self.exchange = exchange
         self.logger = get_logger(__name__)
         self.execution_observability = TradeExecutionObservability(self.logger)
+        self.trading_idle = TradingIdleTracker()
 
         # Initialize OCO Manager for SL/TP order management
         self.oco_manager = OCOManager(exchange, self.logger, self)
@@ -3066,6 +3068,7 @@ class Dispatcher:
                             "signal_fingerprint": signal_fingerprint,
                         }
                     except LockUnavailableError as lock_error:
+                        self.trading_idle.tick("lease_unavailable")
                         self.logger.error("🔒 LOCK SERVICE UNAVAILABLE: %s", lock_error)
                         signals_processed.labels(
                             status="lock_unavailable", action=signal.action
@@ -3112,6 +3115,7 @@ class Dispatcher:
                         "partially_filled",
                         "NEW",
                     ):
+                        self.trading_idle.order_submitted()
                         if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
                             self.last_accumulation_time[position_key] = time.time()
                         elif position_key in self.position_manager.positions:
@@ -3132,6 +3136,15 @@ class Dispatcher:
                         status=result["status"], action=signal.action
                     ).inc()
                 elif signal_status == "rejected":
+                    reason = str(result.get("reason", "other"))
+                    if reason in (
+                        "lease_unavailable",
+                        "portfolio_exposure",
+                        "insufficient_margin",
+                        "cio_skip",
+                        "no_signals",
+                    ):
+                        self.trading_idle.tick(reason)
                     self.logger.info(
                         f"⛔ SIGNAL REJECTED: {signal.strategy_id} | "
                         f"Reason: {result.get('reason', 'Unknown')}"

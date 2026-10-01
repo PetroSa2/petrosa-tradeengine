@@ -844,6 +844,8 @@ async def process_trade(
             signals_processed = 0
             conflicts_resolved = 0
             audit_logs = []
+            if not request.signals:
+                dispatcher.trading_idle.tick("no_signals")
 
             for signal in request.signals:
                 try:

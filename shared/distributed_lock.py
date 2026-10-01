@@ -29,6 +29,29 @@ lease_outcomes_total = Counter(
     "Lease API outcomes by operation and result.",
     ["op", "outcome"],
 )
+lease_call_total = Counter(
+    "tradeengine_lease_call_total",
+    "Lease API calls by operation and result.",
+    ["op", "result"],
+)
+
+_lease_log_state: dict[tuple[str, str], tuple[float, int]] = {}
+_LEASE_LOG_INTERVAL = 60.0
+
+
+def _rate_limited_lease_warning(op: str, exc: BaseException) -> None:
+    """Emit one warning per operation/error class and summarize suppressed calls."""
+    now = time.monotonic()
+    key = (op, type(exc).__name__)
+    last, suppressed = _lease_log_state.get(key, (0.0, 0))
+    if now - last < _LEASE_LOG_INTERVAL:
+        _lease_log_state[key] = (last, suppressed + 1)
+        return
+    logger.warning(
+        "Lease %s failed: %s suppressed=%d", op, _format_exception(exc), suppressed
+    )
+    _lease_log_state[key] = (now, 0)
+
 
 DEFAULT_LEASE_TIMEOUT_SECONDS = 5.0
 LEASE_MAX_RETRIES = 2
@@ -99,7 +122,14 @@ class LeaseClient:
     ) -> dict[str, Any]:
         started = time.perf_counter()
         try:
-            return await self._client.request(method, path, json=body)
+            response = await self._client.request(method, path, json=body)
+            lease_call_total.labels(op=op, result="success").inc()
+            return response
+        except Exception as exc:
+            lease_call_total.labels(
+                op=op, result="timeout" if _is_timeout(exc) else "error"
+            ).inc()
+            raise
         finally:
             lease_request_seconds.labels(op=op).observe(time.perf_counter() - started)
 
@@ -146,7 +176,14 @@ class DistributedLockManager:
         self.lock_timeout = int(os.getenv("LOCK_TIMEOUT_SECONDS", "60"))
         self.heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "10"))
         self.lease_timeout = float(os.getenv("TE_LEASE_TIMEOUT_S", "1.5"))
-        self.is_leader = False
+        self.settings = Settings()
+        self._is_leader = False
+        self.lease_valid_until = 0.0
+        self.lease_safety_margin = float(
+            os.getenv(
+                "TE_LEASE_SAFETY_MARGIN_S", str(self.settings.te_lease_safety_margin_s)
+            )
+        )
         self.leader_pod_id: str | None = None
         self.heartbeat_task: asyncio.Task[None] | None = None
         self._leader_info_refresh_task: asyncio.Task[None] | None = None
@@ -158,8 +195,21 @@ class DistributedLockManager:
             "current_pod_id": self.pod_id,
             "elected_at": None,
         }
-        self.settings = Settings()
         self.lease_client = LeaseClient(timeout=self.lease_timeout)
+
+    @property
+    def is_leader(self) -> bool:
+        return self._is_leader and time.monotonic() < self.lease_valid_until
+
+    @is_leader.setter
+    def is_leader(self, value: bool) -> None:
+        self._is_leader = value
+        if value and self.lease_valid_until <= time.monotonic():
+            # Preserve test/manual callers that set the legacy flag directly;
+            # real acquire and renew paths always replace this with a deadline.
+            self.lease_valid_until = float("inf")
+        if not value:
+            self.lease_valid_until = 0.0
 
     async def initialize(self) -> None:
         await self._try_become_leader()
@@ -191,11 +241,7 @@ class DistributedLockManager:
                 op="acquire", outcome="timeout" if _is_timeout(exc) else "error"
             ).inc()
             lease_unavailable_total.labels(op="acquire").inc()
-            logger.warning(
-                "Lease acquire unavailable for %s: %s",
-                lock_name,
-                _format_exception(exc),
-            )
+            _rate_limited_lease_warning("acquire", exc)
             return LockState.UNAVAILABLE
         lease_outcomes_total.labels(
             op="acquire", outcome="acquired" if response.get("acquired") else "error"
@@ -211,22 +257,22 @@ class DistributedLockManager:
                 op="release", outcome="timeout" if _is_timeout(exc) else "error"
             ).inc()
             lease_unavailable_total.labels(op="release").inc()
-            logger.warning(
-                "Lease release failed for %s: %s", lock_name, _format_exception(exc)
-            )
+            _rate_limited_lease_warning("release", exc)
             return False
 
     async def _try_become_leader(self) -> bool:
+        request_started = time.monotonic()
+        ttl = 30
         try:
             response = await self.lease_client.acquire(
-                "tradeengine-leader", self.pod_id, 30
+                "tradeengine-leader", self.pod_id, ttl
             )
         except Exception as exc:
             lease_outcomes_total.labels(
                 op="acquire", outcome="timeout" if _is_timeout(exc) else "error"
             ).inc()
             lease_unavailable_total.labels(op="acquire").inc()
-            logger.warning("Leader lease unavailable: %s", _format_exception(exc))
+            _rate_limited_lease_warning("acquire", exc)
             self.is_leader = False
             return False
         self.is_leader = bool(response.get("acquired"))
@@ -235,6 +281,7 @@ class DistributedLockManager:
         ).inc()
         self.leader_pod_id = self.pod_id if self.is_leader else response.get("owner")
         if self.is_leader:
+            self.lease_valid_until = request_started + ttl - self.lease_safety_margin
             self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         return self.is_leader
 
@@ -246,6 +293,7 @@ class DistributedLockManager:
     async def _heartbeat_loop(self) -> None:
         while self.is_leader:
             await asyncio.sleep(self.heartbeat_interval)
+            request_started = time.monotonic()
             try:
                 response = await self.lease_client.renew(
                     "tradeengine-leader", self.pod_id, 30
@@ -259,13 +307,17 @@ class DistributedLockManager:
                     op="renew", outcome="timeout" if _is_timeout(exc) else "error"
                 ).inc()
                 lease_unavailable_total.labels(op="renew").inc()
-                logger.warning(
-                    "Leader lease renewal failed: %s", _format_exception(exc)
-                )
-                self.is_leader = False
+                _rate_limited_lease_warning("renew", exc)
+                # Keep leadership during a transient failure; the deadline is
+                # the authoritative validity boundary and the loop retries.
+                if self.lease_valid_until == float("inf"):
+                    self.lease_valid_until = time.monotonic()
             else:
                 if response.get("renewed"):
                     lease_outcomes_total.labels(op="renew", outcome="renewed").inc()
+                    self.lease_valid_until = (
+                        request_started + 30 - self.lease_safety_margin
+                    )
 
     async def _leader_info_refresh_loop(self) -> None:
         while True:

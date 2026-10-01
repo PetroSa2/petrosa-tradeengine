@@ -38,6 +38,4 @@ ignored_paths:
   - build
   - .pytest_cache
   - k8s
-  - _bmad
-  - _bmad-output
   - .serena/cache

@@ -53,6 +53,7 @@ from tradeengine.position_manager import PositionManager
 from tradeengine.protective_leg_mode import protective_leg_mode
 from tradeengine.protective_legs import ProtectiveLegManager
 from tradeengine.services.alert_publisher import alert_publisher
+from tradeengine.services.cost_telemetry import build_cost_fields, record_fill_metrics
 from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
     execution_event_publisher,
@@ -3929,6 +3930,29 @@ class Dispatcher:
         elif event_type in ("filled", "partial_fill"):
             # Explicit null so audit consumers can distinguish "unknown" from omitted.
             extra["pnl"] = None
+        if event_type in ("filled", "partial_fill"):
+            cost_fields = build_cost_fields(
+                order, result, mark_price=result.get("mark_price")
+            )
+            extra.update(cost_fields)
+            order_type = str(order.type).lower()
+            role = "entry"
+            if order.reduce_only:
+                role = (
+                    "stop_loss"
+                    if order_type in {"stop", "stop_market"}
+                    else "take_profit"
+                    if order_type in {"take_profit", "take_profit_market"}
+                    else "manual_close"
+                )
+            liquidity = "maker" if result.get("maker") is True else "taker"
+            record_fill_metrics(
+                order_id,
+                cost_fields,
+                role=role,
+                side=str(order.side),
+                liquidity=liquidity,
+            )
         if order.rejection_source is not None:
             extra["rejection_source"] = order.rejection_source
             extra["rejection_reason"] = order.rejection_reason
@@ -4029,6 +4053,9 @@ class Dispatcher:
             "metadata": current_signal.metadata,
             "meta": current_signal.meta,
             "decision_id": current_signal.decision_id,
+            "signal_price": current_signal.current_price,
+            "current_price": current_signal.current_price,
+            "signal_timestamp": current_signal.timestamp.isoformat(),
         }
 
         # CRITICAL DEBUG: Log TP/SL values from signal

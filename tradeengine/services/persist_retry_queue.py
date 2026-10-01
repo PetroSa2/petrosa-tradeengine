@@ -35,6 +35,9 @@ class PendingWrite:
     attempts: int = 0
     enqueued_at: datetime = field(default_factory=datetime.utcnow)
     last_error: str = ""
+    order_id: str = ""
+    trade_id: str = ""
+    idempotency_key: str = ""
 
 
 # Type alias for the async callable the drain loop invokes
@@ -211,9 +214,14 @@ def register_default_handlers(queue: PersistRetryQueue, client: Any) -> None:
         position_id = str(kwargs.pop("_retry_position_id", ""))
         return await client.update_position_risk_orders(position_id, kwargs)
 
+    async def _retry_upsert_position(**kwargs: Any) -> Any:
+        kwargs.pop("_retry_position_id", None)
+        return await client.upsert_position(kwargs)
+
     queue.register("create_position", _retry_create_position)
     queue.register("update_position", _retry_update_position)
     queue.register("update_position_risk_orders", _retry_update_position_risk_orders)
+    queue.register("upsert_position", _retry_upsert_position)
 
 
 # Module-level singleton — wired up in api.py startup

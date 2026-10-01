@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) -> None:
     """Emit metric + alert + enqueue retry on a failed persist. Never raises."""
+    logger.error(
+        "Position persistence failed operation=%s symbol=%s position_id=%s reason=%s error=%s",
+        result.operation,
+        result.symbol or position_data.get("symbol", "unknown"),
+        result.position_id,
+        result.reason or "unknown",
+        result.error,
+    )
     try:
         sym = result.symbol or str(position_data.get("symbol", "unknown"))
         pos_side = str(position_data.get("position_side", "unknown"))
@@ -62,7 +70,7 @@ def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) ->
             },
         )
     except Exception as exc:
-        logger.warning("Metric emission failed for persist_failed: %s", exc)
+        logger.error("Metric emission failed for persist_failed: %s", exc)
 
     try:
         import asyncio
@@ -83,7 +91,7 @@ def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) ->
             )
         )
     except Exception as exc:
-        logger.warning("Alert publish failed for persist_failed: %s", exc)
+        logger.error("Alert publish failed for persist_failed: %s", exc)
 
     try:
         pw_data = dict(position_data)
@@ -100,6 +108,9 @@ def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) ->
             symbol=result.symbol or str(position_data.get("symbol", "")),
             position_id=result.position_id,
             last_error=result.error,
+            order_id=str(position_data.get("entry_order_id", "")),
+            trade_id=str(position_data.get("trade_id", "")),
+            idempotency_key=str(position_data.get("idempotency_key", "")),
         )
         persist_retry_queue.enqueue(pw)
     except Exception as exc:

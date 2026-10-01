@@ -56,6 +56,7 @@ class ExecutionEventPublisher:
     def __init__(self) -> None:
         self._nc: nats.aio.client.Client | None = None
         self._connect_lock = asyncio.Lock()
+        self._published_idempotency_keys: set[str] = set()
 
     async def _ensure_connected(self) -> nats.aio.client.Client | None:
         if not settings.nats_enabled or not settings.nats_servers:
@@ -120,6 +121,7 @@ class ExecutionEventPublisher:
         timestamp: datetime | None = None,
         extra: dict[str, Any] | None = None,
         client_order_id: str | None = None,  # petrosa_k8s#1127: position_id from CIO
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         ts = (timestamp or datetime.now(UTC)).astimezone(UTC).isoformat()
         payload: dict[str, Any] = {
@@ -132,6 +134,8 @@ class ExecutionEventPublisher:
         }
         if client_order_id:
             payload["client_order_id"] = client_order_id
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
         if extra:
             # Skip keys that would clobber required fields.
             for k, v in extra.items():
@@ -150,6 +154,7 @@ class ExecutionEventPublisher:
         timestamp: datetime | None = None,
         extra: dict[str, Any] | None = None,
         client_order_id: str | None = None,  # petrosa_k8s#1127
+        idempotency_key: str | None = None,
     ) -> bool:
         """Emit one execution event. Returns True on success, False otherwise.
 
@@ -159,6 +164,11 @@ class ExecutionEventPublisher:
         if event_type not in _VALID_EVENT_TYPES:
             logger.error("Refusing to publish unknown event_type=%s", event_type)
             return False
+        if idempotency_key and idempotency_key in self._published_idempotency_keys:
+            logger.info(
+                "Skipping duplicate execution event idempotency_key=%s", idempotency_key
+            )
+            return True
 
         subject = self._build_subject(strategy_id)
         payload = self._build_payload(
@@ -170,6 +180,7 @@ class ExecutionEventPublisher:
             timestamp=timestamp,
             extra=extra,
             client_order_id=client_order_id,
+            idempotency_key=idempotency_key,
         )
 
         with tracer.start_as_current_span(
@@ -223,6 +234,8 @@ class ExecutionEventPublisher:
                     strategy_id=payload["strategy_id"],
                     result="ok",
                 ).inc()
+                if idempotency_key:
+                    self._published_idempotency_keys.add(idempotency_key)
                 span.set_status(trace.Status(trace.StatusCode.OK))
                 return True
             except Exception as e:

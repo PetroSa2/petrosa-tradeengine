@@ -2712,6 +2712,8 @@ class Dispatcher:
             # "not_started" is a neutral baseline (no consumer wired at all,
             # e.g. a non-live deployment) and does not degrade overall status.
             overall_status = "healthy"
+            if position_manager_health.get("status") not in ("healthy", "not_started"):
+                overall_status = "degraded"
             if exchange_truth_store_health.get("status") not in (
                 "healthy",
                 "not_started",
@@ -4026,6 +4028,7 @@ class Dispatcher:
                 order_id=order_id,
                 reason=reason,
                 decision_id=decision_id,
+                timestamp=(datetime.fromisoformat(fill_time) if fill_time else None),
                 extra=extra,
                 client_order_id=order.client_order_id,  # petrosa_k8s#1127
             )
@@ -4833,9 +4836,15 @@ class Dispatcher:
                     return None
 
             fill_price = _to_float(order_obj.get("L")) or _to_float(order_obj.get("ap"))
-            fill_qty = _to_float(order_obj.get("z")) or _to_float(order_obj.get("q"))
+            cumulative_qty = _to_float(order_obj.get("z"))
+            fill_qty = (
+                _to_float(order_obj.get("l"))
+                or cumulative_qty
+                or _to_float(order_obj.get("q"))
+            )
             fee = _to_float(order_obj.get("n"))
             fee_asset = order_obj.get("N")
+            trade_id = str(order_obj.get("t", order_obj.get("trade_id", "")))
             pnl = _to_float(order_obj.get("rp"))
             fill_time = None
             raw_ts = order_obj.get("T")
@@ -4845,9 +4854,71 @@ class Dispatcher:
                     epoch /= 1000.0
                 fill_time = datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
+            entry_position = (
+                strategy_position_manager.get_strategy_position_by_entry_order_id(
+                    order_id
+                )
+            )
+            position_id = entry_position.get("position_id") if entry_position else None
+            idempotency_key = f"{order_id}:{trade_id}" if trade_id else order_id
+            if position_id and hasattr(self, "position_manager"):
+                persist_task = asyncio.create_task(
+                    self.position_manager.persist_entry_fill(
+                        {
+                            "position_id": position_id,
+                            "strategy_id": strategy_id,
+                            "decision_id": decision_id,
+                            "symbol": symbol,
+                            "position_side": (
+                                entry_position.get("side")
+                                if entry_position
+                                else ("LONG" if side == "BUY" else "SHORT")
+                            ),
+                            "entry_price": fill_price,
+                            "quantity": cumulative_qty or fill_qty,
+                            "commission": fee,
+                            "entry_commission": fee,
+                            "commission_total": fee,
+                            "commission_asset": fee_asset,
+                            "fee_asset": fee_asset,
+                            "entry_order_id": order_id,
+                            "trade_id": trade_id,
+                            "order_id": order_id,
+                            "entry_time": fill_time,
+                            "exchange": getattr(self, "exchange", None),
+                            "idempotency_key": idempotency_key,
+                            "status": "open",
+                        }
+                    )
+                )
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(persist_task),
+                        timeout=float(
+                            getattr(
+                                getattr(self.position_manager, "settings", None),
+                                "te_entry_persist_timeout_seconds",
+                                1.0,
+                            )
+                        ),
+                    )
+                except TimeoutError:
+                    self.logger.error(
+                        "Entry fill persistence exceeded its callback timeout; continuing"
+                    )
+            elif not position_id:
+                self.logger.error(
+                    "Entry fill %s has no position identity; position write skipped",
+                    order_id,
+                )
+
             extra: dict[str, Any] = {
                 "symbol": symbol,
                 "side": side,
+                "position_id": position_id,
+                "trade_id": trade_id,
+                "commission": fee,
+                "commission_asset": fee_asset,
             }
             if fill_price is not None:
                 extra["fill_price"] = fill_price
@@ -4857,6 +4928,9 @@ class Dispatcher:
                 extra["fill_qty"] = fill_qty
             if fee is not None:
                 extra["fee"] = fee
+                extra["fee_status"] = "known"
+            else:
+                extra["fee_status"] = "unknown"
             if fee_asset is not None:
                 extra["fee_asset"] = fee_asset
             if fill_time is not None:
@@ -4871,6 +4945,7 @@ class Dispatcher:
                 decision_id=decision_id,
                 extra=extra,
                 client_order_id=order_obj.get("c"),  # petrosa_k8s#1127
+                idempotency_key=idempotency_key,
             )
         except Exception as emit_err:
             self.logger.warning(

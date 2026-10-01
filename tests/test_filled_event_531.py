@@ -56,6 +56,8 @@ def dispatcher():
     d = Dispatcher.__new__(Dispatcher)
     d.logger = MagicMock()
     d.exchange_order_id_to_signal = {}
+    d.position_manager = MagicMock()
+    d.position_manager.persist_entry_fill = AsyncMock(return_value=True)
     return d
 
 
@@ -165,6 +167,7 @@ async def test_on_user_data_fill_publishes_filled_with_recovered_context(dispatc
         "strategy_id": "rsi_reversal",
         "decision_id": "dec-ENTRY",
         "entry_order_id": "283194212",
+        "position_id": "pos-ENTRY",
     }
 
     with (
@@ -193,6 +196,11 @@ async def test_on_user_data_fill_publishes_filled_with_recovered_context(dispatc
     assert kw["extra"]["symbol"] == "BTCUSDT"
     assert kw["extra"]["side"] == "BUY"
     assert kw["extra"]["fill_time"] == "2024-05-20T00:00:00.123000+00:00"
+    dispatcher.position_manager.persist_entry_fill.assert_awaited_once()
+    persisted = dispatcher.position_manager.persist_entry_fill.await_args.args[0]
+    assert persisted["position_id"] == "pos-ENTRY"
+    assert persisted["trade_id"] == ""
+    assert persisted["commission"] == 0.02
 
 
 @pytest.mark.asyncio

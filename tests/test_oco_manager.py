@@ -3,9 +3,6 @@
 Covers AC1 of petrosa-tradeengine#425 (RC#1 of #424): when one leg posts
 successfully and the other fails, `place_oco_orders` MUST cancel the
 surviving leg on Binance before returning ``{"status": "failed"}``.
-
-Equivalent to ``test_h1_surviving_sl_leg_is_cancelled_when_tp_leg_fails``
-in ``petrosa_k8s/_bmad-output/incidents/2026-05-30/reproduction_test.py``.
 """
 
 from __future__ import annotations

@@ -9,6 +9,7 @@ import pytest
 
 from contracts.order import TradeOrder
 from shared.constants import UTC
+from shared.retry import PersistResult
 from tradeengine.position_manager import PositionManager
 
 
@@ -56,7 +57,9 @@ async def test_create_position_record(sample_order, sample_result):
 
     # Mock position_client (Data Manager client) - patch it where it's imported
     with patch("tradeengine.position_manager.position_client") as mock_position_client:
-        mock_position_client.create_position = AsyncMock()
+        mock_position_client.upsert_position = AsyncMock(
+            return_value=PersistResult(ok=True, operation="upsert_position")
+        )
 
         # Create position record
         await position_manager.create_position_record(sample_order, sample_result)
@@ -64,7 +67,7 @@ async def test_create_position_record(sample_order, sample_result):
         # Verify position_client.create_position was called
         # The method should be called if order.position_id is present
         assert sample_order.position_id is not None, "Order must have position_id"
-        mock_position_client.create_position.assert_called_once()
+        mock_position_client.upsert_position.assert_called_once()
 
 
 @pytest.mark.asyncio

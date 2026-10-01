@@ -4830,8 +4830,22 @@ class Dispatcher:
         # Calculate symbol-specific order count
         symbol_orders_count = sum(1 for o in active_orders if o.get("symbol") == symbol)
 
-        # Build ground-truth state object
+        # Build ground-truth state object. The capital fields are also exposed
+        # at the top level for lightweight consumers of /state.
+        capital_fields = {
+            "capital_base": self.position_manager.capital_base,
+            "equity": self.position_manager.equity,
+            "available_margin": self.position_manager.available_margin,
+            "capital_base_as_of": (
+                self.position_manager.capital_base_as_of.isoformat()
+                if self.position_manager.capital_base_as_of
+                else None
+            ),
+            "gross_notional": self.position_manager.get_notional_summary()[0],
+            "net_notional": self.position_manager.get_notional_summary()[1],
+        }
         return {
+            **capital_fields,
             "portfolio": portfolio_data,
             "risk_limits": {
                 "max_drawdown_pct": settings.max_daily_loss_pct,  # Closest mapping in shared/config
@@ -4849,6 +4863,7 @@ class Dispatcher:
                 "open_orders_global": len(active_orders),
                 "open_orders_symbol": symbol_orders_count,
                 "available_capital_usd": self.position_manager.total_portfolio_value,
+                **capital_fields,
             },
         }
 

@@ -405,6 +405,8 @@ class BinanceFuturesExchange:
             "type": FUTURE_ORDER_TYPE_MARKET,
             "quantity": self._format_quantity(order.symbol, order.amount),
         }
+        if order.client_order_id:
+            params["newClientOrderId"] = order.client_order_id
 
         # Add positionSide for hedge mode
         if order.position_side:
@@ -451,6 +453,8 @@ class BinanceFuturesExchange:
             "quantity": self._format_quantity(order.symbol, order.amount),
             "price": self._format_price(order.symbol, order.target_price),
         }
+        if order.client_order_id:
+            params["newClientOrderId"] = order.client_order_id
 
         # Add positionSide for hedge mode
         if order.position_side:
@@ -2206,6 +2210,19 @@ class BinanceFuturesExchange:
     async def get_price(self, symbol: str) -> float:
         """Get current price for a symbol"""
         return await self.get_symbol_price(symbol)
+
+    async def get_best_entry_price(self, symbol: str, side: str) -> float:
+        if not self.initialized:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        book = await asyncio.to_thread(
+            self.client.futures_order_book, symbol=symbol, limit=5
+        )
+        levels = book.get("bids" if side == "buy" else "asks") or []
+        if not levels:
+            raise RuntimeError(f"No order-book price available for {symbol}")
+        return float(levels[0][0])
 
     async def cancel_order(self, symbol: str, order_id: int) -> dict[str, Any]:
         """Cancel an existing order

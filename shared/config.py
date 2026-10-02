@@ -2,7 +2,7 @@
 Configuration settings for Petrosa Trading Engine
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
@@ -163,6 +163,25 @@ class Settings(BaseSettings):
     # affected. Set TE_FILL_AUDIT_ENRICHMENT_ENABLED=false to disable the extra
     # per-fill REST call per deploy.
     te_fill_audit_enrichment_enabled: bool = True
+
+    te_maker_entry_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "TE_MAKER_ENTRY_ENABLED", "te_maker_entry_enabled"
+        ),
+    )
+    te_maker_entry_timeout_s: float = Field(
+        default=5.0,
+        validation_alias=AliasChoices(
+            "TE_MAKER_ENTRY_TIMEOUT_S", "te_maker_entry_timeout_s"
+        ),
+    )
+    te_maker_entry_fallback: Literal["none", "market"] = Field(
+        default="none",
+        validation_alias=AliasChoices(
+            "TE_MAKER_ENTRY_FALLBACK", "te_maker_entry_fallback"
+        ),
+    )
 
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (read-only, no writes — detection-only), "dry_run"

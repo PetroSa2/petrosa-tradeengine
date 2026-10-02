@@ -61,6 +61,9 @@ class SimulatorExchange:
         variation = random.uniform(-0.02, 0.02)  # ±2%
         return base_price * (1 + variation)
 
+    async def get_best_entry_price(self, symbol: str, side: str) -> float:
+        return await self.get_price(symbol)
+
     async def execute_order(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order through simulator"""
         return await self.simulator.execute(order)

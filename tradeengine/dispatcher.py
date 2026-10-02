@@ -30,11 +30,14 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamC
 from tradeengine.execution_observability import TradeExecutionObservability
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.leverage_manager import LeverageManager
+from tradeengine.maker_entry import MakerEntryExecutor
 from tradeengine.metrics import (
     TradingIdleTracker,
     atomic_rollback_failed_total,
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
+    maker_entry_post_only_rejection_total,
+    maker_entry_unfilled_total,
     oco_cancel_retry_exhausted_total,
     oco_exit_pnl_unknown_total,
     oco_pair_age_seconds,
@@ -3510,8 +3513,53 @@ class Dispatcher:
                     "rejection_source": "exchange",
                 }
 
-            # Execute order
-            result = await self.execute_order(order)
+            if (
+                self.settings.te_maker_entry_enabled
+                and order.type == OrderType.MARKET.value
+                and not order.reduce_only
+                and self.exchange is not None
+                and hasattr(self.exchange, "get_best_entry_price")
+            ):
+                result = await MakerEntryExecutor(
+                    self.exchange,
+                    self.settings.te_maker_entry_timeout_s,
+                    self.settings.te_maker_entry_fallback,
+                ).execute(order)
+                order.target_price = result.get("intended_price") or order.target_price
+                order.strategy_metadata["maker_intended_price"] = result.get(
+                    "intended_price"
+                )
+                order.strategy_metadata["entry_mode"] = result.get(
+                    "entry_mode", "maker"
+                )
+                await self.order_manager.track_order(order, result)
+                result_status = str(result.get("status", "")).lower()
+                event_type: ExecutionEventType = (
+                    "filled"
+                    if result_status == "filled"
+                    else "partial_fill"
+                    if result_status == "partially_filled"
+                    else "rejected"
+                )
+                await self._emit_execution_event_from_order(
+                    order,
+                    result,
+                    event_type=event_type,
+                    reason=str(result.get("entry_mode", "maker_entry")),
+                )
+                if result.get("maker_unfilled"):
+                    maker_entry_unfilled_total.labels(
+                        symbol=order.symbol, side=order.side
+                    ).inc()
+                if result.get("post_only_rejected") or result_status in {
+                    "rejected",
+                    "failed",
+                }:
+                    maker_entry_post_only_rejection_total.labels(
+                        symbol=order.symbol, side=order.side
+                    ).inc()
+            else:
+                result = await self.execute_order(order)
 
             # #546: register the exchange order id -> Signal mapping the instant
             # we have an exchange order_id, synchronously and with no I/O in
@@ -3975,6 +4023,13 @@ class Dispatcher:
             # guessing from event_type alone (both use "filled").
             "reduce_only": getattr(order, "reduce_only", None),
         }
+        entry_mode = result.get("entry_mode") or strategy_meta.get("entry_mode")
+        liquidity = result.get("liquidity")
+        if liquidity is None:
+            liquidity = "maker" if result.get("maker") is True else "taker"
+        if entry_mode is not None:
+            extra["entry_mode"] = entry_mode
+        extra["liquidity"] = liquidity
         if fill_qty is not None:
             extra["fill_qty"] = fill_qty
             extra["fill_quantity"] = fill_qty
@@ -4008,7 +4063,6 @@ class Dispatcher:
                     if order_type in {"take_profit", "take_profit_market"}
                     else "manual_close"
                 )
-            liquidity = "maker" if result.get("maker") is True else "taker"
             record_fill_metrics(
                 order_id,
                 cost_fields,

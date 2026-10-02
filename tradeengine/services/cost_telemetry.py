@@ -41,6 +41,8 @@ def intended_price(
     if order_type in {"limit", "stop_limit", "take_profit_limit"}:
         return _decimal(getattr(order, "target_price", None)), "limit_price"
     metadata = getattr(order, "strategy_metadata", {}) or {}
+    if metadata.get("maker_intended_price") is not None:
+        return _decimal(metadata["maker_intended_price"]), "maker_limit_price"
     return _decimal(
         metadata.get("signal_price") or metadata.get("current_price")
     ), "signal_price"

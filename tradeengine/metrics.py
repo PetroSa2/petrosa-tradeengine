@@ -25,6 +25,17 @@ from tradeengine.services.cost_telemetry import (
     slippage_bp as tradeengine_slippage_bp,
 )
 
+maker_entry_unfilled_total = Counter(
+    "tradeengine_maker_entry_unfilled_total",
+    "Maker entries that ended without a complete fill",
+    ["symbol", "side"],
+)
+maker_entry_post_only_rejection_total = Counter(
+    "tradeengine_maker_entry_post_only_rejection_total",
+    "Post-only maker entries rejected by the exchange",
+    ["symbol", "side"],
+)
+
 ledger_publish_total = Counter(
     "tradeengine_ledger_publish_total",
     "Exchange ledger publish cycles by result",

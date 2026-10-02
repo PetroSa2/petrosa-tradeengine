@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tradeengine.services.data_manager_client import DataManagerClient
 from tradeengine.services.exchange_daily_publisher import ExchangeDailyPublisher
 
 
@@ -47,6 +48,14 @@ class FakeDataManager:
     async def request(self, method, path, **kwargs):
         self.calls.append((method, path, kwargs))
         return {"ok": True}
+
+    async def publish_exchange_positions_ledger(self, as_of_ms, payload):
+        await self.request(
+            "PUT", f"/api/v1/ledger/exchange-positions/{as_of_ms}", json=payload
+        )
+
+    async def publish_exchange_daily_ledger(self, day, payload):
+        await self.request("PUT", f"/api/v1/ledger/exchange-daily/{day}", json=payload)
 
 
 @pytest.mark.asyncio
@@ -93,3 +102,36 @@ async def test_positions_keep_hedge_sides():
     )
     await publisher._positions_snapshot(123)
     assert len(data_manager.calls[0][2]["json"]["rows"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_application_data_manager_client_supports_ledger_publish():
+    data_manager = DataManagerClient(base_url="http://data-manager")
+    calls = []
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return {"ok": True}
+
+    data_manager._client.request = request
+    publisher = ExchangeDailyPublisher(
+        SimpleNamespace(client=FakeClient([]), rate_monitor=None), data_manager
+    )
+
+    await publisher.publish_day("2025-01-01")
+
+    assert calls[0][0:2] == ("PUT", "/api/v1/ledger/exchange-daily/2025-01-01")
+    assert calls[1][0] == "PUT"
+    assert calls[1][1].startswith("/api/v1/ledger/exchange-positions/")
+
+
+@pytest.mark.asyncio
+async def test_preview_does_not_write_ledger():
+    data_manager = FakeDataManager()
+    publisher = ExchangeDailyPublisher(
+        SimpleNamespace(client=FakeClient([]), rate_monitor=None), data_manager
+    )
+
+    await publisher.publish_day("2025-01-01", apply=False)
+
+    assert data_manager.calls == []

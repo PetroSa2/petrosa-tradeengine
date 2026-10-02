@@ -451,6 +451,22 @@ class DataManagerClient:
         except Exception as e:
             self._logger.warning(f"Error disconnecting from Data Manager: {e}")
 
+    async def publish_exchange_daily_ledger(
+        self, day: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Publish an exchange income snapshot to the daily ledger."""
+        return await self._client.request(
+            "PUT", f"/api/v1/ledger/exchange-daily/{day}", json=payload
+        )
+
+    async def publish_exchange_positions_ledger(
+        self, as_of_ms: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Publish exchange positions to the position ledger."""
+        return await self._client.request(
+            "PUT", f"/api/v1/ledger/exchange-positions/{as_of_ms}", json=payload
+        )
+
     # Configuration Management Methods
 
     async def get_global_config(self) -> TradingConfig | None:

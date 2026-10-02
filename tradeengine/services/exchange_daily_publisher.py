@@ -163,10 +163,9 @@ class ExchangeDailyPublisher:
                     ),
                 }
             )
-        await self.data_manager.request(
-            "PUT",
-            f"/api/v1/ledger/exchange-positions/{as_of_ms}",
-            json={
+        await self.data_manager.publish_exchange_positions_ledger(
+            as_of_ms,
+            {
                 "as_of_ms": as_of_ms,
                 "source_run_id": self.run_id_factory(),
                 "rows": rows,
@@ -196,9 +195,7 @@ class ExchangeDailyPublisher:
                 payload["balance_as_of_ms"],
             ) = await self._account_snapshot(now_ms)
             if apply:
-                await self.data_manager.request(
-                    "PUT", f"/api/v1/ledger/exchange-daily/{day}", json=payload
-                )
+                await self.data_manager.publish_exchange_daily_ledger(day, payload)
                 await self._positions_snapshot(now_ms)
             ledger_publish_total.labels(result="success").inc()
             ledger_publish_last_success_timestamp.set(self.clock().timestamp())

@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
+    te_position_persist_failure_threshold: int = Field(
+        default=3,
+        validation_alias=AliasChoices(
+            "TE_POSITION_PERSIST_FAILURE_THRESHOLD",
+            "te_position_persist_failure_threshold",
+        ),
+    )
 
     # API Configuration
     host: str = "0.0.0.0"
@@ -85,6 +92,7 @@ class Settings(BaseSettings):
     # Monitoring Configuration
     prometheus_enabled: bool = True
     health_check_interval: int = 30
+    te_entry_persist_timeout_seconds: float = 1.0
 
     # Distributed Lock Configuration
     lock_timeout_seconds: int = 60

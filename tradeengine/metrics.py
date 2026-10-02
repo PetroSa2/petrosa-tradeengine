@@ -309,6 +309,24 @@ position_persist_failed_total = Counter(
     ["symbol", "position_side", "operation", "reason"],
 )
 
+entry_fill_unknown_fee_total = Counter(
+    "tradeengine_entry_fill_unknown_fee_total",
+    "Entry fills persisted without an exchange commission",
+    ["symbol"],
+)
+
+entry_fill_persist_failed_total = Counter(
+    "tradeengine_entry_fill_persist_failed_total",
+    "Entry-fill position writes that failed and were queued for retry",
+    ["symbol", "reason"],
+)
+
+entry_fill_persist_dropped_total = Counter(
+    "tradeengine_entry_fill_persist_dropped_total",
+    "Entry-fill position writes that could not be queued for retry",
+    ["symbol", "reason"],
+)
+
 # Position-close persistence failures are tracked separately because a close
 # write can leave realized P&L and the exchange state out of sync.
 position_close_persist_failures_total = Counter(

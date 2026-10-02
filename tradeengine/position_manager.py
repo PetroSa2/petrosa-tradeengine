@@ -25,6 +25,9 @@ from tradeengine.metrics import (
     algo_orders_open,
     current_position_size,
     daily_pnl_persist_failures_consecutive,
+    entry_fill_persist_dropped_total,
+    entry_fill_persist_failed_total,
+    entry_fill_unknown_fee_total,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
     position_close_persist_failures_total,
@@ -83,6 +86,7 @@ class PositionManager:
         self._recorded_exit_order_ids: set[str] = set()
         self._store_reachable = False
         self._store_health_task: asyncio.Task[None] | None = None
+        self._entry_persist_failures_consecutive = 0
         # AC2 (#459 — 446-C): injected by Dispatcher.initialize() after
         # UserDataStreamConsumer starts; None until then.
         self.exchange_truth_store: ExchangeTruthStore | None = None
@@ -867,7 +871,7 @@ class PositionManager:
             for _attempt in range(1, 4):
                 try:
                     result = await asyncio.wait_for(
-                        position_client.create_position(position_data), timeout=5.0
+                        position_client.upsert_position(position_data), timeout=5.0
                     )
                     if result.ok:
                         logger.info(
@@ -898,7 +902,7 @@ class PositionManager:
             if not _create_ok:
                 persist_retry_queue.enqueue(
                     PendingWrite(
-                        operation="create_position",
+                        operation="upsert_position",
                         data=dict(position_data),
                         symbol=order.symbol,
                         position_id=order.position_id,
@@ -923,6 +927,54 @@ class PositionManager:
 
         except Exception as e:
             logger.error(f"Error creating position record: {e}")
+
+    async def persist_entry_fill(self, data: dict[str, Any]) -> bool:
+        """Persist one exchange entry fill without blocking order flow."""
+        symbol = str(data.get("symbol", "unknown"))
+        commission = data.get("commission")
+        if commission is None:
+            data["fee_status"] = "unknown"
+            entry_fill_unknown_fee_total.labels(symbol=symbol).inc()
+        else:
+            data["fee_status"] = "known"
+
+        try:
+            result = await position_client.upsert_position(data)
+        except Exception as exc:
+            result = None
+            error = str(exc)
+        else:
+            error = result.error
+
+        if result is not None and result.ok:
+            self._entry_persist_failures_consecutive = 0
+            return True
+
+        reason = (result.reason if result is not None else "transient") or "unknown"
+        self._entry_persist_failures_consecutive += 1
+        entry_fill_persist_failed_total.labels(symbol=symbol, reason=reason).inc()
+        logger.error(
+            "Entry fill position persist failed symbol=%s order_id=%s trade_id=%s: %s",
+            symbol,
+            data.get("order_id"),
+            data.get("trade_id"),
+            error,
+        )
+        queued = persist_retry_queue.enqueue(
+            PendingWrite(
+                operation="upsert_position",
+                data=dict(data),
+                symbol=symbol,
+                position_id=str(data.get("position_id", "")),
+                last_error=error,
+                order_id=str(data.get("order_id", "")),
+                trade_id=str(data.get("trade_id", "")),
+                idempotency_key=str(data.get("idempotency_key", "")),
+            )
+        )
+        if not queued:
+            entry_fill_persist_dropped_total.labels(symbol=symbol, reason=reason).inc()
+        return False
 
     async def update_position_risk_orders(
         self,
@@ -1982,14 +2034,22 @@ class PositionManager:
 
     async def health_check(self) -> dict[str, Any]:
         """Health check for position manager"""
+        settings = getattr(self, "settings", None)
+        threshold = max(
+            1, int(getattr(settings, "te_position_persist_failure_threshold", 3))
+        )
+        failures = getattr(self, "_entry_persist_failures_consecutive", 0)
+        degraded = failures >= threshold
         return {
-            "status": "healthy",
+            "status": "degraded" if degraded else "healthy",
             "positions_count": len(self.positions),
             "last_sync": (
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),
             "positions_store": "data-manager",
             "store_reachable": self._store_reachable,
+            "entry_persist_failures_consecutive": failures,
+            "entry_persist_failure_threshold": threshold,
         }
 
 

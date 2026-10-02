@@ -159,6 +159,56 @@ class TradingStoreClient:
                 position_id=position_id,
             )
 
+    async def upsert_position(self, position: dict[str, object]) -> PersistResult:
+        """Idempotently upsert a position through data-manager's typed API."""
+        legacy = self._legacy_override("upsert_position")
+        if legacy is not None:
+            return await legacy(position)  # type: ignore[no-any-return]
+        position_id = str(position.get("position_id", ""))
+        symbol = str(position.get("symbol", ""))
+        if not position_id:
+            return PersistResult(
+                ok=False,
+                error="position_id is required",
+                reason="permanent",
+                operation="upsert_position",
+                symbol=symbol,
+            )
+        try:
+            response = await self.data_manager_client._client.upsert_one(
+                database="mongodb",
+                collection="positions",
+                filter={"position_id": position_id},
+                record=position,
+            )
+            if response.get("failed", 0):
+                return PersistResult(
+                    ok=False,
+                    error=str(response),
+                    reason="permanent",
+                    operation="upsert_position",
+                    symbol=symbol,
+                    position_id=position_id,
+                )
+            return PersistResult(
+                ok=True,
+                operation="upsert_position",
+                symbol=symbol,
+                position_id=position_id,
+                extra={
+                    "idempotent_duplicate": not bool(response.get("upserted", False))
+                },
+            )
+        except Exception as exc:
+            return PersistResult(
+                ok=False,
+                error=str(exc),
+                reason="transient" if is_transient_error(exc) else "permanent",
+                operation="upsert_position",
+                symbol=symbol,
+                position_id=position_id,
+            )
+
     async def update_position(
         self, position_id: str, fields: dict[str, object]
     ) -> PersistResult:

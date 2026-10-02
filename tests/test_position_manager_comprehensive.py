@@ -105,7 +105,9 @@ async def test_create_position_record_long(
 ):
     """Test creating a LONG position record"""
     with patch(
-        "shared.mysql_client.position_client.create_position", new_callable=AsyncMock
+        "tradeengine.position_manager.position_client.upsert_position",
+        new_callable=AsyncMock,
+        return_value=PersistResult(ok=True, operation="upsert_position"),
     ) as mock_create:
         await position_manager.create_position_record(
             sample_long_order, sample_fill_result
@@ -127,7 +129,9 @@ async def test_create_position_record_short(
 ):
     """Test creating a SHORT position record"""
     with patch(
-        "shared.mysql_client.position_client.create_position", new_callable=AsyncMock
+        "tradeengine.position_manager.position_client.upsert_position",
+        new_callable=AsyncMock,
+        return_value=PersistResult(ok=True, operation="upsert_position"),
     ) as mock_create:
         await position_manager.create_position_record(
             sample_short_order, sample_fill_result
@@ -148,7 +152,9 @@ async def test_create_position_record_with_sl_tp(
     sample_long_order.take_profit = 52000.0
 
     with patch(
-        "shared.mysql_client.position_client.create_position", new_callable=AsyncMock
+        "tradeengine.position_manager.position_client.upsert_position",
+        new_callable=AsyncMock,
+        return_value=PersistResult(ok=True, operation="upsert_position"),
     ) as mock_create:
         await position_manager.create_position_record(
             sample_long_order, sample_fill_result
@@ -181,7 +187,9 @@ async def test_create_position_record_null_fill_price_does_not_raise(
     }
 
     with patch(
-        "shared.mysql_client.position_client.create_position", new_callable=AsyncMock
+        "tradeengine.position_manager.position_client.upsert_position",
+        new_callable=AsyncMock,
+        return_value=PersistResult(ok=True, operation="upsert_position"),
     ) as mock_create:
         await position_manager.create_position_record(
             sample_long_order, unfilled_result

@@ -121,7 +121,7 @@ class ExchangeDailyPublisher:
             "day": day,
             "source_run_id": "",
             "is_final": False,
-            "row_count": len(rows),
+            "row_count": len(payload_rows),
             "first_income_time_ms": min(times) if times else None,
             "last_income_time_ms": max(times) if times else None,
             "rows": payload_rows,

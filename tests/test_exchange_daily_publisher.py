@@ -79,6 +79,40 @@ async def test_paginates_and_preserves_decimal_strings():
     assert payload["rows"][0]["income_by_type"]["COMMISSION"] == "-0.00002300"
 
 
+def test_daily_payload_matches_data_manager_row_count_contract():
+    rows = [
+        {
+            "time": 1_735_689_600_000,
+            "symbol": "BTCUSDT",
+            "asset": "USDT",
+            "incomeType": "COMMISSION",
+            "income": "-0.00000001",
+        },
+        {
+            "time": 1_735_689_600_001,
+            "symbol": "BTCUSDT",
+            "asset": "USDT",
+            "incomeType": "REALIZED_PNL",
+            "income": "1.00000000",
+        },
+    ]
+
+    payload = ExchangeDailyPublisher.aggregate(rows, "2025-01-01")
+
+    assert payload["row_count"] == len(payload["rows"]) == 1
+    assert payload["rows"][0]["income_by_type"] == {
+        "COMMISSION": "-0.00000001",
+        "REALIZED_PNL": "1.00000000",
+    }
+
+
+def test_empty_daily_payload_matches_data_manager_row_count_contract():
+    payload = ExchangeDailyPublisher.aggregate([], "2025-01-01")
+
+    assert payload["row_count"] == 0
+    assert payload["rows"] == []
+
+
 @pytest.mark.asyncio
 async def test_exchange_page_error_does_not_put():
     class Broken(FakeClient):

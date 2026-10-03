@@ -100,3 +100,65 @@ async def test_duplicate_exit_order_is_a_no_op():
 
     assert update.await_count == 1
     assert manager.daily_pnl == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_distinct_trade_ids_allow_partial_fills_and_preserve_fee_status():
+    manager = _manager()
+    with patch(
+        "shared.mysql_client.position_client.update_position",
+        new_callable=AsyncMock,
+    ) as update:
+        await manager.record_position_close(
+            "P",
+            110.0,
+            1.0,
+            "exit-4",
+            datetime.now(UTC),
+            "take_profit",
+            commission=-0.5,
+            trade_id="trade-1",
+            fee_asset="USDT",
+        )
+        await manager.record_position_close(
+            "P",
+            111.0,
+            1.0,
+            "exit-4",
+            datetime.now(UTC),
+            "take_profit",
+            commission=None,
+            trade_id="trade-2",
+            fee_asset="USDT",
+        )
+
+    assert update.await_count == 2
+    body = update.await_args.args[1]
+    assert body["fee_status"] == "unknown"
+    assert body["pnl_unknown"] is False
+    assert body["closed_by_strategy_id"] == "test"
+    assert manager.daily_pnl == pytest.approx(20.5)
+
+
+@pytest.mark.asyncio
+async def test_missing_exit_price_is_flagged_not_zero_pnl():
+    manager = _manager()
+    with patch(
+        "shared.mysql_client.position_client.update_position",
+        new_callable=AsyncMock,
+    ) as update:
+        await manager.record_position_close(
+            "P",
+            None,
+            2.0,
+            "exit-5",
+            datetime.now(UTC),
+            "manual",
+            commission=0.0,
+            trade_id="trade-5",
+        )
+
+    body = update.await_args.args[1]
+    assert body["pnl"] is None
+    assert body["pnl_unknown"] is True
+    assert body["close_reason"] == "manual"

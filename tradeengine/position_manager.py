@@ -5,6 +5,7 @@ Position Manager - Tracks positions and enforces risk limits through data-manage
 import asyncio
 import logging
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from typing import Any
 
@@ -23,6 +24,7 @@ from shared.trading_store_client import trading_store
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     algo_orders_open,
+    close_fill_unknown_fee_total,
     current_position_size,
     daily_pnl_persist_failures_consecutive,
     entry_fill_persist_dropped_total,
@@ -51,6 +53,13 @@ from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry
 
 logger = logging.getLogger(__name__)
 position_client = trading_store
+
+
+def _decimal(value: Any, default: str = "0") -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else default))
+    except (InvalidOperation, ValueError):
+        return Decimal(default)
 
 
 class PositionManager:
@@ -84,6 +93,9 @@ class PositionManager:
         )
         self._portfolio_exposure_refresh_failed = False
         self._recorded_exit_order_ids: set[str] = set()
+        self._recorded_exit_fill_keys: set[tuple[str, str]] = set()
+        self._recorded_fill_keys: set[tuple[str, str]] = set()
+        self._fill_ledger: dict[str, Decimal] = {}
         self._store_reachable = False
         self._store_health_task: asyncio.Task[None] | None = None
         self._entry_persist_failures_consecutive = 0
@@ -938,6 +950,18 @@ class PositionManager:
         else:
             data["fee_status"] = "known"
 
+        fill_key = (str(data.get("order_id", "")), str(data.get("trade_id", "")))
+        fill_time = (
+            data.get("trade_time") or data.get("event_time") or data.get("timestamp")
+        )
+        if isinstance(fill_time, str):
+            fill_time = datetime.fromisoformat(fill_time.replace("Z", "+00:00"))
+        if not isinstance(fill_time, datetime):
+            fill_time = datetime.now(UTC)
+        if fill_key not in self._recorded_fill_keys:
+            self._recorded_fill_keys.add(fill_key)
+            await self._book_fill(fill_time, Decimal("0"), _decimal(commission))
+
         try:
             result = await position_client.upsert_position(data)
         except Exception as exc:
@@ -975,6 +999,21 @@ class PositionManager:
         if not queued:
             entry_fill_persist_dropped_total.labels(symbol=symbol, reason=reason).inc()
         return False
+
+    async def _book_fill(
+        self, fill_time: datetime, realized_pnl: Decimal, commission: Decimal
+    ) -> None:
+        """Book one fill exactly once on its exchange UTC day."""
+        day = fill_time.astimezone(UTC).date().isoformat()
+        self._fill_ledger[day] = (
+            self._fill_ledger.get(day, Decimal("0")) + realized_pnl + commission
+        )
+        if day == self._daily_pnl_date.isoformat():
+            self.daily_pnl = float(self._fill_ledger[day])
+        try:
+            await position_client.update_daily_pnl(day, float(self._fill_ledger[day]))
+        except Exception as exc:
+            logger.error("Failed to persist fill ledger for %s: %s", day, exc)
 
     async def update_position_risk_orders(
         self,
@@ -1074,8 +1113,12 @@ class PositionManager:
                 "close_reason", exit_result.get("reason", "manual")
             ),
             commission=exit_result.get(
-                "exit_commission", exit_result.get("commission", 0.0)
+                "exit_commission", exit_result.get("commission")
             ),
+            trade_id=exit_result.get("trade_id"),
+            fee_asset=exit_result.get("fee_asset"),
+            closed_by_strategy_id=exit_result.get("closed_by_strategy_id"),
+            pnl_unknown=bool(exit_result.get("pnl_unknown", False)),
         )
 
     async def record_position_close(
@@ -1086,8 +1129,11 @@ class PositionManager:
         exit_order_id: str | None,
         exit_time: datetime | None,
         close_reason: str,
-        commission: float = 0.0,
+        commission: float | None = None,
         pnl_unknown: bool = False,
+        trade_id: str | None = None,
+        fee_asset: str | None = None,
+        closed_by_strategy_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Record a full or partial exchange fill against a position row.
 
@@ -1097,7 +1143,13 @@ class PositionManager:
         the order path.
         """
         try:
-            if exit_order_id and str(exit_order_id) in self._recorded_exit_order_ids:
+            fill_key = (str(exit_order_id or ""), str(trade_id or ""))
+            if exit_order_id and (
+                fill_key in self._recorded_exit_fill_keys
+                or (
+                    not trade_id and str(exit_order_id) in self._recorded_exit_order_ids
+                )
+            ):
                 return None
             record = self.position_records.get(position_id)
             if record is None:
@@ -1106,35 +1158,41 @@ class PositionManager:
                 logger.error("Position %s not found for close fill", position_id)
                 return None
 
-            entry_price = float(
-                record.get("entry_price", record.get("avg_price", 0.0)) or 0.0
+            entry_price = _decimal(
+                record.get("entry_price", record.get("avg_price", 0.0))
             )
             position_side = str(record.get("position_side", "LONG"))
-            current_qty = float(
-                record.get("quantity", record.get("entry_quantity", 0.0)) or 0.0
+            current_qty = _decimal(
+                record.get("quantity", record.get("entry_quantity", 0.0))
             )
-            close_qty = min(max(float(exit_qty or 0.0), 0.0), current_qty)
-            if close_qty <= 0.0:
+            close_qty = min(max(_decimal(exit_qty), Decimal("0")), current_qty)
+            if close_qty <= 0:
                 return None
-            exit_price = float(exit_price) if exit_price is not None else None
-            commission = float(commission or 0.0)
+            exit_price_decimal = (
+                _decimal(exit_price) if exit_price is not None else None
+            )
+            fee_known = commission is not None
+            commission_decimal = _decimal(commission)
+            if not fee_known:
+                close_fill_unknown_fee_total.labels(
+                    symbol=str(record.get("symbol", "unknown"))
+                ).inc()
+            pnl_unknown = pnl_unknown or exit_price_decimal is None
             gross_pnl = (
                 None
                 if pnl_unknown
                 else (
-                    (exit_price - entry_price) * close_qty
+                    (exit_price_decimal - entry_price) * close_qty
                     if position_side == "LONG"
-                    else (entry_price - exit_price) * close_qty
+                    else (entry_price - exit_price_decimal) * close_qty
                 )
             )
-            previous_pnl = float(
-                record.get("pnl", record.get("realized_pnl", 0.0)) or 0.0
-            )
-            previous_commission = float(record.get("final_commission", 0.0) or 0.0)
+            previous_pnl = _decimal(record.get("pnl", record.get("realized_pnl", 0.0)))
+            previous_commission = _decimal(record.get("final_commission", 0.0))
             cumulative_pnl = None if pnl_unknown else previous_pnl + gross_pnl
-            cumulative_commission = previous_commission + commission
-            remaining_qty = max(current_qty - close_qty, 0.0)
-            status = "closed" if remaining_qty <= 1e-12 else "open"
+            cumulative_commission = previous_commission + commission_decimal
+            remaining_qty = max(current_qty - close_qty, Decimal("0"))
+            status = "closed" if remaining_qty <= Decimal("0.000000000001") else "open"
             raw_entry_time = record.get("entry_time")
             entry_time = (
                 raw_entry_time
@@ -1153,15 +1211,14 @@ class PositionManager:
             duration_seconds = max(
                 int((effective_exit_time - entry_time).total_seconds()), 0
             )
-            original_qty = float(
+            original_qty = _decimal(
                 record.get(
                     "entry_quantity", record.get("original_quantity", current_qty)
                 )
-                or current_qty
             )
             pnl_pct = (
                 (
-                    cumulative_pnl / (entry_price * original_qty) * 100
+                    float(cumulative_pnl / (entry_price * original_qty) * 100)
                     if entry_price > 0 and original_qty > 0
                     else 0.0
                 )
@@ -1170,27 +1227,39 @@ class PositionManager:
             )
             update_data = {
                 "status": status,
-                "quantity": remaining_qty,
-                "exit_price": exit_price,
+                "quantity": float(remaining_qty),
+                "exit_price": float(exit_price_decimal)
+                if exit_price_decimal is not None
+                else None,
                 "exit_time": effective_exit_time,
                 "exit_order_id": exit_order_id,
-                "pnl": cumulative_pnl,
+                "pnl": float(cumulative_pnl) if cumulative_pnl is not None else None,
                 "pnl_pct": pnl_pct,
                 "pnl_after_fees": None
                 if cumulative_pnl is None
-                else cumulative_pnl
-                - float(record.get("commission_total", 0.0) or 0.0)
-                - cumulative_commission,
+                else float(cumulative_pnl)
+                - float(_decimal(record.get("commission_total", 0.0)))
+                - float(cumulative_commission),
                 "duration_seconds": duration_seconds,
                 "close_reason": close_reason,
                 "final_commission": cumulative_commission,
                 "pnl_unknown": pnl_unknown,
+                "fee_status": "known" if fee_known else "unknown",
+                "fee_asset": fee_asset,
+                "strategy_id": record.get("strategy_id", "unknown"),
+                "closed_by_strategy_id": closed_by_strategy_id
+                or record.get("strategy_id", "unknown"),
+                "trade_id": trade_id,
             }
+            update_data["final_commission"] = float(cumulative_commission)
+            if pnl_unknown and not close_reason:
+                update_data["close_reason"] = "pnl_unavailable"
 
             record.update(update_data)
             self.position_records[position_id] = record
             if exit_order_id:
                 self._recorded_exit_order_ids.add(str(exit_order_id))
+                self._recorded_exit_fill_keys.add(fill_key)
 
             try:
                 result = await position_client.update_position(position_id, update_data)
@@ -1200,16 +1269,25 @@ class PositionManager:
                 self._queue_close_retry(position_id, record, update_data, result)
 
             await self._roll_daily_pnl_if_new_day()
-            if gross_pnl is not None:
-                self.daily_pnl += gross_pnl
-                await position_client.update_daily_pnl(
-                    datetime.now(UTC).date().isoformat(), self.daily_pnl
-                )
+            booking_day = effective_exit_time.astimezone(UTC).date().isoformat()
+            fill_value = (gross_pnl or Decimal("0")) + (
+                commission_decimal if fee_known else Decimal("0")
+            )
+            self._fill_ledger[booking_day] = (
+                self._fill_ledger.get(booking_day, Decimal("0")) + fill_value
+            )
+            if booking_day == self._daily_pnl_date.isoformat():
+                self.daily_pnl = float(self._fill_ledger[booking_day])
+                await position_client.update_daily_pnl(booking_day, self.daily_pnl)
                 total_daily_pnl_usd.labels(
                     exchange=record.get("exchange", "binance")
                 ).set(self.daily_pnl)
 
-            position_data = {**record, **update_data, "gross_pnl": gross_pnl}
+            position_data = {
+                **record,
+                **update_data,
+                "gross_pnl": float(gross_pnl) if gross_pnl is not None else None,
+            }
             await self._export_position_closed_metrics(position_data)
             if status == "closed":
                 positions_closed_total.labels(

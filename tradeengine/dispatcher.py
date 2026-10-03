@@ -2164,6 +2164,10 @@ class OCOManager:
                         pnl=pnl,
                         filled_order_id=filled_order_id,
                         close_reason=close_reason,
+                        fee=order_details.get("commission"),
+                        fee_asset=order_details.get("commission_asset"),
+                        trade_id=str(order_details.get("trade_id", "")) or None,
+                        closed_by_strategy_id=str(strategy_id),
                     )
 
                     # Persist the real exchange fill against the durable position
@@ -2178,9 +2182,12 @@ class OCOManager:
                             exit_order_id=str(filled_order_id),
                             exit_time=datetime.now(UTC),
                             close_reason=close_reason,
-                            commission=float(
-                                order_details.get("commission", 0.0) or 0.0
-                            ),
+                            commission=float(order_details["commission"])
+                            if order_details.get("commission") is not None
+                            else None,
+                            trade_id=str(order_details.get("trade_id", "")) or None,
+                            fee_asset=order_details.get("commission_asset"),
+                            closed_by_strategy_id=str(strategy_id),
                             pnl_unknown=pnl_unknown,
                         )
 
@@ -2278,6 +2285,10 @@ class OCOManager:
         pnl: float,
         filled_order_id: str,
         close_reason: str,
+        fee: float | None = None,
+        fee_asset: str | None = None,
+        trade_id: str | None = None,
+        closed_by_strategy_id: str = "unknown",
     ) -> None:
         """Publish a `filled` execution event for a completed OCO exit (#531).
 
@@ -2318,6 +2329,12 @@ class OCOManager:
                     "fill_quantity": filled_quantity,
                     "fill_qty": filled_quantity,
                     "pnl": pnl,
+                    "fee": fee,
+                    "fee_asset": fee_asset,
+                    "fee_status": "known" if fee is not None else "unknown",
+                    "trade_id": trade_id,
+                    "closed_by_strategy_id": closed_by_strategy_id,
+                    "exchange_trade_time": closure.get("trade_time"),
                     "close_reason": close_reason,
                     # petrosa_k8s#1130: an SL/TP trigger is always a full,
                     # reduce_only exit of the strategy position — lets CIO's
@@ -4750,6 +4767,8 @@ class Dispatcher:
             exit_time=exit_time,
             close_reason=close_reason,
             commission=_number(order_obj.get("n")),
+            trade_id=str(order_obj.get("t", "")) or None,
+            fee_asset=order_obj.get("N"),
         )
 
     async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
@@ -6432,12 +6451,23 @@ class Dispatcher:
                         filled_qty = close_result.get("filled_amount", quantity)
                     await self.position_manager.record_position_close(
                         position_id=position_id,
-                        exit_price=float(fill_price or 0.0),
+                        exit_price=float(fill_price)
+                        if fill_price is not None
+                        else None,
                         exit_qty=float(filled_qty or quantity),
                         exit_order_id=str(close_result.get("order_id", "")) or None,
                         exit_time=close_result.get("timestamp") or datetime.now(UTC),
                         close_reason=reason,
-                        commission=float(close_result.get("commission", 0.0) or 0.0),
+                        commission=(
+                            float(close_result["commission"])
+                            if close_result.get("commission") is not None
+                            else None
+                        ),
+                        trade_id=str(close_result.get("trade_id", "")) or None,
+                        fee_asset=close_result.get("commission_asset"),
+                        closed_by_strategy_id=str(
+                            close_result.get("strategy_id", "unknown")
+                        ),
                     )
                     self.logger.info("✅ POSITION RECORD UPDATED")
                 except Exception as e:

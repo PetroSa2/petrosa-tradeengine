@@ -326,6 +326,12 @@ entry_fill_unknown_fee_total = Counter(
     ["symbol"],
 )
 
+close_fill_unknown_fee_total = Counter(
+    "tradeengine_close_fill_unknown_fee_total",
+    "Close fills persisted without an exchange commission",
+    ["symbol"],
+)
+
 entry_fill_persist_failed_total = Counter(
     "tradeengine_entry_fill_persist_failed_total",
     "Entry-fill position writes that failed and were queued for retry",

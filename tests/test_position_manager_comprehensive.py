@@ -46,6 +46,7 @@ def position_manager(mock_exchange):
     pm = PositionManager(exchange=mock_exchange)
     pm.mongodb_db = None  # Disable MongoDB for unit tests
     pm.total_portfolio_value = 10000.0  # Set portfolio value for risk calculations
+    pm.equity = 10000.0
     return pm
 
 
@@ -942,6 +943,7 @@ async def test_exchange_truth_notional_enforces_portfolio_exposure(
     )
     position_manager.exchange_truth_store = store
     position_manager.total_portfolio_value = 1000.0
+    position_manager.equity = 1000.0
     position_manager.max_portfolio_exposure_pct = 0.5
 
     with (
@@ -1068,6 +1070,7 @@ async def test_exchange_truth_empty_store_ignores_stale_local_rows(
 async def test_calculate_portfolio_exposure(position_manager):
     """Test portfolio exposure calculation"""
     position_manager.total_portfolio_value = 10000.0
+    position_manager.equity = 10000.0
 
     # Add positions
     position_manager.positions = {
@@ -1088,6 +1091,118 @@ async def test_calculate_portfolio_exposure(position_manager):
     assert exposure == pytest.approx(0.6, rel=0.01)
 
 
+def test_exposure_uses_equity_and_reports_available_comparison(position_manager):
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 4700.0
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {
+            "quantity": 0.11,
+            "mark_price": 50000.0,
+        }
+    }
+
+    assert position_manager._calculate_portfolio_exposure() == pytest.approx(0.55)
+    summary = position_manager.get_portfolio_summary()
+    assert summary["exposure_base"] == "equity"
+    assert summary["equity_exposure"] == pytest.approx(0.55)
+    assert summary["available_exposure"] == pytest.approx(5500 / 4700)
+
+
+@pytest.mark.asyncio
+async def test_increasing_order_uses_projected_equity_exposure(
+    position_manager, sample_long_order
+):
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 4700.0
+    position_manager.max_portfolio_exposure_pct = 0.8
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {
+            "quantity": 0.158,
+            "mark_price": 50000.0,
+        }
+    }
+    sample_long_order.amount = 0.006
+
+    with (
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_positions_from_data_manager",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "portfolio_exposure"
+
+
+@pytest.mark.asyncio
+async def test_reduce_only_order_passes_exposure_gate_above_cap(
+    position_manager, sample_long_order
+):
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 4700.0
+    position_manager.max_portfolio_exposure_pct = 0.5
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {
+            "quantity": 0.11,
+            "mark_price": 50000.0,
+        }
+    }
+    sample_long_order.side = "sell"
+    sample_long_order.position_side = "LONG"
+    sample_long_order.reduce_only = True
+    sample_long_order.amount = 0.01
+
+    with (
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_positions_from_data_manager",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+    ):
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is True
+    assert position_manager.rejection_reason is None
+
+
 # ============================================================================
 # Zero-Balance / Insufficient Margin Tests (#352)
 # ============================================================================
@@ -1099,6 +1214,7 @@ async def test_check_position_limits_zero_portfolio_value(
 ):
     """AC-1 (#352): zero portfolio value returns distinct insufficient-margin rejection"""
     position_manager.total_portfolio_value = 0.0
+    position_manager.equity = 0.0
     position_manager.max_portfolio_exposure_pct = 0.5
     caplog.set_level("ERROR")
 
@@ -1128,6 +1244,7 @@ async def test_check_position_limits_negative_portfolio_value(
 ):
     """AC-1 (#352): negative portfolio value also returns insufficient-margin rejection"""
     position_manager.total_portfolio_value = -500.0
+    position_manager.equity = -500.0
     position_manager.max_portfolio_exposure_pct = 0.5
     caplog.set_level("ERROR")
 
@@ -1155,8 +1272,9 @@ async def test_check_position_limits_negative_portfolio_value(
 async def test_check_position_limits_small_positive_balance(
     position_manager, sample_long_order
 ):
-    """AC-3 (#352): small positive portfolio value allows trading within limits"""
+    """A small positive equity balance rejects an order that exceeds the cap."""
     position_manager.total_portfolio_value = 1.0
+    position_manager.equity = 1.0
     position_manager.max_portfolio_exposure_pct = 0.8
 
     with patch.object(
@@ -1172,8 +1290,8 @@ async def test_check_position_limits_small_positive_balance(
         ):
             with patch("tradeengine.position_manager.RISK_MANAGEMENT_ENABLED", True):
                 result = await position_manager.check_position_limits(sample_long_order)
-                assert result is True
-                assert position_manager.rejection_reason is None
+                assert result is False
+                assert position_manager.rejection_reason == "portfolio_exposure"
 
 
 @pytest.mark.asyncio
@@ -1197,11 +1315,13 @@ async def test_check_position_limits_refresh_failure(
 async def test_calculate_portfolio_exposure_zero_value(position_manager):
     """AC-2 (#352): _calculate_portfolio_exposure returns 1.0 for zero/negative capital"""
     position_manager.total_portfolio_value = 0.0
+    position_manager.equity = 0.0
 
     exposure = position_manager._calculate_portfolio_exposure()
     assert exposure == 1.0
 
     position_manager.total_portfolio_value = -100.0
+    position_manager.equity = -100.0
     exposure = position_manager._calculate_portfolio_exposure()
     assert exposure == 1.0
 
@@ -1597,6 +1717,7 @@ class TestSymbolWhitelist:
     ):
         """Order for a symbol on the whitelist must not be rejected by the whitelist check."""
         position_manager.total_portfolio_value = 10000.0
+        position_manager.equity = 10000.0
         with patch.object(
             position_manager,
             "_get_allowed_symbols",
@@ -1628,6 +1749,7 @@ class TestSymbolWhitelist:
     ):
         """Empty allowed_symbols list means all symbols are permitted (safe default)."""
         position_manager.total_portfolio_value = 10000.0
+        position_manager.equity = 10000.0
         with patch.object(
             position_manager,
             "_get_allowed_symbols",

@@ -3341,7 +3341,7 @@ class Dispatcher:
                 rej_source = pm_source_map.get(pm_reason, "risk_check")
                 order.mark_rejected(source=rej_source, reason=pm_reason)
                 risk_rejections_total.labels(
-                    reason="position_limits_exceeded",
+                    reason=pm_reason,
                     symbol=order.symbol,
                     exchange=order.exchange,
                 ).inc()

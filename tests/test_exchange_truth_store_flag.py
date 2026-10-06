@@ -164,6 +164,7 @@ class TestAC2CheckPositionLimits:
         pm.max_daily_loss_pct = 0.05
         pm.max_portfolio_exposure_pct = 0.8
         pm.total_portfolio_value = 100_000.0
+        pm.equity = 100_000.0
         pm.daily_pnl = 0.0
         pm.portfolio_value_last_update = None
         pm.portfolio_value_lock = asyncio.Lock()

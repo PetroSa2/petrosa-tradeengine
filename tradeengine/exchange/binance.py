@@ -29,6 +29,7 @@ from binance.exceptions import BinanceAPIException
 
 from contracts.order import TradeOrder
 from shared.constants import MAX_RETRY_ATTEMPTS, RETRY_BACKOFF_MULTIPLIER, RETRY_DELAY
+from tradeengine.minimum_order import FALLBACK_MARGIN, minimum_quantity
 from tradeengine.protective_leg_mode import CLOSE_POSITION, protective_leg_mode
 from tradeengine.services.rate_monitor import RateLimitMonitor
 
@@ -1441,11 +1442,19 @@ class BinanceFuturesExchange:
         #     (f for f in filters if f["filterType"] == "PRICE_FILTER"), None
         # )
 
+        # Market orders are bound by MARKET_LOT_SIZE as well: take the stricter minimum and step.
+        market_lot_filter = next(
+            (f for f in filters if f["filterType"] == "MARKET_LOT_SIZE"), None
+        )
         min_qty = float(lot_size_filter["minQty"]) if lot_size_filter else 0.001
+        if market_lot_filter:
+            min_qty = max(min_qty, float(market_lot_filter["minQty"]))
         min_notional = (
             float(min_notional_filter["notional"]) if min_notional_filter else 20.0
         )
         step_size = float(lot_size_filter["stepSize"]) if lot_size_filter else 0.001
+        if market_lot_filter and float(market_lot_filter["stepSize"]) > 0:
+            step_size = max(step_size, float(market_lot_filter["stepSize"]))
 
         # Calculate precision based on step size
         precision = (
@@ -1790,58 +1799,41 @@ class BinanceFuturesExchange:
             return (False, error_msg)
 
     def calculate_min_order_amount(
-        self, symbol: str, current_price: float | None = None
+        self,
+        symbol: str,
+        current_price: float | None = None,
+        margin: float | None = None,
     ) -> float:
-        """Calculate the minimum order amount that meets all requirements"""
+        """The smallest valid quantity (the shared :func:`minimum_quantity`).
+
+        ``margin`` is the volatility-derived safety margin over MIN_NOTIONAL; ``FALLBACK_MARGIN`` when
+        the caller has none.
+        """
         try:
             min_info = self.get_min_order_amount(symbol)
-            min_qty = float(min_info["min_qty"])
-            min_notional = float(min_info["min_notional"])
-            step_size = float(min_info["step_size"])
-
-            # If no current price provided, use min_qty as fallback
             if current_price is None:
-                return min_qty
-
-            # Calculate minimum quantity based on notional value
-            min_qty_by_notional = min_notional / current_price
-
-            # Use the larger of the two minimums
-            final_min_qty = max(min_qty, min_qty_by_notional)
-
-            # Add 5% safety margin to avoid rounding errors
-            final_min_qty = final_min_qty * 1.05
-
-            # Round UP to the next valid step_size increment
-            # This ensures we always meet the minimum notional requirement
-            if step_size > 0:
-                # Calculate how many steps we need
-                steps = math.ceil(final_min_qty / step_size)
-                final_min_qty = steps * step_size
-
-                # Round to appropriate precision to avoid floating point errors
-                precision = min_info["precision"]
-                final_min_qty = round(final_min_qty, precision)
-
-            # Verify the final quantity meets the minimum notional
-            # If not, add one more step_size increment
-            if current_price * final_min_qty < min_notional:
-                final_min_qty += step_size
-                precision = min_info["precision"]
-                final_min_qty = round(final_min_qty, precision)
-
-            # Log the calculation
-            logger.debug(
-                f"Calculated min order amount for {symbol}: "
-                f"{final_min_qty} (price: ${current_price:.2f}, "
-                f"min_notional: ${min_notional:.2f}, step_size: {step_size})"
+                return float(min_info["min_qty"])
+            return minimum_quantity(
+                price=current_price,
+                step=min_info["step_size"],
+                min_qty=min_info["min_qty"],
+                min_notional=min_info["min_notional"],
+                margin=FALLBACK_MARGIN if margin is None else margin,
             )
-
-            return final_min_qty
-
         except Exception as e:
             logger.warning(f"Error calculating min order amount for {symbol}: {e}")
             return 0.001  # Fallback to safe default
+
+    async def get_recent_closes(self, symbol: str, limit: int = 60) -> list[float]:
+        """Closing prices of the last ``limit`` one-minute candles (oldest first)."""
+        if not self.initialized:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        rows = await asyncio.to_thread(
+            self.client.futures_klines, symbol=symbol, interval="1m", limit=limit
+        )
+        return [float(row[4]) for row in rows]
 
     async def get_commission_rate(self, symbol: str) -> tuple[float, float, bool]:
         """``(maker, taker, fee_burn)``: the account's commission rate for a symbol.

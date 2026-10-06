@@ -33,6 +33,7 @@ DEFAULT_TRADING_PARAMETERS = {
     # -------------------------------------------------------------------------
     "position_size_pct": 0.1,  # 10% of portfolio
     "max_position_size_usd": 1000.0,
+    "probe_mode": False,
     "min_position_size_usd": 10.0,
     "quantity_multiplier": 1.0,
     "use_exchange_minimums": True,
@@ -278,6 +279,25 @@ PARAMETER_SCHEMA = {
         "when_to_change": (
             "Increase as account grows or for high-conviction trades. Decrease "
             "when reducing risk or trading volatile assets."
+        ),
+    },
+    "probe_mode": {
+        "type": "boolean",
+        "description": (
+            "Size every entry order to the symbol's smallest valid order, computed from the live "
+            "exchange filters: max(LOT_SIZE minQty, MIN_NOTIONAL / price rounded UP to the step) at the "
+            "current price. Reduce-only orders are not affected. While on, no entry order is larger "
+            "than that size."
+        ),
+        "default": False,
+        "example": True,
+        "impact": (
+            "Every entry is the exchange minimum for its symbol, so exposure per trade is as small as "
+            "the exchange allows. /state reports that notional as max_position_size_usd."
+        ),
+        "when_to_change": (
+            "Turn on to contain risk while verifying the engine end to end; turn off to size normally "
+            "(max_position_size_usd then applies as an optional ceiling)."
         ),
     },
     "min_position_size_usd": {

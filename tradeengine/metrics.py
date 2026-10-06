@@ -499,6 +499,12 @@ risk_rejections_total = Counter(
     ["reason", "symbol", "exchange"],
 )
 
+sizing_cap_total = Counter(
+    "tradeengine_sizing_cap_total",
+    "Orders whose quantity was reduced by a sizing cap",
+    ["cap"],
+)
+
 risk_checks_total = Counter(
     "tradeengine_risk_checks_total",
     "Total risk checks performed",

@@ -91,10 +91,9 @@ async def test_position_size_limit_exceeded(dispatcher_with_risk_limits):
     assert execution_result.get("status") == "rejected", (
         f"Expected rejected status, got {execution_result.get('status')}"
     )
-    assert (
-        "risk" in execution_result.get("reason", "").lower()
-        or "limit" in execution_result.get("reason", "").lower()
-    )
+    reason = execution_result.get("reason", "").lower()
+    # The $-notional cap (max_position_size_usd) stops this oversize order before the position limits.
+    assert "risk" in reason or "limit" in reason or reason == "max_position_size_usd"
 
     # Verify no order was executed
     assert len(fake_exchange.get_executed_orders()) == 0

@@ -48,6 +48,7 @@ async def test_oco_failure_causes_rollback(dispatcher):
         position_id="pos_123",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     # Mock _place_risk_management_orders to raise an exception
@@ -89,6 +90,7 @@ async def test_oco_timeout_causes_rollback(dispatcher):
         position_id="pos_124",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     # Mock _place_risk_management_orders to timeout
@@ -130,6 +132,7 @@ async def test_rollback_falls_back_when_position_id_none(dispatcher):
         position_id=None,  # ← the bug
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     dispatcher._place_risk_management_orders = AsyncMock(
@@ -169,6 +172,7 @@ async def test_rollback_refetches_qty_from_binance_when_filled_zero(dispatcher):
         position_id="pos_h2_2",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     dispatcher._place_risk_management_orders = AsyncMock(
@@ -220,6 +224,7 @@ async def test_rollback_skipped_only_when_binance_also_zero(dispatcher):
         position_id="pos_h2_3",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     dispatcher._place_risk_management_orders = AsyncMock(
@@ -264,6 +269,7 @@ async def test_rollback_failed_emits_alert_and_counter(dispatcher):
         position_id="pos_h2_4",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     dispatcher._place_risk_management_orders = AsyncMock(
@@ -316,6 +322,7 @@ async def test_rollback_failed_when_close_returns_position_closed_false(dispatch
         position_id="pos_returns_false",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     dispatcher._place_risk_management_orders = AsyncMock(
@@ -390,6 +397,7 @@ async def test_rollback_failure_is_handled(dispatcher):
         position_id="pos_125",
         position_side="LONG",
         simulate=False,
+        target_price=50000.0,
     )
 
     # Force risk management order placement to fail, triggering rollback.

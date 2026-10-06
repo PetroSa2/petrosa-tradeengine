@@ -32,6 +32,8 @@ from tradeengine.metrics import (
     entry_fill_unknown_fee_total,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
+    portfolio_exposure_cap_ratio,
+    portfolio_exposure_ratio,
     position_close_persist_failures_total,
     position_commission_usd,
     position_duration_seconds,
@@ -1603,7 +1605,15 @@ class PositionManager:
             self.rejection_reason = "position_size_pct"
             return False
 
-        # Check portfolio exposure limit
+        # Algo order limits (prevent -4045 error). Every limit that is not the exposure gate runs
+        # first, so an order that skips the exposure check (reduce-only, closes) or that cannot be
+        # priced still meets it.
+        if not await self.check_algo_order_limits(order):
+            self.rejection_reason = "algo_order_limits"
+            return False
+
+        # Check portfolio exposure limit. Exposure is based on equity, and the
+        # pending order is included only when it increases the position.
         current_exposure = self._calculate_portfolio_exposure()
         if self._portfolio_exposure_refresh_failed:
             self.rejection_reason = "refresh_failure"
@@ -1613,17 +1623,45 @@ class PositionManager:
                 order.symbol,
             )
             return False
-        if current_exposure > self.max_portfolio_exposure_pct:
+        available_exposure = self._calculate_portfolio_exposure(
+            denominator=self.total_portfolio_value
+        )
+        portfolio_exposure_ratio.labels(base="equity").set(current_exposure)
+        portfolio_exposure_ratio.labels(base="available").set(available_exposure)
+        portfolio_exposure_cap_ratio.set(self.max_portfolio_exposure_pct)
+
+        projected_exposure = current_exposure
+        exposure_gate_applies = self._order_increases_exposure(order)
+        equity = getattr(self, "equity", 0.0)
+        if exposure_gate_applies and equity <= 0:
+            # The exposure cap is measured on equity: without it an increasing order cannot be projected.
+            self.rejection_reason = "insufficient_margin"
+            logger.error(
+                f"⛔ RISK REJECTION: Insufficient margin — equity is ${equity:.2f} "
+                f"(equity <= 0). Order {order.symbol} rejected; check exchange account funding."
+            )
+            return False
+        if exposure_gate_applies:
+            order_notional = self._order_notional(order)
+            if order_notional is None:
+                self.rejection_reason = "refresh_failure"
+                logger.error(
+                    "⛔ RISK REJECTION: Could not determine order notional for %s",
+                    order.symbol,
+                )
+                return False
+            projected_exposure += order_notional / equity
+
+        if (
+            exposure_gate_applies
+            and projected_exposure > self.max_portfolio_exposure_pct
+        ):
             logger.warning(
-                f"Portfolio exposure {current_exposure:.2%} exceeds limit "
-                f"{self.max_portfolio_exposure_pct:.2%}"
+                f"Portfolio exposure base=equity current={current_exposure:.2%} "
+                f"projected={projected_exposure:.2%} available={available_exposure:.2%} "
+                f"exceeds limit {self.max_portfolio_exposure_pct:.2%}"
             )
             self.rejection_reason = "portfolio_exposure"
-            return False
-
-        # Check algo order limits (prevent -4045 error)
-        if not await self.check_algo_order_limits(order):
-            self.rejection_reason = "algo_order_limits"
             return False
 
         self.rejection_reason = None
@@ -1795,7 +1833,105 @@ class PositionManager:
             )
             self._daily_pnl_refresh_stale = True
 
-    def _calculate_portfolio_exposure(self) -> float:
+    def _position_notional(self) -> float:
+        """Return current gross position notional from the selected source."""
+        self._portfolio_exposure_refresh_failed = False
+
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
+            store = self.exchange_truth_store
+            if store is None or not store.is_ready:
+                self._portfolio_exposure_refresh_failed = True
+                return 0.0
+
+            total_notional = 0.0
+            for snapshot in store.get_positions().values():
+                if abs(snapshot.quantity) < 1e-9:
+                    continue
+                notional = abs(snapshot.notional)
+                if notional <= 0 and snapshot.mark_price > 0:
+                    notional = abs(snapshot.quantity) * snapshot.mark_price
+                if notional <= 0:
+                    self._portfolio_exposure_refresh_failed = True
+                    return 0.0
+                total_notional += notional
+            return total_notional
+
+        total_notional = 0.0
+        for position in self.positions.values():
+            quantity = abs(float(position.get("quantity", 0)))
+            price = float(position.get("mark_price", position.get("avg_price", 0.0)))
+            total_notional += quantity * price
+        return total_notional
+
+    def _order_increases_exposure(self, order: TradeOrder) -> bool:
+        """Return whether an order adds gross notional to an existing position."""
+        if order.reduce_only:
+            return False
+
+        explicit_side = order.position_side
+        position_side = (
+            explicit_side or ("LONG" if order.side == "buy" else "SHORT")
+        ).upper()
+        position_key = (order.symbol, position_side)
+        if explicit_side is None:
+            opposite_side = "SHORT" if position_side == "LONG" else "LONG"
+            opposite_key = (order.symbol, opposite_side)
+            if opposite_key in self.positions:
+                position_side, position_key = opposite_side, opposite_key
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on" and self.exchange_truth_store:
+            snapshots = self.exchange_truth_store.get_positions()
+            snapshot = snapshots.get(position_key)
+            if snapshot is None and explicit_side is None:
+                opposite_side = "SHORT" if position_side == "LONG" else "LONG"
+                snapshot = snapshots.get((order.symbol, opposite_side))
+                if snapshot is not None:
+                    position_side = opposite_side
+            current_quantity = abs(snapshot.quantity) if snapshot else 0.0
+        else:
+            position = self.positions.get(position_key)
+            current_quantity = (
+                abs(float(position.get("quantity", 0))) if position else 0.0
+            )
+
+        if current_quantity <= 0:
+            return True
+        is_same_direction = (position_side == "LONG" and order.side == "buy") or (
+            position_side == "SHORT" and order.side == "sell"
+        )
+        return is_same_direction or order.amount > current_quantity
+
+    def _order_notional(self, order: TradeOrder) -> float | None:
+        """Estimate pending order notional using its price or a current mark."""
+        explicit_price = order.target_price
+        price = None if order.type.lower() == "market" else explicit_price
+        if (
+            not price
+            and TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            and self.exchange_truth_store
+        ):
+            position_side = (
+                order.position_side or ("LONG" if order.side == "buy" else "SHORT")
+            ).upper()
+            snapshots = self.exchange_truth_store.get_positions()
+            snapshot = snapshots.get((order.symbol, position_side))
+            if snapshot is None and order.position_side is None:
+                opposite_side = "SHORT" if position_side == "LONG" else "LONG"
+                snapshot = snapshots.get((order.symbol, opposite_side))
+            price = snapshot.mark_price if snapshot else None
+        if not price:
+            position_side = (
+                order.position_side or ("LONG" if order.side == "buy" else "SHORT")
+            ).upper()
+            position = self.positions.get((order.symbol, position_side))
+            if position:
+                price = position.get("mark_price", position.get("avg_price"))
+        if not price:
+            price = explicit_price
+        if not price or price <= 0:
+            return None
+        return abs(order.amount) * float(price)
+
+    def _calculate_portfolio_exposure(self, denominator: float | None = None) -> float:
         """Calculate current portfolio exposure
 
         Returns 1.0 (100%) when portfolio value is zero/negative as a safety
@@ -1804,44 +1940,17 @@ class PositionManager:
         rejection reason; callers should inspect rejection_reason rather than
         relying on this float value alone for diagnostics.
         """
-        if self.total_portfolio_value <= 0:
+        equity = getattr(self, "equity", 0.0)
+        if equity <= 0:
             return 1.0
-
-        self._portfolio_exposure_refresh_failed = False
-
-        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
-            store = self.exchange_truth_store
-            if store is None or not store.is_ready:
-                self._portfolio_exposure_refresh_failed = True
-                return 1.0
-
-            total_notional = 0.0
-            for snapshot in store.get_positions().values():
-                if abs(snapshot.quantity) < 1e-9:
-                    continue
-
-                notional = abs(snapshot.notional)
-                if notional <= 0 and snapshot.mark_price > 0:
-                    notional = abs(snapshot.quantity) * snapshot.mark_price
-                if notional <= 0:
-                    self._portfolio_exposure_refresh_failed = True
-                    return 1.0
-                total_notional += notional
-
-            return total_notional / self.total_portfolio_value
-
-        total_exposure = 0.0
-
-        for position in self.positions.values():
-            if position.get("quantity", 0) > 0:
-                # Calculate position value as percentage of portfolio
-                position_value = position["quantity"] * position.get(
-                    "mark_price", position.get("avg_price", 0.0)
-                )
-                exposure_pct = position_value / self.total_portfolio_value
-                total_exposure += exposure_pct
-
-        return total_exposure
+        if denominator is None:
+            denominator = equity
+        if denominator <= 0:
+            return 1.0
+        total_notional = self._position_notional()
+        if self._portfolio_exposure_refresh_failed:
+            return 1.0
+        return total_notional / denominator
 
     def get_cio_portfolio_summary(self, symbol: str) -> dict[str, Any]:
         """
@@ -2062,6 +2171,11 @@ class PositionManager:
         return {
             "total_positions": total_positions,
             "total_exposure": total_exposure,
+            "exposure_base": "equity",
+            "equity_exposure": total_exposure,
+            "available_exposure": self._calculate_portfolio_exposure(
+                denominator=self.total_portfolio_value
+            ),
             "daily_pnl": self.daily_pnl,
             "total_unrealized_pnl": total_unrealized,
             "portfolio_value": self.total_portfolio_value,

@@ -511,6 +511,17 @@ risk_checks_total = Counter(
     ["check_type", "result", "exchange"],
 )
 
+portfolio_exposure_ratio = Gauge(
+    "tradeengine_portfolio_exposure_ratio",
+    "Current gross portfolio exposure ratio by capital base",
+    ["base"],
+)
+
+portfolio_exposure_cap_ratio = Gauge(
+    "tradeengine_portfolio_exposure_cap_ratio",
+    "Configured portfolio exposure cap ratio",
+)
+
 # Position Size Monitoring
 current_position_size = Gauge(
     "tradeengine_current_position_size",

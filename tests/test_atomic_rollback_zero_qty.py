@@ -37,7 +37,7 @@ async def test_atomic_rollback_prioritizes_order_amount_when_result_amount_is_ze
         side=OrderSide.BUY,
         type=OrderType.MARKET,
         amount=1.5,
-        target_price=50000.0,
+        target_price=100.0,  # $150: under the max_position_size_usd cap
         stop_loss=48000.0,
         take_profit=52000.0,
         position_id="test_pos_123",

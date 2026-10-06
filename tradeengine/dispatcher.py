@@ -54,6 +54,11 @@ from tradeengine.metrics import (
     sizing_cap_total,
     strategy_close_blocked_no_exchange_position_total,
 )
+from tradeengine.minimum_order import (
+    FALLBACK_MARGIN,
+    minimum_quantity,
+    volatility_margin,
+)
 from tradeengine.order_manager import OrderManager
 from tradeengine.position_manager import PositionManager
 from tradeengine.protective_leg_mode import protective_leg_mode
@@ -3097,6 +3102,7 @@ class Dispatcher:
 
                     # FIX: Pass the processed order_params to _signal_to_order
                     order_params = result.get("order_params")
+                    await self._refresh_notional_margin(signal.symbol)
                     order = self._signal_to_order(signal, order_params)
 
                     # Store signal for strategy position creation later
@@ -3356,23 +3362,54 @@ class Dispatcher:
             return None
         return price if price > 0 else None
 
-    def _probe_quantity(self, symbol: str, price: float) -> float:
-        """The smallest valid order quantity: ``max(minQty, MIN_NOTIONAL / price)`` rounded UP to the step."""
+    def _notional_margin(self, symbol: str) -> tuple[float, str]:
+        """The safety margin over MIN_NOTIONAL for a symbol and where it came from.
+
+        Read from the cache that ``_refresh_notional_margin`` fills; ``FALLBACK_MARGIN`` (source
+        ``fallback``) until a volatility estimate exists.
+        """
+        cached = getattr(self, "_margin_cache", {}).get(symbol)
+        if cached is None:
+            return FALLBACK_MARGIN, "fallback"
+        return cached[0], "volatility"
+
+    async def _refresh_notional_margin(self, symbol: str) -> None:
+        """Re-derive the symbol's margin from the last hour of 1m closes (at most once a minute)."""
+        cache = self.__dict__.setdefault("_margin_cache", {})
+        cached = cache.get(symbol)
+        if cached is not None and time.monotonic() - cached[1] < 60:
+            return
+        try:
+            closes = await self.exchange.get_recent_closes(symbol, 60)
+        except Exception as exc:
+            self.logger.warning("No recent prices for the %s margin: %s", symbol, exc)
+            return
+        margin = volatility_margin(closes)
+        if margin is not None:
+            cache[symbol] = (margin, time.monotonic())
+
+    def _minimum_quantity(self, symbol: str, price: float) -> float:
+        """The shared minimum valid quantity for a symbol at a price (see ``minimum_order``)."""
         info = self.exchange.get_min_order_amount(symbol)
-        step = Decimal(str(info["step_size"]))
-        wanted = max(
-            Decimal(str(info["min_qty"])),
-            Decimal(str(info["min_notional"])) / Decimal(str(price)),
+        margin, _ = self._notional_margin(symbol)
+        return minimum_quantity(
+            price=price,
+            step=info["step_size"],
+            min_qty=info["min_qty"],
+            min_notional=info["min_notional"],
+            margin=margin,
         )
-        if step > 0:
-            wanted = (wanted / step).to_integral_value(rounding=ROUND_UP) * step
-        return float(wanted)
+
+    def _probe_quantity(self, symbol: str, price: float) -> float:
+        """The probe quantity is the shared minimum valid quantity."""
+        return self._minimum_quantity(symbol, price)
 
     async def probe_size(self, symbol: str) -> tuple[float, float] | None:
         """``(quantity, notional)`` of the symbol's smallest valid order at the live price, or ``None``."""
         price = await self._live_price(symbol)
         if price is None:
             return None
+        await self._refresh_notional_margin(symbol)
         try:
             quantity = self._probe_quantity(symbol, price)
         except Exception as exc:
@@ -3386,17 +3423,30 @@ class Dispatcher:
         self, symbol: str, side: str | None = None
     ) -> dict[str, Any]:
         """What ``/state`` reports as the size limit: the probe notional in probe mode, else the cap."""
+        size = await self.probe_size(symbol)
+        margin, source = self._notional_margin(symbol)
+        order_minimum = (
+            {
+                "quantity": size[0],
+                "notional": size[1],
+                "margin": margin,
+                "margin_source": source,
+            }
+            if size
+            else None
+        )
         if await self.resolve_probe_mode(symbol, side):
-            size = await self.probe_size(symbol)
             return {
                 "probe_mode": True,
                 "max_position_size_usd": size[1] if size else None,
+                "order_minimum": order_minimum,
             }
         return {
             "probe_mode": False,
             "max_position_size_usd": await self.resolve_max_position_size_usd(
                 symbol, side
             ),
+            "order_minimum": order_minimum,
         }
 
     async def _apply_probe_sizing(self, order: TradeOrder) -> dict[str, Any] | None:
@@ -3415,6 +3465,7 @@ class Dispatcher:
             return await self._reject_sizing(
                 order, "probe_sizing_unavailable", "no price to size the probe order"
             )
+        await self._refresh_notional_margin(order.symbol)
         try:
             quantity = self._probe_quantity(order.symbol, price)
         except Exception as exc:
@@ -3466,11 +3517,11 @@ class Dispatcher:
         if notional <= cap:
             return None
 
+        await self._refresh_notional_margin(order.symbol)
         try:
             info = self.exchange.get_min_order_amount(order.symbol)
             step = Decimal(str(info["step_size"]))
-            min_qty = float(info["min_qty"])
-            min_notional = float(info["min_notional"])
+            shared_minimum = self._minimum_quantity(order.symbol, price)
         except Exception as exc:
             return await self._reject_max_usd(
                 order, f"exchange limits unavailable for the ${cap:.2f} cap ({exc})"
@@ -3479,11 +3530,11 @@ class Dispatcher:
         if step > 0:
             fitted = (fitted / step).to_integral_value(rounding=ROUND_DOWN) * step
         quantity = float(fitted)
-        if quantity <= 0 or quantity < min_qty or quantity * price < min_notional:
+        if quantity <= 0 or quantity < shared_minimum:
             return await self._reject_max_usd(
                 order,
-                f"quantity {quantity} at ${price} cannot fit ${cap:.2f} above the exchange minimum "
-                f"(min_qty={min_qty}, min_notional={min_notional})",
+                f"quantity {quantity} at ${price} cannot fit ${cap:.2f} above the minimum valid "
+                f"quantity {shared_minimum}",
             )
 
         self.logger.warning(
@@ -4485,8 +4536,9 @@ class Dispatcher:
 
             # Calculate minimum amount needed to meet MIN_NOTIONAL
             current_price = signal.current_price or 0
+            margin, _ = self._notional_margin(signal.symbol)
             min_amount = binance_exchange.calculate_min_order_amount(
-                signal.symbol, current_price
+                signal.symbol, current_price, margin=margin
             )
 
             # Determine whether to use percentage or fixed quantity

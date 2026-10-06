@@ -59,7 +59,9 @@ class TestOrderAmountCalculation:
 
             # Signal quantity (0.001) is below minimum (0.002), so should use minimum
             assert amount == 0.002
-            mock_calculate.assert_called_once_with("BTCUSDT", 50000.0)
+            mock_calculate.assert_called_once_with(
+                "BTCUSDT", 50000.0, margin=0.02
+            )  # the labelled fallback margin
 
     def test_signal_quantity_above_minimum(self, dispatcher, base_signal):
         """Test that signal quantity is used when above minimum"""

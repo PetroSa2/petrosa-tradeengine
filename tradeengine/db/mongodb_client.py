@@ -17,6 +17,18 @@ from tradeengine.services.data_manager_client import DataManagerClient
 logger = logging.getLogger(__name__)
 
 
+def _config_from_document(document: dict[str, Any], fallback_id: str) -> TradingConfig:
+    """Build a TradingConfig from a stored document.
+
+    Data-manager strips `_id` from every query result, so the id comes from `_id` or `id` when the
+    document has one and from the scope key otherwise (`global`, the symbol, `SYMBOL:SIDE`, the strategy).
+    """
+    fields = dict(document)
+    stored_id = fields.pop("_id", None) or fields.get("id") or fallback_id
+    fields["id"] = str(stored_id)
+    return TradingConfig(**fields)
+
+
 class DataManagerConfigClient:
     """
     Data Manager client for trading configuration management.
@@ -55,9 +67,7 @@ class DataManagerConfigClient:
             )
 
             if response and response.get("data"):
-                doc = response["data"][0]
-                doc["id"] = str(doc.pop("_id"))
-                return TradingConfig(**doc)
+                return _config_from_document(response["data"][0], "global")
             return None
 
         except Exception as e:
@@ -117,9 +127,7 @@ class DataManagerConfigClient:
             )
 
             if response and response.get("data"):
-                doc = response["data"][0]
-                doc["id"] = str(doc.pop("_id"))
-                return TradingConfig(**doc)
+                return _config_from_document(response["data"][0], symbol)
             return None
 
         except Exception as e:
@@ -402,9 +410,7 @@ class DataManagerConfigClient:
             )
 
             if response and response.get("data"):
-                doc = response["data"][0]
-                doc["id"] = str(doc.pop("_id"))
-                return TradingConfig(**doc)
+                return _config_from_document(response["data"][0], f"{symbol}:{side}")
             return None
 
         except Exception as e:
@@ -544,9 +550,7 @@ class DataManagerConfigClient:
             )
 
             if response and response.get("data"):
-                doc = response["data"][0]
-                doc["id"] = str(doc.pop("_id"))
-                return TradingConfig(**doc)
+                return _config_from_document(response["data"][0], strategy_id)
             return None
         except Exception as e:
             logger.error(f"Failed to get strategy config: {e}")

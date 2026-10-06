@@ -1203,6 +1203,152 @@ async def test_reduce_only_order_passes_exposure_gate_above_cap(
     assert position_manager.rejection_reason is None
 
 
+def _reduce_only_over_cap(position_manager, order):
+    """A reduce-only sell of an open long while exposure is above the cap."""
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 4700.0
+    position_manager.max_portfolio_exposure_pct = 0.5
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {"quantity": 0.11, "mark_price": 50000.0}
+    }
+    order.side = "sell"
+    order.position_side = "LONG"
+    order.reduce_only = True
+    order.amount = 0.01
+
+
+def _risk_patches(position_manager, allowed=()):
+    return (
+        patch.object(
+            position_manager,
+            "_get_allowed_symbols",
+            new_callable=AsyncMock,
+            return_value=list(allowed),
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_portfolio_value",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch.object(
+            position_manager,
+            "_refresh_positions_from_data_manager",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            position_manager,
+            "get_position_size_limit",
+            new_callable=AsyncMock,
+            return_value=1.0,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reduce_only_order_still_hits_the_algo_order_limit(
+    position_manager, sample_long_order, mock_exchange
+):
+    """The reduce-only pass-through skips only the exposure gate (#721)."""
+    _reduce_only_over_cap(position_manager, sample_long_order)
+    mock_exchange.get_open_algo_orders = AsyncMock(
+        return_value=[{"algoId": i} for i in range(9)]
+    )
+
+    patches = _risk_patches(position_manager)
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "algo_order_limits"
+
+
+@pytest.mark.asyncio
+async def test_reduce_only_order_still_hits_the_per_order_size_limit(
+    position_manager, sample_long_order
+):
+    _reduce_only_over_cap(position_manager, sample_long_order)
+    position_manager.max_position_size_pct = 0.1
+    sample_long_order.position_size_pct = 0.5
+
+    patches = _risk_patches(position_manager)
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "position_size_pct"
+
+
+@pytest.mark.asyncio
+async def test_reduce_only_order_still_hits_the_symbol_whitelist(
+    position_manager, sample_long_order
+):
+    _reduce_only_over_cap(position_manager, sample_long_order)
+
+    patches = _risk_patches(position_manager, allowed=["ETHUSDT"])
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "symbol_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_algo_limit_is_checked_before_the_exposure_gate(
+    position_manager, sample_long_order, mock_exchange
+):
+    """An increasing order over the cap that also hits the algo limit reports the algo limit."""
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 4700.0
+    position_manager.max_portfolio_exposure_pct = 0.1
+    position_manager.positions = {
+        ("BTCUSDT", "LONG"): {"quantity": 0.158, "mark_price": 50000.0}
+    }
+    sample_long_order.amount = 0.006
+    mock_exchange.get_open_algo_orders = AsyncMock(
+        return_value=[{"algoId": i} for i in range(9)]
+    )
+
+    patches = _risk_patches(position_manager)
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "algo_order_limits"
+
+
+@pytest.mark.asyncio
+async def test_zero_equity_rejects_an_increasing_order_as_insufficient_margin(
+    position_manager, sample_long_order
+):
+    """The cap is measured on equity, so an increasing order cannot be projected without it."""
+    position_manager.equity = 0.0
+    position_manager.total_portfolio_value = 4700.0
+
+    patches = _risk_patches(position_manager)
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "insufficient_margin"
+
+
+@pytest.mark.asyncio
+async def test_zero_available_margin_still_rejects_as_insufficient_margin(
+    position_manager, sample_long_order
+):
+    """The guard on free margin is separate from the equity cap and stays (#721)."""
+    position_manager.equity = 10000.0
+    position_manager.total_portfolio_value = 0.0
+
+    patches = _risk_patches(position_manager)
+    with patches[0], patches[1], patches[2], patches[3]:
+        result = await position_manager.check_position_limits(sample_long_order)
+
+    assert result is False
+    assert position_manager.rejection_reason == "insufficient_margin"
+
+
 # ============================================================================
 # Zero-Balance / Insufficient Margin Tests (#352)
 # ============================================================================

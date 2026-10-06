@@ -1541,12 +1541,11 @@ class PositionManager:
 
         # AC-1 (#352): Explicit zero-capital guard — return a distinct reason before
         # _calculate_portfolio_exposure() hits the "safest for risk" 1.0 fallback.
-        equity = getattr(self, "equity", 0.0)
-        if equity <= 0:
+        if self.total_portfolio_value <= 0:
             self.rejection_reason = "insufficient_margin"
             logger.error(
                 f"⛔ RISK REJECTION: Insufficient margin — available capital is "
-                f"${equity:.2f} (equity <= 0). "
+                f"${self.total_portfolio_value:.2f} (total_portfolio_value <= 0). "
                 f"Order {order.symbol} rejected; check exchange account funding."
             )
             return False
@@ -1606,6 +1605,13 @@ class PositionManager:
             self.rejection_reason = "position_size_pct"
             return False
 
+        # Algo order limits (prevent -4045 error). Every limit that is not the exposure gate runs
+        # first, so an order that skips the exposure check (reduce-only, closes) or that cannot be
+        # priced still meets it.
+        if not await self.check_algo_order_limits(order):
+            self.rejection_reason = "algo_order_limits"
+            return False
+
         # Check portfolio exposure limit. Exposure is based on equity, and the
         # pending order is included only when it increases the position.
         current_exposure = self._calculate_portfolio_exposure()
@@ -1626,6 +1632,15 @@ class PositionManager:
 
         projected_exposure = current_exposure
         exposure_gate_applies = self._order_increases_exposure(order)
+        equity = getattr(self, "equity", 0.0)
+        if exposure_gate_applies and equity <= 0:
+            # The exposure cap is measured on equity: without it an increasing order cannot be projected.
+            self.rejection_reason = "insufficient_margin"
+            logger.error(
+                f"⛔ RISK REJECTION: Insufficient margin — equity is ${equity:.2f} "
+                f"(equity <= 0). Order {order.symbol} rejected; check exchange account funding."
+            )
+            return False
         if exposure_gate_applies:
             order_notional = self._order_notional(order)
             if order_notional is None:
@@ -1647,11 +1662,6 @@ class PositionManager:
                 f"exceeds limit {self.max_portfolio_exposure_pct:.2%}"
             )
             self.rejection_reason = "portfolio_exposure"
-            return False
-
-        # Check algo order limits (prevent -4045 error)
-        if not await self.check_algo_order_limits(order):
-            self.rejection_reason = "algo_order_limits"
             return False
 
         self.rejection_reason = None

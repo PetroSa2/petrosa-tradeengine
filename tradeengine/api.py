@@ -1463,6 +1463,8 @@ async def get_state(
         state = dispatcher.get_cio_state(symbol)
         cap = await dispatcher.resolve_risk_cap(symbol, side)
         state["risk_limits"]["probe_mode"] = cap["probe_mode"]
+        if cap.get("order_minimum") is not None:
+            state["risk_limits"]["order_minimum"] = cap["order_minimum"]
         if cap["max_position_size_usd"] is not None:
             state["risk_limits"]["max_position_size_usd"] = cap["max_position_size_usd"]
         return state

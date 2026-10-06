@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any, Literal
 
 from opentelemetry import trace
@@ -3301,13 +3301,12 @@ class Dispatcher:
             )
             return False
 
-    async def resolve_max_position_size_usd(
+    async def resolve_trading_parameters(
         self, symbol: str, side: str | None = None
-    ) -> float | None:
-        """The ``max_position_size_usd`` in force for a symbol (and side), from the live config.
+    ) -> dict[str, Any] | None:
+        """The live trading parameters for a symbol (and side); ``None`` when the config is unreadable.
 
-        Resolution is the config manager's own (symbol-side, symbol, global, defaults). ``None`` means
-        the config could not be read and the caller falls back to the static settings.
+        Resolution is the config manager's own (symbol-side, symbol, global, defaults).
         """
         try:
             manager = getattr(self, "config_manager", None)
@@ -3321,20 +3320,121 @@ class Dispatcher:
                     "LONG" if str(side).lower() in ("buy", "long") else "SHORT"
                 )
             resolved = await manager.get_config(symbol=symbol, side=position_side)
-            raw = (
-                resolved.get("max_position_size_usd")
-                if isinstance(resolved, dict)
-                else None
-            )
-            if isinstance(raw, bool) or not isinstance(raw, int | float | str):
-                return None
-            value = float(raw)
-            return value if value > 0 else None
+            return resolved if isinstance(resolved, dict) else None
         except Exception as exc:
             self.logger.warning(
-                "Could not resolve max_position_size_usd for %s: %s", symbol, exc
+                "Could not resolve trading parameters for %s: %s", symbol, exc
             )
             return None
+
+    async def resolve_max_position_size_usd(
+        self, symbol: str, side: str | None = None
+    ) -> float | None:
+        """The ``max_position_size_usd`` in force for a symbol (and side), from the live config.
+
+        ``None`` means the config could not be read and the caller falls back to the static settings.
+        """
+        parameters = await self.resolve_trading_parameters(symbol, side)
+        raw = parameters.get("max_position_size_usd") if parameters else None
+        if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    async def resolve_probe_mode(self, symbol: str, side: str | None = None) -> bool:
+        """Whether ``probe_mode`` is on for a symbol (and side). Unreadable config means off."""
+        parameters = await self.resolve_trading_parameters(symbol, side)
+        return bool(parameters and parameters.get("probe_mode") is True)
+
+    async def _live_price(self, symbol: str) -> float | None:
+        try:
+            price = float(await self.exchange.get_price(symbol))
+        except Exception:
+            return None
+        return price if price > 0 else None
+
+    def _probe_quantity(self, symbol: str, price: float) -> float:
+        """The smallest valid order quantity: ``max(minQty, MIN_NOTIONAL / price)`` rounded UP to the step."""
+        info = self.exchange.get_min_order_amount(symbol)
+        step = Decimal(str(info["step_size"]))
+        wanted = max(
+            Decimal(str(info["min_qty"])),
+            Decimal(str(info["min_notional"])) / Decimal(str(price)),
+        )
+        if step > 0:
+            wanted = (wanted / step).to_integral_value(rounding=ROUND_UP) * step
+        return float(wanted)
+
+    async def probe_size(self, symbol: str) -> tuple[float, float] | None:
+        """``(quantity, notional)`` of the symbol's smallest valid order at the live price, or ``None``."""
+        price = await self._live_price(symbol)
+        if price is None:
+            return None
+        try:
+            quantity = self._probe_quantity(symbol, price)
+        except Exception as exc:
+            self.logger.warning(
+                "Could not compute the probe size for %s: %s", symbol, exc
+            )
+            return None
+        return quantity, quantity * price
+
+    async def resolve_risk_cap(
+        self, symbol: str, side: str | None = None
+    ) -> dict[str, Any]:
+        """What ``/state`` reports as the size limit: the probe notional in probe mode, else the cap."""
+        if await self.resolve_probe_mode(symbol, side):
+            size = await self.probe_size(symbol)
+            return {
+                "probe_mode": True,
+                "max_position_size_usd": size[1] if size else None,
+            }
+        return {
+            "probe_mode": False,
+            "max_position_size_usd": await self.resolve_max_position_size_usd(
+                symbol, side
+            ),
+        }
+
+    async def _apply_probe_sizing(self, order: TradeOrder) -> dict[str, Any] | None:
+        """In probe mode, size an entry order to the symbol's smallest valid order.
+
+        Reduce-only orders and closes are exempt (and simulated ones, which never reach the exchange).
+        The order is never left larger than the probe size; if the size cannot be computed the order is
+        rejected rather than sent at its original size.
+        """
+        if order.reduce_only or order.simulate:
+            return None
+        if not await self.resolve_probe_mode(order.symbol, order.side):
+            return None
+        price = await self._live_price(order.symbol) or order.target_price
+        if not price or price <= 0:
+            return await self._reject_sizing(
+                order, "probe_sizing_unavailable", "no price to size the probe order"
+            )
+        try:
+            quantity = self._probe_quantity(order.symbol, price)
+        except Exception as exc:
+            return await self._reject_sizing(
+                order,
+                "probe_sizing_unavailable",
+                f"exchange limits unavailable ({exc})",
+            )
+        self.logger.warning(
+            "SIZING CAP probe_mode: %s %s quantity %s -> %s (~$%.2f at %s)",
+            order.symbol,
+            order.side,
+            order.amount,
+            quantity,
+            quantity * price,
+            price,
+        )
+        order.amount = quantity
+        sizing_cap_total.labels(cap="probe").inc()
+        return None
 
     async def _apply_max_usd_cap(self, order: TradeOrder) -> dict[str, Any] | None:
         """Clamp an entry order's notional to ``max_position_size_usd``.
@@ -3401,18 +3501,23 @@ class Dispatcher:
 
     async def _reject_max_usd(self, order: TradeOrder, detail: str) -> dict[str, Any]:
         """Reject an order that cannot be fitted under ``max_position_size_usd``."""
-        reason = "max_position_size_usd"
+        return await self._reject_sizing(order, "max_position_size_usd", detail)
+
+    async def _reject_sizing(
+        self, order: TradeOrder, reason: str, detail: str
+    ) -> dict[str, Any]:
+        """Reject an order that a sizing rule could not size."""
         order.mark_rejected(source="risk_check", reason=reason)
         risk_rejections_total.labels(
             reason=reason, symbol=order.symbol, exchange=order.exchange
         ).inc()
         risk_checks_total.labels(
-            check_type="max_position_size_usd",
+            check_type=reason,
             result="rejected",
             exchange=order.exchange,
         ).inc()
         self.logger.warning(
-            "⛔ RISK REJECTION: max_position_size_usd for %s: %s", order.symbol, detail
+            "⛔ RISK REJECTION: %s for %s: %s", reason, order.symbol, detail
         )
         await self._emit_execution_event_from_order(
             order, {"status": "rejected"}, event_type="rejected", reason=reason
@@ -3428,9 +3533,11 @@ class Dispatcher:
         """Execute order with distributed consensus"""
         try:
             # The USD cap runs first so every later check sees the quantity that will be sent.
-            cap_rejection = await self._apply_max_usd_cap(order)
-            if cap_rejection is not None:
-                return cap_rejection
+            # Probe sizing first (smallest valid order), then the optional USD ceiling on the result.
+            for sizing in (self._apply_probe_sizing, self._apply_max_usd_cap):
+                sizing_rejection = await sizing(order)
+                if sizing_rejection is not None:
+                    return sizing_rejection
 
             # Check risk limits with distributed state
             risk_checks_total.labels(

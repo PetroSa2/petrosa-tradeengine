@@ -1455,14 +1455,16 @@ async def get_state(
     Ground-truth data derived from engine authoritative state.
 
     ``risk_limits.max_position_size_usd`` is the value the order path enforces: the resolved trading
-    config for the symbol (and side when given). The static settings value stays only when the config
-    cannot be read.
+    config for the symbol (and side when given), or, with ``probe_mode`` on, the notional of the
+    symbol's smallest valid order (``risk_limits.probe_mode`` is then true). The static settings value
+    stays only when the config cannot be read.
     """
     try:
         state = dispatcher.get_cio_state(symbol)
-        resolved = await dispatcher.resolve_max_position_size_usd(symbol, side)
-        if resolved is not None:
-            state["risk_limits"]["max_position_size_usd"] = resolved
+        cap = await dispatcher.resolve_risk_cap(symbol, side)
+        state["risk_limits"]["probe_mode"] = cap["probe_mode"]
+        if cap["max_position_size_usd"] is not None:
+            state["risk_limits"]["max_position_size_usd"] = cap["max_position_size_usd"]
         return state
     except Exception as e:
         logger.error(f"Error getting state for {symbol}: {e}")

@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from datetime import UTC, datetime
+from decimal import ROUND_DOWN, Decimal
 from typing import Any, Literal
 
 from opentelemetry import trace
@@ -50,6 +51,7 @@ from tradeengine.metrics import (
     otel_orders_total,
     risk_checks_total,
     risk_rejections_total,
+    sizing_cap_total,
     strategy_close_blocked_no_exchange_position_total,
 )
 from tradeengine.order_manager import OrderManager
@@ -3299,9 +3301,137 @@ class Dispatcher:
             )
             return False
 
+    async def resolve_max_position_size_usd(
+        self, symbol: str, side: str | None = None
+    ) -> float | None:
+        """The ``max_position_size_usd`` in force for a symbol (and side), from the live config.
+
+        Resolution is the config manager's own (symbol-side, symbol, global, defaults). ``None`` means
+        the config could not be read and the caller falls back to the static settings.
+        """
+        try:
+            manager = getattr(self, "config_manager", None)
+            if manager is None:
+                from tradeengine.api_filter_routes import get_config_manager
+
+                manager = get_config_manager()
+            position_side = None
+            if side:
+                position_side = (
+                    "LONG" if str(side).lower() in ("buy", "long") else "SHORT"
+                )
+            resolved = await manager.get_config(symbol=symbol, side=position_side)
+            raw = (
+                resolved.get("max_position_size_usd")
+                if isinstance(resolved, dict)
+                else None
+            )
+            if isinstance(raw, bool) or not isinstance(raw, int | float | str):
+                return None
+            value = float(raw)
+            return value if value > 0 else None
+        except Exception as exc:
+            self.logger.warning(
+                "Could not resolve max_position_size_usd for %s: %s", symbol, exc
+            )
+            return None
+
+    async def _apply_max_usd_cap(self, order: TradeOrder) -> dict[str, Any] | None:
+        """Clamp an entry order's notional to ``max_position_size_usd``.
+
+        Returns a rejection result when the order cannot be made to fit, otherwise ``None`` (the order
+        may have had its quantity reduced in place). Reduce-only orders, closes and simulated orders are exempt. The
+        quantity is only ever rounded DOWN to the exchange step; a quantity below the exchange minimum is
+        rejected, never rounded up.
+        """
+        if order.reduce_only or order.simulate:
+            # Simulated orders never reach the exchange.
+            return None
+
+        cap = await self.resolve_max_position_size_usd(order.symbol, order.side)
+        if cap is None:
+            cap = float(getattr(settings, "max_position_size_usd", 1000.0))
+
+        price = order.target_price
+        if not price or price <= 0:
+            try:
+                price = float(await self.exchange.get_price(order.symbol))
+            except Exception:
+                price = None
+        if not price or price <= 0:
+            return await self._reject_max_usd(
+                order, f"no price to value the order against the ${cap:.2f} cap"
+            )
+        notional = order.amount * price
+        if notional <= cap:
+            return None
+
+        try:
+            info = self.exchange.get_min_order_amount(order.symbol)
+            step = Decimal(str(info["step_size"]))
+            min_qty = float(info["min_qty"])
+            min_notional = float(info["min_notional"])
+        except Exception as exc:
+            return await self._reject_max_usd(
+                order, f"exchange limits unavailable for the ${cap:.2f} cap ({exc})"
+            )
+        fitted = Decimal(str(cap)) / Decimal(str(price))
+        if step > 0:
+            fitted = (fitted / step).to_integral_value(rounding=ROUND_DOWN) * step
+        quantity = float(fitted)
+        if quantity <= 0 or quantity < min_qty or quantity * price < min_notional:
+            return await self._reject_max_usd(
+                order,
+                f"quantity {quantity} at ${price} cannot fit ${cap:.2f} above the exchange minimum "
+                f"(min_qty={min_qty}, min_notional={min_notional})",
+            )
+
+        self.logger.warning(
+            "SIZING CAP max_position_size_usd: %s %s notional $%.2f > $%.2f; quantity %s -> %s",
+            order.symbol,
+            order.side,
+            notional,
+            cap,
+            order.amount,
+            quantity,
+        )
+        order.amount = quantity
+        sizing_cap_total.labels(cap="max_usd").inc()
+        return None
+
+    async def _reject_max_usd(self, order: TradeOrder, detail: str) -> dict[str, Any]:
+        """Reject an order that cannot be fitted under ``max_position_size_usd``."""
+        reason = "max_position_size_usd"
+        order.mark_rejected(source="risk_check", reason=reason)
+        risk_rejections_total.labels(
+            reason=reason, symbol=order.symbol, exchange=order.exchange
+        ).inc()
+        risk_checks_total.labels(
+            check_type="max_position_size_usd",
+            result="rejected",
+            exchange=order.exchange,
+        ).inc()
+        self.logger.warning(
+            "⛔ RISK REJECTION: max_position_size_usd for %s: %s", order.symbol, detail
+        )
+        await self._emit_execution_event_from_order(
+            order, {"status": "rejected"}, event_type="rejected", reason=reason
+        )
+        _record_orders_total("rejected", order.symbol, order.exchange)
+        return {
+            "status": "rejected",
+            "reason": reason,
+            "rejection_source": "risk_check",
+        }
+
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order with distributed consensus"""
         try:
+            # The USD cap runs first so every later check sees the quantity that will be sent.
+            cap_rejection = await self._apply_max_usd_cap(order)
+            if cap_rejection is not None:
+                return cap_rejection
+
             # Check risk limits with distributed state
             risk_checks_total.labels(
                 check_type="position_limits",

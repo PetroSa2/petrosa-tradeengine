@@ -1448,13 +1448,22 @@ async def get_active_signals(
 @app.get("/state")
 async def get_state(
     symbol: str = Query(..., description="Target symbol for state context"),
+    side: str | None = Query(None, description="Position side (LONG, SHORT)"),
 ) -> dict[str, Any]:
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.
     Ground-truth data derived from engine authoritative state.
+
+    ``risk_limits.max_position_size_usd`` is the value the order path enforces: the resolved trading
+    config for the symbol (and side when given). The static settings value stays only when the config
+    cannot be read.
     """
     try:
-        return dispatcher.get_cio_state(symbol)
+        state = dispatcher.get_cio_state(symbol)
+        resolved = await dispatcher.resolve_max_position_size_usd(symbol, side)
+        if resolved is not None:
+            state["risk_limits"]["max_position_size_usd"] = resolved
+        return state
     except Exception as e:
         logger.error(f"Error getting state for {symbol}: {e}")
         raise HTTPException(

@@ -986,7 +986,7 @@ async def test_execute_order_with_consensus_applies_leverage_before_exchange(
         symbol="BTCUSDT",
         type="market",
         side="buy",
-        amount=0.1,
+        amount=0.01,  # $500: under the max_position_size_usd cap
         target_price=50000.0,
         leverage=3,
         simulate=False,

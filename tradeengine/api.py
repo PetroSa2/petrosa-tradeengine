@@ -55,6 +55,7 @@ from tradeengine.api_filter_routes import (
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
+from tradeengine.equity_peak import equity_peak_tracker
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
 from tradeengine.position_health_guard import (
@@ -408,6 +409,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     _te_settings.position_reconciliation_requires_live_only,
                 )
 
+        # Equity peak and drawdown from it (petrosa_k8s#1239, rule 5): sampled every minute
+        from tradeengine.services.data_manager_client import DataManagerClient
+
+        equity_peak_tracker.configure(
+            DataManagerClient()._client, binance_exchange, dispatcher.position_manager
+        )
+        app.state.equity_peak_task = asyncio.create_task(equity_peak_tracker.run())
+
         # Initialize and start NATS consumer
         logger.info("Initializing NATS consumer...")
         from tradeengine.consumer import signal_consumer
@@ -520,6 +529,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await consumer_task
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
+
+        if hasattr(app.state, "equity_peak_task"):
+            app.state.equity_peak_task.cancel()
+            try:
+                await app.state.equity_peak_task
+            except asyncio.CancelledError:
+                pass
 
         # Stop health evaluator
         if hasattr(app.state, "health_evaluator"):
@@ -1461,6 +1477,7 @@ async def get_state(
     """
     try:
         state = dispatcher.get_cio_state(symbol)
+        state["drawdown"] = equity_peak_tracker.state()
         cap = await dispatcher.resolve_risk_cap(symbol, side)
         state["risk_limits"]["probe_mode"] = cap["probe_mode"]
         if cap.get("order_minimum") is not None:

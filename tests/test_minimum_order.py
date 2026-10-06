@@ -60,10 +60,12 @@ def test_minimum_quantity_meets_minqty_and_notional_after_the_margin(symbol, mar
 
 
 def test_minimum_quantity_rejects_nonsense():
-    with pytest.raises(ValueError, match="price"):
+    with pytest.raises(ValueError, match="price") as bad_price:
         minimum_quantity(price=0, step="1", min_qty="1", min_notional="5", margin=0.02)
-    with pytest.raises(ValueError, match="margin"):
+    with pytest.raises(ValueError, match="margin") as bad_margin:
         minimum_quantity(price=1, step="1", min_qty="1", min_notional="5", margin=1.0)
+    assert "price" in str(bad_price.value)
+    assert "margin" in str(bad_margin.value)
 
 
 def test_volatility_margin_scales_with_the_observed_moves():

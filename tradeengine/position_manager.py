@@ -21,6 +21,7 @@ from shared.constants import (
     UTC,
 )
 from shared.trading_store_client import trading_store
+from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     algo_orders_open,
@@ -97,6 +98,8 @@ class PositionManager:
         self._recorded_exit_order_ids: set[str] = set()
         self._recorded_exit_fill_keys: set[tuple[str, str]] = set()
         self._recorded_fill_keys: set[tuple[str, str]] = set()
+        # Fills that open a position, per entry order: VWAP price, summed fee, trade ids (#737)
+        self.entry_fills = EntryFillAggregator()
         self._fill_ledger: dict[str, Decimal] = {}
         self._store_reachable = False
         self._store_health_task: asyncio.Task[None] | None = None
@@ -874,6 +877,17 @@ class PositionManager:
                 "commission_asset": result.get("commission_asset", "USDT"),
                 "commission_total": commission,
             }
+            # The position carries the economics of its fills, not of the signal: when the fills have
+            # already arrived (the user-data stream beats the REST response) take the VWAP price, the
+            # summed commission and the trade ids from them (#737).
+            fills = self.entry_fills.aggregate(position_data["entry_order_id"])
+            if fills:
+                position_data["entry_price"] = fills["entry_price"]
+                position_data["entry_trade_ids"] = fills["trade_ids"]
+                if fills["commission_total"] is not None:
+                    position_data["commission_total"] = fills["commission_total"]
+                if fills["commission_asset"]:
+                    position_data["commission_asset"] = fills["commission_asset"]
             if not hasattr(self, "position_records"):
                 self.position_records = {}
             self.position_records[order.position_id] = dict(position_data)
@@ -2023,7 +2037,9 @@ class PositionManager:
                     "notional": v.notional,
                     "unrealized_pnl": v.unrealized_pnl,
                     "realized_pnl": 0.0,
-                    "total_cost": 0.0,
+                    # The cost basis of the open quantity: the exchange's entry price is its average, so a
+                    # position of 0.673 ETH at 2710.40 costs 1824, not just the last fill (#737).
+                    "total_cost": v.quantity * v.entry_price,
                     "total_value": v.quantity * v.entry_price,
                     "entry_time": v.updated_at,
                     "last_update": v.updated_at,

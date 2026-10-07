@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     prometheus_enabled: bool = True
     health_check_interval: int = 30
     te_entry_persist_timeout_seconds: float = 1.0
+    # Longest an entry fill waits for its position identity before it is handled anyway (#737)
+    te_entry_link_wait_seconds: float = 10.0
 
     # Distributed Lock Configuration
     lock_timeout_seconds: int = 60

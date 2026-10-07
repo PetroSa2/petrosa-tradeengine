@@ -123,12 +123,19 @@ class ExchangeTruthStore:
         # whose position quantity changed in an ACCOUNT_UPDATE, so the
         # protective-leg manager can resize/cancel legs promptly.
         self._on_position_change: Callable[[list[tuple[str, str]]], None] | None = None
+        # #737: sync callback for every TRADE execution (partial fills included), so the fills of an
+        # order can be aggregated before its FILLED event.
+        self._on_trade: Callable[[dict[str, Any]], None] | None = None
 
     def set_on_position_change(
         self, callback: Callable[[list[tuple[str, str]]], None] | None
     ) -> None:
         """Register (or clear) the position-change callback (#651)."""
         self._on_position_change = callback
+
+    def set_on_trade(self, callback: Callable[[dict[str, Any]], None] | None) -> None:
+        """Register (or clear) the per-trade callback (#737)."""
+        self._on_trade = callback
 
     def set_on_fill(
         self, on_fill: Callable[[dict[str, Any]], Awaitable[None]] | None
@@ -216,6 +223,12 @@ class ExchangeTruthStore:
                 )
             self._last_updated = datetime.now(UTC)
             self._is_ready = True
+
+        if o.get("x") == "TRADE" and self._on_trade is not None:
+            try:
+                self._on_trade(o)
+            except Exception:
+                logger.exception("ExchangeTruthStore trade callback failed")
 
         # #531: fire the fill callback OUTSIDE the lock so the publisher's NATS
         # I/O never blocks the store's critical section. Best-effort — a

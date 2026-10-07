@@ -257,6 +257,11 @@ class Settings(BaseSettings):
     # entirely (the reconciler still degrades the verdict to `degraded`
     # instead of `unhealthy` for ghost-only divergences either way).
     ghost_position_remediation_mode: str = "void"
+    # #739: open position rows above the exchange quantity. dry_run (default) logs and measures the plan,
+    # close applies it, off disables the pass.
+    te_open_row_reconcile_mode: str = "dry_run"
+    te_open_row_reconcile_grace_seconds: float = 300.0
+    te_open_row_reconcile_confirm_passes: int = 2
 
     model_config = {
         "env_file": ".env",

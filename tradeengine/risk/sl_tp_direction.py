@@ -281,6 +281,9 @@ class MarketSideDecision:
     should_flatten: bool
     reason: str
     original_price: float
+    #: ``wrong_side`` (the stop would trigger at once), ``inside_floor`` (correct side but closer to market
+    #: than the safety floor, so it is moved out to the floor) or ``""`` when nothing was changed.
+    kind: str = ""
 
 
 def enforce_market_side_stop(
@@ -371,17 +374,35 @@ def enforce_market_side_stop(
             original_price=stop_price,
         )
 
-    reason = (
-        f"{position_side} SL {stop_price:.6f} would immediately trigger against "
-        f"live market {market_price:.6f} (market crossed entry); RE-ANCHORED to "
-        f"correct side of market at {reanchored:.6f} "
-        f"({sign * min_distance_pct * 100:+.2f}% from market) (#551)"
+    # Wrong side: a LONG stop at or above market (a SHORT stop at or below it) triggers at once. Inside the
+    # floor: on the correct side, but closer to market than the safety floor; it would NOT trigger, it is
+    # only widened to the floor (#738).
+    wrong_side = (sign < 0 and stop_price >= market_price) or (
+        sign > 0 and stop_price <= market_price
     )
-    logger.warning("⚠️ market-side SL re-anchor (#551): %s", reason)
+    distance = (stop_price - market_price) / market_price * 100
+    if wrong_side:
+        kind = "wrong_side"
+        reason = (
+            f"{position_side} SL {stop_price:.6f} would immediately trigger against "
+            f"live market {market_price:.6f} (market crossed entry); RE-ANCHORED to "
+            f"correct side of market at {reanchored:.6f} "
+            f"({sign * min_distance_pct * 100:+.2f}% from market) (#551)"
+        )
+    else:
+        kind = "inside_floor"
+        reason = (
+            f"{position_side} SL {stop_price:.6f} is on the correct side of live market "
+            f"{market_price:.6f} ({distance:+.2f}%) but inside the "
+            f"{min_distance_pct * 100:.2f}% safety floor; it would not trigger, WIDENED to the "
+            f"floor at {reanchored:.6f} ({sign * min_distance_pct * 100:+.2f}% from market) (#738)"
+        )
+    logger.warning("⚠️ market-side SL adjustment (%s): %s", kind, reason)
     return MarketSideDecision(
         price=reanchored,
         was_reanchored=True,
         should_flatten=False,
         reason=reason,
         original_price=stop_price,
+        kind=kind,
     )

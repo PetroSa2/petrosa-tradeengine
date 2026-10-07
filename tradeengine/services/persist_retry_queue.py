@@ -219,9 +219,13 @@ def register_default_handlers(queue: PersistRetryQueue, client: Any) -> None:
         return await client.upsert_position(kwargs)
 
     queue.register("create_position", _retry_create_position)
+    queue.register("create_strategy_position", _retry_create_position)
+    queue.register("create_position_contribution", _retry_create_position)
     queue.register("update_position", _retry_update_position)
     queue.register("update_position_risk_orders", _retry_update_position_risk_orders)
     queue.register("upsert_position", _retry_upsert_position)
+    queue.register("update_strategy_position", _retry_update_position)
+    queue.register("update_position_contribution", _retry_update_position)
 
 
 # Module-level singleton — wired up in api.py startup

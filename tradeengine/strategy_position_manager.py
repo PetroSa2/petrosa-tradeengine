@@ -20,6 +20,7 @@ import inspect
 import logging
 import uuid
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from petrosa_contracts import Signal
@@ -34,11 +35,24 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.metrics import (
     otel_position_persist_failed,
     position_persist_failed_total,
+    strategy_attribution_persist_failures_total,
 )
 from tradeengine.services.alert_publisher import alert_publisher
 from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
+
+_EIGHT_PLACES = Decimal("0.00000001")
+
+
+def _decimal(value: Any, default: str = "0") -> Decimal:
+    if value is None:
+        return Decimal(default)
+    return Decimal(str(value))
+
+
+def _money(value: Any) -> Decimal:
+    return _decimal(value).quantize(_EIGHT_PLACES, rounding=ROUND_HALF_UP)
 
 
 def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) -> None:
@@ -53,6 +67,19 @@ def _on_persist_failure(result: PersistResult, position_data: dict[str, Any]) ->
     )
     try:
         sym = result.symbol or str(position_data.get("symbol", "unknown"))
+        path = (
+            "strategy_positions"
+            if "strategy_position" in result.operation
+            or result.operation == "update_position"
+            else "position_contributions"
+            if "contribution" in result.operation
+            else "exchange_positions"
+        )
+        strategy_attribution_persist_failures_total.labels(
+            path=path,
+            operation=result.operation,
+            reason=result.reason or "unknown",
+        ).inc()
         pos_side = str(position_data.get("position_side", "unknown"))
         position_persist_failed_total.labels(
             symbol=sym,
@@ -130,6 +157,9 @@ class StrategyPositionManager:
         self.contributions: dict[
             str, list[dict[str, Any]]
         ] = {}  # exchange_position_key -> contributions
+        self._processed_close_keys: set[tuple[str, str, str]] = set()
+        self._processed_fill_keys: set[tuple[str, str]] = set()
+        self.unattributed: dict[str, Decimal] = {}
         # AC4 (#459 — 446-C): injected by Dispatcher after UserDataStreamConsumer starts.
         self.exchange_truth_store: ExchangeTruthStore | None = None
 
@@ -186,6 +216,10 @@ class StrategyPositionManager:
             entry_price = float(fill_price)
             entry_quantity = float(execution_result.get("amount", signal.quantity))
             entry_order_id = execution_result.get("order_id")
+            entry_fee = _money(
+                execution_result.get("entry_fee", execution_result.get("commission"))
+            )
+            entry_trade_id = str(execution_result.get("trade_id", "")) or None
 
             # #505: SHORT positions were stored with an unsigned (positive)
             # ``entry_quantity`` while ``side`` was tracked separately, so a
@@ -254,6 +288,8 @@ class StrategyPositionManager:
                 "entry_price": entry_price,
                 "entry_time": datetime.now(UTC),
                 "entry_order_id": entry_order_id,
+                "entry_fee": entry_fee,
+                "trade_id": entry_trade_id,
                 "position_id": order.position_id,
                 "take_profit_price": take_profit_price,
                 "stop_loss_price": stop_loss_price,
@@ -306,6 +342,7 @@ class StrategyPositionManager:
                 position_side,
                 entry_quantity,
                 entry_price,
+                entry_fee=entry_fee,
             )
 
             logger.info(
@@ -358,6 +395,9 @@ class StrategyPositionManager:
         close_reason: str = "manual",
         exit_order_id: str | None = None,
         pnl_unknown: bool = False,
+        exit_fee: Any = None,
+        trade_id: str | None = None,
+        exit_time: datetime | None = None,
     ) -> dict[str, Any]:
         """Close a strategy position when TP/SL triggers
 
@@ -377,20 +417,58 @@ class StrategyPositionManager:
                 logger.warning(f"Strategy position {strategy_position_id} not found")
                 return {}
 
+            close_key = (
+                strategy_position_id,
+                str(exit_order_id or ""),
+                str(trade_id or ""),
+            )
+            if exit_order_id and trade_id and close_key in self._processed_close_keys:
+                return {
+                    "strategy_position_id": strategy_position_id,
+                    "idempotent": True,
+                }
+            if position.get("status") == "closed":
+                return {
+                    "strategy_position_id": strategy_position_id,
+                    "idempotent": True,
+                    "position_status": "closed",
+                }
+
             # Calculate exit quantity
             if exit_quantity is None:
-                exit_quantity = position["entry_quantity"]
+                exit_quantity = position["entry_quantity"] - position.get(
+                    "exit_quantity", 0
+                )
+            exit_quantity = min(
+                _decimal(exit_quantity),
+                _decimal(position["entry_quantity"])
+                - _decimal(position.get("exit_quantity", 0)),
+            )
 
             # Calculate PnL
-            entry_price = position["entry_price"]
-            entry_quantity = position["entry_quantity"]
+            entry_price = _decimal(position["entry_price"])
+            entry_quantity = _decimal(position["entry_quantity"])
+            exit_price_decimal = (
+                _decimal(exit_price) if exit_price is not None else None
+            )
 
-            if pnl_unknown:
+            if pnl_unknown or exit_price_decimal is None:
                 pnl = None
             elif position["side"] == "LONG":
-                pnl = (exit_price - entry_price) * exit_quantity
+                pnl = (exit_price_decimal - entry_price) * exit_quantity
             else:  # SHORT
-                pnl = (entry_price - exit_price) * exit_quantity
+                pnl = (entry_price - exit_price_decimal) * exit_quantity
+
+            gross_pnl = None if pnl is None else _money(pnl)
+            entry_fee_total = _money(position.get("entry_fee"))
+            exit_fee_value = _money(exit_fee)
+            fee_for_close = (
+                (entry_fee_total * exit_quantity / entry_quantity) + exit_fee_value
+                if entry_quantity and not pnl_unknown
+                else None
+            )
+            net_pnl = None if gross_pnl is None else _money(gross_pnl + fee_for_close)
+            closed_quantity = _decimal(position.get("exit_quantity", 0)) + exit_quantity
 
             pnl_pct = (
                 ((pnl / (entry_price * exit_quantity)) * 100 if entry_price > 0 else 0)
@@ -400,15 +478,34 @@ class StrategyPositionManager:
 
             # Update position
             position["status"] = (
-                "closed" if exit_quantity >= entry_quantity else "partial"
+                "closed" if closed_quantity >= entry_quantity else "partially_closed"
             )
-            position["exit_quantity"] = exit_quantity
-            position["exit_price"] = exit_price
-            position["exit_time"] = datetime.now(UTC)
+            position["exit_quantity"] = float(closed_quantity)
+            position["exit_price"] = (
+                float(exit_price_decimal) if exit_price_decimal is not None else None
+            )
+            position["exit_time"] = exit_time or datetime.now(UTC)
             position["exit_order_id"] = exit_order_id
+            position["trade_id"] = trade_id
             position["close_reason"] = close_reason
-            position["realized_pnl"] = pnl
-            position["realized_pnl_pct"] = pnl_pct
+            position["gross_realized_pnl"] = gross_pnl
+            position["realized_pnl"] = (
+                _money(_decimal(position.get("realized_pnl")) + net_pnl)
+                if net_pnl is not None
+                else None
+            )
+            prior_commission = position.get("commission_total")
+            position["commission_total"] = (
+                _money(
+                    entry_fee_total if prior_commission is None else prior_commission
+                )
+                + exit_fee_value
+            )
+            position["realized_pnl_pct"] = (
+                _money(net_pnl / (entry_price * exit_quantity) * 100)
+                if net_pnl is not None and entry_price and exit_quantity
+                else None
+            )
 
             # Persist to Data Manager
             await self._update_strategy_position_closure(strategy_position_id, position)
@@ -416,15 +513,30 @@ class StrategyPositionManager:
             # Update contribution
             if not pnl_unknown:
                 await self._close_contribution(
-                    strategy_position_id, exit_price, pnl, pnl_pct, close_reason
+                    strategy_position_id,
+                    exit_price_decimal,
+                    net_pnl,
+                    position["realized_pnl_pct"],
+                    close_reason,
+                    exit_quantity=exit_quantity,
+                    trade_id=trade_id,
+                    exit_fee=exit_fee_value,
+                    exit_order_id=exit_order_id,
                 )
 
             # Update exchange position
             await self._reduce_exchange_position(
                 position["exchange_position_key"],
                 exit_quantity,
-                exit_price if exit_price is not None else entry_price,
+                float(
+                    exit_price_decimal
+                    if exit_price_decimal is not None
+                    else entry_price
+                ),
             )
+
+            if exit_order_id and trade_id:
+                self._processed_close_keys.add(close_key)
 
             pnl_text = "unknown" if pnl is None else f"${pnl:.2f}"
             pct_text = "unknown" if pnl_pct is None else f"{pnl_pct:.2f}%"
@@ -445,8 +557,10 @@ class StrategyPositionManager:
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "quantity": exit_quantity,
-                "realized_pnl": pnl,
-                "realized_pnl_pct": pnl_pct,
+                "realized_pnl": position["realized_pnl"],
+                "gross_realized_pnl": gross_pnl,
+                "realized_pnl_pct": position["realized_pnl_pct"],
+                "commission_total": position["commission_total"],
                 # petrosa_k8s#1130: round-trip the CIO position_id + whether
                 # this closure emptied the position (vs a partial scale-out)
                 # so callers can decide whether to tell CIO the position is
@@ -477,10 +591,12 @@ class StrategyPositionManager:
 
             # First, check in-memory strategy positions
             for strategy_position_id, position in self.strategy_positions.items():
-                if (
-                    position.get("exchange_position_key") == exchange_position_key
-                    and position.get("status") == "open"
-                ):
+                if position.get(
+                    "exchange_position_key"
+                ) == exchange_position_key and position.get("status") in {
+                    "open",
+                    "partially_closed",
+                }:
                     open_positions.append(position)
 
             # Note: Data Manager fallback query removed - positions are managed in memory
@@ -600,7 +716,7 @@ class StrategyPositionManager:
                 return
 
             position = self.exchange_positions[exchange_position_key]
-            position["current_quantity"] -= quantity
+            position["current_quantity"] -= float(quantity)
             position["last_update_time"] = datetime.now(UTC)
 
             if position["current_quantity"] <= 0:
@@ -636,6 +752,7 @@ class StrategyPositionManager:
         position_side: str,
         quantity: float,
         price: float,
+        entry_fee: Decimal = Decimal("0"),
     ) -> None:
         """Create contribution record linking strategy position to exchange position"""
         try:
@@ -658,6 +775,7 @@ class StrategyPositionManager:
                 "position_side": position_side,
                 "contribution_quantity": quantity,
                 "contribution_entry_price": price,
+                "entry_fee": entry_fee,
                 "contribution_time": datetime.now(UTC),
                 "position_sequence": sequence,
                 "exchange_quantity_before": qty_before,
@@ -680,6 +798,7 @@ class StrategyPositionManager:
                 "position_side": position_side,
                 "contribution_quantity": quantity,
                 "contribution_entry_price": price,
+                "entry_fee": entry_fee,
                 "contribution_time": contribution["contribution_time"],
                 "position_sequence": sequence,
                 "exchange_quantity_before": qty_before,
@@ -708,6 +827,11 @@ class StrategyPositionManager:
         pnl: float,
         pnl_pct: float,
         close_reason: str,
+        *,
+        exit_quantity: Decimal | None = None,
+        trade_id: str | None = None,
+        exit_fee: Decimal = Decimal("0"),
+        exit_order_id: str | None = None,
     ) -> None:
         """Close contribution record when strategy position closes"""
         update_data = {
@@ -716,6 +840,9 @@ class StrategyPositionManager:
             "exit_price": exit_price,
             "contribution_pnl": pnl,
             "contribution_pnl_pct": pnl_pct,
+            "trade_id": trade_id,
+            "exit_order_id": exit_order_id,
+            "exit_fee": exit_fee,
             "close_reason": close_reason,
         }
         contribution_id = next(
@@ -745,12 +872,105 @@ class StrategyPositionManager:
             )
             _on_persist_failure(result, update_data)
 
+        for item in self.contributions.get(
+            self.strategy_positions.get(strategy_position_id, {}).get(
+                "exchange_position_key", ""
+            ),
+            [],
+        ):
+            if item.get("strategy_position_id") == strategy_position_id:
+                item.update(update_data)
+
+    async def close_exchange_fill(
+        self,
+        exchange_position_key: str,
+        exit_price: Any,
+        exit_quantity: Any,
+        *,
+        exit_order_id: str | None = None,
+        trade_id: str | None = None,
+        close_reason: str = "manual",
+        exit_fee: Any = None,
+    ) -> dict[str, Any]:
+        """Allocate one exchange fill across open strategy positions FIFO."""
+        fill_key = (str(exit_order_id or ""), str(trade_id or ""))
+        if exit_order_id and trade_id and fill_key in self._processed_fill_keys:
+            return {
+                "allocated_quantity": _money(0),
+                "unattributed": _money(0),
+                "idempotent": True,
+            }
+
+        remaining = _decimal(exit_quantity)
+        fee_remaining = _money(exit_fee)
+        positions = sorted(
+            await self.get_open_strategy_positions_by_exchange_key(
+                exchange_position_key
+            ),
+            key=lambda item: next(
+                (
+                    contribution.get("position_sequence", 0)
+                    for contribution in self.contributions.get(
+                        exchange_position_key, []
+                    )
+                    if contribution.get("strategy_position_id")
+                    == item.get("strategy_position_id")
+                ),
+                0,
+            ),
+        )
+        allocations: list[dict[str, Any]] = []
+        planned: list[tuple[dict[str, Any], Decimal]] = []
+        for position in positions:
+            if remaining <= 0:
+                break
+            available = _decimal(position.get("entry_quantity")) - _decimal(
+                position.get("exit_quantity", 0)
+            )
+            quantity = min(available, remaining)
+            planned.append((position, quantity))
+            remaining -= quantity
+
+        remaining = _decimal(exit_quantity)
+        for index, (position, quantity) in enumerate(planned):
+            if remaining <= 0:
+                break
+            fee = (
+                fee_remaining
+                if index == len(planned) - 1
+                else _money(_decimal(exit_fee) * quantity / _decimal(exit_quantity))
+            )
+            fee_remaining -= fee
+            allocations.append(
+                await self.close_strategy_position(
+                    strategy_position_id=position["strategy_position_id"],
+                    exit_price=exit_price,
+                    exit_quantity=quantity,
+                    close_reason=close_reason,
+                    exit_order_id=exit_order_id,
+                    trade_id=trade_id,
+                    exit_fee=fee,
+                )
+            )
+            remaining -= quantity
+
+        if exit_order_id and trade_id:
+            self._processed_fill_keys.add(fill_key)
+        if remaining:
+            day = datetime.now(UTC).date().isoformat()
+            self.unattributed[day] = _money(self.unattributed.get(day, 0) + remaining)
+        return {
+            "allocations": allocations,
+            "allocated_quantity": _money(_decimal(exit_quantity) - remaining),
+            "unattributed": _money(remaining),
+        }
+
     def get_all_open_strategy_positions(self) -> list[dict[str, Any]]:
         """Return a shallow copy of all in-memory positions with status == 'open'."""
         return [
             dict(pos)
             for pos in self.strategy_positions.values()
-            if pos.get("status") == "open"
+            if pos.get("status") in {"open", "partially_closed"}
         ]
 
     async def evict_ghost_position(

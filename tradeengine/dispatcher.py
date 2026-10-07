@@ -5992,7 +5992,10 @@ class Dispatcher:
                 order.stop_loss
                 and order.stop_loss > 0
                 and entry_price > 0
-                and not order.stop_loss_pct
+                and (
+                    (order.side == "buy" and order.stop_loss < entry_price)
+                    or (order.side != "buy" and order.stop_loss > entry_price)
+                )
             ):
                 implied_pct = abs(entry_price - order.stop_loss) / entry_price
                 if implied_pct < MIN_SL_DISTANCE_PCT:

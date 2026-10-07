@@ -899,6 +899,54 @@ async def test_sl_floor_overrides_absolute_stop_loss_too_close(dispatcher_with_m
     )
 
 
+@pytest.mark.asyncio
+async def test_sl_floor_overrides_cio_absolute_stop_with_percentage_hint(
+    dispatcher_with_mocks,
+):
+    """#724: an absolute CIO stop must not bypass the floor when pct is present."""
+    from shared.constants import MIN_SL_DISTANCE_PCT
+
+    dispatcher, _ = dispatcher_with_mocks
+    oco_place_calls = []
+
+    async def capture_oco(*args, **kwargs):
+        oco_place_calls.append(kwargs)
+        return {"status": "success", "sl_order_id": "sl-724", "tp_order_id": "tp-724"}
+
+    dispatcher.oco_manager.place_oco_orders = capture_oco
+
+    entry_price = 1000.0
+    order = TradeOrder(
+        position_id="test-724-cio-shaped",
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        target_price=entry_price,
+        position_side="LONG",
+        exchange="binance",
+        stop_loss=entry_price * (1 - 0.0022),
+        stop_loss_pct=0.02,
+        take_profit=entry_price * 1.03,
+    )
+
+    fill_result = {
+        "status": "filled",
+        "fill_price": entry_price,
+        "price": entry_price,
+        "amount": 0.001,
+    }
+
+    dispatcher.position_manager.update_position_risk_orders = AsyncMock()
+
+    await dispatcher._place_risk_management_orders(order, fill_result)
+
+    assert len(oco_place_calls) == 1
+    actual_sl = oco_place_calls[0]["stop_loss_price"]
+    expected_sl = entry_price * (1 - MIN_SL_DISTANCE_PCT)
+    assert abs(actual_sl - expected_sl) < 1e-6
+
+
 # ============================================================================
 # Take-Profit Fallback Tests (per #372)
 # ============================================================================

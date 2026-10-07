@@ -65,7 +65,11 @@ from tradeengine.position_manager import PositionManager
 from tradeengine.protective_leg_mode import protective_leg_mode
 from tradeengine.protective_legs import ProtectiveLegManager
 from tradeengine.services.alert_publisher import alert_publisher
-from tradeengine.services.cost_telemetry import build_cost_fields, record_fill_metrics
+from tradeengine.services.cost_telemetry import (
+    build_cost_fields,
+    fill_cost_fields,
+    record_fill_metrics,
+)
 from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
     execution_event_publisher,
@@ -2242,6 +2246,15 @@ class OCOManager:
                         fee_asset=order_details.get("commission_asset"),
                         trade_id=str(order_details.get("trade_id", "")) or None,
                         closed_by_strategy_id=str(strategy_id),
+                        trigger_price=(
+                            (strategy_pos or {}).get(
+                                "stop_loss_price"
+                                if close_reason == "stop_loss"
+                                else "take_profit_price"
+                            )
+                            if close_reason in ("stop_loss", "take_profit")
+                            else None
+                        ),
                     )
 
                     # Persist the real exchange fill against the durable position
@@ -2363,8 +2376,12 @@ class OCOManager:
         fee_asset: str | None = None,
         trade_id: str | None = None,
         closed_by_strategy_id: str = "unknown",
+        trigger_price: float | None = None,
     ) -> None:
         """Publish a `filled` execution event for a completed OCO exit (#531).
+
+        ``trigger_price`` is the stop-loss or take-profit price of the leg that filled: the intended price the
+        event's ``slippage_bp`` is measured against (petrosa-data-manager#561).
 
         The OCO close path is one of the two async producers that actually
         know a fill happened (the other being the user-data stream). Prior to
@@ -2389,6 +2406,31 @@ class OCOManager:
                     closure.get("strategy_position_id"),
                     strategy_id,
                 )
+            exit_side = exit_order_side(closure.get("side")) or str(
+                closure.get("side") or ""
+            )
+            trigger = (
+                close_reason if close_reason in ("stop_loss", "take_profit") else None
+            )
+            telemetry = fill_cost_fields(
+                symbol=symbol,
+                side=exit_side,
+                order_type="market",
+                fill_price=exit_price,
+                quantity=filled_quantity,
+                fee=fee,
+                fee_asset=fee_asset,
+                intended_price=trigger_price if trigger else None,
+                trigger=trigger,
+                reduce_only=True,
+            )
+            record_fill_metrics(
+                str(filled_order_id or ""),
+                telemetry,
+                role=trigger or "manual_close",
+                side=exit_side,
+                liquidity="taker",
+            )
             await execution_event_publisher.publish(
                 event_type="filled",
                 strategy_id=strategy_id,
@@ -2413,6 +2455,7 @@ class OCOManager:
                     "closed_by_strategy_id": closed_by_strategy_id,
                     "exchange_trade_time": closure.get("trade_time"),
                     "close_reason": close_reason,
+                    **telemetry,
                     # petrosa_k8s#1130: an SL/TP trigger is always a full,
                     # reduce_only exit of the strategy position — lets CIO's
                     # execution.events.> listener call
@@ -5321,10 +5364,19 @@ class Dispatcher:
                 strategy_position_manager,
             )
 
+            intended_hint: dict[str, float | None] = {}
+
             def _resolve_from_signal_map() -> tuple[str, str | None] | None:
                 sig = self.exchange_order_id_to_signal.pop(order_id, None)
                 if sig is None:
                     return None
+                # The price the decision was taken at: what the fill's slippage is measured against (#561)
+                intended_hint["price"] = (
+                    getattr(sig, "target_price", None)
+                    if str(order_type).upper() == "LIMIT"
+                    and getattr(sig, "target_price", None)
+                    else getattr(sig, "current_price", None)
+                )
                 return (sig.strategy_id or "unknown", sig.decision_id)
 
             def _resolve_from_strategy_position() -> tuple[str, str | None] | None:
@@ -5523,6 +5575,26 @@ class Dispatcher:
             if fill_time is not None:
                 extra["fill_time"] = fill_time
             extra["pnl"] = pnl  # entry fills usually have rp=0; keep explicit
+            # Cost telemetry of the fill (#561): slippage against the price the signal carried. The live
+            # entries are user-data-stream fills, so this is where it has to be emitted.
+            telemetry = fill_cost_fields(
+                symbol=symbol,
+                side=str(side),
+                order_type=str(order_type),
+                fill_price=fill_price,
+                quantity=fill_qty,
+                fee=fee,
+                fee_asset=fee_asset,
+                intended_price=intended_hint.get("price"),
+            )
+            extra.update(telemetry)
+            record_fill_metrics(
+                order_id,
+                telemetry,
+                role="entry",
+                side=str(side),
+                liquidity="maker" if order_obj.get("m") else "taker",
+            )
 
             await execution_event_publisher.publish(
                 event_type="filled",

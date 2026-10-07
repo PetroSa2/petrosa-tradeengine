@@ -54,7 +54,7 @@ from tradeengine.api_filter_routes import (
 )
 from tradeengine.commission_rates import commission_rates
 from tradeengine.config_manager import TradingConfigManager
-from tradeengine.db.mongodb_client import config_client
+from tradeengine.db.mongodb_client import DataManagerConfigClient, config_client
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
@@ -73,6 +73,26 @@ from tradeengine.strategy_position_manager import (
 tracer = trace.get_tracer(__name__)
 
 logger = logging.getLogger(__name__)
+
+
+def _build_config_rate_limiter() -> Any:
+    """Build a safe limiter for the configured data-manager-backed client."""
+    if ConfigRateLimiter is None:
+        return None
+
+    uses_data_manager_api = isinstance(config_client, DataManagerConfigClient)
+    if uses_data_manager_api:
+        logger.warning(
+            "Configuration rate limiter disabled: data-manager API client is not a Mongo client"
+        )
+
+    return ConfigRateLimiter(
+        mongodb_client=config_client,
+        service_name="tradeengine",
+        per_agent_limit=int(os.getenv("CONFIG_RATE_LIMIT_PER_AGENT", "10")),
+        cooldown_seconds=int(os.getenv("CONFIG_RATE_LIMIT_COOLDOWN", "300")),
+        enabled=not uses_data_manager_api,
+    )
 
 
 @asynccontextmanager
@@ -125,14 +145,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize and register configuration rate limiter
         if ConfigRateLimiter:
-            rate_limiter = ConfigRateLimiter(
-                mongodb_client=config_client,
-                service_name="tradeengine",
-                per_agent_limit=int(os.getenv("CONFIG_RATE_LIMIT_PER_AGENT", "10")),
-                cooldown_seconds=int(os.getenv("CONFIG_RATE_LIMIT_COOLDOWN", "300")),
-            )
+            rate_limiter = _build_config_rate_limiter()
             app.state.rate_limiter = rate_limiter
-            logger.info("✅ Configuration rate limiter initialized")
+            if rate_limiter.enabled:
+                logger.info("✅ Configuration rate limiter initialized")
 
         # Initialize audit logger
         if audit_logger.enabled:

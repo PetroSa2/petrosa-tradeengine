@@ -5570,6 +5570,22 @@ class Dispatcher:
         from shared.config import settings
 
         portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
+        # Per-symbol notional (USD) of the open positions: the held pairs, for the CIO's drawdown basket and
+        # the volatility-derived exposure caps (petrosa_k8s#1239, rules 5 and 11)
+        try:
+            by_symbol = self.position_manager.get_notional_by_symbol()
+            if isinstance(by_symbol, dict):
+                portfolio_data = {
+                    **portfolio_data,
+                    "net_notional_by_symbol": {
+                        s: v["net"] for s, v in by_symbol.items()
+                    },
+                    "gross_notional_by_symbol": {
+                        s: v["gross"] for s, v in by_symbol.items()
+                    },
+                }
+        except Exception as exc:  # /state must never fail on this
+            self.logger.warning("Per-symbol notional unavailable: %s", exc)
         active_orders = self.order_manager.get_active_orders()
 
         # Calculate symbol-specific order count

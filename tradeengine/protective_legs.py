@@ -969,13 +969,15 @@ class ProtectiveLegManager:
     ) -> str:
         """Cancel ``leg`` then re-place it at the side quantity (same trigger)."""
         self._log.warning(
-            "#651: resizing %s %s %s leg %s from %s to side quantity %s",
+            "#651: resizing %s %s %s leg %s from %s to side quantity %s "
+            "(trigger %s, kept as is)",
             symbol,
             side,
             leg.kind,
             leg.algo_id,
             leg.quantity,
             target,
+            leg.trigger_price,
         )
         outcome = await self._cancel_leg(symbol, leg, "resize_cancel")
         if outcome == "failed":
@@ -1028,6 +1030,17 @@ class ProtectiveLegManager:
             return f"resize_failed_place:{leg.algo_id}"
         await self._replace_tracked_id(symbol, side, leg.kind, leg.algo_id, new_id)
         self._record("resize", "success")
+        # #738: an add-on entry grows the side; the existing leg price must not move because of it.
+        self._log.info(
+            "#738: %s %s %s leg trigger old=%s new=%s (qty %s -> %s)",
+            symbol,
+            side,
+            leg.kind,
+            leg.trigger_price,
+            leg.trigger_price,
+            leg.quantity,
+            target,
+        )
         return f"resize:{leg.algo_id}->{new_id}@{target}"
 
     async def _migrate(

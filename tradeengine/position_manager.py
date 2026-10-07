@@ -2161,6 +2161,38 @@ class PositionManager:
             net += signed_notional
         return gross, net
 
+    def get_notional_by_symbol(self) -> dict[str, dict[str, float]]:
+        """Per symbol: gross, signed net, long and short notional (USD), from the open positions.
+
+        Uses mark prices when present, like ``get_notional_summary`` (whose totals these add up to). A
+        symbol with both a LONG and a SHORT (hedge mode) shows both legs and their net.
+        """
+        out: dict[str, dict[str, float]] = {}
+        for key, position in self.get_positions().items():
+            symbol = str(
+                position.get("symbol") or (key[0] if isinstance(key, tuple) else key)
+            )
+            quantity = abs(float(position.get("quantity", 0.0)))
+            mark_price = float(
+                position.get("mark_price")
+                or position.get("current_price")
+                or position.get("avg_price", 0.0)
+            )
+            notional = quantity * mark_price
+            if notional == 0.0:
+                continue
+            entry = out.setdefault(
+                symbol, {"gross": 0.0, "net": 0.0, "long": 0.0, "short": 0.0}
+            )
+            if str(position.get("position_side", "LONG")).upper() == "LONG":
+                entry["long"] += notional
+                entry["net"] += notional
+            else:
+                entry["short"] += notional
+                entry["net"] -= notional
+            entry["gross"] += notional
+        return out
+
     def get_portfolio_summary(self) -> dict[str, Any]:
         """Get portfolio summary"""
         total_positions = len(self.positions)

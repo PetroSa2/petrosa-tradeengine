@@ -63,6 +63,7 @@ from tradeengine.position_health_guard import (
     check_position_stops,
 )
 from tradeengine.services.execution_event_publisher import execution_event_publisher
+from tradeengine.stop_floor import stop_floor
 from tradeengine.strategy_position_manager import (
     strategy_position_manager as _strategy_position_manager,
 )
@@ -224,8 +225,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
-        from tradeengine.open_row_reconciler import OpenRowReconciler
-        from tradeengine.position_reconciler import PositionReconciler
 
         # #540: decouple the watchdog from `simulation_enabled`. The live
         # deployment sets TE_NAKED_POSITION_REMEDIATION_MODE but leaves
@@ -237,6 +236,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # (`position_reconciliation_requires_live_only=False`) starts the
         # watchdog whenever reconciliation is enabled; set the flag True to
         # restore the old sim-gated behavior.
+        # Derived stop floor (petrosa_k8s#1239, rule 23): sigma_1h from data-manager's risk inputs, the
+        # exchange filters and the book spread, refreshed in the background
+        from shared.constants import SUPPORTED_SYMBOLS
+        from tradeengine.open_row_reconciler import OpenRowReconciler
+        from tradeengine.position_reconciler import PositionReconciler
+        from tradeengine.services.data_manager_client import DataManagerClient
+
+        stop_floor.configure(
+            DataManagerClient()._client, binance_exchange, SUPPORTED_SYMBOLS
+        )
+        app.state.stop_floor_task = asyncio.create_task(stop_floor.run())
+
         _reconciliation_enabled = _te_settings.position_reconciliation_enabled
         _real_trading_active = not _te_settings.simulation_enabled
         if _te_settings.position_reconciliation_requires_live_only:
@@ -269,6 +280,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     # of re-arming with a guaranteed-to-fail price (#second-wave
                     # OCO-orphan: 2.4% strategy SL vs 6% floor deadlock).
                     min_sl_distance_pct=_te_settings.te_min_sl_distance_pct,
+                    floor_provider=lambda symbol: stop_floor.floor(symbol).pct,
                     # #560: bound consecutive re-arm failures per position
                     # before backing off instead of retrying every cycle.
                     max_consecutive_arm_failures=(
@@ -535,6 +547,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
 
+        if hasattr(app.state, "stop_floor_task"):
+            app.state.stop_floor_task.cancel()
+            try:
+                await app.state.stop_floor_task
+            except asyncio.CancelledError:
+                pass
         if hasattr(app.state, "commission_task"):
             app.state.commission_task.cancel()
             try:

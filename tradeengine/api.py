@@ -116,6 +116,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Set global config manager for API routes
         set_config_manager(trading_config_manager)
         set_filter_config_manager(trading_config_manager)
+        # The dispatcher's leverage-bound check and parameter resolution read the same live manager (#728)
+        dispatcher.config_manager = trading_config_manager
 
         # Store in app state
         app.state.trading_config_manager = trading_config_manager

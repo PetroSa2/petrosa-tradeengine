@@ -2463,6 +2463,9 @@ class Dispatcher:
 
         # Initialize Leverage Bound Guard (FR64, P6.4)
         self.leverage_bound_guard = LeverageBoundGuard()
+        # The live trading-config manager, set by the API lifespan (tradeengine/api.py) once it exists; until then
+        # (and in tests) `_live_config_manager` falls back to the one the config routes hold, else the code defaults.
+        self.config_manager: Any = None
 
         # #599: applies the leverage actually carried on each signal/order
         # (falling back to settings.te_default_leverage when absent) right
@@ -3389,6 +3392,77 @@ class Dispatcher:
             )
             return False
 
+    def _live_config_manager(self) -> Any:
+        """The live trading-config manager: the one the API lifespan sets on the dispatcher, else the one the
+        config routes hold (the one ``position_manager.get_position_size_limit`` uses); ``None`` when neither
+        exists, in which case callers say that they fall back to the code defaults."""
+        manager = getattr(self, "config_manager", None)
+        if manager is not None:
+            return manager
+        try:
+            from tradeengine.api_filter_routes import get_config_manager
+
+            return get_config_manager()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _config_side(order: Any) -> str:
+        """The position side an order's config is resolved for: its hedge-mode ``position_side`` when it
+        carries one (a sell that closes a LONG is the LONG's config), else the order side."""
+        position_side = str(getattr(order, "position_side", None) or "").upper()
+        if position_side in ("LONG", "SHORT"):
+            return position_side
+        return "LONG" if str(order.side).lower() in ("buy", "long") else "SHORT"
+
+    async def check_leverage_bound(self, order: Any) -> tuple[bool, str]:
+        """AC2 + AC3 of the leverage bound (FR64, P6.4) against the **resolved** config of the order's scope
+        (strategy, symbol, side, then global), not the code defaults. Fails CLOSED on any error (#600)."""
+        try:
+            strategy_id: str | None = order.strategy_metadata.get("strategy_id")
+            manager = self._live_config_manager()
+            side = self._config_side(order)
+            if manager is not None:
+                resolved = await manager.get_config(
+                    symbol=order.symbol, side=side, strategy_id=strategy_id
+                )
+            else:
+                from tradeengine.defaults import get_default_parameters
+
+                self.logger.warning(
+                    "Leverage bound check for %s uses the code defaults: no config manager is available",
+                    order.symbol,
+                )
+                resolved = get_default_parameters()
+            # Open position leverages for AC3, each from the position's own resolved config.
+            # Falls back to 10x if the lookup fails or no config manager is available.
+            open_leverages: list[int] = []
+            for pos in strategy_position_manager.get_all_open_strategy_positions():
+                try:
+                    pos_strategy = pos.get("strategy_id")
+                    if manager is not None and pos_strategy:
+                        pos_config = await manager.get_config(
+                            symbol=pos.get("symbol", order.symbol),
+                            side=pos.get("side", "LONG"),
+                            strategy_id=pos_strategy,
+                        )
+                        open_leverages.append(int(pos_config.get("leverage", 10)))
+                    else:
+                        open_leverages.append(10)
+                except Exception:
+                    open_leverages.append(10)
+            return self.leverage_bound_guard.check(order, resolved, open_leverages)
+        except Exception as exc:
+            # #600: was "failing open (order proceeds)" — bypassed FR64 AC2/AC3 (per-strategy bound +
+            # portfolio aggregate cap) silently on any transient config-store hiccup. Fail CLOSED instead;
+            # the caller records the rejection metric and audit-trail entry.
+            self.logger.error(
+                f"⛔ RISK REJECTION: Leverage bound guard raised an "
+                f"unexpected error for {order.symbol} — failing CLOSED "
+                f"(order rejected): {exc}"
+            )
+            return False, f"leverage_bound_guard_error: {exc}"
+
     async def resolve_trading_parameters(
         self, symbol: str, side: str | None = None
     ) -> dict[str, Any] | None:
@@ -3397,11 +3471,9 @@ class Dispatcher:
         Resolution is the config manager's own (symbol-side, symbol, global, defaults).
         """
         try:
-            manager = getattr(self, "config_manager", None)
+            manager = self._live_config_manager()
             if manager is None:
-                from tradeengine.api_filter_routes import get_config_manager
-
-                manager = get_config_manager()
+                raise RuntimeError("no config manager is available")
             position_side = None
             if side:
                 position_side = (
@@ -3819,61 +3891,7 @@ class Dispatcher:
                 result="checking",
                 exchange=order.exchange,
             ).inc()
-            try:
-                from tradeengine.config_manager import TradingConfigManager
-
-                # Resolve config for this order's scope
-                _strategy_id: str | None = order.strategy_metadata.get("strategy_id")
-                _config_mgr: TradingConfigManager | None = getattr(
-                    self, "config_manager", None
-                )
-                if _config_mgr is not None:
-                    _resolved = await _config_mgr.get_config(
-                        symbol=order.symbol,
-                        side=("LONG" if order.side == "buy" else "SHORT"),
-                        strategy_id=_strategy_id,
-                    )
-                else:
-                    from tradeengine.defaults import get_default_parameters
-
-                    _resolved = get_default_parameters()
-
-                # Collect open position leverages for AC3 by looking up each
-                # position's resolved config. Falls back to 10x if config lookup
-                # fails or config_manager is unavailable.
-                _open_leverages: list[int] = []
-                for _pos in strategy_position_manager.get_all_open_strategy_positions():
-                    try:
-                        _pos_strat = _pos.get("strategy_id")
-                        _pos_sym = _pos.get("symbol", order.symbol)
-                        _pos_side = _pos.get("side", "LONG")
-                        if _config_mgr is not None and _pos_strat:
-                            _pos_cfg = await _config_mgr.get_config(
-                                symbol=_pos_sym,
-                                side=_pos_side,
-                                strategy_id=_pos_strat,
-                            )
-                            _open_leverages.append(int(_pos_cfg.get("leverage", 10)))
-                        else:
-                            _open_leverages.append(10)
-                    except Exception:
-                        _open_leverages.append(10)
-
-                _lb_pass, _lb_reason = self.leverage_bound_guard.check(
-                    order, _resolved, _open_leverages
-                )
-            except Exception as _lb_exc:
-                # #600: was "failing open (order proceeds)" — bypassed FR64
-                # AC2/AC3 (per-strategy bound + portfolio aggregate cap)
-                # silently on any transient config-store hiccup. Fail
-                # CLOSED instead; the existing `if not _lb_pass:` branch
-                # below records the rejection metric and audit-trail entry.
-                self.logger.error(
-                    f"⛔ RISK REJECTION: Leverage bound guard raised an "
-                    f"unexpected error for {order.symbol} — failing CLOSED "
-                    f"(order rejected): {_lb_exc}"
-                )
-                _lb_pass, _lb_reason = False, f"leverage_bound_guard_error: {_lb_exc}"
+            _lb_pass, _lb_reason = await self.check_leverage_bound(order)
 
             if not _lb_pass:
                 order.mark_rejected(source="leverage_bound", reason=_lb_reason)

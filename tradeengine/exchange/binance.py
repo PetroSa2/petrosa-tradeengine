@@ -1835,6 +1835,30 @@ class BinanceFuturesExchange:
         )
         return [float(row[4]) for row in rows]
 
+    async def get_commission_rate(self, symbol: str) -> tuple[float, float, bool]:
+        """``(maker, taker, fee_burn)``: the account's commission rate for a symbol.
+
+        ``fee_burn`` is True when the account pays fees in BNB (a discount applies).
+        """
+        if not self.initialized:
+            await self.initialize()
+        if self.client is None:
+            raise RuntimeError("Binance Futures client not initialized")
+        rate = await asyncio.to_thread(
+            self.client.futures_commission_rate, symbol=symbol
+        )
+        try:
+            burn = await asyncio.to_thread(self.client.futures_v1_get_fee_burn)
+            fee_burn = str(burn.get("feeBurn")).lower() == "true"
+        except Exception as exc:
+            logger.warning("Could not read the fee-burn setting: %s", exc)
+            fee_burn = False
+        return (
+            float(rate["makerCommissionRate"]),
+            float(rate["takerCommissionRate"]),
+            fee_burn,
+        )
+
     async def get_symbol_min_notional(self, symbol: str) -> dict[str, Any]:
         """
         Get MIN_NOTIONAL and calculate minimum quantity at current price.

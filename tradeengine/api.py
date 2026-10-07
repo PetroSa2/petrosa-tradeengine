@@ -224,8 +224,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
-        from tradeengine.open_row_reconciler import OpenRowReconciler
-        from tradeengine.position_reconciler import PositionReconciler
 
         # #540: decouple the watchdog from `simulation_enabled`. The live
         # deployment sets TE_NAKED_POSITION_REMEDIATION_MODE but leaves
@@ -237,6 +235,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # (`position_reconciliation_requires_live_only=False`) starts the
         # watchdog whenever reconciliation is enabled; set the flag True to
         # restore the old sim-gated behavior.
+        # Volatility-derived exposure caps (petrosa_k8s#1239, rule 11): data-manager's risk inputs, refreshed hourly
+        from tradeengine.exposure_caps import risk_inputs_cache
+        from tradeengine.open_row_reconciler import OpenRowReconciler
+        from tradeengine.position_reconciler import PositionReconciler
+        from tradeengine.services.data_manager_client import (
+            DataManagerClient as _CapsDmClient,
+        )
+
+        risk_inputs_cache.configure(_CapsDmClient()._client)
+        app.state.risk_inputs_task = asyncio.create_task(risk_inputs_cache.run())
+
         _reconciliation_enabled = _te_settings.position_reconciliation_enabled
         _real_trading_active = not _te_settings.simulation_enabled
         if _te_settings.position_reconciliation_requires_live_only:
@@ -539,6 +548,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.commission_task.cancel()
             try:
                 await app.state.commission_task
+            except asyncio.CancelledError:
+                pass
+        if hasattr(app.state, "risk_inputs_task"):
+            app.state.risk_inputs_task.cancel()
+            try:
+                await app.state.risk_inputs_task
             except asyncio.CancelledError:
                 pass
 

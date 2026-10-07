@@ -17,12 +17,20 @@ from shared.constants import (
     MAX_PORTFOLIO_EXPOSURE_PCT,
     MAX_POSITION_SIZE_PCT,
     RISK_MANAGEMENT_ENABLED,
+    SUPPORTED_SYMBOLS,
     TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
 )
 from shared.trading_store_client import trading_store
 from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore
+from tradeengine.exposure_caps import (
+    caps_mode,
+    check_projection,
+    leg_stop_risk,
+    risk_inputs_cache,
+    snapshot as caps_snapshot,
+)
 from tradeengine.metrics import (
     algo_orders_open,
     close_fill_unknown_fee_total,
@@ -1666,6 +1674,12 @@ class PositionManager:
                 return False
             projected_exposure += order_notional / equity
 
+        if exposure_gate_applies and not self._check_exposure_caps(
+            order, order_notional, equity
+        ):
+            self.rejection_reason = self._cap_rejection or "exposure_cap"
+            return False
+
         if (
             exposure_gate_applies
             and projected_exposure > self.max_portfolio_exposure_pct
@@ -2176,6 +2190,129 @@ class PositionManager:
             gross += abs(notional)
             net += signed_notional
         return gross, net
+
+    def _stop_floor_fraction(self, symbol: str) -> float:
+        """The stop floor as a fraction: the derived floor when that provider exists, else the fixed value."""
+        try:
+            from tradeengine.stop_floor import stop_floor  # petrosa-tradeengine#742
+
+            return stop_floor.floor(symbol).fraction
+        except Exception:
+            from shared.config import Settings
+
+            try:
+                return float(Settings().te_min_sl_distance_pct) / 100.0
+            except Exception:
+                return 0.06
+
+    def stop_risk_usd(self) -> float:
+        """Worst-case loss if every aggregated leg's stop is hit (rule 23's stop-risk budget).
+
+        One netted leg per (symbol, side): the leg's quantity from the exchange-authoritative positions, its
+        stop the quantity-weighted stop of the rows that opened it, measured from the mark.
+        """
+        total = 0.0
+        records = list(getattr(self, "position_records", {}).values())
+        for key, position in self.get_positions().items():
+            symbol = str(
+                position.get("symbol") or (key[0] if isinstance(key, tuple) else key)
+            )
+            side = str(position.get("position_side", "LONG")).upper()
+            side = {"BUY": "LONG", "SELL": "SHORT"}.get(side, side)
+            quantity = abs(float(position.get("quantity", 0.0)))
+            mark = float(
+                position.get("mark_price")
+                or position.get("current_price")
+                or position.get("avg_price", 0.0)
+            )
+            weighted = weight = 0.0
+            for record in records:
+                if (
+                    str(record.get("symbol")) == symbol
+                    and str(record.get("position_side", "LONG")).upper()
+                    in (side, "BUY" if side == "LONG" else "SELL")
+                    and record.get("stop_loss")
+                ):
+                    q = abs(float(record.get("quantity") or 0.0))
+                    weighted += q * float(record["stop_loss"])
+                    weight += q
+            stop = weighted / weight if weight > 0 else None
+            total += leg_stop_risk(
+                quantity, mark, stop, side, self._stop_floor_fraction(symbol)
+            )
+        return total
+
+    def _check_exposure_caps(
+        self, order: TradeOrder, order_notional: float, equity: float
+    ) -> bool:
+        """Volatility-derived net and per-symbol caps and the stop-risk budget (petrosa-tradeengine#731).
+
+        In ``report`` mode (the default) a breach is logged and the order goes on; in ``enforce`` mode it is
+        rejected. Never raises: a failure here must not stop an order the old gate would let through.
+        """
+        self._cap_rejection = None
+        mode = caps_mode()
+        if mode == "off":
+            return True
+        try:
+            by_symbol = self.get_notional_by_symbol()
+            net = {s: v["net"] for s, v in by_symbol.items()}
+            gross = {s: v["gross"] for s, v in by_symbol.items()}
+            side = (
+                order.position_side or ("LONG" if order.side == "buy" else "SHORT")
+            ).upper()
+            signed = order_notional if side == "LONG" else -order_notional
+            price = float(order.target_price or 0.0) or (
+                order_notional / float(order.amount) if order.amount else 0.0
+            )
+            stop = (
+                abs(price - float(order.stop_loss)) / price
+                if order.stop_loss and price > 0
+                else float(order.stop_loss_pct or 0.0)
+            )
+            new_risk = order_notional * max(
+                stop, self._stop_floor_fraction(order.symbol)
+            )
+            breaches = check_projection(
+                symbol=order.symbol,
+                signed_notional=signed,
+                equity=equity,
+                net_by_symbol=net,
+                gross_by_symbol=gross,
+                stop_risk_usd=self.stop_risk_usd(),
+                new_stop_risk_usd=new_risk,
+                inputs=risk_inputs_cache.current(),
+            )
+        except Exception:
+            logger.exception(
+                "Exposure caps check failed; the order is not blocked by it"
+            )
+            return True
+        for breach in breaches:
+            logger.warning(
+                "EXPOSURE_CAP %s (%s): %s %s",
+                breach.cap,
+                mode,
+                order.symbol,
+                breach.detail,
+            )
+        if breaches and mode == "enforce":
+            self._cap_rejection = breaches[0].cap
+            return False
+        return True
+
+    def exposure_caps_state(self) -> dict[str, Any]:
+        """``/state`` ``risk_limits.exposure_caps``."""
+        by_symbol = self.get_notional_by_symbol()
+        return caps_snapshot(
+            equity=float(getattr(self, "equity", 0.0) or 0.0),
+            net_by_symbol={s: v["net"] for s, v in by_symbol.items()},
+            gross_by_symbol={s: v["gross"] for s, v in by_symbol.items()},
+            symbols=list(SUPPORTED_SYMBOLS),
+            stop_risk_usd=self.stop_risk_usd(),
+            inputs=risk_inputs_cache.current(),
+            gross_ratio=self.max_portfolio_exposure_pct,
+        )
 
     def get_notional_by_symbol(self) -> dict[str, dict[str, float]]:
         """Per symbol: gross, signed net, long and short notional (USD), from the open positions.

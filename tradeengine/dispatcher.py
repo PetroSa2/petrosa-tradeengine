@@ -308,6 +308,54 @@ class OCOManager:
 
         return has_stop and has_take_profit
 
+    async def _log_addon_stop(
+        self, symbol: str, position_side: str, new_stop: float | None
+    ) -> dict[str, Any] | None:
+        """An add-on entry on a side that already has protective legs keeps the existing stop (#738).
+
+        The new entry's own legs are not placed (the side already has them) and the existing leg is only
+        resized, at its own trigger. This records the old and the new stop price and says which is tighter,
+        so a probe entry can never be mistaken for a stop that moved. Best-effort: never raises.
+        """
+        try:
+            from tradeengine.protective_legs import ProtectiveLegManager, side_legs
+
+            orders = await self.exchange.get_open_algo_orders(symbol)
+            stops = [
+                leg
+                for leg in side_legs(orders, symbol, position_side)
+                if leg.kind == "SL" and leg.trigger_price
+            ]
+            if not stops or not new_stop:
+                return None
+            existing = ProtectiveLegManager._choose_keep(stops)
+            old = float(existing.trigger_price or 0.0)
+            tighter = (
+                float(new_stop) > old
+                if position_side.upper() == "LONG"
+                else float(new_stop) < old
+            )
+            self.logger.info(
+                "#738: add-on entry on %s %s keeps the existing SL leg %s at %s; the new "
+                "entry's stop %s is %s than the existing one (the aggregated stop is not "
+                "moved by an add-on entry)",
+                symbol,
+                position_side,
+                existing.algo_id,
+                old,
+                new_stop,
+                "tighter" if tighter else "not tighter (looser or equal)",
+            )
+            return {
+                "action": "kept_existing",
+                "old": old,
+                "new": float(new_stop),
+                "new_is_tighter": tighter,
+            }
+        except Exception:
+            self.logger.debug("#738: add-on stop comparison failed", exc_info=True)
+            return None
+
     def _sync_oco_pairs_gauge(self) -> None:
         """AC (#550): set active_oco_pairs_per_position from the current
         active_oco_pairs map so the gauge reflects exchange truth (every
@@ -455,6 +503,7 @@ class OCOManager:
         existing_pairs = self.active_oco_pairs.get(exchange_position_key, [])
         active_pairs = [p for p in existing_pairs if p.get("status") == "active"]
         if active_pairs:
+            await self._log_addon_stop(symbol, position_side, stop_loss_price)
             self.logger.warning(
                 f"⛔ OCO dedup: {exchange_position_key} already has {len(active_pairs)} "
                 f"active OCO pair(s). Skipping new placement for strategy {strategy_position_id}."
@@ -484,6 +533,7 @@ class OCOManager:
         if _exchange_truth_dedup and hasattr(self.exchange, "get_open_algo_orders"):
             try:
                 if await self._exchange_has_protective_pair(symbol, position_side):
+                    await self._log_addon_stop(symbol, position_side, stop_loss_price)
                     self.logger.warning(
                         "⛔ OCO dedup (exchange truth #550): %s already has a "
                         "reduceOnly STOP+TP pair on Binance (openAlgoOrders). "
@@ -5315,6 +5365,28 @@ class Dispatcher:
                 emit_err,
             )
 
+    @staticmethod
+    def _stop_floor_state() -> dict[str, Any]:
+        """The stop-loss floors that shape every stop actually placed, and their sources (#738).
+
+        ``min_sl_distance_pct`` (percent, from ``TE_MIN_SL_DISTANCE_PCT``) is how far from the LIVE market a stop
+        must sit; a closer one is widened to it. ``min_sl_entry_distance_pct`` (a fraction, from
+        ``MIN_SL_DISTANCE_PCT``, #724) is the floor on a percentage stop's distance from the entry. The source
+        is ``env`` when the variable is set and ``fallback`` when the built-in default applies.
+        """
+        from shared.config import Settings
+        from shared.constants import MIN_SL_DISTANCE_PCT
+
+        def source(name: str) -> str:
+            return "env" if os.environ.get(name, "").strip() else "fallback"
+
+        return {
+            "min_sl_distance_pct": float(Settings().te_min_sl_distance_pct),
+            "min_sl_distance_source": source("TE_MIN_SL_DISTANCE_PCT"),
+            "min_sl_entry_distance_pct": float(MIN_SL_DISTANCE_PCT),
+            "min_sl_entry_distance_source": source("MIN_SL_DISTANCE_PCT"),
+        }
+
     def get_cio_state(self, symbol: str) -> dict[str, Any]:
         """
         Aggregates real-time state data for the CIO TriggerContext.
@@ -5354,6 +5426,7 @@ class Dispatcher:
                 "max_position_size_usd": getattr(
                     settings, "max_position_size_usd", 1000.0
                 ),
+                **self._stop_floor_state(),
             },
             "env_stats": {
                 "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)

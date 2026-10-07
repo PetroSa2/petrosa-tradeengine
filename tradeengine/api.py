@@ -52,6 +52,7 @@ from tradeengine.api_filter_routes import (
     router as filter_router,
     set_config_manager as set_filter_config_manager,
 )
+from tradeengine.commission_rates import commission_rates
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import config_client
 from tradeengine.dispatcher import Dispatcher
@@ -238,6 +239,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Derived stop floor (petrosa_k8s#1239, rule 23): sigma_1h from data-manager's risk inputs, the
         # exchange filters and the book spread, refreshed in the background
         from shared.constants import SUPPORTED_SYMBOLS
+        from tradeengine.open_row_reconciler import OpenRowReconciler
         from tradeengine.position_reconciler import PositionReconciler
         from tradeengine.services.data_manager_client import DataManagerClient
 
@@ -343,6 +345,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 # instead of treating event silence as a fault — see
                 # PositionReconciler._maybe_force_stream_reconnect().
                 stream_consumer=dispatcher.user_data_consumer,
+                row_reconciler=OpenRowReconciler(
+                    dispatcher.position_manager,
+                    mode=_te_settings.te_open_row_reconcile_mode,
+                    grace_seconds=_te_settings.te_open_row_reconcile_grace_seconds,
+                    confirm_passes=_te_settings.te_open_row_reconcile_confirm_passes,
+                ),
             )
             await _reconciler.start()
             app.state.position_reconciler = _reconciler
@@ -419,6 +427,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     _te_settings.position_reconciliation_enabled,
                     _te_settings.position_reconciliation_requires_live_only,
                 )
+
+        # Commission rate per symbol, read at startup and then daily (petrosa_k8s#1239, rule 16)
+        from shared.constants import SUPPORTED_SYMBOLS
+
+        commission_rates.configure(binance_exchange, SUPPORTED_SYMBOLS)
+        app.state.commission_task = asyncio.create_task(commission_rates.run())
 
         # Initialize and start NATS consumer
         logger.info("Initializing NATS consumer...")
@@ -537,6 +551,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.stop_floor_task.cancel()
             try:
                 await app.state.stop_floor_task
+            except asyncio.CancelledError:
+                pass
+        if hasattr(app.state, "commission_task"):
+            app.state.commission_task.cancel()
+            try:
+                await app.state.commission_task
             except asyncio.CancelledError:
                 pass
 
@@ -1480,6 +1500,8 @@ async def get_state(
     """
     try:
         state = dispatcher.get_cio_state(symbol)
+        await commission_rates.ensure(symbol)
+        state["commission"] = commission_rates.get(symbol)
         cap = await dispatcher.resolve_risk_cap(symbol, side)
         state["risk_limits"]["probe_mode"] = cap["probe_mode"]
         if cap.get("order_minimum") is not None:

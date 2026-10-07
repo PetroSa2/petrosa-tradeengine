@@ -139,6 +139,22 @@ def _record_orders_total(route_status: str, symbol: str, exchange: str) -> None:
     )
 
 
+def position_side_of(value: Any) -> str | None:
+    """``LONG``, ``SHORT`` or ``BOTH`` when ``value`` is a hedge-mode position side, else None."""
+    side = str(value or "").strip().upper()
+    return side if side in ("LONG", "SHORT", "BOTH") else None
+
+
+def exit_order_side(position_side: Any) -> str | None:
+    """The order side that closes a position: ``sell`` for a LONG, ``buy`` for a SHORT.
+
+    The strategy-position records carry the position side (LONG/SHORT) in ``side``; a fill event's ``side`` has
+    to be the order side (buy/sell), or the consumers that rebuild P&L and rounds drop it.
+    """
+    side = position_side_of(position_side)
+    return {"LONG": "sell", "SHORT": "buy"}.get(side or "")
+
+
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
@@ -2380,7 +2396,10 @@ class OCOManager:
                 decision_id=decision_id,
                 extra={
                     "symbol": symbol,
-                    "side": closure.get("side"),
+                    # ``closure["side"]`` is the position side (LONG/SHORT); the event carries the closing
+                    # order side (buy/sell) and the position side separately (petrosa-tradeengine#743).
+                    "side": exit_order_side(closure.get("side")) or closure.get("side"),
+                    "position_side": position_side_of(closure.get("side")),
                     "fill_price": exit_price,
                     "price": exit_price,
                     "fill_quantity": filled_quantity,
@@ -4378,6 +4397,11 @@ class Dispatcher:
             # guessing from event_type alone (both use "filled").
             "reduce_only": getattr(order, "reduce_only", None),
         }
+        if event_type in ("filled", "partial_fill"):
+            # Hedge mode: a BUY can open a LONG or close a SHORT (petrosa-tradeengine#743)
+            ps = position_side_of(getattr(order, "position_side", None))
+            if ps is not None:
+                extra["position_side"] = ps
         entry_mode = result.get("entry_mode") or strategy_meta.get("entry_mode")
         liquidity = result.get("liquidity")
         if liquidity is None:
@@ -5332,6 +5356,10 @@ class Dispatcher:
                 "commission": fee,
                 "commission_asset": fee_asset,
             }
+            # Hedge mode: Binance sends the position side as ``ps`` (petrosa-tradeengine#743)
+            ps = position_side_of(order_obj.get("ps"))
+            if ps is not None:
+                extra["position_side"] = ps
             if fill_price is not None:
                 extra["fill_price"] = fill_price
                 extra["price"] = fill_price
@@ -6975,7 +7003,8 @@ class Dispatcher:
                 decision_id=pos.get("decision_id"),
                 extra={
                     "symbol": pos["symbol"],
-                    "side": pos["side"],
+                    "side": exit_order_side(pos["side"]) or pos["side"],
+                    "position_side": position_side_of(pos["side"]),
                     "reduce_only": True,
                     # exit_now is always a full close of the strategy position.
                     "position_status": "closed",
@@ -7102,7 +7131,8 @@ class Dispatcher:
             decision_id=pos.get("decision_id"),
             extra={
                 "symbol": pos["symbol"],
-                "side": pos["side"],
+                "side": exit_order_side(pos["side"]) or pos["side"],
+                "position_side": position_side_of(pos["side"]),
                 "fill_price": exit_price,
                 "price": exit_price,
                 "fill_quantity": scale_qty,

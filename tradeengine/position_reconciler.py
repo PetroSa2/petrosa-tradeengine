@@ -468,6 +468,7 @@ class PositionReconciler:
         store: ExchangeTruthStore | None = None,
         ghost_remediator: GhostPositionRemediator | None = None,
         stream_consumer: Any | None = None,
+        row_reconciler: Any | None = None,
     ) -> None:
         self._exchange = exchange
         self._position_manager = position_manager
@@ -481,6 +482,8 @@ class PositionReconciler:
         # stopped delivering events, since nothing inside the consumer's own
         # loop can notice a connection that neither closes nor raises.
         self._stream_consumer = stream_consumer
+        # #739: open position rows above the exchange quantity (OpenRowReconciler), or None
+        self._row_reconciler = row_reconciler
         self._last_forced_reconnect_at: datetime | None = None
         # #592: ghost-position write path. Defaults to an always-on
         # GhostPositionRemediator (mode="void") rather than None so this
@@ -699,6 +702,15 @@ class PositionReconciler:
                 logger.exception(
                     "PositionReconciler: ghost_remediator raised — read-only "
                     "reconciliation pass continues"
+                )
+
+        # #739: allocate any excess of the open rows over the exchange quantity (dry_run by default)
+        if self._row_reconciler is not None:
+            try:
+                await self._row_reconciler.reconcile(binance_positions)
+            except Exception:
+                logger.exception(
+                    "PositionReconciler: row reconciler raised — read-only pass continues"
                 )
 
         verdict = classify_verdict(divergences)

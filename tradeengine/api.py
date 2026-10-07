@@ -224,6 +224,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
+        from tradeengine.open_row_reconciler import OpenRowReconciler
         from tradeengine.position_reconciler import PositionReconciler
 
         # #540: decouple the watchdog from `simulation_enabled`. The live
@@ -332,6 +333,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 # instead of treating event silence as a fault — see
                 # PositionReconciler._maybe_force_stream_reconnect().
                 stream_consumer=dispatcher.user_data_consumer,
+                row_reconciler=OpenRowReconciler(
+                    dispatcher.position_manager,
+                    mode=_te_settings.te_open_row_reconcile_mode,
+                    grace_seconds=_te_settings.te_open_row_reconcile_grace_seconds,
+                    confirm_passes=_te_settings.te_open_row_reconcile_confirm_passes,
+                ),
             )
             await _reconciler.start()
             app.state.position_reconciler = _reconciler

@@ -9,6 +9,7 @@ failures without relying on exception propagation.  Closes #448 Tasks 1.1-1.2.
 
 import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from shared.constants import UTC
@@ -108,6 +109,8 @@ class DataManagerPositionClient:
             "entry_price",
             "entry_time",
             "entry_order_id",
+            "trade_id",
+            "entry_fee",
             "take_profit_price",
             "stop_loss_price",
             "tp_order_id",
@@ -121,6 +124,8 @@ class DataManagerPositionClient:
             "realized_pnl",
             "realized_pnl_pct",
             "commission_total",
+            "gross_realized_pnl",
+            "open_entry_fee_delta",
             "exchange_position_key",
             "strategy_metadata",
         }
@@ -148,6 +153,10 @@ class DataManagerPositionClient:
             "strategy_id",
             "symbol",
             "position_side",
+            "trade_id",
+            "entry_fee",
+            "exit_fee",
+            "exit_order_id",
             "contribution_quantity",
             "contribution_entry_price",
             "contribution_time",
@@ -165,7 +174,11 @@ class DataManagerPositionClient:
 
     @staticmethod
     def _columns(data: dict[str, Any], columns: frozenset[str]) -> dict[str, Any]:
-        return {key: value for key, value in data.items() if key in columns}
+        return {
+            key: float(value) if isinstance(value, Decimal) else value
+            for key, value in data.items()
+            if key in columns
+        }
 
     async def _create_dedicated(
         self,

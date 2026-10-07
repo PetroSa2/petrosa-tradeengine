@@ -2218,6 +2218,8 @@ class OCOManager:
                         close_reason=close_reason,
                         exit_order_id=filled_order_id,
                         pnl_unknown=pnl_unknown,
+                        exit_fee=order_details.get("commission"),
+                        trade_id=str(order_details.get("trade_id", "")) or None,
                     )
 
                     self.logger.info(

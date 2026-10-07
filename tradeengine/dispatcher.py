@@ -27,6 +27,7 @@ from shared.distributed_lock import (
     distributed_lock_manager,
 )
 from shared.logger import get_logger
+from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.execution_observability import TradeExecutionObservability
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
@@ -138,6 +139,22 @@ def _record_orders_total(route_status: str, symbol: str, exchange: str) -> None:
     otel_orders_total.add(
         1, {"route_status": route_status, "symbol": symbol, "exchange": exchange}
     )
+
+
+def position_side_of(value: Any) -> str | None:
+    """``LONG``, ``SHORT`` or ``BOTH`` when ``value`` is a hedge-mode position side, else None."""
+    side = str(value or "").strip().upper()
+    return side if side in ("LONG", "SHORT", "BOTH") else None
+
+
+def exit_order_side(position_side: Any) -> str | None:
+    """The order side that closes a position: ``sell`` for a LONG, ``buy`` for a SHORT.
+
+    The strategy-position records carry the position side (LONG/SHORT) in ``side``; a fill event's ``side`` has
+    to be the order side (buy/sell), or the consumers that rebuild P&L and rounds drop it.
+    """
+    side = position_side_of(position_side)
+    return {"LONG": "sell", "SHORT": "buy"}.get(side or "")
 
 
 class OCOManager:
@@ -2381,7 +2398,10 @@ class OCOManager:
                 decision_id=decision_id,
                 extra={
                     "symbol": symbol,
-                    "side": closure.get("side"),
+                    # ``closure["side"]`` is the position side (LONG/SHORT); the event carries the closing
+                    # order side (buy/sell) and the position side separately (petrosa-tradeengine#743).
+                    "side": exit_order_side(closure.get("side")) or closure.get("side"),
+                    "position_side": position_side_of(closure.get("side")),
                     "fill_price": exit_price,
                     "price": exit_price,
                     "fill_quantity": filled_quantity,
@@ -2489,6 +2509,12 @@ class Dispatcher:
         # consumed by _on_user_data_fill or once create_strategy_position
         # completes (see _consume_pending_fill_signal()).
         self.exchange_order_id_to_signal: dict[str, Signal] = {}
+        # #737: the entry's position identity, known before the order is placed. The user-data fill can
+        # beat both the REST response and create_strategy_position(); keyed by the client order id the
+        # exchange echoes on every update (and, once the REST response lands, by the exchange order id).
+        self.pending_entry_by_client_id: dict[str, dict[str, Any]] = {}
+        self.exchange_order_id_to_position: dict[str, str] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
         self.user_data_consumer: UserDataStreamConsumer | None = None
         # #480 — periodic ghost-position eviction for the strategy-layer
@@ -2637,6 +2663,11 @@ class Dispatcher:
                 # #651: ACCOUNT_UPDATE position changes schedule a protective-
                 # leg sync for the changed sides (resize/cancel promptly, even
                 # for changes made outside the engine).
+                _set_trade_cb = getattr(
+                    self.user_data_consumer.store, "set_on_trade", None
+                )
+                if callable(_set_trade_cb):
+                    _set_trade_cb(self._on_user_data_trade)
                 _set_pos_cb = getattr(
                     self.user_data_consumer.store, "set_on_position_change", None
                 )
@@ -3939,6 +3970,7 @@ class Dispatcher:
                         symbol=order.symbol, side=order.side
                     ).inc()
             else:
+                self._register_pending_entry(order)
                 result = await self.execute_order(order)
 
             # #546: register the exchange order id -> Signal mapping the instant
@@ -4403,6 +4435,11 @@ class Dispatcher:
             # guessing from event_type alone (both use "filled").
             "reduce_only": getattr(order, "reduce_only", None),
         }
+        if event_type in ("filled", "partial_fill"):
+            # Hedge mode: a BUY can open a LONG or close a SHORT (petrosa-tradeengine#743)
+            ps = position_side_of(getattr(order, "position_side", None))
+            if ps is not None:
+                extra["position_side"] = ps
         entry_mode = result.get("entry_mode") or strategy_meta.get("entry_mode")
         liquidity = result.get("liquidity")
         if liquidity is None:
@@ -4987,6 +5024,14 @@ class Dispatcher:
             if not exch_order_id or pending_signal is None:
                 return
             self.exchange_order_id_to_signal[str(exch_order_id)] = pending_signal
+            if order.position_id:
+                # #737: the position identity too, so a fill never finds "no position identity".
+                positions = self.__dict__.setdefault(
+                    "exchange_order_id_to_position", {}
+                )
+                positions[str(exch_order_id)] = order.position_id
+                while len(positions) > 500:
+                    positions.pop(next(iter(positions)))
             # Bounded FIFO eviction: entries are normally consumed (popped) by
             # _on_user_data_fill within seconds. This cap only guards against
             # unbounded growth for orders that never fill via the user-data
@@ -5002,6 +5047,96 @@ class Dispatcher:
                 order.order_id,
                 reg_err,
             )
+
+    def _register_pending_entry(self, order: TradeOrder) -> None:
+        """Register an entry order's position identity BEFORE it is placed (#737).
+
+        Keyed by the client order id, which the exchange echoes (``c``) on every update, so the fill
+        resolves its position with no dependence on how fast the REST response or the strategy position
+        arrives. Reduce-only orders are not entries. Best-effort and synchronous: never blocks order flow.
+        """
+        try:
+            if order.reduce_only or not order.client_order_id or not order.position_id:
+                return
+            pending = self.__dict__.setdefault("pending_entry_by_client_id", {})
+            pending[str(order.client_order_id)] = {
+                "position_id": order.position_id,
+                "signal": self.order_to_signal.get(order.order_id),
+            }
+            while len(pending) > 500:
+                pending.pop(next(iter(pending)))
+        except Exception as exc:
+            self.logger.debug("#737: pending entry registration failed: %s", exc)
+
+    def _resolve_entry_position_id(
+        self, order_id: str, client_order_id: str | None
+    ) -> str | None:
+        """The position an entry fill belongs to, from the strategy position or the early registrations."""
+        from tradeengine.strategy_position_manager import strategy_position_manager
+
+        position = (
+            strategy_position_manager.get_strategy_position_by_entry_order_id(order_id)
+            if strategy_position_manager is not None
+            else None
+        )
+        if position and position.get("position_id"):
+            return str(position["position_id"])
+        by_exchange = getattr(self, "exchange_order_id_to_position", {}).get(order_id)
+        if by_exchange:
+            return by_exchange
+        pending = getattr(self, "pending_entry_by_client_id", {}).get(
+            str(client_order_id or "")
+        )
+        return str(pending["position_id"]) if pending else None
+
+    def _on_user_data_trade(self, order_obj: dict[str, Any]) -> None:
+        """Aggregate every TRADE of an entry order, partial fills included (#737)."""
+        try:
+            if bool(order_obj.get("R", False)) or order_obj.get("o", "") in (
+                "STOP_MARKET",
+                "TAKE_PROFIT_MARKET",
+                "STOP",
+                "TAKE_PROFIT",
+            ):
+                return
+            fills = getattr(self.position_manager, "entry_fills", None)
+            if isinstance(fills, EntryFillAggregator):
+                fills.record(
+                    str(order_obj.get("i", "")),
+                    order_obj.get("t"),
+                    order_obj.get("L"),
+                    order_obj.get("l"),
+                    order_obj.get("n"),
+                    order_obj.get("N"),
+                )
+        except Exception as exc:
+            self.logger.debug("#737: trade aggregation failed: %s", exc)
+
+    def _spawn(self, coroutine: Any) -> None:
+        """Run a coroutine in the background, keeping a reference so it is not collected."""
+        task = asyncio.create_task(coroutine)
+        tasks = self.__dict__.setdefault("_background_tasks", set())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    async def _finish_fill_when_linked(self, order_obj: dict[str, Any]) -> None:
+        """Wait (bounded) for an entry fill's position identity, then handle the fill (#737).
+
+        The fill handler runs inside the user-data stream, so it never waits there. The wait is short
+        polling up to ``te_entry_link_wait_seconds``; after it the fill is handled anyway (position row
+        written by the position record, which merges the aggregated fills). The `filled` event has
+        already been published by the first pass; this pass only writes the position.
+        """
+        wait = float(
+            getattr(getattr(self, "settings", None), "te_entry_link_wait_seconds", 10.0)
+        )
+        order_id = str(order_obj.get("i", ""))
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if self._resolve_entry_position_id(order_id, order_obj.get("c")):
+                break
+            await asyncio.sleep(0.2)
+        await self._on_user_data_fill(order_obj, _deferred=True)
 
     def _consume_pending_fill_signal(self, result: dict[str, Any] | None) -> None:
         """Drop the early exchange_order_id_to_signal entry once
@@ -5135,7 +5270,9 @@ class Dispatcher:
             fee_asset=order_obj.get("N"),
         )
 
-    async def _on_user_data_fill(self, order_obj: dict[str, Any]) -> None:
+    async def _on_user_data_fill(
+        self, order_obj: dict[str, Any], *, _deferred: bool = False
+    ) -> None:
         """Publish a `filled` execution event for an entry fill (#531).
 
         Invoked by ExchangeTruthStore when an ORDER_TRADE_UPDATE reports a
@@ -5296,8 +5433,23 @@ class Dispatcher:
                     order_id
                 )
             )
-            position_id = entry_position.get("position_id") if entry_position else None
+            client_order_id = order_obj.get("c")
+            position_id = self._resolve_entry_position_id(order_id, client_order_id)
+            if not position_id and not _deferred:
+                # The fill beat every registration (no client order id, REST response not back yet):
+                # never skip the write. The `filled` event goes out now; the position write is redone
+                # once the position identity exists (#737).
+                self._spawn(self._finish_fill_when_linked(order_obj))
             idempotency_key = f"{order_id}:{trade_id}" if trade_id else order_id
+            # The position takes the economics of ALL the order's fills: VWAP price, summed fee (#737).
+            fills = getattr(
+                getattr(self, "position_manager", None), "entry_fills", None
+            )
+            aggregate = (
+                fills.record(order_id, trade_id, fill_price, fill_qty, fee, fee_asset)
+                if isinstance(fills, EntryFillAggregator)
+                else None
+            )
             if position_id and hasattr(self, "position_manager"):
                 persist_task = asyncio.create_task(
                     self.position_manager.persist_entry_fill(
@@ -5311,13 +5463,29 @@ class Dispatcher:
                                 if entry_position
                                 else ("LONG" if side == "BUY" else "SHORT")
                             ),
-                            "entry_price": fill_price,
+                            "entry_price": (
+                                aggregate["entry_price"] if aggregate else fill_price
+                            ),
                             "quantity": cumulative_qty or fill_qty,
                             "commission": fee,
                             "entry_commission": fee,
-                            "commission_total": fee,
-                            "commission_asset": fee_asset,
+                            "commission_total": (
+                                aggregate["commission_total"]
+                                if aggregate
+                                and aggregate["commission_total"] is not None
+                                else fee
+                            ),
+                            "commission_asset": (
+                                aggregate["commission_asset"] or fee_asset
+                                if aggregate
+                                else fee_asset
+                            ),
                             "fee_asset": fee_asset,
+                            "entry_trade_ids": (
+                                aggregate["trade_ids"]
+                                if aggregate
+                                else ([trade_id] if trade_id else [])
+                            ),
                             "entry_order_id": order_id,
                             "trade_id": trade_id,
                             "order_id": order_id,
@@ -5343,11 +5511,14 @@ class Dispatcher:
                     self.logger.error(
                         "Entry fill persistence exceeded its callback timeout; continuing"
                     )
-            elif not position_id:
+            elif not position_id and _deferred:
                 self.logger.error(
                     "Entry fill %s has no position identity; position write skipped",
                     order_id,
                 )
+
+            if _deferred:
+                return  # the `filled` event was published by the first pass
 
             extra: dict[str, Any] = {
                 "symbol": symbol,
@@ -5357,6 +5528,10 @@ class Dispatcher:
                 "commission": fee,
                 "commission_asset": fee_asset,
             }
+            # Hedge mode: Binance sends the position side as ``ps`` (petrosa-tradeengine#743)
+            ps = position_side_of(order_obj.get("ps"))
+            if ps is not None:
+                extra["position_side"] = ps
             if fill_price is not None:
                 extra["fill_price"] = fill_price
                 extra["price"] = fill_price
@@ -5428,6 +5603,22 @@ class Dispatcher:
         from shared.config import settings
 
         portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
+        # Per-symbol notional (USD) of the open positions: the held pairs, for the CIO's drawdown basket and
+        # the volatility-derived exposure caps (petrosa_k8s#1239, rules 5 and 11)
+        try:
+            by_symbol = self.position_manager.get_notional_by_symbol()
+            if isinstance(by_symbol, dict):
+                portfolio_data = {
+                    **portfolio_data,
+                    "net_notional_by_symbol": {
+                        s: v["net"] for s, v in by_symbol.items()
+                    },
+                    "gross_notional_by_symbol": {
+                        s: v["gross"] for s, v in by_symbol.items()
+                    },
+                }
+        except Exception as exc:  # /state must never fail on this
+            self.logger.warning("Per-symbol notional unavailable: %s", exc)
         active_orders = self.order_manager.get_active_orders()
 
         # Calculate symbol-specific order count
@@ -7012,7 +7203,8 @@ class Dispatcher:
                 decision_id=pos.get("decision_id"),
                 extra={
                     "symbol": pos["symbol"],
-                    "side": pos["side"],
+                    "side": exit_order_side(pos["side"]) or pos["side"],
+                    "position_side": position_side_of(pos["side"]),
                     "reduce_only": True,
                     # exit_now is always a full close of the strategy position.
                     "position_status": "closed",
@@ -7139,7 +7331,8 @@ class Dispatcher:
             decision_id=pos.get("decision_id"),
             extra={
                 "symbol": pos["symbol"],
-                "side": pos["side"],
+                "side": exit_order_side(pos["side"]) or pos["side"],
+                "position_side": position_side_of(pos["side"]),
                 "fill_price": exit_price,
                 "price": exit_price,
                 "fill_quantity": scale_qty,

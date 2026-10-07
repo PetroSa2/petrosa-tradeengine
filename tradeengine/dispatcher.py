@@ -73,6 +73,7 @@ from tradeengine.services.execution_event_publisher import (
 from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
+from tradeengine.stop_floor import stop_floor
 from tradeengine.strategy_position_manager import strategy_position_manager
 from tradeengine.strategy_position_reconciler import (
     StrategyPositionReconciler,
@@ -138,6 +139,22 @@ def _record_orders_total(route_status: str, symbol: str, exchange: str) -> None:
     otel_orders_total.add(
         1, {"route_status": route_status, "symbol": symbol, "exchange": exchange}
     )
+
+
+def position_side_of(value: Any) -> str | None:
+    """``LONG``, ``SHORT`` or ``BOTH`` when ``value`` is a hedge-mode position side, else None."""
+    side = str(value or "").strip().upper()
+    return side if side in ("LONG", "SHORT", "BOTH") else None
+
+
+def exit_order_side(position_side: Any) -> str | None:
+    """The order side that closes a position: ``sell`` for a LONG, ``buy`` for a SHORT.
+
+    The strategy-position records carry the position side (LONG/SHORT) in ``side``; a fill event's ``side`` has
+    to be the order side (buy/sell), or the consumers that rebuild P&L and rounds drop it.
+    """
+    side = position_side_of(position_side)
+    return {"LONG": "sell", "SHORT": "buy"}.get(side or "")
 
 
 class OCOManager:
@@ -2381,7 +2398,10 @@ class OCOManager:
                 decision_id=decision_id,
                 extra={
                     "symbol": symbol,
-                    "side": closure.get("side"),
+                    # ``closure["side"]`` is the position side (LONG/SHORT); the event carries the closing
+                    # order side (buy/sell) and the position side separately (petrosa-tradeengine#743).
+                    "side": exit_order_side(closure.get("side")) or closure.get("side"),
+                    "position_side": position_side_of(closure.get("side")),
                     "fill_price": exit_price,
                     "price": exit_price,
                     "fill_quantity": filled_quantity,
@@ -3684,6 +3704,26 @@ class Dispatcher:
         sizing_cap_total.labels(cap="max_usd").inc()
         return None
 
+    async def _apply_stop_floor_check(self, order: TradeOrder) -> dict[str, Any] | None:
+        """Skip an entry whose derived stop floor is beyond the exchange's maximum placeable distance.
+
+        A stop that cannot be placed at the floor would be clamped or flattened silently later; the order
+        is refused up front with a labelled reason instead (petrosa-tradeengine#742). Only a derived floor
+        is checked: the fixed fallback keeps its existing clamping behaviour.
+        """
+        if getattr(order, "reduce_only", False) or getattr(order, "simulate", False):
+            return None
+        floor = stop_floor.floor(
+            order.symbol, strategy_id=(order.strategy_metadata or {}).get("strategy_id")
+        )
+        if floor.source != "derived" or floor.placeable:
+            return None
+        detail = (
+            f"derived stop floor {floor.pct:.3f}% exceeds the maximum placeable distance "
+            f"{floor.max_placeable_pct:.3f}% ({floor.log_line()})"
+        )
+        return await self._reject_sizing(order, "stop_floor_unplaceable", detail)
+
     async def _reject_max_usd(self, order: TradeOrder, detail: str) -> dict[str, Any]:
         """Reject an order that cannot be fitted under ``max_position_size_usd``."""
         return await self._reject_sizing(order, "max_position_size_usd", detail)
@@ -3719,7 +3759,11 @@ class Dispatcher:
         try:
             # The USD cap runs first so every later check sees the quantity that will be sent.
             # Probe sizing first (smallest valid order), then the optional USD ceiling on the result.
-            for sizing in (self._apply_probe_sizing, self._apply_max_usd_cap):
+            for sizing in (
+                self._apply_probe_sizing,
+                self._apply_max_usd_cap,
+                self._apply_stop_floor_check,
+            ):
                 sizing_rejection = await sizing(order)
                 if sizing_rejection is not None:
                     return sizing_rejection
@@ -4409,6 +4453,11 @@ class Dispatcher:
             # guessing from event_type alone (both use "filled").
             "reduce_only": getattr(order, "reduce_only", None),
         }
+        if event_type in ("filled", "partial_fill"):
+            # Hedge mode: a BUY can open a LONG or close a SHORT (petrosa-tradeengine#743)
+            ps = position_side_of(getattr(order, "position_side", None))
+            if ps is not None:
+                extra["position_side"] = ps
         entry_mode = result.get("entry_mode") or strategy_meta.get("entry_mode")
         liquidity = result.get("liquidity")
         if liquidity is None:
@@ -5497,6 +5546,10 @@ class Dispatcher:
                 "commission": fee,
                 "commission_asset": fee_asset,
             }
+            # Hedge mode: Binance sends the position side as ``ps`` (petrosa-tradeengine#743)
+            ps = position_side_of(order_obj.get("ps"))
+            if ps is not None:
+                extra["position_side"] = ps
             if fill_price is not None:
                 extra["fill_price"] = fill_price
                 extra["price"] = fill_price
@@ -5531,13 +5584,18 @@ class Dispatcher:
             )
 
     @staticmethod
-    def _stop_floor_state() -> dict[str, Any]:
+    def _stop_floor_state(symbol: str | None = None) -> dict[str, Any]:
         """The stop-loss floors that shape every stop actually placed, and their sources (#738).
 
         ``min_sl_distance_pct`` (percent, from ``TE_MIN_SL_DISTANCE_PCT``) is how far from the LIVE market a stop
         must sit; a closer one is widened to it. ``min_sl_entry_distance_pct`` (a fraction, from
         ``MIN_SL_DISTANCE_PCT``, #724) is the floor on a percentage stop's distance from the entry. The source
         is ``env`` when the variable is set and ``fallback`` when the built-in default applies.
+
+        With a ``symbol`` the floor is the one in force for it (petrosa-tradeengine#742): ``derived`` from the
+        volatility and the exchange filters, ``fallback`` (the fixed value) when an input is missing, ``env`` when
+        pinned; ``stop_floor`` carries sigma_1h, H, q and the parts. The value stays in PERCENT (6.0 = 6%), as
+        before; ``min_sl_entry_distance_pct`` is a fraction.
         """
         from shared.config import Settings
         from shared.constants import MIN_SL_DISTANCE_PCT
@@ -5545,12 +5603,15 @@ class Dispatcher:
         def source(name: str) -> str:
             return "env" if os.environ.get(name, "").strip() else "fallback"
 
-        return {
+        state = {
             "min_sl_distance_pct": float(Settings().te_min_sl_distance_pct),
             "min_sl_distance_source": source("TE_MIN_SL_DISTANCE_PCT"),
             "min_sl_entry_distance_pct": float(MIN_SL_DISTANCE_PCT),
             "min_sl_entry_distance_source": source("MIN_SL_DISTANCE_PCT"),
         }
+        if symbol:
+            state.update(stop_floor.floor(symbol).as_state())
+        return state
 
     def get_cio_state(self, symbol: str) -> dict[str, Any]:
         """
@@ -5560,6 +5621,22 @@ class Dispatcher:
         from shared.config import settings
 
         portfolio_data = self.position_manager.get_cio_portfolio_summary(symbol)
+        # Per-symbol notional (USD) of the open positions: the held pairs, for the CIO's drawdown basket and
+        # the volatility-derived exposure caps (petrosa_k8s#1239, rules 5 and 11)
+        try:
+            by_symbol = self.position_manager.get_notional_by_symbol()
+            if isinstance(by_symbol, dict):
+                portfolio_data = {
+                    **portfolio_data,
+                    "net_notional_by_symbol": {
+                        s: v["net"] for s, v in by_symbol.items()
+                    },
+                    "gross_notional_by_symbol": {
+                        s: v["gross"] for s, v in by_symbol.items()
+                    },
+                }
+        except Exception as exc:  # /state must never fail on this
+            self.logger.warning("Per-symbol notional unavailable: %s", exc)
         active_orders = self.order_manager.get_active_orders()
 
         # Calculate symbol-specific order count
@@ -5591,7 +5668,7 @@ class Dispatcher:
                 "max_position_size_usd": getattr(
                     settings, "max_position_size_usd", 1000.0
                 ),
-                **self._stop_floor_state(),
+                **self._stop_floor_state(symbol),
             },
             "env_stats": {
                 "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)
@@ -5985,9 +6062,13 @@ class Dispatcher:
                 )
 
                 try:
-                    sl_safety_floor_pct = (
-                        float(Settings().te_min_sl_distance_pct) / 100.0
+                    floor_in_force = stop_floor.floor(
+                        order.symbol,
+                        strategy_id=(order.strategy_metadata or {}).get("strategy_id"),
                     )
+                    sl_safety_floor_pct = floor_in_force.fraction
+                    # Logged on every use, with sigma_1h, H and q (petrosa-tradeengine#742)
+                    self.logger.info(floor_in_force.log_line())
                 except Exception:
                     sl_safety_floor_pct = 0.06
 
@@ -7140,7 +7221,8 @@ class Dispatcher:
                 decision_id=pos.get("decision_id"),
                 extra={
                     "symbol": pos["symbol"],
-                    "side": pos["side"],
+                    "side": exit_order_side(pos["side"]) or pos["side"],
+                    "position_side": position_side_of(pos["side"]),
                     "reduce_only": True,
                     # exit_now is always a full close of the strategy position.
                     "position_status": "closed",
@@ -7267,7 +7349,8 @@ class Dispatcher:
             decision_id=pos.get("decision_id"),
             extra={
                 "symbol": pos["symbol"],
-                "side": pos["side"],
+                "side": exit_order_side(pos["side"]) or pos["side"],
+                "position_side": position_side_of(pos["side"]),
                 "fill_price": exit_price,
                 "price": exit_price,
                 "fill_quantity": scale_qty,

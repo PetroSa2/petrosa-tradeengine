@@ -1410,8 +1410,8 @@ class PositionManager:
             pnl_pct = position_data.get("pnl_pct", 0.0)
             duration_seconds = position_data.get("duration_seconds", 0)
             exit_price = position_data.get("exit_price", 0.0)
-            entry_commission = position_data.get("commission_total", 0.0)
-            final_commission = position_data.get("final_commission", 0.0)
+            entry_commission = position_data.get("commission_total") or 0.0
+            final_commission = position_data.get("final_commission") or 0.0
             total_commission = entry_commission + final_commission
 
             # Increment position closed counter

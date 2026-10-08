@@ -175,6 +175,19 @@ def exit_order_side(position_side: Any) -> str | None:
 DEFAULT_EXCHANGE_NAME = "binance"
 
 
+def _exception_context(exc: BaseException) -> dict[str, Any]:
+    message = str(exc).strip()
+    attribute_message = str(getattr(exc, "message", "") or "").strip()
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(exc, "error_code", None)
+    return {
+        "exception_type": type(exc).__name__,
+        "message": message or attribute_message,
+        "exchange_code": code,
+    }
+
+
 def exchange_name_of(value: Any) -> str:
     """The exchange as a persisted position names it: a string (``binance``), never the client object."""
     if isinstance(value, str) and value.strip():
@@ -716,8 +729,15 @@ class OCOManager:
         )
 
         # Execute both orders
+        sl_result: dict[str, Any] | None = None
+        tp_result: dict[str, Any] | None = None
+        active_leg = "SL"
         try:
-            sl_result = await self.exchange.execute(sl_order)
+            try:
+                sl_result = await self.exchange.execute(sl_order)
+            except Exception as exc:
+                sl_result = {"status": "exception", **_exception_context(exc)}
+                raise
             sl_order_id = sl_result.get("order_id")
             if not sl_order_id:
                 self.logger.error(
@@ -727,12 +747,19 @@ class OCOManager:
                 return {
                     "status": "failed",
                     "reason": "stop_loss_not_accepted",
+                    "failure_leg": "SL",
                     "symbol": symbol,
                     "position_side": position_side,
                     "sl_result": sl_result,
+                    "tp_result": None,
                 }
 
-            tp_result = await self.exchange.execute(tp_order)
+            active_leg = "TP"
+            try:
+                tp_result = await self.exchange.execute(tp_order)
+            except Exception as exc:
+                tp_result = {"status": "exception", **_exception_context(exc)}
+                raise
             tp_order_id = tp_result.get("order_id")
 
             if sl_order_id and tp_order_id:
@@ -933,13 +960,30 @@ class OCOManager:
                         "position_side": position_side,
                         "cancelled_leg": leg_label,
                         "cancelled_algo_id": surviving_id,
+                        "sl_result": sl_result,
+                        "tp_result": tp_result,
                     }
 
-                return {"status": "failed"}
+                return {
+                    "status": "failed",
+                    "failure_leg": "TP" if sl_order_id else "SL",
+                    "sl_result": sl_result,
+                    "tp_result": tp_result,
+                }
 
         except Exception as e:
             self.logger.error(f"❌ ERROR PLACING OCO ORDERS: {e}")
-            return {"status": "error", "error": str(e)}
+            context = _exception_context(e)
+            return {
+                "status": "error",
+                "error": context["message"] or context["exception_type"],
+                "failure_leg": active_leg,
+                "failure_exception_type": context["exception_type"],
+                "failure_message": context["message"],
+                "exchange_code": context["exchange_code"],
+                "sl_result": sl_result,
+                "tp_result": tp_result,
+            }
 
     async def cancel_oco_pair(
         self, position_id: str, symbol: str = None, position_side: str = None
@@ -4414,8 +4458,31 @@ class Dispatcher:
                             f"✅ Risk management orders placed for {order.symbol}"
                         )
                     except Exception as e:
+                        failure_context = getattr(e, "oco_failure_context", {})
+                        exception_context = _exception_context(e)
+                        failure_message = (
+                            failure_context.get("failure_message")
+                            or exception_context["message"]
+                            or failure_context.get("reason")
+                            or exception_context["exception_type"]
+                        )
                         self.logger.error(
-                            f"[CRITICAL] OCO placement failed. Initiating atomic rollback for symbol {order.symbol}: {e}"
+                            "[CRITICAL] OCO placement failed. Initiating atomic "
+                            "rollback for symbol %s: leg=%s reason=%s "
+                            "exception_type=%s exchange_code=%s sl_result=%s "
+                            "tp_result=%s",
+                            order.symbol,
+                            failure_context.get("failure_leg", "unknown"),
+                            failure_message,
+                            failure_context.get(
+                                "failure_exception_type",
+                                exception_context["exception_type"],
+                            ),
+                            failure_context.get(
+                                "exchange_code", exception_context["exchange_code"]
+                            ),
+                            failure_context.get("sl_result"),
+                            failure_context.get("tp_result"),
                         )
                         # Atomic Rollback (AC2 / RC#2 of #424): close the position immediately
                         # via a MARKET reduceOnly order. When local state is incomplete
@@ -6708,7 +6775,11 @@ class Dispatcher:
                         f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result} - falling back to individual orders"
                     )
                     # Fallback to individual order placement
-                    await self._place_individual_risk_orders(order, result)
+                    try:
+                        await self._place_individual_risk_orders(order, result)
+                    except Exception as fallback_error:
+                        fallback_error.oco_failure_context = oco_result
+                        raise
 
             elif order.stop_loss and order.stop_loss > 0:
                 # Only stop loss specified

@@ -176,6 +176,34 @@ async def test_metrics_export_on_position_open(sample_order, sample_result):
 
 
 @pytest.mark.asyncio
+async def test_closed_metrics_treat_missing_commission_as_zero():
+    position_manager = PositionManager()
+    position_data = {
+        "position_id": "position-123",
+        "strategy_id": "strategy-123",
+        "symbol": "BTCUSDT",
+        "position_side": "LONG",
+        "exchange": "binance",
+        "close_reason": "manual",
+        "pnl_after_fees": 1.0,
+        "pnl_pct": 0.01,
+        "duration_seconds": 10,
+        "entry_price": 50000.0,
+        "exit_price": 50100.0,
+        "commission_total": None,
+        "final_commission": None,
+    }
+
+    with patch("tradeengine.position_manager.position_commission_usd") as metric:
+        await position_manager._export_position_closed_metrics(position_data)
+
+    metric.labels.assert_called_once_with(
+        strategy_id="strategy-123", symbol="BTCUSDT", exchange="binance"
+    )
+    metric.labels.return_value.observe.assert_called_once_with(0.0)
+
+
+@pytest.mark.asyncio
 async def test_mysql_position_persistence():
     """Test MySQL position persistence"""
     from shared.mysql_client import position_client

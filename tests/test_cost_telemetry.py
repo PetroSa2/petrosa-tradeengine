@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from tradeengine.services.cost_telemetry import build_cost_fields
+from tradeengine.services.cost_telemetry import (
+    build_cost_fields,
+    cost_signal_ratio,
+    planned_move_bp,
+)
 
 
 def order(**kwargs):
@@ -74,3 +78,14 @@ def test_role_intended_prices():
         )["intended_price_source"]
         == "manual_close_mark"
     )
+
+
+def test_planned_move_uses_absolute_entry_to_target_distance():
+    assert planned_move_bp(
+        order(strategy_metadata={"signal_price": 100}, take_profit=100.12)
+    ) == pytest.approx(12.0)
+
+
+def test_cost_signal_ratio_is_cost_over_signal_move():
+    assert cost_signal_ratio(12, 8) == pytest.approx(2 / 3)
+    assert cost_signal_ratio(0, 8) is None

@@ -27,6 +27,7 @@ from shared.distributed_lock import (
     distributed_lock_manager,
 )
 from shared.logger import get_logger
+from tradeengine.commission_rates import commission_rates
 from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.execution_observability import TradeExecutionObservability
@@ -67,7 +68,9 @@ from tradeengine.protective_legs import ProtectiveLegManager
 from tradeengine.services.alert_publisher import alert_publisher
 from tradeengine.services.cost_telemetry import (
     build_cost_fields,
+    cost_signal_ratio,
     fill_cost_fields,
+    planned_move_bp,
     record_fill_metrics,
 )
 from tradeengine.services.execution_event_publisher import (
@@ -3996,6 +3999,30 @@ class Dispatcher:
                     "reason": "leverage_mismatch",
                     "rejection_source": "exchange",
                 }
+
+            if (
+                getattr(self.settings, "te_cost_filter_enabled", False) is True
+                and not order.reduce_only
+            ):
+                move_bp = planned_move_bp(order)
+                rates = commission_rates.get(order.symbol)
+                entry_rate = (
+                    rates["maker_rate"]
+                    if self.settings.te_maker_entry_enabled
+                    else rates["taker_rate"]
+                )
+                round_trip_cost_bp = float(entry_rate + rates["taker_rate"]) * 10_000
+                ratio = cost_signal_ratio(move_bp, round_trip_cost_bp)
+                self.logger.info(
+                    "ORDER COST DIAGNOSTIC symbol=%s side=%s planned_move_bp=%s "
+                    "round_trip_cost_bp=%.4f c/S=%s fee_source=%s",
+                    order.symbol,
+                    order.side,
+                    move_bp,
+                    round_trip_cost_bp,
+                    ratio,
+                    rates["source"],
+                )
 
             if (
                 self.settings.te_maker_entry_enabled

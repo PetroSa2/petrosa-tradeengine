@@ -184,6 +184,13 @@ class Settings(BaseSettings):
             "TE_MAKER_ENTRY_FALLBACK", "te_maker_entry_fallback"
         ),
     )
+    te_cost_filter_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "TE_COST_FILTER_ENABLED", "te_cost_filter_enabled"
+        ),
+        description="Log per-order cost-to-signal diagnostics without filtering orders.",
+    )
 
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (read-only, no writes — detection-only), "dry_run"

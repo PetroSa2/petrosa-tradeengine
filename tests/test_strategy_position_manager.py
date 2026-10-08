@@ -299,7 +299,7 @@ class TestStrategyPositionManagerBasic:
             assert result is not None
             assert "realized_pnl" in result
             position = strategy_position_manager.get_strategy_position(position_id)
-            assert position["status"] == "partial"
+            assert position["status"] == "partially_closed"
 
     @pytest.mark.asyncio
     async def test_close_strategy_position_long_pnl(
@@ -964,3 +964,54 @@ class TestDecisionIdThreading531:
             strategy_position_manager.get_strategy_position_by_entry_order_id("")
             is None
         )
+
+
+@pytest.mark.asyncio
+async def test_close_exchange_fill_allocates_fifo_and_is_idempotent():
+    manager = StrategyPositionManager()
+    first = str(uuid.uuid4())
+    second = str(uuid.uuid4())
+    for position_id, strategy_id, quantity, price in (
+        (first, "strategy-a", 1.0, 100.0),
+        (second, "strategy-b", 2.0, 110.0),
+    ):
+        manager.strategy_positions[position_id] = {
+            "strategy_position_id": position_id,
+            "strategy_id": strategy_id,
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_quantity": quantity,
+            "entry_price": price,
+            "status": "open",
+            "exchange_position_key": "BTCUSDT_LONG",
+        }
+    manager.contributions["BTCUSDT_LONG"] = [
+        {"strategy_position_id": first, "position_sequence": 1},
+        {"strategy_position_id": second, "position_sequence": 2},
+    ]
+    with (
+        patch.object(manager, "_update_strategy_position_closure", AsyncMock()),
+        patch.object(manager, "_close_contribution", AsyncMock()),
+        patch.object(manager, "_reduce_exchange_position", AsyncMock()),
+    ):
+        result = await manager.close_exchange_fill(
+            "BTCUSDT_LONG",
+            120,
+            2,
+            exit_order_id="exit-1",
+            trade_id="trade-1",
+        )
+        replay = await manager.close_exchange_fill(
+            "BTCUSDT_LONG",
+            120,
+            2,
+            exit_order_id="exit-1",
+            trade_id="trade-1",
+        )
+    assert result["allocated_quantity"] == 2
+    assert result["unattributed"] == 0
+    assert [item["strategy_id"] for item in result["allocations"]] == [
+        "strategy-a",
+        "strategy-b",
+    ]
+    assert replay["idempotent"] is True

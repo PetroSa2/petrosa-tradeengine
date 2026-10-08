@@ -65,7 +65,11 @@ from tradeengine.position_manager import PositionManager
 from tradeengine.protective_leg_mode import protective_leg_mode
 from tradeengine.protective_legs import ProtectiveLegManager
 from tradeengine.services.alert_publisher import alert_publisher
-from tradeengine.services.cost_telemetry import build_cost_fields, record_fill_metrics
+from tradeengine.services.cost_telemetry import (
+    build_cost_fields,
+    fill_cost_fields,
+    record_fill_metrics,
+)
 from tradeengine.services.execution_event_publisher import (
     EventType as ExecutionEventType,
     execution_event_publisher,
@@ -73,6 +77,7 @@ from tradeengine.services.execution_event_publisher import (
 from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
+from tradeengine.stop_floor import stop_floor
 from tradeengine.strategy_position_manager import strategy_position_manager
 from tradeengine.strategy_position_reconciler import (
     StrategyPositionReconciler,
@@ -154,6 +159,16 @@ def exit_order_side(position_side: Any) -> str | None:
     """
     side = position_side_of(position_side)
     return {"LONG": "sell", "SHORT": "buy"}.get(side or "")
+
+
+DEFAULT_EXCHANGE_NAME = "binance"
+
+
+def exchange_name_of(value: Any) -> str:
+    """The exchange as a persisted position names it: a string (``binance``), never the client object."""
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return DEFAULT_EXCHANGE_NAME
 
 
 class OCOManager:
@@ -2217,6 +2232,8 @@ class OCOManager:
                         close_reason=close_reason,
                         exit_order_id=filled_order_id,
                         pnl_unknown=pnl_unknown,
+                        exit_fee=order_details.get("commission"),
+                        trade_id=str(order_details.get("trade_id", "")) or None,
                     )
 
                     self.logger.info(
@@ -2242,6 +2259,15 @@ class OCOManager:
                         fee_asset=order_details.get("commission_asset"),
                         trade_id=str(order_details.get("trade_id", "")) or None,
                         closed_by_strategy_id=str(strategy_id),
+                        trigger_price=(
+                            (strategy_pos or {}).get(
+                                "stop_loss_price"
+                                if close_reason == "stop_loss"
+                                else "take_profit_price"
+                            )
+                            if close_reason in ("stop_loss", "take_profit")
+                            else None
+                        ),
                     )
 
                     # Persist the real exchange fill against the durable position
@@ -2363,8 +2389,12 @@ class OCOManager:
         fee_asset: str | None = None,
         trade_id: str | None = None,
         closed_by_strategy_id: str = "unknown",
+        trigger_price: float | None = None,
     ) -> None:
         """Publish a `filled` execution event for a completed OCO exit (#531).
+
+        ``trigger_price`` is the stop-loss or take-profit price of the leg that filled: the intended price the
+        event's ``slippage_bp`` is measured against (petrosa-data-manager#561).
 
         The OCO close path is one of the two async producers that actually
         know a fill happened (the other being the user-data stream). Prior to
@@ -2389,6 +2419,31 @@ class OCOManager:
                     closure.get("strategy_position_id"),
                     strategy_id,
                 )
+            exit_side = exit_order_side(closure.get("side")) or str(
+                closure.get("side") or ""
+            )
+            trigger = (
+                close_reason if close_reason in ("stop_loss", "take_profit") else None
+            )
+            telemetry = fill_cost_fields(
+                symbol=symbol,
+                side=exit_side,
+                order_type="market",
+                fill_price=exit_price,
+                quantity=filled_quantity,
+                fee=fee,
+                fee_asset=fee_asset,
+                intended_price=trigger_price if trigger else None,
+                trigger=trigger,
+                reduce_only=True,
+            )
+            record_fill_metrics(
+                str(filled_order_id or ""),
+                telemetry,
+                role=trigger or "manual_close",
+                side=exit_side,
+                liquidity="taker",
+            )
             await execution_event_publisher.publish(
                 event_type="filled",
                 strategy_id=strategy_id,
@@ -2413,6 +2468,7 @@ class OCOManager:
                     "closed_by_strategy_id": closed_by_strategy_id,
                     "exchange_trade_time": closure.get("trade_time"),
                     "close_reason": close_reason,
+                    **telemetry,
                     # petrosa_k8s#1130: an SL/TP trigger is always a full,
                     # reduce_only exit of the strategy position — lets CIO's
                     # execution.events.> listener call
@@ -2462,6 +2518,9 @@ class Dispatcher:
 
         # Initialize Leverage Bound Guard (FR64, P6.4)
         self.leverage_bound_guard = LeverageBoundGuard()
+        # The live trading-config manager, set by the API lifespan (tradeengine/api.py) once it exists; until then
+        # (and in tests) `_live_config_manager` falls back to the one the config routes hold, else the code defaults.
+        self.config_manager: Any = None
 
         # #599: applies the leverage actually carried on each signal/order
         # (falling back to settings.te_default_leverage when absent) right
@@ -3388,6 +3447,77 @@ class Dispatcher:
             )
             return False
 
+    def _live_config_manager(self) -> Any:
+        """The live trading-config manager: the one the API lifespan sets on the dispatcher, else the one the
+        config routes hold (the one ``position_manager.get_position_size_limit`` uses); ``None`` when neither
+        exists, in which case callers say that they fall back to the code defaults."""
+        manager = getattr(self, "config_manager", None)
+        if manager is not None:
+            return manager
+        try:
+            from tradeengine.api_filter_routes import get_config_manager
+
+            return get_config_manager()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _config_side(order: Any) -> str:
+        """The position side an order's config is resolved for: its hedge-mode ``position_side`` when it
+        carries one (a sell that closes a LONG is the LONG's config), else the order side."""
+        position_side = str(getattr(order, "position_side", None) or "").upper()
+        if position_side in ("LONG", "SHORT"):
+            return position_side
+        return "LONG" if str(order.side).lower() in ("buy", "long") else "SHORT"
+
+    async def check_leverage_bound(self, order: Any) -> tuple[bool, str]:
+        """AC2 + AC3 of the leverage bound (FR64, P6.4) against the **resolved** config of the order's scope
+        (strategy, symbol, side, then global), not the code defaults. Fails CLOSED on any error (#600)."""
+        try:
+            strategy_id: str | None = order.strategy_metadata.get("strategy_id")
+            manager = self._live_config_manager()
+            side = self._config_side(order)
+            if manager is not None:
+                resolved = await manager.get_config(
+                    symbol=order.symbol, side=side, strategy_id=strategy_id
+                )
+            else:
+                from tradeengine.defaults import get_default_parameters
+
+                self.logger.warning(
+                    "Leverage bound check for %s uses the code defaults: no config manager is available",
+                    order.symbol,
+                )
+                resolved = get_default_parameters()
+            # Open position leverages for AC3, each from the position's own resolved config.
+            # Falls back to 10x if the lookup fails or no config manager is available.
+            open_leverages: list[int] = []
+            for pos in strategy_position_manager.get_all_open_strategy_positions():
+                try:
+                    pos_strategy = pos.get("strategy_id")
+                    if manager is not None and pos_strategy:
+                        pos_config = await manager.get_config(
+                            symbol=pos.get("symbol", order.symbol),
+                            side=pos.get("side", "LONG"),
+                            strategy_id=pos_strategy,
+                        )
+                        open_leverages.append(int(pos_config.get("leverage", 10)))
+                    else:
+                        open_leverages.append(10)
+                except Exception:
+                    open_leverages.append(10)
+            return self.leverage_bound_guard.check(order, resolved, open_leverages)
+        except Exception as exc:
+            # #600: was "failing open (order proceeds)" — bypassed FR64 AC2/AC3 (per-strategy bound +
+            # portfolio aggregate cap) silently on any transient config-store hiccup. Fail CLOSED instead;
+            # the caller records the rejection metric and audit-trail entry.
+            self.logger.error(
+                f"⛔ RISK REJECTION: Leverage bound guard raised an "
+                f"unexpected error for {order.symbol} — failing CLOSED "
+                f"(order rejected): {exc}"
+            )
+            return False, f"leverage_bound_guard_error: {exc}"
+
     async def resolve_trading_parameters(
         self, symbol: str, side: str | None = None
     ) -> dict[str, Any] | None:
@@ -3396,11 +3526,9 @@ class Dispatcher:
         Resolution is the config manager's own (symbol-side, symbol, global, defaults).
         """
         try:
-            manager = getattr(self, "config_manager", None)
+            manager = self._live_config_manager()
             if manager is None:
-                from tradeengine.api_filter_routes import get_config_manager
-
-                manager = get_config_manager()
+                raise RuntimeError("no config manager is available")
             position_side = None
             if side:
                 position_side = (
@@ -3631,6 +3759,26 @@ class Dispatcher:
         sizing_cap_total.labels(cap="max_usd").inc()
         return None
 
+    async def _apply_stop_floor_check(self, order: TradeOrder) -> dict[str, Any] | None:
+        """Skip an entry whose derived stop floor is beyond the exchange's maximum placeable distance.
+
+        A stop that cannot be placed at the floor would be clamped or flattened silently later; the order
+        is refused up front with a labelled reason instead (petrosa-tradeengine#742). Only a derived floor
+        is checked: the fixed fallback keeps its existing clamping behaviour.
+        """
+        if getattr(order, "reduce_only", False) or getattr(order, "simulate", False):
+            return None
+        floor = stop_floor.floor(
+            order.symbol, strategy_id=(order.strategy_metadata or {}).get("strategy_id")
+        )
+        if floor.source != "derived" or floor.placeable:
+            return None
+        detail = (
+            f"derived stop floor {floor.pct:.3f}% exceeds the maximum placeable distance "
+            f"{floor.max_placeable_pct:.3f}% ({floor.log_line()})"
+        )
+        return await self._reject_sizing(order, "stop_floor_unplaceable", detail)
+
     async def _reject_max_usd(self, order: TradeOrder, detail: str) -> dict[str, Any]:
         """Reject an order that cannot be fitted under ``max_position_size_usd``."""
         return await self._reject_sizing(order, "max_position_size_usd", detail)
@@ -3666,7 +3814,11 @@ class Dispatcher:
         try:
             # The USD cap runs first so every later check sees the quantity that will be sent.
             # Probe sizing first (smallest valid order), then the optional USD ceiling on the result.
-            for sizing in (self._apply_probe_sizing, self._apply_max_usd_cap):
+            for sizing in (
+                self._apply_probe_sizing,
+                self._apply_max_usd_cap,
+                self._apply_stop_floor_check,
+            ):
                 sizing_rejection = await sizing(order)
                 if sizing_rejection is not None:
                     return sizing_rejection
@@ -3794,61 +3946,7 @@ class Dispatcher:
                 result="checking",
                 exchange=order.exchange,
             ).inc()
-            try:
-                from tradeengine.config_manager import TradingConfigManager
-
-                # Resolve config for this order's scope
-                _strategy_id: str | None = order.strategy_metadata.get("strategy_id")
-                _config_mgr: TradingConfigManager | None = getattr(
-                    self, "config_manager", None
-                )
-                if _config_mgr is not None:
-                    _resolved = await _config_mgr.get_config(
-                        symbol=order.symbol,
-                        side=("LONG" if order.side == "buy" else "SHORT"),
-                        strategy_id=_strategy_id,
-                    )
-                else:
-                    from tradeengine.defaults import get_default_parameters
-
-                    _resolved = get_default_parameters()
-
-                # Collect open position leverages for AC3 by looking up each
-                # position's resolved config. Falls back to 10x if config lookup
-                # fails or config_manager is unavailable.
-                _open_leverages: list[int] = []
-                for _pos in strategy_position_manager.get_all_open_strategy_positions():
-                    try:
-                        _pos_strat = _pos.get("strategy_id")
-                        _pos_sym = _pos.get("symbol", order.symbol)
-                        _pos_side = _pos.get("side", "LONG")
-                        if _config_mgr is not None and _pos_strat:
-                            _pos_cfg = await _config_mgr.get_config(
-                                symbol=_pos_sym,
-                                side=_pos_side,
-                                strategy_id=_pos_strat,
-                            )
-                            _open_leverages.append(int(_pos_cfg.get("leverage", 10)))
-                        else:
-                            _open_leverages.append(10)
-                    except Exception:
-                        _open_leverages.append(10)
-
-                _lb_pass, _lb_reason = self.leverage_bound_guard.check(
-                    order, _resolved, _open_leverages
-                )
-            except Exception as _lb_exc:
-                # #600: was "failing open (order proceeds)" — bypassed FR64
-                # AC2/AC3 (per-strategy bound + portfolio aggregate cap)
-                # silently on any transient config-store hiccup. Fail
-                # CLOSED instead; the existing `if not _lb_pass:` branch
-                # below records the rejection metric and audit-trail entry.
-                self.logger.error(
-                    f"⛔ RISK REJECTION: Leverage bound guard raised an "
-                    f"unexpected error for {order.symbol} — failing CLOSED "
-                    f"(order rejected): {_lb_exc}"
-                )
-                _lb_pass, _lb_reason = False, f"leverage_bound_guard_error: {_lb_exc}"
+            _lb_pass, _lb_reason = await self.check_leverage_bound(order)
 
             if not _lb_pass:
                 order.mark_rejected(source="leverage_bound", reason=_lb_reason)
@@ -5321,10 +5419,19 @@ class Dispatcher:
                 strategy_position_manager,
             )
 
+            intended_hint: dict[str, float | None] = {}
+
             def _resolve_from_signal_map() -> tuple[str, str | None] | None:
                 sig = self.exchange_order_id_to_signal.pop(order_id, None)
                 if sig is None:
                     return None
+                # The price the decision was taken at: what the fill's slippage is measured against (#561)
+                intended_hint["price"] = (
+                    getattr(sig, "target_price", None)
+                    if str(order_type).upper() == "LIMIT"
+                    and getattr(sig, "target_price", None)
+                    else getattr(sig, "current_price", None)
+                )
                 return (sig.strategy_id or "unknown", sig.decision_id)
 
             def _resolve_from_strategy_position() -> tuple[str, str | None] | None:
@@ -5465,7 +5572,11 @@ class Dispatcher:
                             "trade_id": trade_id,
                             "order_id": order_id,
                             "entry_time": fill_time,
-                            "exchange": getattr(self, "exchange", None),
+                            # The exchange NAME: the client object is not JSON serializable, so every entry
+                            # fill failed to persist (#755)
+                            "exchange": exchange_name_of(
+                                (entry_position or {}).get("exchange")
+                            ),
                             "idempotency_key": idempotency_key,
                             "status": "open",
                         }
@@ -5523,6 +5634,26 @@ class Dispatcher:
             if fill_time is not None:
                 extra["fill_time"] = fill_time
             extra["pnl"] = pnl  # entry fills usually have rp=0; keep explicit
+            # Cost telemetry of the fill (#561): slippage against the price the signal carried. The live
+            # entries are user-data-stream fills, so this is where it has to be emitted.
+            telemetry = fill_cost_fields(
+                symbol=symbol,
+                side=str(side),
+                order_type=str(order_type),
+                fill_price=fill_price,
+                quantity=fill_qty,
+                fee=fee,
+                fee_asset=fee_asset,
+                intended_price=intended_hint.get("price"),
+            )
+            extra.update(telemetry)
+            record_fill_metrics(
+                order_id,
+                telemetry,
+                role="entry",
+                side=str(side),
+                liquidity="maker" if order_obj.get("m") else "taker",
+            )
 
             await execution_event_publisher.publish(
                 event_type="filled",
@@ -5541,13 +5672,18 @@ class Dispatcher:
             )
 
     @staticmethod
-    def _stop_floor_state() -> dict[str, Any]:
+    def _stop_floor_state(symbol: str | None = None) -> dict[str, Any]:
         """The stop-loss floors that shape every stop actually placed, and their sources (#738).
 
         ``min_sl_distance_pct`` (percent, from ``TE_MIN_SL_DISTANCE_PCT``) is how far from the LIVE market a stop
         must sit; a closer one is widened to it. ``min_sl_entry_distance_pct`` (a fraction, from
         ``MIN_SL_DISTANCE_PCT``, #724) is the floor on a percentage stop's distance from the entry. The source
         is ``env`` when the variable is set and ``fallback`` when the built-in default applies.
+
+        With a ``symbol`` the floor is the one in force for it (petrosa-tradeengine#742): ``derived`` from the
+        volatility and the exchange filters, ``fallback`` (the fixed value) when an input is missing, ``env`` when
+        pinned; ``stop_floor`` carries sigma_1h, H, q and the parts. The value stays in PERCENT (6.0 = 6%), as
+        before; ``min_sl_entry_distance_pct`` is a fraction.
         """
         from shared.config import Settings
         from shared.constants import MIN_SL_DISTANCE_PCT
@@ -5555,12 +5691,15 @@ class Dispatcher:
         def source(name: str) -> str:
             return "env" if os.environ.get(name, "").strip() else "fallback"
 
-        return {
+        state = {
             "min_sl_distance_pct": float(Settings().te_min_sl_distance_pct),
             "min_sl_distance_source": source("TE_MIN_SL_DISTANCE_PCT"),
             "min_sl_entry_distance_pct": float(MIN_SL_DISTANCE_PCT),
             "min_sl_entry_distance_source": source("MIN_SL_DISTANCE_PCT"),
         }
+        if symbol:
+            state.update(stop_floor.floor(symbol).as_state())
+        return state
 
     def _exposure_caps_state(self) -> dict[str, Any] | None:
         """The volatility-derived caps with their sources; None when they cannot be read."""
@@ -5626,7 +5765,7 @@ class Dispatcher:
                 "max_position_size_usd": getattr(
                     settings, "max_position_size_usd", 1000.0
                 ),
-                **self._stop_floor_state(),
+                **self._stop_floor_state(symbol),
                 "exposure_caps": self._exposure_caps_state(),
             },
             "env_stats": {
@@ -5949,7 +6088,10 @@ class Dispatcher:
                 order.stop_loss
                 and order.stop_loss > 0
                 and entry_price > 0
-                and not order.stop_loss_pct
+                and (
+                    (order.side == "buy" and order.stop_loss < entry_price)
+                    or (order.side != "buy" and order.stop_loss > entry_price)
+                )
             ):
                 implied_pct = abs(entry_price - order.stop_loss) / entry_price
                 if implied_pct < MIN_SL_DISTANCE_PCT:
@@ -6021,9 +6163,13 @@ class Dispatcher:
                 )
 
                 try:
-                    sl_safety_floor_pct = (
-                        float(Settings().te_min_sl_distance_pct) / 100.0
+                    floor_in_force = stop_floor.floor(
+                        order.symbol,
+                        strategy_id=(order.strategy_metadata or {}).get("strategy_id"),
                     )
+                    sl_safety_floor_pct = floor_in_force.fraction
+                    # Logged on every use, with sigma_1h, H and q (petrosa-tradeengine#742)
+                    self.logger.info(floor_in_force.log_line())
                 except Exception:
                     sl_safety_floor_pct = 0.06
 

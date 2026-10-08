@@ -320,6 +320,12 @@ position_persist_failed_total = Counter(
     ["symbol", "position_side", "operation", "reason"],
 )
 
+strategy_attribution_persist_failures_total = Counter(
+    "petrosa_tradeengine_strategy_attribution_persist_failures_total",
+    "Strategy position attribution writes queued after persistence failure",
+    ["path", "operation", "reason"],
+)
+
 entry_fill_unknown_fee_total = Counter(
     "tradeengine_entry_fill_unknown_fee_total",
     "Entry fills persisted without an exchange commission",

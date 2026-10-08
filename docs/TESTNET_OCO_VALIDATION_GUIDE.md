@@ -55,8 +55,6 @@ ENVIRONMENT=testnet
 Run the comprehensive OCO test script:
 
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
-
 # Set testnet credentials
 export BINANCE_API_KEY="your-testnet-api-key"
 export BINANCE_API_SECRET="your-testnet-api-secret"
@@ -405,6 +403,5 @@ Once testnet validation is successful:
 
 ---
 
-**Last Updated**: October 17, 2025
 **Status**: Ready for testnet validation
 **Next**: Run `python scripts/live_oco_test.py` with testnet credentials

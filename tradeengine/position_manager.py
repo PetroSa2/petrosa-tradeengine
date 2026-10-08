@@ -23,6 +23,7 @@ from shared.constants import (
 from shared.trading_store_client import trading_store
 from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore
+from tradeengine.json_safe import json_safe
 from tradeengine.metrics import (
     algo_orders_open,
     close_fill_unknown_fee_total,
@@ -958,6 +959,9 @@ class PositionManager:
 
     async def persist_entry_fill(self, data: dict[str, Any]) -> bool:
         """Persist one exchange entry fill without blocking order flow."""
+        data = json_safe(
+            data
+        )  # a non-JSON value must never fail the write and its retries (#755)
         symbol = str(data.get("symbol", "unknown"))
         commission = data.get("commission")
         if commission is None:
@@ -1847,6 +1851,31 @@ class PositionManager:
             )
             self._daily_pnl_refresh_stale = True
 
+    @staticmethod
+    def _snapshot_price(snapshot: Any) -> float:
+        """The price to value an exchange position at: its mark price; else the mark implied by its entry price
+        and unrealized P&L (``entry + upnl / quantity`` on a LONG, ``entry - upnl / quantity`` on a SHORT);
+        else its entry price. 0.0 only when the snapshot carries none of them (then the check fails closed)."""
+        mark = float(snapshot.mark_price or 0.0)
+        if mark > 0:
+            return mark
+        entry = float(snapshot.entry_price or 0.0)
+        quantity = abs(float(snapshot.quantity))
+        if entry > 0 and quantity > 0:
+            side = str(snapshot.side or "").upper()
+            direction = (
+                1.0
+                if side == "LONG"
+                else -1.0
+                if side == "SHORT"
+                else (1.0 if snapshot.quantity > 0 else -1.0)
+            )
+            implied = (
+                entry + direction * float(snapshot.unrealized_pnl or 0.0) / quantity
+            )
+            return implied if implied > 0 else entry
+        return entry if entry > 0 else 0.0
+
     def _position_notional(self) -> float:
         """Return current gross position notional from the selected source."""
         self._portfolio_exposure_refresh_failed = False
@@ -1862,11 +1891,15 @@ class PositionManager:
                 if abs(snapshot.quantity) < 1e-9:
                     continue
                 notional = abs(snapshot.notional)
-                if notional <= 0 and snapshot.mark_price > 0:
-                    notional = abs(snapshot.quantity) * snapshot.mark_price
                 if notional <= 0:
-                    self._portfolio_exposure_refresh_failed = True
-                    return 0.0
+                    # A snapshot from a fresh ACCOUNT_UPDATE has the quantity, the entry price and the
+                    # unrealized P&L but neither a notional nor a mark price: price it from what it does
+                    # carry instead of failing the whole check (#755).
+                    price = self._snapshot_price(snapshot)
+                    if price <= 0:
+                        self._portfolio_exposure_refresh_failed = True
+                        return 0.0
+                    notional = abs(snapshot.quantity) * price
                 total_notional += notional
             return total_notional
 

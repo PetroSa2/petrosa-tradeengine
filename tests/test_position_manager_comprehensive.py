@@ -974,8 +974,18 @@ async def test_exchange_truth_notional_enforces_portfolio_exposure(
 
 
 @pytest.mark.asyncio
-async def test_exchange_truth_missing_price_fails_closed(
-    position_manager, sample_long_order
+@pytest.mark.parametrize(
+    ("entry_price", "failed_closed"),
+    [
+        (
+            "0",
+            True,
+        ),  # no mark, no notional and no entry price: nothing to value the position at
+        ("50000", False),  # a fresh snapshot is valued at its entry price (#755)
+    ],
+)
+async def test_exchange_truth_missing_price_fails_closed_only_when_nothing_prices_it(
+    position_manager, sample_long_order, entry_price, failed_closed
 ):
     from tradeengine.exchange_truth_store import ExchangeTruthStore
 
@@ -986,7 +996,7 @@ async def test_exchange_truth_missing_price_fails_closed(
                 "symbol": "BTCUSDT",
                 "positionSide": "LONG",
                 "positionAmt": "0.02",
-                "entryPrice": "50000",
+                "entryPrice": entry_price,
                 "markPrice": "0",
                 "notional": "0",
             }
@@ -1018,8 +1028,9 @@ async def test_exchange_truth_missing_price_fails_closed(
     ):
         result = await position_manager.check_position_limits(sample_long_order)
 
-    assert result is False
-    assert position_manager.rejection_reason == "refresh_failure"
+    assert (position_manager.rejection_reason == "refresh_failure") is failed_closed
+    if failed_closed:
+        assert result is False
 
 
 @pytest.mark.asyncio

@@ -157,6 +157,16 @@ def exit_order_side(position_side: Any) -> str | None:
     return {"LONG": "sell", "SHORT": "buy"}.get(side or "")
 
 
+DEFAULT_EXCHANGE_NAME = "binance"
+
+
+def exchange_name_of(value: Any) -> str:
+    """The exchange as a persisted position names it: a string (``binance``), never the client object."""
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    return DEFAULT_EXCHANGE_NAME
+
+
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
@@ -5510,7 +5520,11 @@ class Dispatcher:
                             "trade_id": trade_id,
                             "order_id": order_id,
                             "entry_time": fill_time,
-                            "exchange": getattr(self, "exchange", None),
+                            # The exchange NAME: the client object is not JSON serializable, so every entry
+                            # fill failed to persist (#755)
+                            "exchange": exchange_name_of(
+                                (entry_position or {}).get("exchange")
+                            ),
                             "idempotency_key": idempotency_key,
                             "status": "open",
                         }

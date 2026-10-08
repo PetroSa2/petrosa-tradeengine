@@ -197,8 +197,8 @@ Result for ETHUSDT: leverage=10
     "parameters": {...},
     "version": 3,
     "source": "mongodb",
-    "created_at": "2025-10-20T10:00:00Z",
-    "updated_at": "2025-10-20T15:30:00Z"
+    "created_at": "<ISO-8601 timestamp>",
+    "updated_at": "<ISO-8601 timestamp>"
   },
   "metadata": {
     "action": "updated",
@@ -360,7 +360,6 @@ curl http://localhost:8000/api/v1/config/trading/SOLUSDT/LONG | jq '.data.parame
 
 ---
 
-**Quick Reference Generated:** October 20, 2025
 **API Version:** 1.1.0
 **Total Endpoints:** 12+
 **Total Parameters:** 31

@@ -9,7 +9,7 @@ or environment.
 **Alert:** `UnhedgedPositionDetected` (Grafana Cloud)
 **Metric:** `tradeengine_position_reconciliation_divergences_total{category="unhedged"} > 0`
 **Severity:** `critical`
-**Origin:** AC5 / RC#5 of [#424](https://github.com/PetroSa2/petrosa-tradeengine/issues/424) (2026-05-30 OCO orphan-legs incident)
+**Origin:** AC5 / RC#5 of [#424](https://github.com/PetroSa2/petrosa-tradeengine/issues/424) (OCO orphan-legs incident)
 
 ---
 
@@ -22,7 +22,7 @@ A live, non-zero position exists on Binance Futures for which TradeEngine cannot
 
 on the matching `(symbol, positionSide)`. The position is running **unprotected** — a routine adverse move will hit the entry-side margin without firing any pre-placed exit.
 
-On 2026-05-30 this exact state covered **11 of 12** open positions for **2+ hours** with no alert firing. The reconciler now flags it within 60 s.
+This state previously covered multiple open positions for **2+ hours** with no alert firing. The reconciler now flags it within 60 s.
 
 ---
 

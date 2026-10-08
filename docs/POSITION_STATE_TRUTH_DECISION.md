@@ -1,6 +1,5 @@
 # Position/Order State Truth — Mirror vs Always-Consult Decision
 
-**Last Updated**: August 20, 2026
 **Service Status**: ✅ ACTIVE (Production)
 **Issue**: [#549](https://github.com/PetroSa2/petrosa-tradeengine/issues/549) — INVESTIGATION (P1)
 **Root cause of**: `-4130` / `-4509` arm failures; malformed `source:"exchange"` quantities
@@ -13,7 +12,7 @@ The trade engine keeps **three independent in-memory stores** of position/order 
 can silently diverge from Binance truth.
 The SL/TP arming hot path reads local/result state, never live exchange qty.
 That drift is the root cause of the live `-4509` (arming a position Binance no longer holds)
-and `-4130` (arming legs that already exist) failures observed on 2026-08-20.
+and `-4130` (arming legs that already exist) failures.
 
 **Decision: Option A — corrected mirror.**
 Keep `ExchangeTruthStore` as the single read model; close the four wiring gaps that make it

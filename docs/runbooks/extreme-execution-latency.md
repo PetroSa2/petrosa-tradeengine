@@ -158,7 +158,7 @@ kubectl --kubeconfig=k8s/kubeconfig.yaml rollout history deployment/tradeengine 
 ## Related Documentation
 
 - [Business Metrics Documentation](../BUSINESS_METRICS.md)
-- [Performance Optimization Guide](../QUICK_OPTIMIZATION_GUIDE.md)
+- [Logs and Troubleshooting](../LOGS_TROUBLESHOOTING.md)
 - [Trading Engine Documentation](../TRADING_ENGINE_DOCUMENTATION.md)
 
 ## Dashboard Links

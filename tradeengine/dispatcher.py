@@ -5869,7 +5869,7 @@ class Dispatcher:
             "gross_notional": self.position_manager.get_notional_summary()[0],
             "net_notional": self.position_manager.get_notional_summary()[1],
         }
-        policy = getattr(self.settings, "te_hedge_netting_policy", "allow_both")
+        policy = getattr(settings, "te_hedge_netting_policy", "allow_both")
         same_symbol_offset = offset_notional(
             strategy_position_manager.get_all_open_strategy_positions(), symbol
         )

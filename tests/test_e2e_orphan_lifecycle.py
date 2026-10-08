@@ -276,9 +276,9 @@ async def test_ac2_orphan_survives_pod_restart() -> None:
         )
     finally:
         await oco.stop_monitoring()
-    assert pre_result.get("requires_remediation") is True
-    # TP posted, SL failed -> surviving TP cancelled.
-    assert pre_result.get("cancelled_leg") == "TP"
+    assert pre_result.get("requires_remediation") is None
+    # SL failed first, so no TP was posted and no leg was cancelled.
+    assert pre_result.get("cancelled_leg") is None
 
     # --- Simulate pod restart: fresh managers, no in-memory OCO state ---
     # The exchange still shows the position and one *unpaired* leftover leg

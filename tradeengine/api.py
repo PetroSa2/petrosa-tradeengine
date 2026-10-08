@@ -254,13 +254,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # (`position_reconciliation_requires_live_only=False`) starts the
         # watchdog whenever reconciliation is enabled; set the flag True to
         # restore the old sim-gated behavior.
-        # Derived stop floor (petrosa_k8s#1239, rule 23): sigma_1h from data-manager's risk inputs, the
-        # exchange filters and the book spread, refreshed in the background
+        # Volatility-derived exposure caps (petrosa_k8s#1239, rule 11): data-manager's risk inputs, refreshed hourly
         from shared.constants import SUPPORTED_SYMBOLS
+        from tradeengine.exposure_caps import risk_inputs_cache
         from tradeengine.open_row_reconciler import OpenRowReconciler
         from tradeengine.position_reconciler import PositionReconciler
         from tradeengine.services.data_manager_client import DataManagerClient
 
+        risk_inputs_cache.configure(DataManagerClient()._client)
+        app.state.risk_inputs_task = asyncio.create_task(risk_inputs_cache.run())
+        # Derived stop floor (petrosa_k8s#1239, rule 23): sigma_1h from data-manager's risk inputs, the
+        # exchange filters and the book spread, refreshed in the background
         stop_floor.configure(
             DataManagerClient()._client, binance_exchange, SUPPORTED_SYMBOLS
         )
@@ -575,6 +579,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.commission_task.cancel()
             try:
                 await app.state.commission_task
+            except asyncio.CancelledError:
+                pass
+        if hasattr(app.state, "risk_inputs_task"):
+            app.state.risk_inputs_task.cancel()
+            try:
+                await app.state.risk_inputs_task
             except asyncio.CancelledError:
                 pass
 

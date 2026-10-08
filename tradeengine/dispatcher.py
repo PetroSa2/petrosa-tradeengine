@@ -5701,6 +5701,15 @@ class Dispatcher:
             state.update(stop_floor.floor(symbol).as_state())
         return state
 
+    def _exposure_caps_state(self) -> dict[str, Any] | None:
+        """The volatility-derived caps with their sources; None when they cannot be read."""
+        try:
+            state = self.position_manager.exposure_caps_state()
+            return state if isinstance(state, dict) else None
+        except Exception as exc:  # /state must never fail on this
+            self.logger.warning("Exposure caps unavailable: %s", exc)
+            return None
+
     def get_cio_state(self, symbol: str) -> dict[str, Any]:
         """
         Aggregates real-time state data for the CIO TriggerContext.
@@ -5757,6 +5766,7 @@ class Dispatcher:
                     settings, "max_position_size_usd", 1000.0
                 ),
                 **self._stop_floor_state(symbol),
+                "exposure_caps": self._exposure_caps_state(),
             },
             "env_stats": {
                 "global_drawdown_pct": max(-self.position_manager.get_daily_pnl(), 0.0)

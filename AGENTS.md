@@ -44,7 +44,3 @@ Python packages at the top level: `contracts/`, `shared/`, `tradeengine/`. Also 
 - Commits use Conventional Commits; branches are `{type}/{issue-number}-{slug}`; a PR body contains `Closes #N`; never merge with `--admin`.
 - Text that leaves the repository (PR titles and bodies, commit messages, code comments) uses generic roles such as Agentic Developer and never names the upstream workflow engine or its personas.
 - Do not commit logs, drafts, scratch files or generated working notes. GitHub and the memory server are the record.
-
-## Legacy rules
-
-`docs/agent-rules.md` holds the repository's previous editor rules, moved unchanged and not yet re-verified. Prefer this file and the code.

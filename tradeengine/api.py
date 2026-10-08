@@ -54,7 +54,7 @@ from tradeengine.api_filter_routes import (
 )
 from tradeengine.commission_rates import commission_rates
 from tradeengine.config_manager import TradingConfigManager
-from tradeengine.db.mongodb_client import config_client
+from tradeengine.db.mongodb_client import DataManagerConfigClient, config_client
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
@@ -63,6 +63,7 @@ from tradeengine.position_health_guard import (
     check_position_stops,
 )
 from tradeengine.services.execution_event_publisher import execution_event_publisher
+from tradeengine.stop_floor import stop_floor
 from tradeengine.strategy_position_manager import (
     strategy_position_manager as _strategy_position_manager,
 )
@@ -72,6 +73,26 @@ from tradeengine.strategy_position_manager import (
 tracer = trace.get_tracer(__name__)
 
 logger = logging.getLogger(__name__)
+
+
+def _build_config_rate_limiter() -> Any:
+    """Build a safe limiter for the configured data-manager-backed client."""
+    if ConfigRateLimiter is None:
+        return None
+
+    uses_data_manager_api = isinstance(config_client, DataManagerConfigClient)
+    if uses_data_manager_api:
+        logger.warning(
+            "Configuration rate limiter disabled: data-manager API client is not a Mongo client"
+        )
+
+    return ConfigRateLimiter(
+        mongodb_client=config_client,
+        service_name="tradeengine",
+        per_agent_limit=int(os.getenv("CONFIG_RATE_LIMIT_PER_AGENT", "10")),
+        cooldown_seconds=int(os.getenv("CONFIG_RATE_LIMIT_COOLDOWN", "300")),
+        enabled=not uses_data_manager_api,
+    )
 
 
 @asynccontextmanager
@@ -115,6 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Set global config manager for API routes
         set_config_manager(trading_config_manager)
         set_filter_config_manager(trading_config_manager)
+        # The dispatcher's leverage-bound check and parameter resolution read the same live manager (#728)
+        dispatcher.config_manager = trading_config_manager
 
         # Store in app state
         app.state.trading_config_manager = trading_config_manager
@@ -122,14 +145,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize and register configuration rate limiter
         if ConfigRateLimiter:
-            rate_limiter = ConfigRateLimiter(
-                mongodb_client=config_client,
-                service_name="tradeengine",
-                per_agent_limit=int(os.getenv("CONFIG_RATE_LIMIT_PER_AGENT", "10")),
-                cooldown_seconds=int(os.getenv("CONFIG_RATE_LIMIT_COOLDOWN", "300")),
-            )
+            rate_limiter = _build_config_rate_limiter()
             app.state.rate_limiter = rate_limiter
-            logger.info("✅ Configuration rate limiter initialized")
+            if rate_limiter.enabled:
+                logger.info("✅ Configuration rate limiter initialized")
 
         # Initialize audit logger
         if audit_logger.enabled:
@@ -224,8 +243,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Start position reconciler (FR65 / AC1)
         from shared.config import settings as _te_settings
-        from tradeengine.open_row_reconciler import OpenRowReconciler
-        from tradeengine.position_reconciler import PositionReconciler
 
         # #540: decouple the watchdog from `simulation_enabled`. The live
         # deployment sets TE_NAKED_POSITION_REMEDIATION_MODE but leaves
@@ -237,6 +254,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # (`position_reconciliation_requires_live_only=False`) starts the
         # watchdog whenever reconciliation is enabled; set the flag True to
         # restore the old sim-gated behavior.
+        # Derived stop floor (petrosa_k8s#1239, rule 23): sigma_1h from data-manager's risk inputs, the
+        # exchange filters and the book spread, refreshed in the background
+        from shared.constants import SUPPORTED_SYMBOLS
+        from tradeengine.open_row_reconciler import OpenRowReconciler
+        from tradeengine.position_reconciler import PositionReconciler
+        from tradeengine.services.data_manager_client import DataManagerClient
+
+        stop_floor.configure(
+            DataManagerClient()._client, binance_exchange, SUPPORTED_SYMBOLS
+        )
+        app.state.stop_floor_task = asyncio.create_task(stop_floor.run())
+
         _reconciliation_enabled = _te_settings.position_reconciliation_enabled
         _real_trading_active = not _te_settings.simulation_enabled
         if _te_settings.position_reconciliation_requires_live_only:
@@ -269,6 +298,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     # of re-arming with a guaranteed-to-fail price (#second-wave
                     # OCO-orphan: 2.4% strategy SL vs 6% floor deadlock).
                     min_sl_distance_pct=_te_settings.te_min_sl_distance_pct,
+                    floor_provider=lambda symbol: stop_floor.floor(symbol).pct,
                     # #560: bound consecutive re-arm failures per position
                     # before backing off instead of retrying every cycle.
                     max_consecutive_arm_failures=(
@@ -535,6 +565,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
 
+        if hasattr(app.state, "stop_floor_task"):
+            app.state.stop_floor_task.cancel()
+            try:
+                await app.state.stop_floor_task
+            except asyncio.CancelledError:
+                pass
         if hasattr(app.state, "commission_task"):
             app.state.commission_task.cancel()
             try:

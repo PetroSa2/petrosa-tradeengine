@@ -1,6 +1,5 @@
 # Multi-Strategy OCO Tracking
 
-**Date**: October 24, 2025
 **Version**: 2.1.0
 **Status**: ✅ Implemented
 
@@ -245,7 +244,7 @@ operational store; the historic MySQL copy is also maintained by data-manager.
   "side": "LONG",
   "entry_price": 45000.0,
   "entry_quantity": 0.001,
-  "entry_time": "2025-10-24T10:00:00Z",
+  "entry_time": "<ISO-8601 timestamp>",
   "take_profit_price": 48000.0,
   "stop_loss_price": 43000.0,
   "status": "open",
@@ -260,7 +259,7 @@ operational store; the historic MySQL copy is also maintained by data-manager.
   "status": "closed",
   "exit_price": 48000.0,
   "exit_quantity": 0.001,
-  "exit_time": "2025-10-24T10:15:00Z",
+  "exit_time": "<ISO-8601 timestamp>",
   "close_reason": "take_profit",
   "realized_pnl": 3.0,
   "realized_pnl_pct": 6.67,
@@ -377,7 +376,6 @@ tradeengine_active_oco_pairs_per_position > 1
 
 **Run**:
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 python scripts/test_multi_strategy_oco.py
 ```
 
@@ -518,7 +516,6 @@ for key, pos in exchange_positions.items():
 
 1. **Update Code**:
    ```bash
-   cd /Users/yurisa2/petrosa/petrosa-tradeengine
    git add .
    git commit -m "feat: Multi-strategy OCO tracking with proper attribution"
    git push origin main
@@ -648,7 +645,6 @@ db.strategy_positions.find({
 
 ## References
 
-- [Research Findings](RESEARCH_FINDINGS.md) - Implementation research
 - [Strategy Position Manager](../tradeengine/strategy_position_manager.py) - Position tracking
 - [Dispatcher](../tradeengine/dispatcher.py) - OCO management
 - [Metrics](../tradeengine/metrics.py) - Prometheus metrics

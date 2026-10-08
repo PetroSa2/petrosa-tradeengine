@@ -107,6 +107,18 @@ def cleanup_logging_state():
 
 
 @pytest.fixture(autouse=True)
+def _restore_route_config_managers():
+    """The config routes hold a module-level manager that the API lifespan sets. The dispatcher falls back to it
+    (#728), so a manager left behind by a lifespan test would be read as the live config by any later test that
+    runs an order through the dispatcher. Restore the pre-test value after each test."""
+    from tradeengine import api_config_routes, api_filter_routes
+
+    saved = (api_config_routes._config_manager, api_filter_routes._config_manager)
+    yield
+    api_config_routes._config_manager, api_filter_routes._config_manager = saved
+
+
+@pytest.fixture(autouse=True)
 def _restore_api_module_isolation():
     """Guard against sys.modules["petrosa_otel"] replacement leaking into
     tradeengine.api's module namespace and poisoning app.user_middleware

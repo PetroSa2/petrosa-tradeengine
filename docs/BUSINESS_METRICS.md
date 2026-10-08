@@ -403,4 +403,3 @@ Planned improvements to business metrics:
 - [Prometheus Best Practices](https://prometheus.io/docs/practices/naming/)
 - [Grafana Dashboard Documentation](https://grafana.com/docs/grafana/latest/dashboards/)
 - [OpenTelemetry Metrics](https://opentelemetry.io/docs/concepts/signals/metrics/)
-- [petrosa_k8s Master Cursorrules](/Users/yurisa2/petrosa/petrosa_k8s/.cursorrules)

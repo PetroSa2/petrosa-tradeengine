@@ -10,7 +10,6 @@
 
 ```bash
 # Get a pod
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 POD=$(kubectl --kubeconfig=k8s/kubeconfig.yaml get pods -n petrosa-apps -l app=petrosa-tradeengine -o jsonpath='{.items[0].metadata.name}')
 
 echo "=== 1. Check Watchdog Started ==="

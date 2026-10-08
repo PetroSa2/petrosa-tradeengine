@@ -65,7 +65,7 @@ The expected signal format is:
   "action": "buy",
   "price": 45000.0,
   "confidence": 0.85,
-  "timestamp": "2025-06-29T12:00:00",
+  "timestamp": "<ISO-8601 timestamp>",
   "meta": {
     "simulate": true,
     "indicators": {"rsi": 65},

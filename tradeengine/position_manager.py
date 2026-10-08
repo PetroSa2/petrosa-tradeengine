@@ -1540,6 +1540,35 @@ class PositionManager:
 
         return MAX_POSITION_SIZE
 
+    def get_risk_at_stop(self, *, gross: bool) -> float:
+        total = 0.0
+        by_symbol: dict[str, list[float]] = {}
+        for key, record in self.positions.items():
+            quantity = float(record.get("quantity", 0.0) or 0.0)
+            entry = float(
+                record.get(
+                    "entry_price", record.get("avg_price", record.get("price", 0.0))
+                )
+                or 0.0
+            )
+            stop = record.get("stop_loss") or record.get("stop_loss_price")
+            if not stop or entry <= 0:
+                continue
+            risk = quantity * abs(entry - float(stop))
+            symbol = str(
+                key[0] if isinstance(key, tuple) else record.get("symbol", key)
+            )
+            by_symbol.setdefault(symbol, []).append(risk)
+        for values in by_symbol.values():
+            total += (
+                sum(values)
+                if gross
+                else abs(values[0] - values[1])
+                if len(values) > 1
+                else values[0]
+            )
+        return total
+
     async def check_position_limits(self, order: TradeOrder) -> bool:
         """Check if order meets position size limits with distributed state"""
         if not RISK_MANAGEMENT_ENABLED:

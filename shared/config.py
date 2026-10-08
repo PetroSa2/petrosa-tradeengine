@@ -197,6 +197,25 @@ class Settings(BaseSettings):
         ),
         description="Log per-order cost-to-signal diagnostics without filtering orders.",
     )
+    te_risk_fraction: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("TE_RISK_FRACTION", "te_risk_fraction"),
+        ge=0.0,
+        le=1.0,
+    )
+    te_margin_precheck_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "TE_MARGIN_PRECHECK_ENABLED", "te_margin_precheck_enabled"
+        ),
+    )
+    te_expected_cost_per_unit: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "TE_EXPECTED_COST_PER_UNIT", "te_expected_cost_per_unit"
+        ),
+        ge=0.0,
+    )
 
     # #445: exchange-authoritative naked-position remediation.
     # Modes: "off" (read-only, no writes — detection-only), "dry_run"

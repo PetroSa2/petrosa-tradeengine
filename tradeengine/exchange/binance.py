@@ -10,7 +10,7 @@ import logging
 import math
 import os
 import time
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR, Decimal, InvalidOperation
 from typing import Any, cast
 
 from binance import Client
@@ -1698,6 +1698,33 @@ class BinanceFuturesExchange:
                 if price > current_price and price < current_price * (
                     1 + min_safe_distance_pct / 100.0
                 ):
+                    floor_price = Decimal(str(current_price)) * (
+                        Decimal("1")
+                        + Decimal(str(min_safe_distance_pct)) / Decimal("100")
+                    )
+                    tick_size = next(
+                        (
+                            Decimal(str(f["tickSize"]))
+                            for f in getattr(self, "symbol_info", {})
+                            .get(symbol, {})
+                            .get("filters", [])
+                            if f.get("filterType") == "PRICE_FILTER"
+                        ),
+                        Decimal("0"),
+                    )
+                    if tick_size > 0:
+                        floor_price = (floor_price / tick_size).to_integral_value(
+                            rounding=ROUND_CEILING
+                        ) * tick_size
+                    adjusted_price = float(floor_price)
+                    if adjusted_price <= max_price:
+                        adjustment_msg = (
+                            f"🔧 WIDENED {symbol} {order_type} price from ${price:.2f} "
+                            f"to ${adjusted_price:.2f} at the placeable safety floor "
+                            f"({deviation_pct:+.2f}% to {min_safe_distance_pct:+.2f}%)"
+                        )
+                        logger.warning(adjustment_msg)
+                        return (True, adjusted_price, adjustment_msg)
                     reason = (
                         f"sl_within_safety_floor: requested ${price:.2f} "
                         f"({deviation_pct:+.2f}%) is inside the safety floor "
@@ -1709,6 +1736,33 @@ class BinanceFuturesExchange:
                 if price < current_price and price > current_price * (
                     1 - min_safe_distance_pct / 100.0
                 ):
+                    floor_price = Decimal(str(current_price)) * (
+                        Decimal("1")
+                        - Decimal(str(min_safe_distance_pct)) / Decimal("100")
+                    )
+                    tick_size = next(
+                        (
+                            Decimal(str(f["tickSize"]))
+                            for f in getattr(self, "symbol_info", {})
+                            .get(symbol, {})
+                            .get("filters", [])
+                            if f.get("filterType") == "PRICE_FILTER"
+                        ),
+                        Decimal("0"),
+                    )
+                    if tick_size > 0:
+                        floor_price = (floor_price / tick_size).to_integral_value(
+                            rounding=ROUND_FLOOR
+                        ) * tick_size
+                    adjusted_price = float(floor_price)
+                    if adjusted_price >= min_price:
+                        adjustment_msg = (
+                            f"🔧 WIDENED {symbol} {order_type} price from ${price:.2f} "
+                            f"to ${adjusted_price:.2f} at the placeable safety floor "
+                            f"({deviation_pct:+.2f}% to {-min_safe_distance_pct:+.2f}%)"
+                        )
+                        logger.warning(adjustment_msg)
+                        return (True, adjusted_price, adjustment_msg)
                     reason = (
                         f"sl_within_safety_floor: requested ${price:.2f} "
                         f"({deviation_pct:+.2f}%) is inside the safety floor "

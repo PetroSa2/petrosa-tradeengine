@@ -718,9 +718,21 @@ class OCOManager:
         # Execute both orders
         try:
             sl_result = await self.exchange.execute(sl_order)
-            tp_result = await self.exchange.execute(tp_order)
-
             sl_order_id = sl_result.get("order_id")
+            if not sl_order_id:
+                self.logger.error(
+                    "❌ STOP LOSS LEG WAS NOT ACCEPTED; refusing to post TP for "
+                    f"{symbol} {position_side}: {sl_result}"
+                )
+                return {
+                    "status": "failed",
+                    "reason": "stop_loss_not_accepted",
+                    "symbol": symbol,
+                    "position_side": position_side,
+                    "sl_result": sl_result,
+                }
+
+            tp_result = await self.exchange.execute(tp_order)
             tp_order_id = tp_result.get("order_id")
 
             if sl_order_id and tp_order_id:

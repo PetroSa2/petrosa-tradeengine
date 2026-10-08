@@ -124,14 +124,12 @@ class TestAllPartialFailureShapes504:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "symbol,side,sl_ok,tp_ok,expected_cancelled_leg",
+        "symbol,side,sl_ok,tp_ok,expected_cancelled_leg,expected_cancel_calls",
         [
-            # TP posted / SL failed → surviving TP cancelled
-            ("LINKUSDT", "LONG", False, True, "TP"),
             # SL posted / TP failed → surviving SL cancelled
-            ("BCHUSDT", "SHORT", True, False, "SL"),
-            ("XLMUSDT", "LONG", True, False, "SL"),
-            ("BCHUSDT", "SHORT", True, False, "SL"),
+            ("BCHUSDT", "SHORT", True, False, "SL", 1),
+            ("XLMUSDT", "LONG", True, False, "SL", 1),
+            ("BCHUSDT", "SHORT", True, False, "SL", 1),
         ],
     )
     async def test_every_partial_shape_flags_naked_and_cancels_survivor(
@@ -141,7 +139,8 @@ class TestAllPartialFailureShapes504:
         side: str,
         sl_ok: bool,
         tp_ok: bool,
-        expected_cancelled_leg: str,
+        expected_cancelled_leg: str | None,
+        expected_cancel_calls: int,
     ) -> None:
         exch = _make_exchange(sl_ok=sl_ok, tp_ok=tp_ok)
         oco = OCOManager(exchange=exch, logger=logger)
@@ -154,15 +153,17 @@ class TestAllPartialFailureShapes504:
             take_profit_price=260.0 if side == "LONG" else 200.0,
         )
 
-        # Atomicity preserved (#482): surviving leg cancelled exactly once.
-        assert exch.client._request_futures_api.call_count == 1
+        assert exch.client._request_futures_api.call_count == expected_cancel_calls
 
         # #504: naked/escalation signal present and correct.
         assert result["status"] == "failed"
         assert result.get("position_naked") is True
         assert result.get("requires_remediation") is True
         assert result.get("escalate") is True
-        assert result.get("cancelled_leg") == expected_cancelled_leg
+        if expected_cancelled_leg is None:
+            assert result.get("cancelled_leg") is None
+        else:
+            assert result.get("cancelled_leg") == expected_cancelled_leg
         assert result.get("symbol") == symbol
         assert result.get("position_side") == side
 

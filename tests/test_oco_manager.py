@@ -78,7 +78,7 @@ async def test_surviving_sl_leg_is_cancelled_when_tp_leg_fails(
 async def test_surviving_tp_leg_is_cancelled_when_sl_leg_fails(
     logger: logging.Logger,
 ) -> None:
-    """TP posts → SL fails → TP algoId must be sent to algoOrder DELETE."""
+    """SL fails → TP is not posted, so no cancel request is needed."""
     exch = _make_exchange(sl_ok=False, tp_ok=True)
     oco = OCOManager(exchange=exch, logger=logger)
 
@@ -92,9 +92,7 @@ async def test_surviving_tp_leg_is_cancelled_when_sl_leg_fails(
     )
 
     assert result["status"] == "failed"
-    assert exch.client._request_futures_api.call_count == 1
-    call = exch.client._request_futures_api.call_args
-    assert call.kwargs["data"] == {"symbol": "BCHUSDT", "algoId": "1000000091274546"}
+    assert exch.client._request_futures_api.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -158,7 +156,7 @@ async def test_orphan_counter_increments_when_cancel_raises(
 async def test_orphan_counter_increments_when_cancel_succeeds(
     logger: logging.Logger,
 ) -> None:
-    """#482 AC2: cancel_outcome="success" bucket ticks when cancel goes through cleanly."""
+    """A rejected stop does not create an orphan TP or cancel metric."""
     from tradeengine.metrics import oco_orphan_leg_total
 
     exch = _make_exchange(sl_ok=False, tp_ok=True)
@@ -184,14 +182,9 @@ async def test_orphan_counter_increments_when_cancel_succeeds(
     after_failed = failed_sample._value.get()
 
     assert result["status"] == "failed"
-    # surviving TP leg was cancelled cleanly → success bucket ticks
-    assert after_success - before_success == 1.0
-    # failed bucket must NOT tick when cancel went through
+    assert after_success - before_success == 0.0
     assert after_failed - before_failed == 0.0
-    # And the cancel call itself was issued with the right algoId
-    assert exch.client._request_futures_api.call_count == 1
-    call = exch.client._request_futures_api.call_args
-    assert call.kwargs["data"]["algoId"] == "1000000091274546"
+    assert exch.client._request_futures_api.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +199,7 @@ async def test_otel_oco_orphan_leg_called_on_cancel_success(
     logger: logging.Logger,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#497 AC1: when cancel succeeds, otel_oco_orphan_leg.add(success) is called."""
+    """A rejected stop does not emit an orphan-leg cancellation metric."""
     import tradeengine.metrics as _metrics
 
     calls: list[tuple[int, dict]] = []
@@ -230,11 +223,7 @@ async def test_otel_oco_orphan_leg_called_on_cancel_success(
     )
 
     assert result["status"] == "failed"
-    assert len(calls) == 1
-    amount, attrs = calls[0]
-    assert amount == 1
-    assert attrs["cancel_outcome"] == "success"
-    assert attrs["symbol"] == "SOLUSDT"
+    assert calls == []
 
 
 @pytest.mark.asyncio

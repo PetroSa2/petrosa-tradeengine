@@ -27,6 +27,10 @@ def exchange() -> BinanceFuturesExchange:
     exc = BinanceFuturesExchange.__new__(BinanceFuturesExchange)
     exc.client = MagicMock()
     exc.testnet = True
+    exc.symbol_info = {
+        symbol: {"filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}]}
+        for symbol in ("BCHUSDT", "BTCUSDT", "ETHUSDT")
+    }
     return exc
 
 
@@ -121,10 +125,8 @@ async def test_541_clamps_below_market_sl_when_floor_exceeds_filter(exchange):
 
 
 @pytest.mark.asyncio
-async def test_h4_refuses_sl_already_inside_safety_floor(exchange):
-    """AC4: a stop-loss whose requested price is already inside the
-    safety floor (e.g. 2% from market) MUST be refused even if it's
-    within the PERCENT_PRICE filter."""
+async def test_h4_widens_sl_already_inside_placeable_safety_floor(exchange):
+    """A placeable inside-floor stop is widened to the directional floor."""
     market = 300.0
     requested_sl = 306.0  # +2% — inside the 6% floor for a short SL
     _stub_filter(
@@ -142,9 +144,9 @@ async def test_h4_refuses_sl_already_inside_safety_floor(exchange):
         min_safe_distance_pct=6.0,
     )
 
-    assert is_adjusted is False
-    assert adjusted_price is None
-    assert "sl_within_safety_floor" in msg
+    assert is_adjusted is True
+    assert adjusted_price == pytest.approx(318.0)
+    assert "WIDENED" in msg
 
 
 @pytest.mark.asyncio
@@ -207,9 +209,8 @@ async def test_h4_take_profit_not_subject_to_safety_floor(exchange):
 
 
 @pytest.mark.asyncio
-async def test_h4_below_market_sl_inside_floor_refused(exchange):
-    """AC4: same logic for LONG-position SLs (below market). A SL at -2%
-    from market must be refused when the floor is 6%."""
+async def test_h4_below_market_sl_inside_placeable_floor_is_widened(exchange):
+    """A placeable below-market stop is widened away from the market."""
     market = 300.0
     requested_sl = 294.0  # -2% — inside the 6% floor for a long SL
     _stub_filter(
@@ -227,9 +228,41 @@ async def test_h4_below_market_sl_inside_floor_refused(exchange):
         min_safe_distance_pct=6.0,
     )
 
-    assert is_adjusted is False
-    assert adjusted_price is None
-    assert "sl_within_safety_floor" in msg
+    assert is_adjusted is True
+    assert adjusted_price == pytest.approx(282.0)
+    assert "WIDENED" in msg
+
+
+@pytest.mark.asyncio
+async def test_h4_rounds_long_floor_away_from_market(exchange):
+    _stub_filter(exchange, market_price=100.0, multiplier_up=1.10, multiplier_down=0.90)
+
+    adjusted, price, msg = await exchange.validate_and_adjust_price_for_percent_filter(
+        symbol="BTCUSDT",
+        price=97.64,
+        order_type="STOP_LOSS",
+        min_safe_distance_pct=2.3615,
+    )
+
+    assert adjusted is True
+    assert price == pytest.approx(97.63)
+    assert "WIDENED" in msg
+
+
+@pytest.mark.asyncio
+async def test_h4_rounds_short_floor_away_from_market(exchange):
+    _stub_filter(exchange, market_price=100.0, multiplier_up=1.10, multiplier_down=0.90)
+
+    adjusted, price, msg = await exchange.validate_and_adjust_price_for_percent_filter(
+        symbol="BTCUSDT",
+        price=102.36,
+        order_type="STOP_LOSS",
+        min_safe_distance_pct=2.3615,
+    )
+
+    assert adjusted is True
+    assert price == pytest.approx(102.37)
+    assert "WIDENED" in msg
 
 
 @pytest.mark.asyncio
@@ -254,6 +287,6 @@ async def test_h4_default_floor_comes_from_settings_when_not_passed(exchange):
         order_type="STOP_LOSS",
     )
 
-    assert is_adjusted is False
-    assert adjusted_price is None
-    assert "sl_within_safety_floor" in msg
+    assert is_adjusted is True
+    assert adjusted_price == pytest.approx(318.0)
+    assert "WIDENED" in msg

@@ -5,7 +5,7 @@ import pytest
 
 from contracts.order import OrderSide, OrderType, TradeOrder
 from shared.constants import UTC
-from tradeengine.dispatcher import Dispatcher
+from tradeengine.dispatcher import Dispatcher, OCOManager
 
 
 @pytest.fixture
@@ -73,6 +73,69 @@ async def test_oco_failure_causes_rollback(dispatcher):
         # Verify rollback was called
         dispatcher.close_position_with_cleanup.assert_called_once()
         assert result["status"] == "rolled_back"
+
+
+@pytest.mark.asyncio
+async def test_oco_failure_context_identifies_failed_leg_and_exchange_code():
+    exchange = Mock()
+    exchange.execute = AsyncMock(
+        side_effect=[
+            {"status": "new", "order_id": "sl-123", "algoId": 123},
+            type("ExchangeFailure", (Exception,), {"code": -2021})(""),
+        ]
+    )
+    manager = OCOManager(exchange=exchange, logger=Mock())
+
+    result = await manager.place_oco_orders(
+        position_id="position-123",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        quantity=0.001,
+        stop_loss_price=49000.0,
+        take_profit_price=51000.0,
+        entry_price=50000.0,
+    )
+
+    assert result["status"] == "error"
+    assert result["failure_leg"] == "TP"
+    assert result["failure_exception_type"] == "ExchangeFailure"
+    assert result["failure_message"] == ""
+    assert result["exchange_code"] == -2021
+    assert result["sl_result"]["order_id"] == "sl-123"
+    assert result["tp_result"]["status"] == "exception"
+
+
+@pytest.mark.asyncio
+async def test_atomic_rollback_log_has_reason_for_blank_exception(dispatcher):
+    dispatcher.logger = Mock()
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        side="buy",
+        type="market",
+        amount=0.001,
+        order_id="test_order_blank_error",
+        position_id="pos_blank_error",
+        position_side="LONG",
+        simulate=False,
+        target_price=50000.0,
+    )
+    dispatcher._place_risk_management_orders = AsyncMock(side_effect=TimeoutError())
+    dispatcher.close_position_with_cleanup = AsyncMock(
+        return_value={"status": "success", "position_closed": True}
+    )
+
+    with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+        mock_spm.create_strategy_position = AsyncMock(return_value="strat_pos_blank")
+        result = await dispatcher._execute_order_with_consensus(order)
+
+    critical_messages = [
+        call.args for call in dispatcher.logger.error.call_args_list
+        if call.args and "[CRITICAL] OCO placement failed" in call.args[0]
+    ]
+    assert result["status"] == "rolled_back"
+    assert critical_messages
+    assert critical_messages[0][3] == "TimeoutError"
+    assert critical_messages[0][4] == "TimeoutError"
 
 
 @pytest.mark.asyncio

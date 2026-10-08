@@ -56,6 +56,7 @@ from tradeengine.commission_rates import commission_rates
 from tradeengine.config_manager import TradingConfigManager
 from tradeengine.db.mongodb_client import DataManagerConfigClient, config_client
 from tradeengine.dispatcher import Dispatcher
+from tradeengine.equity_peak import equity_peak_tracker
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
 from tradeengine.position_health_guard import (
@@ -450,6 +451,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     _te_settings.position_reconciliation_requires_live_only,
                 )
 
+        # Equity peak and drawdown from it (petrosa_k8s#1239, rule 5): sampled every minute
+        from tradeengine.services.data_manager_client import DataManagerClient
+
+        equity_peak_tracker.configure(
+            DataManagerClient()._client, binance_exchange, dispatcher.position_manager
+        )
+        app.state.equity_peak_task = asyncio.create_task(equity_peak_tracker.run())
         # Commission rate per symbol, read at startup and then daily (petrosa_k8s#1239, rule 16)
         from shared.constants import SUPPORTED_SYMBOLS
 
@@ -569,6 +577,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except asyncio.CancelledError:
                 logger.info("NATS consumer task cancelled successfully")
 
+        if hasattr(app.state, "equity_peak_task"):
+            app.state.equity_peak_task.cancel()
+            try:
+                await app.state.equity_peak_task
+            except asyncio.CancelledError:
+                pass
         if hasattr(app.state, "stop_floor_task"):
             app.state.stop_floor_task.cancel()
             try:
@@ -1528,6 +1542,7 @@ async def get_state(
     """
     try:
         state = dispatcher.get_cio_state(symbol)
+        state["drawdown"] = equity_peak_tracker.state()
         await commission_rates.ensure(symbol)
         state["commission"] = commission_rates.get(symbol)
         cap = await dispatcher.resolve_risk_cap(symbol, side)

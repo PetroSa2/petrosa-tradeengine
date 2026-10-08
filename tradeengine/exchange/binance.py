@@ -2204,6 +2204,7 @@ class BinanceFuturesExchange:
                 "can_deposit": account_info.get("canDeposit"),
                 "total_wallet_balance": account_info.get("totalWalletBalance"),
                 "available_balance": account_info.get("availableBalance"),
+                "total_unrealized_profit": account_info.get("totalUnrealizedProfit"),
                 "assets": account_info.get("assets", []),
             }
         except Exception as e:

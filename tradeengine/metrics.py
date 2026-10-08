@@ -511,6 +511,12 @@ sizing_cap_total = Counter(
     ["cap"],
 )
 
+netting_saved_fee_estimate_total = Counter(
+    "tradeengine_netting_saved_fee_estimate_total",
+    "Estimated fee and funding avoided by hedge netting",
+    ["symbol"],
+)
+
 risk_checks_total = Counter(
     "tradeengine_risk_checks_total",
     "Total risk checks performed",

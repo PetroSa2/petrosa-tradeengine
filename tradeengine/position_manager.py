@@ -1891,8 +1891,17 @@ class PositionManager:
         return entry if entry > 0 else 0.0
 
     def _position_notional(self) -> float:
-        """Return current gross position notional from the selected source."""
+        """Return current position notional from the selected hedge policy."""
         self._portfolio_exposure_refresh_failed = False
+        policy = getattr(self.settings, "te_hedge_netting_policy", "allow_both")
+
+        def total_by_policy(values: dict[str, dict[str, float]]) -> float:
+            if policy != "net":
+                return sum(sum(sides.values()) for sides in values.values())
+            return sum(
+                abs(sides.get("LONG", 0.0) - sides.get("SHORT", 0.0))
+                for sides in values.values()
+            )
 
         if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on":
             store = self.exchange_truth_store
@@ -1900,7 +1909,7 @@ class PositionManager:
                 self._portfolio_exposure_refresh_failed = True
                 return 0.0
 
-            total_notional = 0.0
+            by_symbol: dict[str, dict[str, float]] = {}
             for snapshot in store.get_positions().values():
                 if abs(snapshot.quantity) < 1e-9:
                     continue
@@ -1914,15 +1923,24 @@ class PositionManager:
                         self._portfolio_exposure_refresh_failed = True
                         return 0.0
                     notional = abs(snapshot.quantity) * price
-                total_notional += notional
-            return total_notional
+                side = str(snapshot.side or "").upper()
+                if side not in {"LONG", "SHORT"}:
+                    side = "LONG" if snapshot.quantity > 0 else "SHORT"
+                by_symbol.setdefault(str(snapshot.symbol), {}).setdefault(side, 0.0)
+                by_symbol[str(snapshot.symbol)][side] += notional
+            return total_by_policy(by_symbol)
 
-        total_notional = 0.0
+        by_symbol = {}
         for position in self.positions.values():
             quantity = abs(float(position.get("quantity", 0)))
             price = float(position.get("mark_price", position.get("avg_price", 0.0)))
-            total_notional += quantity * price
-        return total_notional
+            symbol = str(position.get("symbol", ""))
+            side = str(position.get("side", "")).upper()
+            if side not in {"LONG", "SHORT"}:
+                side = "LONG" if float(position.get("quantity", 0)) >= 0 else "SHORT"
+            by_symbol.setdefault(symbol, {}).setdefault(side, 0.0)
+            by_symbol[symbol][side] += quantity * price
+        return total_by_policy(by_symbol)
 
     def _order_increases_exposure(self, order: TradeOrder) -> bool:
         """Return whether an order adds gross notional to an existing position."""

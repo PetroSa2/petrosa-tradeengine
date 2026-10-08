@@ -28,6 +28,7 @@ DEFAULT_TRADING_PARAMETERS = {
     "default_order_type": "market",
     "time_in_force": "GTC",
     "position_mode": "hedge",
+    "te_hedge_netting_policy": "allow_both",
     # -------------------------------------------------------------------------
     # Position Sizing Parameters
     # -------------------------------------------------------------------------
@@ -686,6 +687,12 @@ PARAMETER_SCHEMA = {
             "Keep enabled for hedge mode trading. Disable only if you want to "
             "force conflict resolution even in hedge mode."
         ),
+    },
+    "te_hedge_netting_policy": {
+        "type": "string",
+        "description": "Opposite hedge signal policy: allow_both, net, or block_opposite.",
+        "default": "allow_both",
+        "allowed_values": ["allow_both", "net", "block_opposite"],
     },
     "same_direction_conflict_resolution": {
         "type": "string",

@@ -18,6 +18,7 @@ from shared.constants import (
     OCO_CANCEL_RETRY_BACKOFF_MULTIPLIER,
     OCO_CANCEL_RETRY_BASE_DELAY,
     OCO_CANCEL_RETRY_MAX_DELAY,
+    POSITION_MODE,
     TE_EXCHANGE_TRUTH_STORE_ENABLED,
     UTC,
 )
@@ -31,6 +32,10 @@ from tradeengine.commission_rates import commission_rates
 from tradeengine.entry_fills import EntryFillAggregator
 from tradeengine.exchange_truth_store import ExchangeTruthStore, UserDataStreamConsumer
 from tradeengine.execution_observability import TradeExecutionObservability
+from tradeengine.hedge_netting import (
+    decide as decide_hedge_netting,
+    offset_notional,
+)
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.leverage_manager import LeverageManager
 from tradeengine.maker_entry import MakerEntryExecutor
@@ -41,6 +46,7 @@ from tradeengine.metrics import (
     dispatcher_thrash_circuit_open_total,
     maker_entry_post_only_rejection_total,
     maker_entry_unfilled_total,
+    netting_saved_fee_estimate_total,
     oco_cancel_retry_exhausted_total,
     oco_exit_pnl_unknown_total,
     oco_pair_age_seconds,
@@ -3189,6 +3195,33 @@ class Dispatcher:
                     span.set_status(trace.Status(trace.StatusCode.OK))
                     return {"status": "hold", "reason": "Signal indicates hold action"}
 
+                hedge_netting = None
+                if str(POSITION_MODE).lower() == "hedge":
+                    hedge_netting = decide_hedge_netting(
+                        policy=getattr(
+                            self.settings, "te_hedge_netting_policy", "allow_both"
+                        ),
+                        symbol=signal.symbol,
+                        action=signal.action,
+                        quantity=signal.quantity,
+                        positions=strategy_position_manager.get_all_open_strategy_positions(),
+                    )
+                    if (
+                        hedge_netting.policy == "block_opposite"
+                        and hedge_netting.position_side
+                    ):
+                        await self._emit_execution_event_from_signal(
+                            signal,
+                            event_type="rejected",
+                            reason="opposite_position_open",
+                            extra={"position_side": hedge_netting.position_side},
+                            rejection_source="validation",
+                        )
+                        return {
+                            "status": "rejected",
+                            "reason": "opposite_position_open",
+                        }
+
                 # NEW: Check accumulation cooldown
                 position_side = "LONG" if signal.action == "buy" else "SHORT"
                 position_key = (signal.symbol, position_side)
@@ -3245,6 +3278,33 @@ class Dispatcher:
 
                     # FIX: Pass the processed order_params to _signal_to_order
                     order_params = result.get("order_params")
+                    if (
+                        hedge_netting
+                        and hedge_netting.policy == "net"
+                        and hedge_netting.quantity > 0
+                    ):
+                        order_params = dict(order_params or {})
+                        order_params.update(
+                            {
+                                "amount": hedge_netting.quantity,
+                                "reduce_only": True,
+                                "position_side": hedge_netting.position_side,
+                                "position_id": hedge_netting.owner_position_id,
+                                "netting_owner_strategy_id": hedge_netting.owner_strategy_id,
+                                "closed_by_strategy_id": signal.strategy_id,
+                                "netting_skipped_quantity": hedge_netting.skipped_quantity,
+                            }
+                        )
+                        netting_saved_fee_estimate_total.labels(
+                            symbol=signal.symbol
+                        ).inc(
+                            hedge_netting.quantity
+                            * max(signal.current_price, 0.0)
+                            * 0.001
+                        )
+                        result["netting_skipped_quantity"] = (
+                            hedge_netting.skipped_quantity
+                        )
                     await self._refresh_notional_margin(signal.symbol)
                     order = self._signal_to_order(signal, order_params)
 
@@ -4153,10 +4213,13 @@ class Dispatcher:
                         f"🔍 DEBUG: ENTERED if position_updated block for {order.symbol}"
                     )
                     try:
-                        await asyncio.wait_for(
-                            self.position_manager.create_position_record(order, result),
-                            timeout=5.0,
-                        )
+                        if not order.reduce_only:
+                            await asyncio.wait_for(
+                                self.position_manager.create_position_record(
+                                    order, result
+                                ),
+                                timeout=5.0,
+                            )
                         self.logger.info(
                             f"✅ Position record created for {order.symbol}"
                         )
@@ -4172,7 +4235,7 @@ class Dispatcher:
                     # Create strategy position for advanced analytics
                     try:
                         signal = self.order_to_signal.get(order.order_id)
-                        if signal:
+                        if signal and not order.reduce_only:
                             strategy_position_id = await asyncio.wait_for(
                                 strategy_position_manager.create_strategy_position(
                                     signal, order, result
@@ -4535,6 +4598,13 @@ class Dispatcher:
             # guessing from event_type alone (both use "filled").
             "reduce_only": getattr(order, "reduce_only", None),
         }
+        for key in (
+            "netting_owner_strategy_id",
+            "closed_by_strategy_id",
+            "netting_skipped_quantity",
+        ):
+            if strategy_meta.get(key) is not None:
+                extra[key] = strategy_meta[key]
         if event_type in ("filled", "partial_fill"):
             # Hedge mode: a BUY can open a LONG or close a SHORT (petrosa-tradeengine#743)
             ps = position_side_of(getattr(order, "position_side", None))
@@ -4664,13 +4734,23 @@ class Dispatcher:
                 current_signal.action = order_params["side"]
 
         # Calculate order amount based on signal quantity or dynamic minimum
-        amount = self._calculate_order_amount(current_signal)
+        amount = (
+            float(order_params["amount"])
+            if order_params and "amount" in order_params
+            else self._calculate_order_amount(current_signal)
+        )
 
         # Generate unique position ID for tracking
         position_id = str(uuid.uuid4())
 
         # Determine position side for hedge mode (buy=LONG, sell=SHORT)
-        position_side = "LONG" if current_signal.action == "buy" else "SHORT"
+        position_side = (
+            order_params.get("position_side")
+            if order_params and order_params.get("position_side")
+            else "LONG"
+            if current_signal.action == "buy"
+            else "SHORT"
+        )
 
         # Collect all signal parameters for position tracking
         strategy_metadata = {
@@ -4692,6 +4772,14 @@ class Dispatcher:
             "current_price": current_signal.current_price,
             "signal_timestamp": current_signal.timestamp.isoformat(),
         }
+        if order_params:
+            for key in (
+                "netting_owner_strategy_id",
+                "closed_by_strategy_id",
+                "netting_skipped_quantity",
+            ):
+                if order_params.get(key) is not None:
+                    strategy_metadata[key] = order_params[key]
 
         # CRITICAL DEBUG: Log TP/SL values from signal
         self.logger.info(
@@ -4718,7 +4806,7 @@ class Dispatcher:
             iceberg_quantity=current_signal.iceberg_quantity,
             client_order_id=current_signal.client_order_id,
             status=OrderStatus.PENDING,
-            reduce_only=False,  # Orders from signals are position-opening
+            reduce_only=bool(order_params and order_params.get("reduce_only")),
             filled_amount=0.0,
             average_price=0.0,
             time_in_force=current_signal.time_in_force.value,
@@ -4732,7 +4820,8 @@ class Dispatcher:
                 else False
             ),
             # Hedge mode position tracking
-            position_id=position_id,
+            position_id=(order_params.get("position_id") if order_params else None)
+            or position_id,
             position_side=position_side,
             exchange="binance",
             strategy_metadata=strategy_metadata,
@@ -5780,8 +5869,14 @@ class Dispatcher:
             "gross_notional": self.position_manager.get_notional_summary()[0],
             "net_notional": self.position_manager.get_notional_summary()[1],
         }
+        policy = getattr(self.settings, "te_hedge_netting_policy", "allow_both")
+        same_symbol_offset = offset_notional(
+            strategy_position_manager.get_all_open_strategy_positions(), symbol
+        )
         return {
             **capital_fields,
+            "hedge_netting_policy": policy,
+            "same_symbol_offset_notional": same_symbol_offset,
             "portfolio": portfolio_data,
             "risk_limits": {
                 "max_drawdown_pct": settings.max_daily_loss_pct,  # Closest mapping in shared/config

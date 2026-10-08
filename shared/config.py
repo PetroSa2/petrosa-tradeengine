@@ -121,6 +121,12 @@ class Settings(BaseSettings):
     # ran once at boot for every symbol regardless of what any signal
     # actually decided.
     te_default_leverage: int = 10
+    te_hedge_netting_policy: Literal["allow_both", "net", "block_opposite"] = Field(
+        default="allow_both",
+        validation_alias=AliasChoices(
+            "TE_HEDGE_NETTING_POLICY", "te_hedge_netting_policy"
+        ),
+    )
     te_leverage_cache_ttl_minutes: int = 10
     te_leverage_strict: bool = False
 

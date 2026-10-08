@@ -369,3 +369,31 @@ async def test_ac5_partial_oco_failure_increments_orphan_leg_metric(
     )
     # Surviving leg was cancelled exactly once (idempotent orphan cleanup).
     assert exchange.client._request_futures_api.call_count == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stop_rejection_does_not_post_take_profit(
+    oco_manager: OCOManager, exchange: RaceFakeExchange
+) -> None:
+    calls: list[str] = []
+
+    async def _execute(order: Any) -> dict[str, Any]:
+        calls.append(str(order.type))
+        return {"order_id": None, "status": "REJECTED"}
+
+    exchange.execute = _execute  # type: ignore[assignment]
+
+    result = await oco_manager.place_oco_orders(
+        position_id="pos-1",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        quantity=0.001,
+        stop_loss_price=49000.0,
+        take_profit_price=51000.0,
+        entry_price=50000.0,
+    )
+
+    assert result["reason"] == "stop_loss_not_accepted"
+    assert len(calls) == 1
+    assert "TAKE_PROFIT" not in calls[0]

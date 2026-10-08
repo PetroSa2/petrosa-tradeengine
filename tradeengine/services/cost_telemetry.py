@@ -49,6 +49,33 @@ def intended_price(
     ), "signal_price"
 
 
+def planned_move_bp(order: Any) -> float | None:
+    """Return the absolute planned entry-to-target move in basis points."""
+    metadata = getattr(order, "strategy_metadata", {}) or {}
+    entry = _decimal(
+        metadata.get("entry_price")
+        or metadata.get("signal_price")
+        or metadata.get("current_price")
+    )
+    target = _decimal(
+        getattr(order, "take_profit", None)
+        or metadata.get("take_profit")
+        or metadata.get("target_price")
+    )
+    if entry in (None, 0) or target is None:
+        return None
+    return float(abs(target - entry) / entry * Decimal("10000"))
+
+
+def cost_signal_ratio(planned_move: Any, round_trip_cost: Any) -> float | None:
+    """Return round-trip cost divided by planned move, or ``None`` when undefined."""
+    move = _decimal(planned_move)
+    cost = _decimal(round_trip_cost)
+    if move in (None, 0) or cost is None:
+        return None
+    return float(cost / move)
+
+
 def build_cost_fields(
     order: Any, result: dict[str, Any], *, mark_price: Any = None
 ) -> dict[str, Any]:

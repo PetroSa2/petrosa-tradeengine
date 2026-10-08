@@ -511,6 +511,16 @@ sizing_cap_total = Counter(
     ["cap"],
 )
 
+risk_at_stop_total = Gauge(
+    "tradeengine_risk_at_stop_total",
+    "Planned stop risk for open orders and positions",
+)
+
+margin_shortfall_usd_total = Counter(
+    "tradeengine_margin_shortfall_usd_total",
+    "USD margin shortfall observed before order submission",
+)
+
 netting_saved_fee_estimate_total = Counter(
     "tradeengine_netting_saved_fee_estimate_total",
     "Estimated fee and funding avoided by hedge netting",

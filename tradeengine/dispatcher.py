@@ -46,6 +46,7 @@ from tradeengine.metrics import (
     dispatcher_thrash_circuit_open_total,
     maker_entry_post_only_rejection_total,
     maker_entry_unfilled_total,
+    margin_shortfall_usd_total,
     netting_saved_fee_estimate_total,
     oco_cancel_retry_exhausted_total,
     oco_exit_pnl_unknown_total,
@@ -57,6 +58,7 @@ from tradeengine.metrics import (
     orders_total,
     otel_oco_pair_age_seconds,
     otel_orders_total,
+    risk_at_stop_total,
     risk_checks_total,
     risk_rejections_total,
     sizing_cap_total,
@@ -3822,6 +3824,97 @@ class Dispatcher:
         sizing_cap_total.labels(cap="max_usd").inc()
         return None
 
+    async def _apply_risk_sizing(self, order: TradeOrder) -> dict[str, Any] | None:
+        fraction = getattr(settings, "te_risk_fraction", None)
+        if (
+            order.reduce_only
+            or order.simulate
+            or fraction is None
+            or not order.stop_loss
+        ):
+            return None
+        price = order.target_price or await self._live_price(order.symbol)
+        if not price or price <= 0:
+            return await self._reject_sizing(
+                order, "risk_sizing_unavailable", "no entry price"
+            )
+        base = Decimal(
+            str(
+                self.position_manager.equity
+                or self.position_manager.total_portfolio_value
+            )
+        )
+        distance = abs(Decimal(str(price)) - Decimal(str(order.stop_loss)))
+        cost = Decimal(str(getattr(settings, "te_expected_cost_per_unit", 0.0)))
+        if base <= 0 or distance + cost <= 0:
+            return await self._reject_sizing(
+                order, "risk_sizing_unavailable", "invalid capital or stop distance"
+            )
+        budget = base * Decimal(str(fraction))
+        risk_quantity = budget / (distance + cost)
+        if risk_quantity >= Decimal(str(order.amount)):
+            order.risk_at_stop = float(Decimal(str(order.amount)) * distance)
+            order.risk_at_stop_net = float(
+                Decimal(str(order.amount)) * (distance + cost)
+            )
+            return None
+        await self._refresh_notional_margin(order.symbol)
+        info = self.exchange.get_min_order_amount(order.symbol)
+        step = Decimal(str(info["step_size"]))
+        minimum = Decimal(str(self._minimum_quantity(order.symbol, float(price))))
+        if step > 0:
+            risk_quantity = (risk_quantity / step).to_integral_value(
+                rounding=ROUND_DOWN
+            ) * step
+        if risk_quantity <= 0 or risk_quantity < minimum:
+            return await self._reject_sizing(
+                order,
+                "risk_budget_below_minimum",
+                "risk quantity is below exchange minimum",
+            )
+        order.amount = float(risk_quantity)
+        order.risk_at_stop = float(risk_quantity * distance)
+        order.risk_at_stop_net = float(risk_quantity * (distance + cost))
+        sizing_cap_total.labels(cap="risk").inc()
+        risk_at_stop_total.set(order.risk_at_stop_net)
+        return None
+
+    async def _apply_margin_precheck(self, order: TradeOrder) -> dict[str, Any] | None:
+        if (
+            order.reduce_only
+            or order.simulate
+            or not getattr(settings, "te_margin_precheck_enabled", False)
+        ):
+            return None
+        price = order.target_price or await self._live_price(order.symbol)
+        leverage = Decimal(
+            str(order.leverage or getattr(settings, "te_default_leverage", 10))
+        )
+        available = Decimal(str(self.position_manager.available_margin or 0.0))
+        required = Decimal(str(order.amount)) * Decimal(str(price or 0)) / leverage
+        if required <= available:
+            return None
+        shortfall = required - available
+        margin_shortfall_usd_total.inc(float(shortfall))
+        if not price or price <= 0 or leverage <= 0:
+            return await self._reject_sizing(
+                order, "insufficient_margin", "missing price or leverage"
+            )
+        await self._refresh_notional_margin(order.symbol)
+        info = self.exchange.get_min_order_amount(order.symbol)
+        step = Decimal(str(info["step_size"]))
+        fitted = available * leverage / Decimal(str(price))
+        if step > 0:
+            fitted = (fitted / step).to_integral_value(rounding=ROUND_DOWN) * step
+        minimum = Decimal(str(self._minimum_quantity(order.symbol, float(price))))
+        if fitted <= 0 or fitted < minimum:
+            return await self._reject_sizing(
+                order, "insufficient_margin", f"shortfall USD {shortfall}"
+            )
+        order.amount = float(fitted)
+        sizing_cap_total.labels(cap="margin").inc()
+        return None
+
     async def _apply_stop_floor_check(self, order: TradeOrder) -> dict[str, Any] | None:
         """Skip an entry whose derived stop floor is beyond the exchange's maximum placeable distance.
 
@@ -3879,7 +3972,9 @@ class Dispatcher:
             # Probe sizing first (smallest valid order), then the optional USD ceiling on the result.
             for sizing in (
                 self._apply_probe_sizing,
+                self._apply_risk_sizing,
                 self._apply_max_usd_cap,
+                self._apply_margin_precheck,
                 self._apply_stop_floor_check,
             ):
                 sizing_rejection = await sizing(order)
@@ -5868,6 +5963,9 @@ class Dispatcher:
             ),
             "gross_notional": self.position_manager.get_notional_summary()[0],
             "net_notional": self.position_manager.get_notional_summary()[1],
+            "risk_at_stop_gross": self.position_manager.get_risk_at_stop(gross=True),
+            "risk_at_stop_net": self.position_manager.get_risk_at_stop(gross=False),
+            "risk_at_stop_total": self.position_manager.get_risk_at_stop(gross=False),
         }
         policy = getattr(settings, "te_hedge_netting_policy", "allow_both")
         same_symbol_offset = offset_notional(

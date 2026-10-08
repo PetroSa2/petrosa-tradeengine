@@ -33,6 +33,9 @@ DEFAULT_TRADING_PARAMETERS = {
     # Position Sizing Parameters
     # -------------------------------------------------------------------------
     "position_size_pct": 0.1,  # 10% of portfolio
+    "te_risk_fraction": None,
+    "te_margin_precheck_enabled": False,
+    "te_expected_cost_per_unit": 0.0,
     "max_position_size_usd": 1000.0,
     "probe_mode": False,
     "min_position_size_usd": 10.0,

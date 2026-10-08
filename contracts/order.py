@@ -107,6 +107,10 @@ class TradeOrder(BaseModel):
     stop_loss_pct: float | None = Field(
         None, description="Stop loss as percentage of entry price"
     )
+    risk_at_stop: float | None = Field(None, description="Planned gross loss at stop")
+    risk_at_stop_net: float | None = Field(
+        None, description="Planned loss at stop including costs"
+    )
     take_profit_pct: float | None = Field(
         None, description="Take profit as percentage of entry price"
     )

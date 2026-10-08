@@ -3,6 +3,7 @@ Minimal mocking tests for api.py lifespan to achieve coverage.
 Uses minimal mocks to let actual code execute and be measured by coverage.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -68,10 +69,22 @@ async def test_lifespan_success_log_line_executes():
     try:
         with (
             patch("tradeengine.api.setup_telemetry", return_value=True),
+            patch.object(api_module, "ConfigRateLimiter", True),
+            patch.object(api_module, "TradingConfigManager") as MockConfig,
+            patch.object(
+                api_module,
+                "_build_config_rate_limiter",
+                return_value=SimpleNamespace(enabled=True),
+            ),
+            patch.object(api_module.logger, "info", wraps=api_module.logger.info),
             patch.object(api_module, "binance_exchange") as mock_binance,
             patch.object(api_module, "simulator_exchange") as mock_sim,
             patch.object(api_module, "dispatcher") as mock_disp,
         ):
+            mock_config = AsyncMock()
+            mock_config.start = AsyncMock()
+            mock_config.stop = AsyncMock()
+            MockConfig.return_value = mock_config
             mock_binance.close = AsyncMock()
             mock_sim.close = AsyncMock()
             mock_disp.close = AsyncMock()
@@ -86,6 +99,9 @@ async def test_lifespan_success_log_line_executes():
             if "✅ Telemetry initialized successfully" in msg
         ]
         assert len(success_logs) > 0
+        assert any(
+            "Configuration rate limiter initialized" in msg for msg in log_captured
+        )
     finally:
         api_logger.removeHandler(handler)
 

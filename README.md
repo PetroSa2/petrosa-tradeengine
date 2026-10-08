@@ -80,7 +80,7 @@ MongoDB is the operational store: every live-path read and write goes to MongoDB
   "take_profit": 51500.00,
   "indicators": {...},
   "metadata": {...},
-  "timestamp": "2024-01-01T00:00:00.000Z"
+  "timestamp": "<ISO-8601 timestamp>"
 }
 ```
 
@@ -111,7 +111,7 @@ MongoDB is the operational store: every live-path read and write goes to MongoDB
 
 #### MongoDB (Audit Log)
 
-> **Status note (#354):** the in-process `audit_logger` (`shared/audit.py`) is
+> The in-process `audit_logger` (`shared/audit.py`) is
 > currently a **stdout stub** — it emits structured log lines via Python
 > `logging` and does not write to MongoDB. The schema below documents the
 > intended persistent backend. The `/health` endpoint reports the live audit
@@ -137,7 +137,7 @@ MongoDB is the operational store: every live-path read and write goes to MongoDB
   "status": "filled",
   "fill_price": 50005.00,
   "fees": 0.00005,
-  "timestamp": "2024-01-01T00:00:00.000Z",
+  "timestamp": "<ISO-8601 timestamp>",
   "simulation_mode": false,
   "metadata": {...}
 }
@@ -767,7 +767,7 @@ make deploy
 ### Manual Deployment (No Code Changes)
 
 For operational deployments without code changes (ConfigMap updates, Docker base image updates, etc.):
-- **Guide**: See [docs/MANUAL_DEPLOYMENT_GUIDE.md](docs/MANUAL_DEPLOYMENT_GUIDE.md)
+- **Guide**: See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - **Trigger**: Via GitHub Actions UI or `gh workflow run manual-deploy.yml`
 
 ---

@@ -9,7 +9,7 @@ or environment.
 **Alert:** `tradeengine-naked-remediation-off` (Grafana Cloud)
 **Metric:** `tradeengine_naked_position_remediation_mode_status{mode="off"} > 0`
 **Severity:** `critical`
-**Origin:** [#500](https://github.com/PetroSa2/petrosa-tradeengine/issues/500) (2026-07-16 naked-position incident)
+**Origin:** [#500](https://github.com/PetroSa2/petrosa-tradeengine/issues/500) (naked-position incident)
 
 ---
 
@@ -21,7 +21,7 @@ increments `tradeengine_naked_position_detected_total`, but takes **no correctiv
 write action** — it never re-arms protective stops and never flattens. This is a
 "watchdog that never enforces."
 
-On 2026-07-16 the remediator silently ran `off` in production because
+The remediator previously ran `off` in production because
 `TE_NAKED_POSITION_REMEDIATION_MODE` was unset and the code default was `off`.
 Multiple live positions (XRPUSDT, BTCUSDT, ETHUSDT) sat naked with zero
 protective orders while metrics incremented and no repair happened.
@@ -119,7 +119,7 @@ A **malformed** position is a hedge-mode row where the declared
 > flattens. If you rely on `arm_only` in production, a malformed position
 > **will** sit naked (missing SL and/or TP) until an operator intervenes or
 > the mode is promoted to `arm_or_flatten`. This was the exact dead path
-> behind the 2026-09-20 BCHUSDT/XRPUSDT incident (#607): both positions sat
+> behind the BCHUSDT/XRPUSDT incident (#607): both positions sat
 > without TP for 1h15m while `arm_only` logged one CRITICAL alert and then
 > went silent. **`arm_or_flatten` is the recommended production mode** if
 > malformed positions are a realistic occurrence on your account (hedge-mode
@@ -148,7 +148,7 @@ A **malformed** position is a hedge-mode row where the declared
   `critical` — the stuck-seconds gauge already tracks live age continuously
   independent of the alert-repeat interval above.
 
-### Root cause (#586, 2026-09-16 LTCUSDT incident)
+### Root cause (#586, LTCUSDT incident)
 
 `close_position_with_cleanup` (and the remediator's `_flatten`, which calls
 it) send a MARKET close order with a caller-supplied `quantity`. In hedge

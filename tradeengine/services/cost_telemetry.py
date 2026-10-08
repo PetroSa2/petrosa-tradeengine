@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -116,6 +117,58 @@ def build_cost_fields(
             pass
     fields["decision_latency_ms"] = latency
     return fields
+
+
+#: The cost fields a fill event carries for the slippage report of data-manager (petrosa-data-manager#535).
+SLIPPAGE_FIELDS = ("intended_price", "intended_price_source", "slippage_bp", "fee_bp")
+
+
+def fill_cost_fields(
+    *,
+    symbol: str,
+    side: str,
+    order_type: str,
+    fill_price: Any,
+    quantity: Any,
+    fee: Any = None,
+    fee_asset: str | None = None,
+    intended_price: Any = None,
+    trigger: str | None = None,
+    reduce_only: bool = False,
+) -> dict[str, Any]:
+    """Slippage fields of a fill that did not come from an order object (the user-data stream and the OCO
+    exit path, petrosa-data-manager#561).
+
+    ``slippage_bp`` is signed, positive = adverse, against the *intended* price: for an entry the price the
+    signal carried (``intended_price``; the limit price for a limit order), for a stop-loss / take-profit exit
+    the trigger price of that leg (``trigger`` = ``"stop_loss"`` / ``"take_profit"`` with ``intended_price`` as
+    the trigger). Without an intended price the fields are present and null (``intended_price_source`` says
+    where it would have come from), so a consumer can count the fills it cannot measure.
+    """
+    kind = str(order_type or "").lower()
+    if trigger == "stop_loss":
+        kind = "stop_market"
+    elif trigger == "take_profit":
+        kind = "take_profit_market"
+    order = SimpleNamespace(
+        symbol=symbol,
+        side=str(side or "").lower(),
+        type=kind,
+        reduce_only=reduce_only,
+        stop_loss=intended_price if trigger == "stop_loss" else None,
+        take_profit=intended_price if trigger == "take_profit" else None,
+        target_price=intended_price if kind in {"limit", "stop_limit"} else None,
+        strategy_metadata={"signal_price": intended_price},
+    )
+    result: dict[str, Any] = {
+        "fill_price": fill_price,
+        "amount": quantity,
+        "fee_asset": fee_asset,
+    }
+    if fee is not None:
+        result["fees"] = fee
+    fields = build_cost_fields(order, result)
+    return {name: fields.get(name) for name in SLIPPAGE_FIELDS}
 
 
 def record_fill_metrics(

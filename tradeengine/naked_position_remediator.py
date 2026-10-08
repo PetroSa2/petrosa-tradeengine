@@ -150,6 +150,7 @@ class NakedPositionRemediator:
         fallback_sl_pct: float = 2.0,
         fallback_tp_pct: float = 4.0,
         min_sl_distance_pct: float = 6.0,
+        floor_provider: Callable[[str], float] | None = None,
         max_consecutive_arm_failures: int = 5,
         arm_backoff_cooldown_sec: int = 300,
         malformed_realert_interval_sec: int = 300,
@@ -168,6 +169,9 @@ class NakedPositionRemediator:
         # floor rather than handing the re-arm a guaranteed-to-fail price
         # (2026-07-20 second-wave OCO-orphan incident).
         self._min_sl_distance_pct = float(min_sl_distance_pct)
+        # Per-symbol floor in percent (the derived stop floor, petrosa-tradeengine#742); the fixed value
+        # above when absent or when it fails.
+        self._floor_provider = floor_provider
         # #560: cap consecutive re-arm failures per (symbol, side) before
         # backing off instead of retrying every reconciliation cycle
         # indefinitely (the "infinite retry loop" symptom).
@@ -686,6 +690,17 @@ class NakedPositionRemediator:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _floor_pct(self, symbol: str) -> float:
+        """The stop floor in percent for ``symbol``: the provider's, else the fixed value."""
+        if self._floor_provider is not None:
+            try:
+                return float(self._floor_provider(symbol))
+            except Exception:
+                logger.warning(
+                    "NakedPositionRemediator: stop floor provider failed for %s", symbol
+                )
+        return self._min_sl_distance_pct
+
     def _derive_protective_prices(
         self,
         symbol: str,
@@ -770,8 +785,9 @@ class NakedPositionRemediator:
         # Clamp a too-tight SL (stored OR fallback) out to the safety floor.
         # LONG SL is below entry: it must be <= entry * (1 - floor).
         # SHORT SL is above entry: it must be >= entry * (1 + floor).
-        if sl_price is not None and self._min_sl_distance_pct > 0:
-            floor = self._min_sl_distance_pct / 100.0
+        floor_pct = self._floor_pct(symbol)
+        if sl_price is not None and floor_pct > 0:
+            floor = floor_pct / 100.0
             if side == "LONG":
                 floor_price = entry_price * (1.0 - floor)
                 if sl_price > floor_price:
@@ -783,7 +799,7 @@ class NakedPositionRemediator:
                         sl_price,
                         floor_price,
                         entry_price,
-                        self._min_sl_distance_pct,
+                        floor_pct,
                     )
                     sl_price = floor_price
             else:
@@ -797,7 +813,7 @@ class NakedPositionRemediator:
                         sl_price,
                         floor_price,
                         entry_price,
-                        self._min_sl_distance_pct,
+                        floor_pct,
                     )
                     sl_price = floor_price
 
@@ -823,7 +839,7 @@ class NakedPositionRemediator:
                 position_side=side,  # type: ignore[arg-type]
                 stop_price=float(sl_price),
                 market_price=mark_price,
-                min_distance_pct=self._min_sl_distance_pct / 100.0,
+                min_distance_pct=floor_pct / 100.0,
             )
             if decision.should_flatten:
                 logger.error(

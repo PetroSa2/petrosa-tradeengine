@@ -1558,9 +1558,14 @@ class BinanceFuturesExchange:
         try:
             if min_safe_distance_pct is None:
                 try:
-                    min_safe_distance_pct = float(Settings().te_min_sl_distance_pct)
+                    from tradeengine.stop_floor import stop_floor
+
+                    min_safe_distance_pct = stop_floor.floor(symbol).pct
                 except Exception:
-                    min_safe_distance_pct = 6.0
+                    try:
+                        min_safe_distance_pct = float(Settings().te_min_sl_distance_pct)
+                    except Exception:
+                        min_safe_distance_pct = 6.0
             is_stop = "STOP" in (order_type or "").upper()
 
             # Get current market price

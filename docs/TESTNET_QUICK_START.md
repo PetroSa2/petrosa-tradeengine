@@ -21,7 +21,6 @@ export BINANCE_API_SECRET="your-testnet-api-secret-here"
 ### **Step 3: Run Validation** (2 minutes)
 
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 ./scripts/validate_oco_testnet.sh
 ```
 
@@ -234,6 +233,5 @@ Once testnet validation passes:
 **Ready? Let's validate! 🚀**
 
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 ./scripts/validate_oco_testnet.sh
 ```

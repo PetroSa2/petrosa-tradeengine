@@ -28,11 +28,7 @@ def exchange() -> BinanceFuturesExchange:
     exc.client = MagicMock()
     exc.testnet = True
     exc.symbol_info = {
-        symbol: {
-            "filters": [
-                {"filterType": "PRICE_FILTER", "tickSize": "0.01"}
-            ]
-        }
+        symbol: {"filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.01"}]}
         for symbol in ("BCHUSDT", "BTCUSDT", "ETHUSDT")
     }
     return exc

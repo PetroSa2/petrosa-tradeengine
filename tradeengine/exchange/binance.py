@@ -1698,22 +1698,24 @@ class BinanceFuturesExchange:
                 if price > current_price and price < current_price * (
                     1 + min_safe_distance_pct / 100.0
                 ):
-                    floor_price = (
-                        Decimal(str(current_price))
-                        * (Decimal("1") + Decimal(str(min_safe_distance_pct)) / Decimal("100"))
+                    floor_price = Decimal(str(current_price)) * (
+                        Decimal("1")
+                        + Decimal(str(min_safe_distance_pct)) / Decimal("100")
                     )
                     tick_size = next(
                         (
                             Decimal(str(f["tickSize"]))
-                            for f in getattr(self, "symbol_info", {}).get(symbol, {}).get("filters", [])
+                            for f in getattr(self, "symbol_info", {})
+                            .get(symbol, {})
+                            .get("filters", [])
                             if f.get("filterType") == "PRICE_FILTER"
                         ),
                         Decimal("0"),
                     )
                     if tick_size > 0:
-                        floor_price = (
-                            floor_price / tick_size
-                        ).to_integral_value(rounding=ROUND_CEILING) * tick_size
+                        floor_price = (floor_price / tick_size).to_integral_value(
+                            rounding=ROUND_CEILING
+                        ) * tick_size
                     adjusted_price = float(floor_price)
                     if adjusted_price <= max_price:
                         adjustment_msg = (
@@ -1734,22 +1736,24 @@ class BinanceFuturesExchange:
                 if price < current_price and price > current_price * (
                     1 - min_safe_distance_pct / 100.0
                 ):
-                    floor_price = (
-                        Decimal(str(current_price))
-                        * (Decimal("1") - Decimal(str(min_safe_distance_pct)) / Decimal("100"))
+                    floor_price = Decimal(str(current_price)) * (
+                        Decimal("1")
+                        - Decimal(str(min_safe_distance_pct)) / Decimal("100")
                     )
                     tick_size = next(
                         (
                             Decimal(str(f["tickSize"]))
-                            for f in getattr(self, "symbol_info", {}).get(symbol, {}).get("filters", [])
+                            for f in getattr(self, "symbol_info", {})
+                            .get(symbol, {})
+                            .get("filters", [])
                             if f.get("filterType") == "PRICE_FILTER"
                         ),
                         Decimal("0"),
                     )
                     if tick_size > 0:
-                        floor_price = (
-                            floor_price / tick_size
-                        ).to_integral_value(rounding=ROUND_FLOOR) * tick_size
+                        floor_price = (floor_price / tick_size).to_integral_value(
+                            rounding=ROUND_FLOOR
+                        ) * tick_size
                     adjusted_price = float(floor_price)
                     if adjusted_price >= min_price:
                         adjustment_msg = (

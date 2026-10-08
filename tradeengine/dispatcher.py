@@ -6778,7 +6778,7 @@ class Dispatcher:
                     try:
                         await self._place_individual_risk_orders(order, result)
                     except Exception as fallback_error:
-                        setattr(fallback_error, "oco_failure_context", oco_result)
+                        fallback_error.oco_failure_context = oco_result
                         raise
 
             elif order.stop_loss and order.stop_loss > 0:

@@ -129,7 +129,8 @@ async def test_atomic_rollback_log_has_reason_for_blank_exception(dispatcher):
         result = await dispatcher._execute_order_with_consensus(order)
 
     critical_messages = [
-        call.args for call in dispatcher.logger.error.call_args_list
+        call.args
+        for call in dispatcher.logger.error.call_args_list
         if call.args and "[CRITICAL] OCO placement failed" in call.args[0]
     ]
     assert result["status"] == "rolled_back"

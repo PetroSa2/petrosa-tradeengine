@@ -9,7 +9,6 @@ Since your Binance API keys are stored in Kubernetes, use this simplified approa
 ## 🚀 **One-Command Validation**
 
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 ./scripts/validate_oco_with_k8s_secrets.sh
 ```
 
@@ -81,7 +80,7 @@ Same validation as the manual method:
 ==============================================
 📋 Configuration
 ==============================================
-API Key: VGK4c8SSNZtS7ATDd8Cl...
+API Key: <masked>
 API Secret: xxxxxxxxxx...
 Testnet Mode: true
 
@@ -349,14 +348,11 @@ Validation is successful when you see:
 ## 🚀 **Quick Commands**
 
 ```bash
-# Navigate to project
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
-
 # Check K8s connection
-kubectl --kubeconfig=k8s/kubeconfig.yaml cluster-info
+kubectl cluster-info
 
 # Check if secret exists
-kubectl --kubeconfig=k8s/kubeconfig.yaml get secret petrosa-sensitive-credentials -n petrosa-apps
+kubectl get secret petrosa-sensitive-credentials -n petrosa-apps
 
 # Run validation with K8s secrets
 ./scripts/validate_oco_with_k8s_secrets.sh
@@ -372,8 +368,7 @@ export BINANCE_API_SECRET="testnet-secret"
 ## 📁 **Related Files**
 
 - **This guide**: `TESTNET_VALIDATION_K8S.md` (for K8s users)
-- **Standard guide**: `TESTNET_VALIDATION_READY.md` (for manual keys)
-- **Complete summary**: `OCO_VALIDATION_COMPLETE_SUMMARY.md`
+- **Standard guide**: `TESTNET_OCO_VALIDATION_GUIDE.md` (for manual keys)
 - **K8s script**: `scripts/validate_oco_with_k8s_secrets.sh`
 - **Manual script**: `scripts/validate_oco_testnet.sh`
 
@@ -382,6 +377,5 @@ export BINANCE_API_SECRET="testnet-secret"
 **Ready to validate with your K8s secrets? 🚀**
 
 ```bash
-cd /Users/yurisa2/petrosa/petrosa-tradeengine
 ./scripts/validate_oco_with_k8s_secrets.sh
 ```

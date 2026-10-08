@@ -13,14 +13,13 @@ S2 = (
 
 
 def test_root_agent_docs_state_data_pillars_verbatim() -> None:
-    for name in ("README.md", "docs/agent-rules.md"):
-        content = (ROOT / name).read_text()
-        assert S1 in content
-        assert S2 in content
+    content = (ROOT / "README.md").read_text()
+    assert S1 in content
+    assert S2 in content
 
 
 def test_non_archived_docs_do_not_reintroduce_removed_database_language() -> None:
-    files = [ROOT / "README.md", ROOT / "docs/agent-rules.md"]
+    files = [ROOT / "README.md"]
     files.extend(path for path in (ROOT / "docs").rglob("*") if path.is_file())
     forbidden = (
         "Dual Persistence",
@@ -34,8 +33,6 @@ def test_non_archived_docs_do_not_reintroduce_removed_database_language() -> Non
         "MySQL audit logging",
     )
     for path in files:
-        if "docs/archive" in str(path):
-            continue
         content = path.read_text()
         for phrase in forbidden:
             assert phrase not in content, f"{phrase} remains in {path}"
@@ -48,7 +45,11 @@ def test_position_comments_describe_data_manager_store() -> None:
     assert "MongoDB for coordination only" not in position_manager
 
 
-def test_archive_moves_are_complete() -> None:
+def test_historic_and_retired_docs_are_absent() -> None:
     assert not (ROOT / "docs/COMMIT_MESSAGE.md").exists()
     assert not (ROOT / "pr_body.md").exists()
-    assert (ROOT / "docs/archive/README.md").exists()
+    archive = ROOT / "docs/archive"
+    assert not archive.exists() or not any(
+        path.is_file() for path in archive.rglob("*")
+    )
+    assert not (ROOT / "docs/agent-rules.md").exists()

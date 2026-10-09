@@ -231,7 +231,8 @@ class OpenRowReconciler:
             )
             if self.mode == "close" and passes >= self._confirm:
                 record["applied"] = await self._apply(plan)
-                self._seen.pop((symbol, side), None)
+                if record["applied"]:
+                    self._seen.pop((symbol, side), None)
             results.append(record)
         self.last_plans = results
         return results
@@ -241,7 +242,7 @@ class OpenRowReconciler:
         ok = True
         for action in plan.actions:
             try:
-                await self._pm.record_position_close(
+                result = await self._pm.record_position_close(
                     position_id=action.position_id,
                     exit_price=None,
                     exit_qty=action.quantity,
@@ -250,6 +251,13 @@ class OpenRowReconciler:
                     close_reason=CLOSE_REASON,
                     pnl_unknown=True,
                 )
+                if result is None:
+                    ok = False
+                    logger.error(
+                        "OpenRowReconciler: close returned no mutation for row %s",
+                        action.position_id,
+                    )
+                    continue
                 open_rows_reconciled_total.labels(
                     symbol=plan.symbol, side=plan.side, action=action.action
                 ).inc()

@@ -181,6 +181,20 @@ async def test_a_failed_close_is_logged_and_marks_the_plan_not_applied():
     assert plans[0]["applied"] is False
 
 
+@pytest.mark.asyncio
+async def test_an_unconfirmed_close_is_retried_on_the_next_pass():
+    pm = _manager([_row("a", 1.0, 100)])
+    pm.record_position_close = AsyncMock(side_effect=[None, {}])
+    reconciler = _reconciler(pm, "close", confirm_passes=1)
+
+    first = await reconciler.reconcile({})
+    second = await reconciler.reconcile({})
+
+    assert first[0]["applied"] is False
+    assert second[0]["applied"] is True
+    assert pm.record_position_close.await_count == 2
+
+
 # --- inside the position reconciler --------------------------------------------------------------
 
 

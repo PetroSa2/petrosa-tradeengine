@@ -224,6 +224,8 @@ class BaseDataManagerClient:
         # Fixes petrosa-tradeengine#495 ('Object of type datetime is not JSON
         # serializable' at ~3.5/min on the live pod).
         json_body = _serialize_for_http(json_body)
+        if not hasattr(self, "_circuit"):
+            self._circuit = _CircuitBreaker()
         try:
             await self._circuit.before_call()
         except CircuitOpenError:

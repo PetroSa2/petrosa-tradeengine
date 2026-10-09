@@ -21,6 +21,8 @@ import pytest
 from tradeengine.services.data_manager_client import (
     APIError,
     BaseDataManagerClient,
+    CircuitOpenError,
+    CircuitState,
     ConnectionError as DMConnectionError,
 )
 
@@ -387,6 +389,100 @@ async def test_health_unhealthy_when_data_manager_unreachable() -> None:
         await client.close()
 
     assert health["status"] == "unhealthy"
+
+
+@pytest.mark.asyncio
+async def test_retryable_outage_opens_circuit_and_suppresses_requests(
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"detail": "down"}, request=request)
+
+    monkeypatch.setenv("TE_DM_CIRCUIT_FAILURE_THRESHOLD", "2")
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+    _install_transport(client, handler)
+
+    with pytest.raises(APIError):
+        await client._retry_request("GET", "/health/readiness")
+    with pytest.raises(APIError):
+        await client._retry_request("GET", "/health/readiness")
+    with pytest.raises(CircuitOpenError):
+        await client._retry_request("GET", "/health/readiness")
+
+    assert attempts == 2
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_circuit_half_open_probe_closes_after_recovery(monkeypatch) -> None:
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+    _install_transport(
+        client,
+        lambda request: httpx.Response(200, json={"status": "ready"}, request=request),
+    )
+    monkeypatch.setenv("TE_DM_CIRCUIT_RECOVERY_SECONDS", "0")
+    client._circuit.state = CircuitState.OPEN
+    client._circuit.opened_at = 0
+    client._circuit.recovery_seconds = 0
+
+    response = await client._retry_request("GET", "/health/readiness")
+
+    assert response["status"] == "ready"
+    assert client._circuit.state.value == "closed"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_half_open_probe_reopens_circuit() -> None:
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=1)
+    _install_transport(
+        client,
+        lambda request: httpx.Response(503, json={"detail": "down"}, request=request),
+    )
+    client._circuit.state = CircuitState.OPEN
+    client._circuit.opened_at = 0
+    client._circuit.recovery_seconds = 0
+
+    with pytest.raises(APIError):
+        await client._retry_request("GET", "/health/readiness")
+
+    assert client._circuit.state is CircuitState.OPEN
+    client._circuit.recovery_seconds = 30
+    with pytest.raises(CircuitOpenError):
+        await client._retry_request("GET", "/health/readiness")
+    await client.close()
+
+
+def test_invalid_circuit_environment_uses_safe_defaults(monkeypatch) -> None:
+    monkeypatch.setenv("TE_DM_CIRCUIT_FAILURE_THRESHOLD", "invalid")
+    monkeypatch.setenv("TE_DM_CIRCUIT_RECOVERY_SECONDS", "invalid")
+    monkeypatch.setenv("TE_DM_CIRCUIT_HALF_OPEN_MAX_CALLS", "invalid")
+
+    client = BaseDataManagerClient(base_url="http://dm.test")
+
+    assert client._circuit.failure_threshold == 3
+    assert client._circuit.recovery_seconds == 30.0
+    assert client._circuit.half_open_max_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_error_does_not_open_circuit() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"detail": "bad"}, request=request)
+
+    client = BaseDataManagerClient(base_url="http://dm.test", timeout=5, max_retries=3)
+    _install_transport(client, handler)
+
+    with pytest.raises(APIError) as excinfo:
+        await client._retry_request("GET", "/health/readiness")
+
+    assert excinfo.value.status_code == 400
+    assert client._circuit.state.value == "closed"
+    await client.close()
 
 
 @pytest.mark.asyncio

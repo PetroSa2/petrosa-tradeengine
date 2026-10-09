@@ -15,7 +15,9 @@ import json
 import logging
 import os
 import random
+import time
 from datetime import date, datetime
+from enum import StrEnum
 from typing import Any, Optional
 
 import httpx
@@ -71,6 +73,83 @@ _RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
 _RETRY_BACKOFF_BASE = 0.5
 _RETRY_BACKOFF_CAP = 8.0
 
+_CIRCUIT_FAILURE_THRESHOLD = 3
+_CIRCUIT_RECOVERY_SECONDS = 30.0
+_CIRCUIT_HALF_OPEN_MAX_CALLS = 1
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float, minimum: float) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+class CircuitState(StrEnum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class CircuitOpenError(APIError):
+    """Raised when the data-manager circuit is open and the call is suppressed."""
+
+
+class _CircuitBreaker:
+    def __init__(self) -> None:
+        self.state = CircuitState.CLOSED
+        self.failures = 0
+        self.opened_at = 0.0
+        self.half_open_calls = 0
+        self.lock = asyncio.Lock()
+        self.failure_threshold = _env_int(
+            "TE_DM_CIRCUIT_FAILURE_THRESHOLD", _CIRCUIT_FAILURE_THRESHOLD, 1
+        )
+        self.recovery_seconds = _env_float(
+            "TE_DM_CIRCUIT_RECOVERY_SECONDS", _CIRCUIT_RECOVERY_SECONDS, 0.0
+        )
+        self.half_open_max_calls = _env_int(
+            "TE_DM_CIRCUIT_HALF_OPEN_MAX_CALLS", _CIRCUIT_HALF_OPEN_MAX_CALLS, 1
+        )
+
+    async def before_call(self) -> None:
+        async with self.lock:
+            if self.state is CircuitState.OPEN:
+                if time.monotonic() - self.opened_at < self.recovery_seconds:
+                    raise CircuitOpenError("data-manager circuit is open")
+                self.state = CircuitState.HALF_OPEN
+                self.half_open_calls = 0
+            if self.state is CircuitState.HALF_OPEN:
+                if self.half_open_calls >= self.half_open_max_calls:
+                    raise CircuitOpenError(
+                        "data-manager circuit recovery probe in progress"
+                    )
+                self.half_open_calls += 1
+
+    async def success(self) -> None:
+        async with self.lock:
+            self.state = CircuitState.CLOSED
+            self.failures = 0
+            self.half_open_calls = 0
+
+    async def failure(self) -> None:
+        async with self.lock:
+            self.failures += 1
+            self.half_open_calls = 0
+            if (
+                self.state is CircuitState.HALF_OPEN
+                or self.failures >= self.failure_threshold
+            ):
+                self.state = CircuitState.OPEN
+                self.opened_at = time.monotonic()
+
 
 class BaseDataManagerClient:
     """
@@ -105,6 +184,7 @@ class BaseDataManagerClient:
         self.max_retries = max(1, int(max_retries))
         self._client: httpx.AsyncClient | None = None
         self._client_lock: asyncio.Lock | None = None
+        self._circuit = _CircuitBreaker()
 
     def _ensure_lock(self) -> asyncio.Lock:
         if self._client_lock is None:
@@ -144,6 +224,15 @@ class BaseDataManagerClient:
         # Fixes petrosa-tradeengine#495 ('Object of type datetime is not JSON
         # serializable' at ~3.5/min on the live pod).
         json_body = _serialize_for_http(json_body)
+        if not hasattr(self, "_circuit"):
+            self._circuit = _CircuitBreaker()
+        try:
+            await self._circuit.before_call()
+        except CircuitOpenError:
+            logger.warning(
+                "data-manager retry storm mitigation: circuit open; request suppressed"
+            )
+            raise
         client = await self._get_client()
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
@@ -167,9 +256,11 @@ class BaseDataManagerClient:
                         payload = resp.json()
                     except ValueError:
                         payload = {}
+                    await self._circuit.success()
                     return payload if isinstance(payload, dict) else {"data": payload}
                 else:
                     # Non-retryable 4xx (or other) — fail fast
+                    await self._circuit.success()
                     raise APIError(
                         f"data-manager {method} {path} returned {resp.status_code}",
                         status_code=resp.status_code,
@@ -192,6 +283,7 @@ class BaseDataManagerClient:
                 )
                 await asyncio.sleep(backoff)
         assert last_exc is not None
+        await self._circuit.failure()
         raise last_exc
 
     async def health(self) -> dict[str, Any]:

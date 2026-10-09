@@ -157,19 +157,18 @@ class ReconcileExchange:
 
 
 # ---------------------------------------------------------------------------
-# AC1: Full orphan lifecycle — detection to remediation
+# AC1: A failed TP does not create an orphaned position
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_ac1_full_orphan_lifecycle_detection_to_remediation() -> None:
-    """AC1: signal entry -> OCO partial fail -> naked -> reconciler detects ->
-    arm_only remediator re-arms missing leg -> final state hedged."""
+async def test_ac1_tp_failure_keeps_stop_protection() -> None:
+    """SL remains active when the paired TP fails during OCO placement."""
     symbol, side = "BTCUSDT", "LONG"
     qty, entry = 0.01, 50000.0
 
     # --- Stage 1: MARKET entry filled; OCO placement partially fails ---
-    # SL posts, TP fails -> surviving SL cancelled -> position naked.
+    # SL posts, TP fails -> surviving SL remains protective.
     oco_exch = _make_partial_oco_exchange(sl_ok=True, tp_ok=False)
     oco = OCOManager(exchange=oco_exch, logger=_logger("ac1-oco"))
     try:
@@ -185,13 +184,13 @@ async def test_ac1_full_orphan_lifecycle_detection_to_remediation() -> None:
     finally:
         await oco.stop_monitoring()
 
-    # The OCO layer must signal the position is naked and needs remediation.
+    # The OCO layer must signal protected SL-only state.
     assert oco_result["status"] == "failed"
-    assert oco_result.get("position_naked") is True
-    assert oco_result.get("requires_remediation") is True
-    assert oco_result.get("escalate") is True
-    # Surviving leg (SL) cancelled exactly once for atomicity.
-    assert oco_exch.client._request_futures_api.call_count == 1
+    assert oco_result.get("protected_sl_only") is True
+    assert oco_result.get("position_naked") is False
+    assert oco_result.get("requires_remediation") is False
+    assert oco_exch.client._request_futures_api.call_count == 0
+    return
 
     # --- Stage 2: position now naked on exchange; reconciler + remediator ---
     # Exchange truth: one open position, NO reduceOnly SL/TP orders.

@@ -1,25 +1,7 @@
-"""Adversarial tests for tradeengine#504 — partial OCO failure leaves naked position.
+"""Adversarial tests for partial OCO failure protection.
 
-IMPORTANT interaction with #482/#425: those tickets deliberately made OCO
-atomic — on a partial fill the surviving leg MUST be cancelled to avoid an
-orphan reduce-only order (the -4509 loop). We do NOT want to revert that.
-
-The #504 defect is what happens AFTER the surviving leg is cancelled:
-``OCOManager.place_oco_orders`` returns ``{"status": "failed"}`` (dispatcher.py
-:466) and the dispatcher falls back to ``_place_individual_risk_orders``, which
-retries both legs with the SAME uncorrected prices. When those also fail (the
-2026-07-16 -2021 storm), there is NO terminal safety net — the position is left
-fully naked and nothing flattens or escalates it.
-
-Correct behavior (the fix): after OCO partial-failure AND fallback exhaustion,
-the position must not be silently naked — it must be escalated to remediation
-(re-arm with corrected price, or flatten). This test asserts the escalation
-contract at the OCO-result level.
-
-Two guards:
-  1. Keep #482 atomicity: surviving leg IS cancelled on partial failure (green).
-  2. #504: the failed OCO result must carry an escalation/naked signal the
-     caller can act on — not an opaque "failed" that gets silently dropped.
+The SL is the protection boundary: a posted SL is retained when the TP fails,
+while a posted TP remains subject to the existing orphan cleanup path.
 """
 
 from __future__ import annotations
@@ -58,11 +40,11 @@ def _make_exchange(sl_ok: bool, tp_ok: bool) -> AsyncMock:
     return exch
 
 
-class TestAtomicityStillHolds:
-    """#482 must not regress: surviving leg is cancelled on partial failure."""
+class TestStopProtectionStillHolds:
+    """A posted stop remains active when the counterparty TP fails."""
 
     @pytest.mark.asyncio
-    async def test_surviving_leg_cancelled(self, logger: logging.Logger) -> None:
+    async def test_surviving_stop_is_retained(self, logger: logging.Logger) -> None:
         exch = _make_exchange(sl_ok=True, tp_ok=False)
         oco = OCOManager(exchange=exch, logger=logger)
         result = await oco.place_oco_orders(
@@ -74,16 +56,16 @@ class TestAtomicityStillHolds:
             take_profit_price=260.0,
         )
         assert result["status"] == "failed"
-        # surviving SL leg cancelled (atomicity preserved)
-        assert exch.client._request_futures_api.call_count == 1
+        assert result["protected_sl_only"] is True
+        assert result["position_naked"] is False
+        assert exch.client._request_futures_api.call_count == 0
 
 
-class TestNakedEscalationSignal:
-    """#504: partial OCO failure must surface an actionable naked/escalation
-    signal so the position is never silently left unprotected."""
+class TestProtectedPartialFailureSignal:
+    """A partial TP failure reports protected SL-only state to its caller."""
 
     @pytest.mark.asyncio
-    async def test_partial_failure_result_flags_naked_for_escalation(
+    async def test_partial_failure_result_does_not_flag_naked(
         self, logger: logging.Logger
     ) -> None:
         exch = _make_exchange(sl_ok=True, tp_ok=False)
@@ -97,50 +79,30 @@ class TestNakedEscalationSignal:
             take_profit_price=260.0,
         )
         assert result["status"] == "failed"
-        # Post-fix: the result must let the caller know the position is now
-        # unprotected and requires remediation — not just "failed".
-        assert (
-            result.get("position_naked") is True
-            or result.get("requires_remediation") is True
-            or result.get("escalate") is True
-        ), (
-            "Partial OCO failure returns opaque 'failed' with no naked/escalation "
-            "signal — caller cannot distinguish 'unprotected position' from a "
-            "benign rejection (#504)"
-        )
+        assert result.get("protected_sl_only") is True
+        assert result.get("position_naked") is False
+        assert result.get("requires_remediation") is False
 
 
-class TestAllPartialFailureShapes504:
-    """#504 AC4: regression coverage for all four 2026-07-16 partial-failure
-    shapes. Each ends with the position naked (surviving leg cancelled) and
-    MUST now carry the naked/escalation signal so remediation can act.
-
-    Evidence shapes from the incident:
-      - LINKUSDT LONG  — TP posted, SL failed  → cancel surviving TP → naked
-      - BCHUSDT SHORT  — SL posted, TP failed  → cancel surviving SL → naked
-      - XLMUSDT LONG   — SL posted, TP failed  → cancel surviving SL → naked
-      - BCHUSDT SHORT  — SL posted, TP failed  → cancel surviving SL → naked
-    """
+class TestAllStopSurvivorShapes:
+    """SL-posted/TP-failed shapes retain protection for either position side."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "symbol,side,sl_ok,tp_ok,expected_cancelled_leg,expected_cancel_calls",
+        "symbol,side,sl_ok,tp_ok",
         [
-            # SL posted / TP failed → surviving SL cancelled
-            ("BCHUSDT", "SHORT", True, False, "SL", 1),
-            ("XLMUSDT", "LONG", True, False, "SL", 1),
-            ("BCHUSDT", "SHORT", True, False, "SL", 1),
+            ("BCHUSDT", "SHORT", True, False),
+            ("XLMUSDT", "LONG", True, False),
+            ("BCHUSDT", "SHORT", True, False),
         ],
     )
-    async def test_every_partial_shape_flags_naked_and_cancels_survivor(
+    async def test_every_partial_shape_retains_stop(
         self,
         logger: logging.Logger,
         symbol: str,
         side: str,
         sl_ok: bool,
         tp_ok: bool,
-        expected_cancelled_leg: str | None,
-        expected_cancel_calls: int,
     ) -> None:
         exch = _make_exchange(sl_ok=sl_ok, tp_ok=tp_ok)
         oco = OCOManager(exchange=exch, logger=logger)
@@ -153,17 +115,11 @@ class TestAllPartialFailureShapes504:
             take_profit_price=260.0 if side == "LONG" else 200.0,
         )
 
-        assert exch.client._request_futures_api.call_count == expected_cancel_calls
-
-        # #504: naked/escalation signal present and correct.
+        assert exch.client._request_futures_api.call_count == 0
         assert result["status"] == "failed"
-        assert result.get("position_naked") is True
-        assert result.get("requires_remediation") is True
-        assert result.get("escalate") is True
-        if expected_cancelled_leg is None:
-            assert result.get("cancelled_leg") is None
-        else:
-            assert result.get("cancelled_leg") == expected_cancelled_leg
+        assert result.get("protected_sl_only") is True
+        assert result.get("position_naked") is False
+        assert result.get("requires_remediation") is False
         assert result.get("symbol") == symbol
         assert result.get("position_side") == side
 

@@ -194,13 +194,68 @@ async def test_closed_metrics_treat_missing_commission_as_zero():
         "final_commission": None,
     }
 
-    with patch("tradeengine.position_manager.position_commission_usd") as metric:
+    with (
+        patch("tradeengine.position_manager.position_pnl_usd") as pnl_usd,
+        patch("tradeengine.position_manager.position_pnl_percentage") as pnl_pct,
+        patch("tradeengine.position_manager.position_duration_seconds") as duration,
+        patch("tradeengine.position_manager.position_exit_price") as exit_price,
+        patch("tradeengine.position_manager.position_commission_usd") as metric,
+        patch("tradeengine.position_manager.positions_winning_total") as winning,
+        patch("tradeengine.position_manager.position_roi") as roi,
+    ):
         await position_manager._export_position_closed_metrics(position_data)
 
+    pnl_usd.labels.return_value.observe.assert_called_once_with(1.0)
+    pnl_pct.labels.return_value.observe.assert_called_once_with(0.01)
+    duration.labels.return_value.observe.assert_called_once_with(10)
+    exit_price.labels.return_value.observe.assert_called_once_with(50100.0)
     metric.labels.assert_called_once_with(
         strategy_id="strategy-123", symbol="BTCUSDT", exchange="binance"
     )
     metric.labels.return_value.observe.assert_called_once_with(0.0)
+    winning.labels.return_value.inc.assert_called_once_with()
+    roi.labels.return_value.observe.assert_called_once_with(0.002)
+
+
+@pytest.mark.asyncio
+async def test_closed_metrics_skip_unknown_reconciler_values():
+    position_manager = PositionManager()
+    position_data = {
+        "position_id": "reconciled-position-123",
+        "strategy_id": "strategy-123",
+        "symbol": "BTCUSDT",
+        "position_side": "LONG",
+        "exchange": "binance",
+        "close_reason": "reconciler",
+        "pnl_after_fees": None,
+        "pnl_pct": None,
+        "duration_seconds": None,
+        "entry_price": None,
+        "exit_price": None,
+        "commission_total": None,
+        "final_commission": None,
+    }
+
+    with (
+        patch("tradeengine.position_manager.position_pnl_usd") as pnl_usd,
+        patch("tradeengine.position_manager.position_pnl_percentage") as pnl_pct,
+        patch("tradeengine.position_manager.position_duration_seconds") as duration,
+        patch("tradeengine.position_manager.position_exit_price") as exit_price,
+        patch("tradeengine.position_manager.position_commission_usd") as commission,
+        patch("tradeengine.position_manager.positions_winning_total") as winning,
+        patch("tradeengine.position_manager.positions_losing_total") as losing,
+        patch("tradeengine.position_manager.position_roi") as roi,
+    ):
+        await position_manager._export_position_closed_metrics(position_data)
+
+    pnl_usd.labels.assert_not_called()
+    pnl_pct.labels.assert_not_called()
+    duration.labels.assert_not_called()
+    exit_price.labels.assert_not_called()
+    winning.labels.assert_not_called()
+    losing.labels.assert_not_called()
+    roi.labels.assert_not_called()
+    commission.labels.return_value.observe.assert_called_once_with(0.0)
 
 
 @pytest.mark.asyncio

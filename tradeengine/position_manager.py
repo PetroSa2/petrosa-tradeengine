@@ -1406,10 +1406,10 @@ class PositionManager:
             position_side = position_data.get("position_side", "LONG")
             exchange = position_data.get("exchange", "binance")
             close_reason = position_data.get("close_reason", "manual")
-            pnl_after_fees = position_data.get("pnl_after_fees", 0.0)
-            pnl_pct = position_data.get("pnl_pct", 0.0)
-            duration_seconds = position_data.get("duration_seconds", 0)
-            exit_price = position_data.get("exit_price", 0.0)
+            pnl_after_fees = position_data.get("pnl_after_fees")
+            pnl_pct = position_data.get("pnl_pct")
+            duration_seconds = position_data.get("duration_seconds")
+            exit_price = position_data.get("exit_price")
             entry_commission = position_data.get("commission_total") or 0.0
             final_commission = position_data.get("final_commission") or 0.0
             total_commission = entry_commission + final_commission
@@ -1423,35 +1423,35 @@ class PositionManager:
                 exchange=exchange,
             ).inc()
 
-            # Record PnL in USD
-            position_pnl_usd.labels(
-                strategy_id=strategy_id,
-                symbol=symbol,
-                position_side=position_side,
-                exchange=exchange,
-            ).observe(pnl_after_fees)
+            if pnl_after_fees is not None:
+                position_pnl_usd.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange=exchange,
+                ).observe(pnl_after_fees)
 
-            # Record PnL percentage
-            position_pnl_percentage.labels(
-                strategy_id=strategy_id,
-                symbol=symbol,
-                position_side=position_side,
-                exchange=exchange,
-            ).observe(pnl_pct)
+            if pnl_pct is not None:
+                position_pnl_percentage.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    exchange=exchange,
+                ).observe(pnl_pct)
 
-            # Record duration
-            position_duration_seconds.labels(
-                strategy_id=strategy_id,
-                symbol=symbol,
-                position_side=position_side,
-                close_reason=close_reason,
-                exchange=exchange,
-            ).observe(duration_seconds)
+            if duration_seconds is not None:
+                position_duration_seconds.labels(
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    position_side=position_side,
+                    close_reason=close_reason,
+                    exchange=exchange,
+                ).observe(duration_seconds)
 
-            # Record exit price
-            position_exit_price.labels(
-                symbol=symbol, position_side=position_side, exchange=exchange
-            ).observe(exit_price)
+            if exit_price is not None:
+                position_exit_price.labels(
+                    symbol=symbol, position_side=position_side, exchange=exchange
+                ).observe(exit_price)
 
             # Record commission
             position_commission_usd.labels(
@@ -1459,24 +1459,25 @@ class PositionManager:
             ).observe(total_commission)
 
             # Track win/loss
-            if pnl_after_fees > 0:
-                positions_winning_total.labels(
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    position_side=position_side,
-                    exchange=exchange,
-                ).inc()
-            else:
-                positions_losing_total.labels(
-                    strategy_id=strategy_id,
-                    symbol=symbol,
-                    position_side=position_side,
-                    exchange=exchange,
-                ).inc()
+            if pnl_after_fees is not None:
+                if pnl_after_fees > 0:
+                    positions_winning_total.labels(
+                        strategy_id=strategy_id,
+                        symbol=symbol,
+                        position_side=position_side,
+                        exchange=exchange,
+                    ).inc()
+                else:
+                    positions_losing_total.labels(
+                        strategy_id=strategy_id,
+                        symbol=symbol,
+                        position_side=position_side,
+                        exchange=exchange,
+                    ).inc()
 
             # Calculate and record ROI
-            entry_price = position_data.get("entry_price", 0.0)
-            if entry_price > 0:
+            entry_price = position_data.get("entry_price")
+            if entry_price is not None and exit_price is not None and entry_price > 0:
                 roi = (exit_price - entry_price) / entry_price
                 position_roi.labels(
                     strategy_id=strategy_id,
@@ -1487,7 +1488,8 @@ class PositionManager:
 
             logger.debug(
                 f"Position closed metrics exported for {position_data.get('position_id')}: "
-                f"PnL=${pnl_after_fees:.2f}, Duration={duration_seconds}s"
+                f"PnL={'unknown' if pnl_after_fees is None else f'${pnl_after_fees:.2f}'}, "
+                f"Duration={'unknown' if duration_seconds is None else f'{duration_seconds}s'}"
             )
 
         except Exception as e:

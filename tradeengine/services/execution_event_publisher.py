@@ -147,7 +147,9 @@ class ExecutionEventPublisher:
         if extra:
             # Skip keys that would clobber required fields.
             for k, v in extra.items():
-                if k not in payload and (v is not None or event_type == "position_closed"):
+                if k not in payload and (
+                    v is not None or event_type == "position_closed"
+                ):
                     payload[k] = v
         return payload
 

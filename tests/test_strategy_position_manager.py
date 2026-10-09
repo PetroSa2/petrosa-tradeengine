@@ -1022,7 +1022,11 @@ async def test_close_exchange_fill_publishes_one_position_closed_event_per_fifo_
     manager = StrategyPositionManager()
     rows = []
     for index, (strategy_id, quantity, price) in enumerate(
-        (("strategy-a", 1.0, 100.0), ("strategy-b", 2.0, 110.0), ("strategy-a", 1.0, 115.0)),
+        (
+            ("strategy-a", 1.0, 100.0),
+            ("strategy-b", 2.0, 110.0),
+            ("strategy-a", 1.0, 115.0),
+        ),
         start=1,
     ):
         position_id = f"row-{index}"

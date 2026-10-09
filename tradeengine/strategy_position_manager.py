@@ -990,14 +990,14 @@ class StrategyPositionManager:
             )
             fee_remaining -= fee
             allocation = await self.close_strategy_position(
-                    strategy_position_id=position["strategy_position_id"],
-                    exit_price=exit_price,
-                    exit_quantity=quantity,
-                    close_reason=close_reason,
-                    exit_order_id=exit_order_id,
-                    trade_id=trade_id,
-                    exit_fee=fee,
-                )
+                strategy_position_id=position["strategy_position_id"],
+                exit_price=exit_price,
+                exit_quantity=quantity,
+                close_reason=close_reason,
+                exit_order_id=exit_order_id,
+                trade_id=trade_id,
+                exit_fee=fee,
+            )
             allocations.append(allocation)
             remaining -= quantity
 

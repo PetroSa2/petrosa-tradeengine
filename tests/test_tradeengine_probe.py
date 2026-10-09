@@ -58,8 +58,9 @@ def test_adapter_rejects_direct_session_request_without_sending(monkeypatch):
         "POST", "https://testnet.binancefuture.com/fapi/v1/order"
     ).prepare()
     monkeypatch.setattr(adapter, "send", adapter.send)
-    with pytest.raises(ProbeForbidden):
+    with pytest.raises(ProbeForbidden) as exc_info:
         adapter.send(request)
+    assert "request refused" in str(exc_info.value)
 
 
 @pytest.mark.unit

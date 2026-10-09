@@ -231,6 +231,66 @@ class OCOManager:
             self._side_locks[exchange_position_key] = lock
         return lock
 
+    async def _retry_tp_after_immediate_trigger(
+        self,
+        tp_order: TradeOrder,
+        symbol: str,
+        position_side: str,
+    ) -> dict[str, Any] | None:
+        """Retry a rejected TP at the nearest valid price beyond live market."""
+        try:
+            market_price = float(await self.exchange._get_current_price(symbol))
+            if market_price <= 0:
+                return None
+
+            tick_size = 0.0
+            for item in getattr(self.exchange, "symbol_info", {}).get(symbol, {}).get(
+                "filters", []
+            ):
+                if item.get("filterType") == "PRICE_FILTER":
+                    tick_size = float(item.get("tickSize", 0.0))
+                    break
+            if tick_size <= 0:
+                tick_size = max(abs(market_price) * 1e-8, 1e-8)
+
+            multipliers = {"multiplierUp": "1.10", "multiplierDown": "0.90"}
+            get_filter = getattr(self.exchange, "get_percent_price_filter", None)
+            if get_filter is not None:
+                multipliers.update(get_filter(symbol))
+            upper = market_price * float(multipliers["multiplierUp"])
+            lower = market_price * float(multipliers["multiplierDown"])
+
+            if position_side == "LONG":
+                retry_price = market_price + tick_size
+                if retry_price > upper:
+                    return None
+                rounding = ROUND_UP
+            else:
+                retry_price = market_price - tick_size
+                if retry_price < lower:
+                    return None
+                rounding = ROUND_DOWN
+            retry_price = float(
+                (Decimal(str(retry_price)) / Decimal(str(tick_size))).to_integral_value(
+                    rounding=rounding
+                )
+                * Decimal(str(tick_size))
+            )
+
+            tp_order.take_profit = retry_price
+            tp_order.target_price = retry_price
+            self.logger.warning(
+                "TP -2021 retry for %s %s at nearest beyond-market price %s "
+                "(market=%s)",
+                symbol,
+                position_side,
+                retry_price,
+                market_price,
+            )
+            return await self.exchange.execute(tp_order)
+        except Exception as exc:
+            return {"status": "exception", **_exception_context(exc)}
+
     @staticmethod
     def _leg_is_algo(oco_info: dict[str, Any], leg: str) -> bool:
         """#650: whether an OCO leg is an algo (conditional) order.
@@ -762,6 +822,15 @@ class OCOManager:
                 raise
             tp_order_id = tp_result.get("order_id")
 
+            if not tp_order_id and (
+                "-2021" in str(tp_result.get("error", ""))
+                or "immediately trigger" in str(tp_result.get("error", "")).lower()
+            ):
+                tp_result = await self._retry_tp_after_immediate_trigger(
+                    tp_order, symbol, position_side
+                ) or tp_result
+                tp_order_id = tp_result.get("order_id")
+
             if sl_order_id and tp_order_id:
                 # Store the OCO pair for monitoring
                 if exchange_position_key not in self.active_oco_pairs:
@@ -842,14 +911,31 @@ class OCOManager:
                     "status": "success",
                 }
             else:
-                # #425 (RC#1 of #424): partial OCO failure — one leg posted, the other did not.
-                # Cancel the surviving leg on Binance before returning to prevent an orphan
-                # blocking the next placement attempt with -4130 ("open stop/TP already exists").
+                # #425: cancel only a surviving TP. A surviving SL remains protective
+                # when TP placement fails and must never be removed from the exchange.
                 surviving_leg: tuple[str, str] | None = None
-                if sl_order_id and not tp_order_id:
-                    surviving_leg = ("SL", sl_order_id)
-                elif tp_order_id and not sl_order_id:
+                if tp_order_id and not sl_order_id:
                     surviving_leg = ("TP", tp_order_id)
+
+                if sl_order_id and not tp_order_id:
+                    self.logger.error(
+                        "PARTIAL OCO FAILURE: SL remains active for %s %s; TP failed "
+                        "after bounded retry. Position remains protected by SL.",
+                        symbol,
+                        position_side,
+                    )
+                    return {
+                        "status": "failed",
+                        "protected_sl_only": True,
+                        "position_naked": False,
+                        "requires_remediation": False,
+                        "failure_leg": "TP",
+                        "sl_order_id": sl_order_id,
+                        "sl_result": sl_result,
+                        "tp_result": tp_result,
+                        "symbol": symbol,
+                        "position_side": position_side,
+                    }
 
                 if surviving_leg is not None:
                     leg_label, surviving_id = surviving_leg
@@ -6770,6 +6856,13 @@ class Dispatcher:
                     # naked (AC3) instead of a false position_closed. The
                     # exchange-authoritative remediator's periodic loop takes
                     # it from here.
+                elif oco_result.get("protected_sl_only"):
+                    self.logger.warning(
+                        "OCO TP failed after retry for %s; retaining accepted SL "
+                        "and skipping individual-order fallback. oco_result=%s",
+                        order.symbol,
+                        oco_result,
+                    )
                 else:
                     self.logger.error(
                         f"❌ OCO ORDERS FAILED FOR {order.symbol}: {oco_result} - falling back to individual orders"

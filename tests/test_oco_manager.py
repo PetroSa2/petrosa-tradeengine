@@ -50,10 +50,10 @@ def _make_exchange(sl_ok: bool, tp_ok: bool) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_surviving_sl_leg_is_cancelled_when_tp_leg_fails(
+async def test_surviving_sl_leg_is_retained_when_tp_leg_fails(
     logger: logging.Logger,
 ) -> None:
-    """SL posts → TP fails → SL algoId must be sent to algoOrder DELETE."""
+    """SL posts → TP fails → SL remains active and is not cancelled."""
     exch = _make_exchange(sl_ok=True, tp_ok=False)
     oco = OCOManager(exchange=exch, logger=logger)
 
@@ -67,11 +67,92 @@ async def test_surviving_sl_leg_is_cancelled_when_tp_leg_fails(
     )
 
     assert result["status"] == "failed"
-    assert exch.client._request_futures_api.call_count == 1
-    call = exch.client._request_futures_api.call_args
-    assert call.args[0] == "delete"
-    assert call.args[1] == "algoOrder"
-    assert call.kwargs["data"] == {"symbol": "BCHUSDT", "algoId": "1000000091274545"}
+    assert result["protected_sl_only"] is True
+    assert result["position_naked"] is False
+    assert result["sl_order_id"] == "1000000091274545"
+    assert exch.client._request_futures_api.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_tp_2021_retries_beyond_market_while_retaining_sl(
+    logger: logging.Logger,
+) -> None:
+    """A LONG TP -2021 is retried one tick above market without removing SL."""
+    exch = AsyncMock()
+    exch.client = MagicMock()
+    exch.symbol_info = {
+        "BCHUSDT": {
+            "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]
+        }
+    }
+    exch._get_current_price = AsyncMock(return_value=100.0)
+    exch.get_percent_price_filter = MagicMock(
+        return_value={"multiplierUp": "1.05", "multiplierDown": "0.95"}
+    )
+    exch.execute = AsyncMock(
+        side_effect=[
+            {"order_id": "sl-1", "status": "NEW"},
+            {"order_id": None, "status": "error", "error": "APIError -2021"},
+            {"order_id": "tp-1", "status": "NEW"},
+        ]
+    )
+    oco = OCOManager(exchange=exch, logger=logger)
+
+    result = await oco.place_oco_orders(
+        position_id="tp-retry",
+        symbol="BCHUSDT",
+        position_side="LONG",
+        quantity=0.22,
+        stop_loss_price=90.0,
+        take_profit_price=110.0,
+    )
+
+    assert result["status"] == "success"
+    assert result["sl_order_id"] == "sl-1"
+    assert result["tp_order_id"] == "tp-1"
+    retry_order = exch.execute.await_args_list[2].args[0]
+    assert retry_order.take_profit == pytest.approx(100.1)
+
+
+@pytest.mark.asyncio
+async def test_tp_retry_failure_still_returns_protected_sl(
+    logger: logging.Logger,
+) -> None:
+    """A failed adjusted TP leaves the accepted SL as the only protection."""
+    exch = AsyncMock()
+    exch.client = MagicMock()
+    exch.symbol_info = {
+        "BCHUSDT": {
+            "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]
+        }
+    }
+    exch._get_current_price = AsyncMock(return_value=100.0)
+    exch.get_percent_price_filter = MagicMock(
+        return_value={"multiplierUp": "1.05", "multiplierDown": "0.95"}
+    )
+    exch.execute = AsyncMock(
+        side_effect=[
+            {"order_id": "sl-2", "status": "NEW"},
+            {"order_id": None, "status": "error", "error": "-2021"},
+            {"order_id": None, "status": "error", "error": "exchange unavailable"},
+        ]
+    )
+    oco = OCOManager(exchange=exch, logger=logger)
+
+    result = await oco.place_oco_orders(
+        position_id="tp-retry-fails",
+        symbol="BCHUSDT",
+        position_side="LONG",
+        quantity=0.22,
+        stop_loss_price=90.0,
+        take_profit_price=110.0,
+    )
+
+    assert result["status"] == "failed"
+    assert result["protected_sl_only"] is True
+    assert result["position_naked"] is False
+    assert result["sl_order_id"] == "sl-2"
+    assert exch.client._request_futures_api.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -147,8 +228,7 @@ async def test_orphan_counter_increments_when_cancel_raises(
     after_success = success_sample._value.get()
 
     assert result["status"] == "failed"
-    assert after_failed - before_failed == 1.0
-    # success bucket must NOT tick when cancel raised
+    assert after_failed - before_failed == 0.0
     assert after_success - before_success == 0.0
 
 
@@ -256,10 +336,7 @@ async def test_otel_oco_orphan_leg_called_on_cancel_failed(
     )
 
     assert result["status"] == "failed"
-    assert len(calls) == 1
-    amount, attrs = calls[0]
-    assert amount == 1
-    assert attrs["cancel_outcome"] == "failed"
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -293,4 +370,4 @@ async def test_otel_oco_orphan_count_incremented_on_cancel_failed(
 
     assert result["status"] == "failed"
     # Exactly one unhedged orphan was left → count must be incremented once.
-    assert count_calls == [1]
+    assert count_calls == []

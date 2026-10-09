@@ -300,21 +300,19 @@ async def test_ac4_no_phantom_placement_on_empty_pending(
 
 
 # ---------------------------------------------------------------------------
-# AC5: Partial-OCO orphan-leg race records the oco_orphan_leg_total metric.
+# AC5: A surviving stop is retained when the TP leg fails.
 #
 # NOTE: The simultaneous-fill race (AC1) does NOT emit oco_orphan_leg_total —
 # in _monitor_orders both-gone simply marks the pair completed. The metric is
-# emitted by the *partial OCO placement* path (place_oco_orders), which is the
-# real orphan-leg race: one leg posts, the counterparty fails, and the
-# surviving leg is cancelled. We assert the counter ticks there.
+# emitted by the *partial OCO placement* path only when a TP survives a failed
+# stop. A successfully posted stop is protection, not an orphan.
 # ---------------------------------------------------------------------------
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_ac5_partial_oco_failure_increments_orphan_leg_metric(
+async def test_ac5_partial_oco_failure_retains_stop_without_orphan_metric(
     oco_manager: OCOManager, exchange: RaceFakeExchange
 ) -> None:
-    """AC5: when only one OCO leg posts (partial failure), the surviving leg is
-    cancelled and ``oco_orphan_leg_total`` is incremented with the outcome.
+    """AC5: when SL posts and TP fails, SL remains active without orphan cleanup.
 
     We drive the partial-failure branch by making ``exchange.execute`` return a
     successful SL leg and a failed TP leg. The counter must advance by one for
@@ -339,14 +337,13 @@ async def test_ac5_partial_oco_failure_increments_orphan_leg_metric(
 
     before = _sample_total()
 
-    # SL posts, TP fails -> partial OCO failure (surviving SL leg orphaned).
+    # SL posts, TP fails -> partial OCO failure (surviving SL is protection).
     async def _execute(order: Any) -> dict[str, Any]:
         if order.type == "STOP_MARKET" or "STOP" in str(order.type).upper():
             return {"order_id": "SL_survivor", "status": "NEW"}
         return {"order_id": None, "status": "FAILED"}
 
     exchange.execute = _execute  # type: ignore[assignment]
-    # Surviving-leg cancel goes through the algo delete path in place_oco_orders.
     exchange.client._request_futures_api = Mock(return_value={"status": "CANCELED"})
 
     result = await oco_manager.place_oco_orders(
@@ -360,15 +357,15 @@ async def test_ac5_partial_oco_failure_increments_orphan_leg_metric(
         entry_price=50000.0,
     )
 
-    # Placement reported failure (partial), and the orphan-leg counter advanced.
+    # Placement reported failure (partial), without orphan cleanup.
     assert result.get("status") != "success"
     after = _sample_total()
-    assert after == before + 1.0, (
-        f"expected oco_orphan_leg_total to advance by 1 for {symbol}/{side}, "
+    assert after == before, (
+        f"expected oco_orphan_leg_total to remain unchanged for {symbol}/{side}, "
         f"before={before} after={after}"
     )
-    # Surviving leg was cancelled exactly once (idempotent orphan cleanup).
-    assert exchange.client._request_futures_api.call_count == 1
+    assert result["protected_sl_only"] is True
+    assert exchange.client._request_futures_api.call_count == 0
 
 
 @pytest.mark.unit

@@ -31,7 +31,19 @@ The engine publishes order-lifecycle events to NATS (`execution.events.*`); `pet
 persists them to the `execution_events` collection, which is the system's trade audit trail.
 
 Every event carries `decision_id`, `strategy_id`, `order_id`, `event_type`
-(`placed` / `filled` / `partial_fill` / `rejected`), `timestamp`, `symbol`, `side` and `qty`.
+(`placed` / `filled` / `partial_fill` / `rejected` / `position_closed`), `timestamp`,
+`symbol`, `side` and `qty`.
+
+`position_closed` is additive and carries one row allocation. Its payload includes
+`strategy_id`, the row's original `client_order_id`, `position_id`, `entry_order_id`,
+`closed_quantity`, `remaining_quantity`, `exit_price`, `exit_time`, `reason`,
+`exit_order_id`, and `pnl_basis`. Known exit fills use `pnl_basis=fifo_attributed` and
+include realized P&L and fees; reconciler closes use `pnl_basis=unknown` and omit
+invented P&L. Its idempotency key is `exit_order_id` plus `client_order_id`.
+
+Rows are allocated oldest first for the matching symbol and position side. Existing
+event types and their consumers are unchanged; the data-manager round-book consumer
+for `position_closed` is a separate follow-up.
 
 Fill events (`filled`, `partial_fill`) additionally carry the audit fields below, emitted from
 `Dispatcher._emit_execution_event_from_order`:

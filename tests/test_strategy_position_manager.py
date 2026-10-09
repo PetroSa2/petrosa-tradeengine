@@ -1015,3 +1015,131 @@ async def test_close_exchange_fill_allocates_fifo_and_is_idempotent():
         "strategy-b",
     ]
     assert replay["idempotent"] is True
+
+
+@pytest.mark.asyncio
+async def test_close_exchange_fill_publishes_one_position_closed_event_per_fifo_row():
+    manager = StrategyPositionManager()
+    rows = []
+    for index, (strategy_id, quantity, price) in enumerate(
+        (
+            ("strategy-a", 1.0, 100.0),
+            ("strategy-b", 2.0, 110.0),
+            ("strategy-a", 1.0, 115.0),
+        ),
+        start=1,
+    ):
+        position_id = f"row-{index}"
+        rows.append(position_id)
+        manager.strategy_positions[position_id] = {
+            "strategy_position_id": position_id,
+            "strategy_id": strategy_id,
+            "client_order_id": f"cio-{index}",
+            "position_id": f"position-{index}",
+            "entry_order_id": f"entry-{index}",
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "entry_quantity": quantity,
+            "entry_price": price,
+            "status": "open",
+            "exchange_position_key": "BTCUSDT_LONG",
+        }
+    manager.contributions["BTCUSDT_LONG"] = [
+        {"strategy_position_id": position_id, "position_sequence": index}
+        for index, position_id in enumerate(rows, start=1)
+    ]
+    with (
+        patch.object(manager, "_update_strategy_position_closure", AsyncMock()),
+        patch.object(manager, "_close_contribution", AsyncMock()),
+        patch.object(manager, "_reduce_exchange_position", AsyncMock()),
+        patch(
+            "tradeengine.strategy_position_manager.execution_event_publisher.publish",
+            new=AsyncMock(),
+        ) as publish,
+    ):
+        result = await manager.close_exchange_fill(
+            "BTCUSDT_LONG",
+            120,
+            3.5,
+            exit_order_id="exit-1",
+            trade_id="trade-1",
+            close_reason="take_profit",
+        )
+
+    assert [allocation["strategy_id"] for allocation in result["allocations"]] == [
+        "strategy-a",
+        "strategy-b",
+        "strategy-a",
+    ]
+    assert [allocation["closed_quantity"] for allocation in result["allocations"]] == [
+        1,
+        2,
+        0.5,
+    ]
+    assert result["allocated_quantity"] == 3.5
+    assert publish.await_count == 3
+    events = [call.kwargs for call in publish.await_args_list]
+    assert [event["client_order_id"] for event in events] == [
+        "cio-1",
+        "cio-2",
+        "cio-3",
+    ]
+    assert all(event["event_type"] == "position_closed" for event in events)
+    assert all(event["extra"]["pnl_basis"] == "fifo_attributed" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_close_exchange_fill_logs_excess_and_does_not_cross_hedge_side():
+    manager = StrategyPositionManager()
+    manager.strategy_positions["long"] = {
+        "strategy_position_id": "long",
+        "strategy_id": "long-strategy",
+        "client_order_id": "cio-long",
+        "symbol": "BTCUSDT",
+        "side": "LONG",
+        "entry_quantity": 1.0,
+        "entry_price": 100.0,
+        "status": "open",
+        "exchange_position_key": "BTCUSDT_LONG",
+    }
+    manager.strategy_positions["short"] = {
+        "strategy_position_id": "short",
+        "strategy_id": "short-strategy",
+        "client_order_id": "cio-short",
+        "symbol": "BTCUSDT",
+        "side": "SHORT",
+        "entry_quantity": 5.0,
+        "entry_price": 100.0,
+        "status": "open",
+        "exchange_position_key": "BTCUSDT_SHORT",
+    }
+    manager.contributions["BTCUSDT_LONG"] = [
+        {"strategy_position_id": "long", "position_sequence": 1}
+    ]
+    manager.contributions["BTCUSDT_SHORT"] = [
+        {"strategy_position_id": "short", "position_sequence": 1}
+    ]
+    with (
+        patch.object(manager, "_update_strategy_position_closure", AsyncMock()),
+        patch.object(manager, "_close_contribution", AsyncMock()),
+        patch.object(manager, "_reduce_exchange_position", AsyncMock()),
+        patch(
+            "tradeengine.strategy_position_manager.execution_event_publisher.publish",
+            new=AsyncMock(),
+        ),
+        patch("tradeengine.strategy_position_manager.logger.warning") as warning,
+    ):
+        result = await manager.close_exchange_fill(
+            "BTCUSDT_LONG",
+            90,
+            2.0,
+            exit_order_id="exit-excess",
+            trade_id="trade-excess",
+        )
+
+    assert [allocation["strategy_id"] for allocation in result["allocations"]] == [
+        "long-strategy"
+    ]
+    assert result["unattributed"] == 1
+    assert manager.strategy_positions["short"]["status"] == "open"
+    warning.assert_called_once()

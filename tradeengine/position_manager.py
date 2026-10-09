@@ -61,6 +61,7 @@ from tradeengine.metrics import (
     total_realized_pnl_usd,
     total_unrealized_pnl_usd,
 )
+from tradeengine.services.execution_event_publisher import execution_event_publisher
 from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
@@ -1325,6 +1326,36 @@ class PositionManager:
                     close_reason=close_reason,
                     exchange=record.get("exchange", "binance"),
                 ).inc()
+            client_order_id = record.get("client_order_id") or record.get(
+                "position_id", position_id
+            )
+            await execution_event_publisher.publish(
+                event_type="position_closed",
+                strategy_id=str(record.get("strategy_id", "unknown")),
+                order_id=str(exit_order_id or ""),
+                reason=close_reason,
+                decision_id=record.get("decision_id"),
+                timestamp=effective_exit_time,
+                client_order_id=str(client_order_id),
+                idempotency_key=(
+                    f"position_closed:{exit_order_id}:{client_order_id}"
+                    if exit_order_id
+                    else None
+                ),
+                extra={
+                    "position_id": position_id,
+                    "entry_order_id": record.get("entry_order_id"),
+                    "closed_quantity": float(close_qty),
+                    "remaining_quantity": float(remaining_qty),
+                    "exit_price": update_data["exit_price"],
+                    "exit_time": effective_exit_time,
+                    "reason": close_reason,
+                    "exit_order_id": exit_order_id,
+                    "pnl_basis": "unknown" if pnl_unknown else "fifo_attributed",
+                    "pnl": update_data["pnl"],
+                    "fee": float(commission_decimal) if fee_known else None,
+                },
+            )
             return position_data
         except Exception as e:
             logger.error("Error recording position close %s: %s", position_id, e)

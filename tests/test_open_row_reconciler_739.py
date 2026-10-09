@@ -182,6 +182,37 @@ async def test_a_failed_close_is_logged_and_marks_the_plan_not_applied():
 
 
 @pytest.mark.asyncio
+async def test_configured_excess_limits_reject_without_writing():
+    pm = _manager([_row("a", 1.0, 100), _row("b", 1.0, 90)])
+    reconciler = _reconciler(
+        pm,
+        "close",
+        confirm_passes=1,
+        max_excess_quantity=0.5,
+    )
+    plans = await reconciler.reconcile(_binance(amount=0.0))
+    assert plans[0]["rejected"] is True
+    assert plans[0]["rejection_reason"] == "max_excess_quantity"
+    assert plans[0]["applied"] is False
+    pm.record_position_close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ratio_limit_rejects_a_large_fraction_of_the_ledger():
+    pm = _manager([_row("a", 1.0, 100), _row("b", 1.0, 90)])
+    reconciler = _reconciler(
+        pm,
+        "close",
+        confirm_passes=1,
+        max_excess_ratio=0.25,
+    )
+    plans = await reconciler.reconcile(_binance(amount=1.0))
+    assert plans[0]["rejected"] is True
+    assert plans[0]["rejection_reason"] == "max_excess_ratio"
+    pm.record_position_close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_an_unconfirmed_close_is_retried_on_the_next_pass():
     pm = _manager([_row("a", 1.0, 100)])
     pm.record_position_close = AsyncMock(side_effect=[None, {}])

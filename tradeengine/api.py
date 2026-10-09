@@ -373,6 +373,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     mode=_te_settings.te_open_row_reconcile_mode,
                     grace_seconds=_te_settings.te_open_row_reconcile_grace_seconds,
                     confirm_passes=_te_settings.te_open_row_reconcile_confirm_passes,
+                    max_excess_quantity=(
+                        _te_settings.te_open_row_reconcile_max_excess_quantity
+                    ),
+                    max_excess_ratio=_te_settings.te_open_row_reconcile_max_excess_ratio,
                 ),
             )
             await _reconciler.start()

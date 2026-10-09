@@ -293,6 +293,23 @@ class Settings(BaseSettings):
     te_open_row_reconcile_mode: str = "close"
     te_open_row_reconcile_grace_seconds: float = 300.0
     te_open_row_reconcile_confirm_passes: int = 2
+    te_open_row_reconcile_max_excess_quantity: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "TE_OPEN_ROW_RECONCILE_MAX_EXCESS_QUANTITY",
+            "te_open_row_reconcile_max_excess_quantity",
+        ),
+        ge=0.0,
+    )
+    te_open_row_reconcile_max_excess_ratio: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "TE_OPEN_ROW_RECONCILE_MAX_EXCESS_RATIO",
+            "te_open_row_reconcile_max_excess_ratio",
+        ),
+        ge=0.0,
+        le=1.0,
+    )
 
     model_config = {
         "env_file": ".env",

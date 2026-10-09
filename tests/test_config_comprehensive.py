@@ -215,6 +215,18 @@ class TestSettings:
             settings = Settings()
         assert settings.naked_position_malformed_realert_interval_sec == 60
 
+    def test_open_row_reconcile_guardrails_read_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "TE_OPEN_ROW_RECONCILE_MAX_EXCESS_QUANTITY": "2.5",
+                "TE_OPEN_ROW_RECONCILE_MAX_EXCESS_RATIO": "0.25",
+            },
+        ):
+            settings = Settings()
+        assert settings.te_open_row_reconcile_max_excess_quantity == 2.5
+        assert settings.te_open_row_reconcile_max_excess_ratio == 0.25
+
     def test_model_config_pydantic_v2(self):
         """Test model_config attribute (Pydantic v2 migration)"""
         settings = Settings()

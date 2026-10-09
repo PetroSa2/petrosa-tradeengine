@@ -40,6 +40,11 @@ open_rows_reconciled_total = Counter(
     "Open position rows closed or reduced to match the exchange quantity (#739)",
     ["symbol", "side", "action"],
 )
+open_rows_reconcile_rejected_total = Counter(
+    "tradeengine_open_rows_reconcile_rejected_total",
+    "Open position-row corrections rejected by a configured guardrail (#769)",
+    ["symbol", "side", "reason"],
+)
 
 
 def normalise_side(value: Any) -> str:
@@ -139,12 +144,16 @@ class OpenRowReconciler:
         mode: str = "dry_run",
         grace_seconds: float = 300.0,
         confirm_passes: int = 2,
+        max_excess_quantity: float = 0.0,
+        max_excess_ratio: float = 0.0,
         clock: Any = time.time,
     ) -> None:
         self._pm = position_manager
         self.mode: RowReconcileMode = self._coerce(mode)
         self._grace = float(grace_seconds)
         self._confirm = max(int(confirm_passes), 1)
+        self._max_excess_quantity = max(float(max_excess_quantity), 0.0)
+        self._max_excess_ratio = min(max(float(max_excess_ratio), 0.0), 1.0)
         self._clock = clock
         self._seen: dict[tuple[str, str], tuple[float, int]] = {}
         self.last_plans: list[dict[str, Any]] = []
@@ -218,6 +227,15 @@ class OpenRowReconciler:
                 "mode": self.mode,
                 "applied": False,
             }
+            rejection = self._rejection_reason(plan)
+            if rejection is not None:
+                record["rejected"] = True
+                record["rejection_reason"] = rejection
+                open_rows_reconcile_rejected_total.labels(
+                    symbol=symbol, side=side, reason=rejection
+                ).inc()
+            else:
+                record["rejected"] = False
             logger.warning(
                 "OPEN_ROWS_EXCESS %s/%s: ledger %.8f vs exchange %.8f, %d row(s) to take off (%s, pass %d/%d)",
                 symbol,
@@ -229,13 +247,27 @@ class OpenRowReconciler:
                 passes,
                 self._confirm,
             )
-            if self.mode == "close" and passes >= self._confirm:
+            if self.mode == "close" and rejection is None and passes >= self._confirm:
                 record["applied"] = await self._apply(plan)
                 if record["applied"]:
                     self._seen.pop((symbol, side), None)
             results.append(record)
         self.last_plans = results
         return results
+
+    def _rejection_reason(self, plan: RowPlan) -> str | None:
+        if (
+            self._max_excess_quantity > 0
+            and plan.excess > self._max_excess_quantity + _EPS
+        ):
+            return "max_excess_quantity"
+        if (
+            self._max_excess_ratio > 0
+            and plan.ledger_quantity > _EPS
+            and plan.excess / plan.ledger_quantity > self._max_excess_ratio + _EPS
+        ):
+            return "max_excess_ratio"
+        return None
 
     async def _apply(self, plan: RowPlan) -> bool:
         stamp = int(self._clock())

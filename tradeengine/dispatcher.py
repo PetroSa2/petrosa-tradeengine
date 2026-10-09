@@ -244,8 +244,10 @@ class OCOManager:
                 return None
 
             tick_size = 0.0
-            for item in getattr(self.exchange, "symbol_info", {}).get(symbol, {}).get(
-                "filters", []
+            for item in (
+                getattr(self.exchange, "symbol_info", {})
+                .get(symbol, {})
+                .get("filters", [])
             ):
                 if item.get("filterType") == "PRICE_FILTER":
                     tick_size = float(item.get("tickSize", 0.0))
@@ -826,9 +828,12 @@ class OCOManager:
                 "-2021" in str(tp_result.get("error", ""))
                 or "immediately trigger" in str(tp_result.get("error", "")).lower()
             ):
-                tp_result = await self._retry_tp_after_immediate_trigger(
-                    tp_order, symbol, position_side
-                ) or tp_result
+                tp_result = (
+                    await self._retry_tp_after_immediate_trigger(
+                        tp_order, symbol, position_side
+                    )
+                    or tp_result
+                )
                 tp_order_id = tp_result.get("order_id")
 
             if sl_order_id and tp_order_id:

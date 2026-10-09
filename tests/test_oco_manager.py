@@ -81,9 +81,7 @@ async def test_tp_2021_retries_beyond_market_while_retaining_sl(
     exch = AsyncMock()
     exch.client = MagicMock()
     exch.symbol_info = {
-        "BCHUSDT": {
-            "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]
-        }
+        "BCHUSDT": {"filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]}
     }
     exch._get_current_price = AsyncMock(return_value=100.0)
     exch.get_percent_price_filter = MagicMock(
@@ -122,9 +120,7 @@ async def test_tp_retry_failure_still_returns_protected_sl(
     exch = AsyncMock()
     exch.client = MagicMock()
     exch.symbol_info = {
-        "BCHUSDT": {
-            "filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]
-        }
+        "BCHUSDT": {"filters": [{"filterType": "PRICE_FILTER", "tickSize": "0.1"}]}
     }
     exch._get_current_price = AsyncMock(return_value=100.0)
     exch.get_percent_price_filter = MagicMock(

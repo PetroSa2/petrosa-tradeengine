@@ -28,7 +28,12 @@ tracer = trace.get_tracer(__name__)
 
 
 EventType = Literal[
-    "placed", "filled", "rejected", "partial_fill", "position_force_closed_no_stops"
+    "placed",
+    "filled",
+    "rejected",
+    "partial_fill",
+    "position_force_closed_no_stops",
+    "position_closed",
 ]
 _VALID_EVENT_TYPES: set[str] = {
     "placed",
@@ -36,6 +41,7 @@ _VALID_EVENT_TYPES: set[str] = {
     "rejected",
     "partial_fill",
     "position_force_closed_no_stops",
+    "position_closed",
 }
 
 
@@ -132,14 +138,16 @@ class ExecutionEventPublisher:
             "timestamp": ts,
             "reason": reason or "",
         }
-        if client_order_id:
+        if event_type == "position_closed":
+            payload["client_order_id"] = client_order_id or ""
+        elif client_order_id:
             payload["client_order_id"] = client_order_id
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
         if extra:
             # Skip keys that would clobber required fields.
             for k, v in extra.items():
-                if k not in payload and v is not None:
+                if k not in payload and (v is not None or event_type == "position_closed"):
                     payload[k] = v
         return payload
 

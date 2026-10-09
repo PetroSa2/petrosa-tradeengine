@@ -21,6 +21,8 @@ def _manager(quantity: float = 2.0, side: str = "LONG") -> PositionManager:
             "commission_total": 0.0,
             "exchange": "binance",
             "strategy_id": "test",
+            "client_order_id": "cio-position",
+            "entry_order_id": "entry-1",
             "status": "open",
         }
     }
@@ -162,3 +164,33 @@ async def test_missing_exit_price_is_flagged_not_zero_pnl():
     assert body["pnl"] is None
     assert body["pnl_unknown"] is True
     assert body["close_reason"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_unknown_close_publishes_position_closed_without_pnl():
+    manager = _manager()
+    with (
+        patch(
+            "shared.mysql_client.position_client.update_position",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "tradeengine.position_manager.execution_event_publisher.publish",
+            new_callable=AsyncMock,
+        ) as publish,
+    ):
+        await manager.record_position_close(
+            "P",
+            None,
+            1.0,
+            "reconcile-1",
+            datetime.now(UTC),
+            "reconciled_to_exchange",
+            pnl_unknown=True,
+        )
+
+    event = publish.await_args.kwargs
+    assert event["event_type"] == "position_closed"
+    assert event["client_order_id"] == "cio-position"
+    assert event["extra"]["pnl_basis"] == "unknown"
+    assert event["extra"]["pnl"] is None

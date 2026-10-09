@@ -38,6 +38,7 @@ from tradeengine.metrics import (
     strategy_attribution_persist_failures_total,
 )
 from tradeengine.services.alert_publisher import alert_publisher
+from tradeengine.services.execution_event_publisher import execution_event_publisher
 from tradeengine.services.persist_retry_queue import PendingWrite, persist_retry_queue
 
 logger = logging.getLogger(__name__)
@@ -545,6 +546,42 @@ class StrategyPositionManager:
                 f"{close_reason} at {exit_price}, PnL: {pnl_text} ({pct_text})"
             )
 
+            client_order_id = position.get("client_order_id") or position.get(
+                "position_id"
+            )
+            await execution_event_publisher.publish(
+                event_type="position_closed",
+                strategy_id=str(position.get("strategy_id") or "unknown"),
+                order_id=str(exit_order_id or ""),
+                reason=close_reason,
+                decision_id=position.get("decision_id"),
+                timestamp=position["exit_time"],
+                client_order_id=client_order_id,
+                idempotency_key=(
+                    f"position_closed:{exit_order_id}:{client_order_id}"
+                    if exit_order_id and client_order_id
+                    else None
+                ),
+                extra={
+                    "position_id": position.get("position_id"),
+                    "strategy_position_id": strategy_position_id,
+                    "entry_order_id": position.get("entry_order_id"),
+                    "closed_quantity": exit_quantity,
+                    "remaining_quantity": max(
+                        _decimal(position["entry_quantity"])
+                        - _decimal(position.get("exit_quantity", 0)),
+                        Decimal("0"),
+                    ),
+                    "exit_price": exit_price,
+                    "exit_time": position["exit_time"],
+                    "reason": close_reason,
+                    "exit_order_id": exit_order_id,
+                    "pnl_basis": "unknown" if pnl_unknown else "fifo_attributed",
+                    "pnl": net_pnl,
+                    "fee": exit_fee_value,
+                },
+            )
+
             return {
                 "strategy_position_id": strategy_position_id,
                 "strategy_id": position["strategy_id"],
@@ -555,9 +592,19 @@ class StrategyPositionManager:
                 "side": position["side"],
                 "close_reason": close_reason,
                 "entry_price": entry_price,
+                "entry_order_id": position.get("entry_order_id"),
+                "position_id": position.get("position_id"),
                 "exit_price": exit_price,
                 "quantity": exit_quantity,
+                "closed_quantity": exit_quantity,
+                "remaining_quantity": max(
+                    _decimal(position["entry_quantity"])
+                    - _decimal(position.get("exit_quantity", 0)),
+                    Decimal("0"),
+                ),
+                "exit_time": position["exit_time"],
                 "realized_pnl": position["realized_pnl"],
+                "closed_pnl": net_pnl,
                 "gross_realized_pnl": gross_pnl,
                 "realized_pnl_pct": position["realized_pnl_pct"],
                 "commission_total": position["commission_total"],
@@ -569,6 +616,7 @@ class StrategyPositionManager:
                 "client_order_id": position.get("client_order_id"),
                 "position_status": position["status"],
                 "pnl_unknown": pnl_unknown,
+                "pnl_basis": "unknown" if pnl_unknown else "fifo_attributed",
             }
 
         except Exception as e:
@@ -941,8 +989,7 @@ class StrategyPositionManager:
                 else _money(_decimal(exit_fee) * quantity / _decimal(exit_quantity))
             )
             fee_remaining -= fee
-            allocations.append(
-                await self.close_strategy_position(
+            allocation = await self.close_strategy_position(
                     strategy_position_id=position["strategy_position_id"],
                     exit_price=exit_price,
                     exit_quantity=quantity,
@@ -951,7 +998,7 @@ class StrategyPositionManager:
                     trade_id=trade_id,
                     exit_fee=fee,
                 )
-            )
+            allocations.append(allocation)
             remaining -= quantity
 
         if exit_order_id and trade_id:
@@ -959,6 +1006,12 @@ class StrategyPositionManager:
         if remaining:
             day = datetime.now(UTC).date().isoformat()
             self.unattributed[day] = _money(self.unattributed.get(day, 0) + remaining)
+            logger.warning(
+                "Exit fill %s exceeded open rows by %s on %s",
+                exit_order_id,
+                remaining,
+                exchange_position_key,
+            )
         return {
             "allocations": allocations,
             "allocated_quantity": _money(_decimal(exit_quantity) - remaining),

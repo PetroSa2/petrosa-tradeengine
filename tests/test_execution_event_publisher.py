@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from contracts.execution_event import ExecutionEvent
 from tradeengine.services.execution_event_publisher import (
     ExecutionEventPublisher,
 )
@@ -109,6 +110,54 @@ def test_build_payload_merges_extra_without_clobbering():
     assert payload["symbol"] == "BTCUSDT"
     assert payload["side"] == "buy"
     assert payload["qty"] == 0.01
+
+
+def test_position_closed_payload_always_carries_row_client_order_id():
+    payload = ExecutionEventPublisher._build_payload(
+        decision_id="dec-close",
+        strategy_id="strategy-a",
+        order_id="exit-1",
+        event_type="position_closed",
+        reason="take_profit",
+        client_order_id="cio-position-1",
+        extra={
+            "position_id": "row-1",
+            "entry_order_id": "entry-1",
+            "closed_quantity": 1.0,
+            "remaining_quantity": 0.0,
+            "exit_price": 120.0,
+            "exit_time": "2026-10-09T16:00:00+00:00",
+            "exit_order_id": "exit-1",
+            "pnl_basis": "fifo_attributed",
+            "pnl": 20.0,
+        },
+    )
+    assert payload["client_order_id"] == "cio-position-1"
+    assert payload["pnl_basis"] == "fifo_attributed"
+    assert payload["closed_quantity"] == 1.0
+
+
+def test_position_closed_contract_accepts_required_row_fields():
+    event = ExecutionEvent(
+        strategy_id="strategy-a",
+        client_order_id="cio-position-1",
+        order_id="exit-1",
+        event_type="position_closed",
+        timestamp="2026-10-09T16:00:00Z",
+        reason="take_profit",
+        position_id="row-1",
+        entry_order_id="entry-1",
+        closed_quantity=1.0,
+        remaining_quantity=0.0,
+        exit_price=120.0,
+        exit_time="2026-10-09T16:00:00Z",
+        exit_order_id="exit-1",
+        pnl_basis="fifo_attributed",
+        pnl=20.0,
+        fee=-0.1,
+    )
+    assert event.client_order_id == "cio-position-1"
+    assert event.pnl_basis == "fifo_attributed"
 
 
 # ---------- publish behaviour ----------

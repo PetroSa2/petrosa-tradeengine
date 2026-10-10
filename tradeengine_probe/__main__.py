@@ -7,7 +7,13 @@ import sys
 import time
 
 from ._client import ProbeBinanceClient, ProbeForbidden
-from .metrics import initialise_series
+from ._facade import ProbeFacade
+from .checks import Result, run_cycle
+from .metrics import (
+    initialise_series,
+    interval as interval_metric,
+    last_run,
+)
 
 
 def main() -> int:
@@ -29,11 +35,19 @@ def main() -> int:
         return 2
     initialise_series()
     interval = float(os.environ.get("TE_SYNTHETIC_PROBE_INTERVAL_SECONDS", "300"))
+    symbol = os.environ.get("TE_SYNTHETIC_PROBE_SYMBOL", "BTCUSDT").upper()
+    interval_metric.set(interval)
+    facade = ProbeFacade(client)
+
+    def cycle() -> bool:
+        outcomes = run_cycle(facade, symbol=symbol)
+        last_run.set(time.time())
+        return all(result is Result.SUCCESS for result in outcomes.values())
+
     if os.environ.get("TE_SYNTHETIC_PROBE_ONESHOT", "false").lower() == "true":
-        client.futures_time()
-        return 0
+        return 0 if cycle() else 1
     while True:
-        client.futures_time()
+        cycle()
         time.sleep(interval)
 
 

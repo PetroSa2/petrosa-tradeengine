@@ -4,20 +4,68 @@ import ast
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 import requests
 
+from tradeengine_probe import __main__ as probe_main
 from tradeengine_probe._client import (
     ProbeBinanceClient,
     ProbeForbidden,
     _allowed,
     _WhitelistAdapter,
 )
+from tradeengine_probe.checks import Result, run_cycle
 from tradeengine_probe.params import build_order_params
 
 ROOT = Path(__file__).parents[1]
+
+
+class FakeProbeClient:
+    def __init__(self):
+        self.order_params = None
+
+    def futures_time(self):
+        return {"serverTime": int(time.time() * 1000)}
+
+    def futures_account(self):
+        return {"canTrade": True}
+
+    def futures_get_position_mode(self):
+        return {"dualSidePosition": True}
+
+    def futures_exchange_info(self):
+        return {
+            "symbols": [
+                {
+                    "symbol": "BTCUSDT",
+                    "filters": [
+                        {
+                            "filterType": "LOT_SIZE",
+                            "minQty": "0.001",
+                            "stepSize": "0.001",
+                        },
+                        {"filterType": "MIN_NOTIONAL", "notional": "5"},
+                        {
+                            "filterType": "PRICE_FILTER",
+                            "minPrice": "0.01",
+                            "maxPrice": "1000000",
+                            "tickSize": "0.01",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    def futures_symbol_ticker(self, *, symbol):
+        assert symbol == "BTCUSDT"
+        return {"price": "100"}
+
+    def futures_create_test_order(self, **kwargs):
+        self.order_params = kwargs
+        return {}
 
 
 @pytest.mark.unit
@@ -143,3 +191,70 @@ def test_probe_source_has_no_forbidden_engine_imports():
                 assert all(alias.name not in forbidden for alias in node.names)
             if isinstance(node, ast.ImportFrom):
                 assert node.module not in forbidden
+
+
+@pytest.mark.unit
+def test_cycle_runs_all_checks_and_derives_order_quantity_from_filters():
+    client = FakeProbeClient()
+
+    outcomes = run_cycle(client, symbol="BTCUSDT")
+
+    assert outcomes == {
+        "clock_skew": Result.SUCCESS,
+        "latency": Result.SUCCESS,
+        "auth": Result.SUCCESS,
+        "hedge_mode": Result.SUCCESS,
+        "filters": Result.SUCCESS,
+        "order_test": Result.SUCCESS,
+    }
+    assert client.order_params == {
+        "symbol": "BTCUSDT",
+        "side": "BUY",
+        "type": "MARKET",
+        "quantity": "0.052",
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "method",
+    [
+        "futures_time",
+        "futures_account",
+        "futures_get_position_mode",
+        "futures_exchange_info",
+        "futures_create_test_order",
+    ],
+)
+def test_cycle_classifies_each_check_failure_and_continues(method):
+    client = FakeProbeClient()
+
+    def fail(*args, **kwargs):
+        raise TimeoutError(method)
+
+    setattr(client, method, fail)
+
+    outcomes = run_cycle(client, symbol="BTCUSDT")
+
+    assert Result.TIMEOUT in outcomes.values()
+    assert set(outcomes) == {
+        "clock_skew",
+        "latency",
+        "auth",
+        "hedge_mode",
+        "filters",
+        "order_test",
+    }
+
+
+@pytest.mark.unit
+def test_one_shot_returns_nonzero_when_any_check_fails(monkeypatch):
+    client = FakeProbeClient()
+    client.futures_account = lambda: {"canTrade": False}
+    monkeypatch.setattr(probe_main, "ProbeBinanceClient", lambda **kwargs: client)
+    monkeypatch.setenv("BINANCE_TESTNET", "true")
+    monkeypatch.setenv("BINANCE_API_KEY", "key")
+    monkeypatch.setenv("BINANCE_API_SECRET", "secret")
+    monkeypatch.setenv("TE_SYNTHETIC_PROBE_ONESHOT", "true")
+
+    assert probe_main.main() != 0

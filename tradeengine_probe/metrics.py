@@ -10,6 +10,12 @@ CHECKS = (
     "order_test_limit",
     "order_test_negative_control",
     "filters_changed",
+    "clock_skew",
+    "latency",
+    "auth",
+    "hedge_mode",
+    "filters",
+    "order_test",
 )
 RESULTS = (
     "success",
@@ -58,6 +64,12 @@ filters_changed = Gauge(
     "tradeengine_synthetic_probe_filters_changed",
     "Whether exchange filters changed",
     ("symbol",),
+)
+can_trade = Gauge(
+    "tradeengine_synthetic_probe_can_trade", "Whether the account can trade"
+)
+hedge_mode = Gauge(
+    "tradeengine_synthetic_probe_hedge_mode", "Whether the account is in hedge mode"
 )
 used_weight = Gauge("tradeengine_synthetic_probe_used_weight_1m", "Binance used weight")
 order_count_10s = Gauge(

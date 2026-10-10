@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,9 +84,21 @@ def api_error(code: int, status: int = 400, headers: dict | None = None):
 class FakeProbeClient:
     """What the exchange answers; the checks only ever see it through ProbeFacade."""
 
-    def __init__(self, *, hedge=False, filters=None, skew_ms=0):
+    def __init__(
+        self,
+        *,
+        hedge=False,
+        filters=None,
+        skew_ms=0,
+        symbol="BTCUSDT",
+        price="100",
+        rate_limits=None,
+    ):
         self.hedge = hedge
         self.skew_ms = skew_ms
+        self.symbol = symbol
+        self.price = price
+        self.rate_limits = rate_limits
         self.filters = filters if filters is not None else FILTERS
         self.test_orders: list[dict] = []
         self.exchange_info_calls = 0
@@ -103,14 +116,17 @@ class FakeProbeClient:
 
     def futures_exchange_info(self):
         self.exchange_info_calls += 1
-        return {"symbols": [{"symbol": "BTCUSDT", "filters": self.filters}]}
+        info = {"symbols": [{"symbol": self.symbol, "filters": self.filters}]}
+        if self.rate_limits is not None:
+            info["rateLimits"] = self.rate_limits
+        return info
 
     def futures_symbol_ticker(self, *, symbol):
-        assert symbol == "BTCUSDT"
-        return {"price": "100"}
+        assert symbol == self.symbol
+        return {"price": self.price}
 
     def futures_mark_price(self, *, symbol):
-        return {"markPrice": "100"}
+        return {"markPrice": self.price}
 
     def futures_create_test_order(self, **kwargs):
         self.test_orders.append(kwargs)
@@ -122,8 +138,23 @@ class FakeProbeClient:
         pytest.fail("a real order was placed")
 
 
+def filters_of(*, step, tick, min_qty=None, notional="5", up="1.05", down="0.95"):
+    return [
+        {"filterType": "LOT_SIZE", "minQty": min_qty or step, "stepSize": step},
+        {"filterType": "MARKET_LOT_SIZE", "minQty": min_qty or step, "stepSize": step},
+        {"filterType": "MIN_NOTIONAL", "notional": notional},
+        {
+            "filterType": "PRICE_FILTER",
+            "minPrice": tick,
+            "maxPrice": "1000000",
+            "tickSize": tick,
+        },
+        {"filterType": "PERCENT_PRICE", "multiplierUp": up, "multiplierDown": down},
+    ]
+
+
 def cycle_of(client, **kwargs):
-    return run_cycle(ProbeFacade(client), symbol="BTCUSDT", **kwargs)
+    return run_cycle(ProbeFacade(client), symbol=client.symbol, **kwargs)
 
 
 def sample(name: str, **labels: str) -> float:
@@ -850,3 +881,323 @@ def test_the_real_binance_exception_is_classified():
         classify_error(module.BinanceRequestException("not json"))
         is Result.TRANSPORT_ERROR
     )
+
+
+# ---------------------------------------------------------------- review round 2 (#784)
+
+
+def decimals(text: str) -> int:
+    return len(text.split(".")[1]) if "." in text else 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("step", "tick", "price", "expected"),
+    [
+        (
+            "0.001",
+            "0.10",
+            58509.84,
+            "58509.8",
+        ),  # step finer than tick: BTCUSDT was sent as 58509.800
+        ("1", "0.1", 58509.84, "58509.8"),  # step coarser than tick
+        ("0.0001", "0.1", 58509.84, "58509.8"),
+        ("0.1", "0.0001", 0.52319, "0.5231"),  # XRPUSDT: was floored to 0.4
+        ("1", "0.00001", 0.123459, "0.12345"),  # DOGEUSDT: was floored to 0
+        ("1", "0.5", 101.74, "101.5"),
+    ],
+)
+def test_the_limit_price_follows_the_tick_size_not_the_quantity_step(
+    step, tick, price, expected
+):
+    params = build_order_params(
+        symbol="X",
+        side="BUY",
+        order_type="LIMIT",
+        price=price,
+        step=step,
+        min_qty=step,
+        min_notional="5",
+        tick=tick,
+        limit_price=price,
+    )
+    assert params["price"] == expected
+    assert decimals(params["quantity"]) == decimals(
+        step
+    )  # the quantity keeps its own step
+
+
+@pytest.mark.unit
+def test_a_limit_order_needs_its_tick():
+    with pytest.raises(ValueError) as error:
+        build_order_params(
+            symbol="X",
+            side="BUY",
+            order_type="LIMIT",
+            price=100,
+            step="0.001",
+            min_qty="0.001",
+            min_notional="5",
+            limit_price=100,
+        )
+    assert "tick" in str(error.value)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("symbol", "price", "step", "tick"),
+    [
+        ("BTCUSDT", "80000.05", "0.001", "0.10"),
+        ("ETHUSDT", "2500.55", "0.01", "0.01"),
+        ("XRPUSDT", "0.5231", "0.1", "0.0001"),
+        ("DOGEUSDT", "0.12345", "1", "0.00001"),
+    ],
+)
+def test_the_cycle_sends_a_valid_limit_price_for_any_symbol(symbol, price, step, tick):
+    client = FakeProbeClient(
+        symbol=symbol, price=price, filters=filters_of(step=step, tick=tick)
+    )
+    client.futures_create_test_order = lambda **kw: client.test_orders.append(kw) or {}
+    outcomes = cycle_of(client)
+    assert outcomes["order_test_limit"] is Result.SUCCESS
+    limit = next(o for o in client.test_orders if o["type"] == "LIMIT")
+    sent = Decimal(limit["price"])
+    assert sent % Decimal(tick) == 0  # a multiple of the tick
+    assert decimals(limit["price"]) == decimals(format(Decimal(tick).normalize(), "f"))
+    assert (
+        Decimal(price) * Decimal("0.95") <= sent < Decimal(price)
+    )  # inside the band, below the mark
+    assert decimals(limit["quantity"]) == decimals(step)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "NaN", "Infinity"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "TE_SYNTHETIC_PROBE_INTERVAL_SECONDS",
+        "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS",
+    ],
+)
+def test_startup_refuses_a_non_finite_interval_or_delay(name, value):
+    result = run_probe({"BINANCE_TESTNET": "true", name: value})
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert result.stderr.strip()
+
+
+@pytest.mark.unit
+def test_the_order_count_is_read_from_the_order_test_responses():
+    """/time never carries X-MBX-ORDER-COUNT-10S; the order/test responses do."""
+    client = FakeProbeClient()
+    original = client.futures_create_test_order
+
+    def with_order_count(**kwargs):
+        client.response = SimpleNamespace(headers={"X-MBX-ORDER-COUNT-10S": "200"})
+        return original(**kwargs)
+
+    client.futures_create_test_order = with_order_count
+    outcomes = cycle_of(client)
+    assert outcomes["order_test_market"] is Result.SUCCESS
+    assert (
+        outcomes["order_test_limit"] is Result.SKIPPED
+    )  # 200 > half of 300, seen after the first order test
+    assert outcomes["order_test_negative_control"] is Result.SKIPPED
+    assert sample("tradeengine_synthetic_probe_order_count_10s") == 200
+
+
+@pytest.mark.unit
+def test_the_weight_is_read_after_every_response():
+    client = FakeProbeClient()
+    original = client.futures_account
+
+    def heavy_account():
+        client.response = SimpleNamespace(headers={"X-MBX-USED-WEIGHT-1M": "1500"})
+        return original()
+
+    client.futures_account = heavy_account
+    outcomes = cycle_of(client)
+    assert outcomes["account"] is Result.SUCCESS
+    assert outcomes["order_test_market"] is Result.SKIPPED
+    assert sample("tradeengine_synthetic_probe_used_weight_1m") == 1500
+
+
+@pytest.mark.unit
+def test_the_limits_come_from_the_exchange_and_the_fallbacks_only_until_then():
+    limits = [
+        {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 1000,
+        },
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "SECOND",
+            "intervalNum": 10,
+            "limit": 100,
+        },
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 1200,
+        },
+    ]
+    busy = {
+        "X-MBX-USED-WEIGHT-1M": "600"
+    }  # above half of 1000, below half of the 2400 fallback
+    client = FakeProbeClient(rate_limits=limits)
+    state = ProbeState()
+    cycle_of(
+        client, state=state
+    )  # reads exchangeInfo (after time_sync), no headers yet
+    assert (state.weight_limit, state.order_limit_10s) == (1000, 100)
+    client.response = SimpleNamespace(headers=busy)
+    skipped = cycle_of(client, state=state)
+    assert skipped["time_sync"] is Result.SUCCESS
+    assert all(
+        skipped[c] is Result.SKIPPED
+        for c in ("signed_read", "account", "order_test_market")
+    )
+    # without limits from the exchange the labelled fallback (2400) stands: 600 is fine
+    fallback = FakeProbeClient()
+    fallback.response = SimpleNamespace(headers=busy)
+    assert all(r is Result.SUCCESS for r in cycle_of(fallback).values())
+
+
+@pytest.mark.unit
+def test_last_run_is_set_by_every_cycle(monkeypatch):
+    """The stale alert reads only this gauge."""
+    fake_main_env(monkeypatch, FakeProbeClient())
+    monkeypatch.setenv("TE_SYNTHETIC_PROBE_ONESHOT", "true")
+    metrics.last_run.set(0)
+    before = time.time()
+    assert probe_main.main() == 0
+    assert (
+        before - 1
+        <= sample("tradeengine_synthetic_probe_last_run_timestamp_seconds")
+        <= time.time() + 1
+    )
+
+
+@pytest.mark.unit
+def test_main_initialises_every_series_at_zero(monkeypatch):
+    metrics.runs.clear()
+    fake_main_env(monkeypatch, FakeProbeClient())
+    monkeypatch.setenv("TE_SYNTHETIC_PROBE_ONESHOT", "true")
+    probe_main.main()
+    for check in metrics.CHECKS:
+        for result in metrics.RESULTS:
+            assert (
+                REGISTRY.get_sample_value(
+                    "tradeengine_synthetic_probe_runs_total",
+                    {"check": check, "result": result},
+                )
+                is not None
+            ), (check, result)  # present even where nothing was counted
+
+
+@pytest.mark.unit
+def test_clock_skew_uses_the_midpoint_of_the_request():
+    """A slow request: the server stamped the middle of it, so the skew is ~0 (start or end would read +-0.2)."""
+    client = FakeProbeClient()
+
+    def slow_time():
+        started = time.time()
+        time.sleep(0.4)
+        return {"serverTime": int((started + 0.2) * 1000)}
+
+    client.futures_time = slow_time
+    cycle_of(client)
+    assert abs(sample("tradeengine_synthetic_probe_clock_skew_seconds")) < 0.05
+
+
+@pytest.mark.unit
+def test_the_loop_defaults_are_port_8000_interval_300_and_a_30_second_first_delay(
+    monkeypatch,
+):
+    seen: dict = {}
+    fake_main_env(monkeypatch, FakeProbeClient())
+    for name in (
+        "TE_SYNTHETIC_PROBE_ONESHOT",
+        "TE_SYNTHETIC_PROBE_METRICS_PORT",
+        "TE_SYNTHETIC_PROBE_INTERVAL_SECONDS",
+        "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        probe_main, "start_http_server", lambda port: seen.update(port=port)
+    )
+    monkeypatch.setattr(
+        probe_main, "run_loop", lambda cycle, **kwargs: seen.update(kwargs)
+    )
+    assert probe_main.main() == 0
+    assert seen["port"] == 8000
+    assert seen["interval"] == 300
+    assert seen["first_run_delay"] == 30
+    assert sample("tradeengine_synthetic_probe_interval_seconds") == 300
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("elapsed", "expected"), [(44.9, Result.SUCCESS), (45.1, Result.TIMEOUT)]
+)
+def test_the_default_cycle_deadline_is_45_seconds(elapsed, expected):
+    reads = iter([0.0])
+
+    def clock():
+        return next(reads, elapsed)
+
+    outcomes = run_cycle(ProbeFacade(FakeProbeClient()), symbol="BTCUSDT", clock=clock)
+    assert outcomes["time_sync"] is expected
+
+
+@pytest.mark.unit
+def test_the_order_limit_comes_from_the_exchange_too():
+    limits = [
+        {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 2400,
+        },
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "SECOND",
+            "intervalNum": 10,
+            "limit": 100,
+        },
+    ]
+    client = FakeProbeClient(rate_limits=limits)
+    state = ProbeState()
+    cycle_of(client, state=state)
+    client.response = SimpleNamespace(
+        headers={"X-MBX-ORDER-COUNT-10S": "60"}
+    )  # > half of 100, < half of 300
+    skipped = cycle_of(client, state=state)
+    assert skipped["time_sync"] is Result.SUCCESS
+    assert skipped["signed_read"] is Result.SKIPPED
+    fallback = FakeProbeClient()
+    fallback.response = SimpleNamespace(headers={"X-MBX-ORDER-COUNT-10S": "60"})
+    assert all(r is Result.SUCCESS for r in cycle_of(fallback).values())
+
+
+@pytest.mark.unit
+def test_a_negative_or_unreadable_header_is_not_a_reading():
+    """The testnet answers X-MBX-USED-WEIGHT-1M: -1 on order/test: it must not overwrite the gauge or skip."""
+    client = FakeProbeClient()
+    client.response = SimpleNamespace(headers={"X-MBX-USED-WEIGHT-1M": "42"})
+    cycle_of(client)
+    original = client.futures_create_test_order
+
+    def negative(**kwargs):
+        client.response = SimpleNamespace(
+            headers={"X-MBX-USED-WEIGHT-1M": "-1", "X-MBX-ORDER-COUNT-10S": "oops"}
+        )
+        return original(**kwargs)
+
+    client.futures_create_test_order = negative
+    outcomes = cycle_of(client)
+    assert all(result is Result.SUCCESS for result in outcomes.values())
+    assert sample("tradeengine_synthetic_probe_used_weight_1m") == 42

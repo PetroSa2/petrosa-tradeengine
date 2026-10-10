@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import sys
@@ -104,19 +105,19 @@ def main() -> int:
             DEFAULT_FIRST_RUN_DELAY_SECONDS,
         )
         port = int(_read_float("TE_SYNTHETIC_PROBE_METRICS_PORT", DEFAULT_METRICS_PORT))
-    except ValueError:
+    except (ValueError, OverflowError):
         print("the TE_SYNTHETIC_PROBE_* settings must be numbers", file=sys.stderr)
         return 2
-    if interval < MIN_INTERVAL_SECONDS:
+    if not math.isfinite(interval) or interval < MIN_INTERVAL_SECONDS:
         print(
             f"TE_SYNTHETIC_PROBE_INTERVAL_SECONDS must be at least {MIN_INTERVAL_SECONDS:g}"
             " (the probe shares the testnet key with the live tradeengine)",
             file=sys.stderr,
         )
         return 2
-    if first_run_delay < 0:
+    if not math.isfinite(first_run_delay) or first_run_delay < 0:
         print(
-            "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS must not be negative",
+            "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS must be a finite number, not negative",
             file=sys.stderr,
         )
         return 2

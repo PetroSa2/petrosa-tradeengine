@@ -55,8 +55,8 @@ FILTER_TYPES = (
 REQUIRED_FILTERS = ("LOT_SIZE", "MIN_NOTIONAL", "PRICE_FILTER")
 FILTERS_TTL_SECONDS = 3600.0
 CYCLE_DEADLINE_SECONDS = 45.0
-#: Binance USD-M futures limits per account (shared with the live testnet tradeengine): request weight per
-#: minute and orders per 10 seconds.
+#: FALLBACK limits (Binance USD-M futures, per account, shared with the live testnet tradeengine): request weight
+#: per minute and orders per 10 seconds. Used only until exchangeInfo's ``rateLimits`` have been read.
 DEFAULT_WEIGHT_LIMIT_1M = 2400
 DEFAULT_ORDER_LIMIT_10S = 300
 DEFAULT_MAX_LIMIT_FRACTION = 0.5
@@ -106,6 +106,17 @@ class ProbeState:
     filters_fetched_at: float | None = None
     hedge: bool | None = None
     retry_after: float | None = None
+    #: The account's limits as the exchange reports them (``rateLimits`` of exchangeInfo); None until read.
+    weight_limit: int | None = None
+    order_limit_10s: int | None = None
+
+
+def _non_negative_int(raw: Any) -> int | None:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
 
 
 def _decimal_places(value: str) -> int:
@@ -189,6 +200,7 @@ class _Cycle:
         try:
             value = operation()
         except Exception as error:
+            self._observe_limits()
             result = classify_error(error)
             self._count(check, result)
             metrics.duration.labels(check=check).observe(self.clock() - started)
@@ -208,6 +220,7 @@ class _Cycle:
         metrics.last_success.labels(check=check).set(self.wall())
         metrics.last_error.labels(check=check).set(0)
         self.outcomes[check] = Result.SUCCESS
+        self._observe_limits()  # after every response: only some endpoints carry the order count
         return value
 
     @staticmethod
@@ -222,26 +235,29 @@ class _Cycle:
         finished_wall = self.wall()
         midpoint = started_wall + (finished_wall - started_wall) / 2
         metrics.clock_skew.set(float(response["serverTime"]) / 1000.0 - midpoint)
-        self._observe_limits()
 
     def _observe_limits(self) -> None:
-        """Publish the used weight and order count of the last response; stop the cycle when they are high."""
+        """Publish the used weight and order count of the last response; stop the cycle when they are high.
+
+        A header that is missing, not a number, or negative (the testnet answers -1 on some endpoints, e.g.
+        order/test) says nothing: the gauge keeps its last real reading and no limit is judged from it.
+        """
         headers_of = getattr(self.client, "response_headers", None)
         headers = headers_of() if callable(headers_of) else {}
-        try:
-            used_weight = int(headers.get("x-mbx-used-weight-1m", ""))
+        used_weight = _non_negative_int(headers.get("x-mbx-used-weight-1m"))
+        if used_weight is not None:
             metrics.used_weight.set(used_weight)
-            if used_weight > self.max_limit_fraction * self.weight_limit:
+            if used_weight > self.max_limit_fraction * (
+                self.state.weight_limit or self.weight_limit
+            ):
                 self.stopped = Result.SKIPPED
-        except ValueError:
-            pass
-        try:
-            orders = int(headers.get("x-mbx-order-count-10s", ""))
+        orders = _non_negative_int(headers.get("x-mbx-order-count-10s"))
+        if orders is not None:
             metrics.order_count_10s.set(orders)
-            if orders > self.max_limit_fraction * self.order_limit_10s:
+            if orders > self.max_limit_fraction * (
+                self.state.order_limit_10s or self.order_limit_10s
+            ):
                 self.stopped = Result.SKIPPED
-        except ValueError:
-            pass
 
     def signed_read(self) -> None:
         response = self.client.futures_get_position_mode()
@@ -256,8 +272,27 @@ class _Cycle:
         if not can_trade:
             raise CheckFailure("account cannot trade")
 
+    def _read_rate_limits(self, exchange_info: dict[str, Any]) -> None:
+        """The account's limits from exchangeInfo ``rateLimits`` (the fallbacks stand until they are read)."""
+        for limit in exchange_info.get("rateLimits", []):
+            kind, interval = limit.get("rateLimitType"), limit.get("interval")
+            if (
+                kind == "REQUEST_WEIGHT"
+                and interval == "MINUTE"
+                and limit.get("intervalNum") == 1
+            ):
+                self.state.weight_limit = int(limit["limit"])
+            elif (
+                kind == "ORDERS"
+                and interval == "SECOND"
+                and limit.get("intervalNum") == 10
+            ):
+                self.state.order_limit_10s = int(limit["limit"])
+
     def filters_changed(self, symbol: str) -> None:
-        snapshot = _snapshot_of(self.client.futures_exchange_info(), symbol)
+        exchange_info = self.client.futures_exchange_info()
+        self._read_rate_limits(exchange_info)
+        snapshot = _snapshot_of(exchange_info, symbol)
         previous = self.state.filters.get(symbol)
         metrics.filters_changed.labels(symbol=symbol).set(
             1 if previous is not None and previous != snapshot else 0
@@ -279,7 +314,8 @@ class _Cycle:
         *,
         limit_price: Decimal | None = None,
     ) -> dict[str, str | bool]:
-        sizing = _sizing(self._snapshot(symbol))
+        snapshot = self._snapshot(symbol)
+        sizing = _sizing(snapshot)
         return build_order_params(
             symbol=symbol,
             side="BUY",
@@ -288,6 +324,7 @@ class _Cycle:
             step=sizing["step"],
             min_qty=sizing["min_qty"],
             min_notional=sizing["min_notional"],
+            tick=snapshot["PRICE_FILTER"]["tickSize"],
             limit_price=None if limit_price is None else float(limit_price),
             # In hedge mode the order must carry its position side (-4061 otherwise); never reduceOnly with it.
             position_side="LONG" if self.state.hedge else None,

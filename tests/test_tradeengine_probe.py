@@ -219,8 +219,9 @@ def test_websocket_names_are_fail_closed():
 
 @pytest.mark.unit
 def test_a_live_client_is_refused():
-    with pytest.raises(ProbeForbidden):
+    with pytest.raises(ProbeForbidden) as refusal:
         ProbeBinanceClient(api_key="key", api_secret="secret", testnet=False)
+    assert "testnet-only" in str(refusal.value)
 
 
 @pytest.mark.unit

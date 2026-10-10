@@ -13,7 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 import requests
-from binance.exceptions import BinanceAPIException
 from prometheus_client import REGISTRY
 
 from tradeengine_probe import (
@@ -60,13 +59,25 @@ FILTERS = [
 ]
 
 
+class ExchangeError(Exception):
+    """A look-alike of BinanceAPIException (``code``, ``status_code``, ``response``). Other test modules in this
+    suite replace ``binance.exceptions`` in ``sys.modules``, so the tests do not import the real class by name;
+    the real one is loaded from its file in test_the_real_binance_exception_is_classified."""
+
+    def __init__(self, response, status_code, text):
+        super().__init__(text)
+        self.response = response
+        self.status_code = status_code
+        self.code = json.loads(text)["code"]
+
+
 def api_error(code: int, status: int = 400, headers: dict | None = None):
     response = SimpleNamespace(
         headers=headers or {},
         status_code=status,
         text=json.dumps({"code": code, "msg": "x"}),
     )
-    return BinanceAPIException(response, status, response.text)
+    return ExchangeError(response, status, response.text)
 
 
 class FakeProbeClient:
@@ -809,3 +820,33 @@ def test_one_shot_serves_nothing_and_returns_nonzero_when_any_check_fails(monkey
         lambda port: pytest.fail("one-shot serves nothing"),
     )
     assert probe_main.main() == 1
+
+
+@pytest.mark.unit
+def test_the_real_binance_exception_is_classified():
+    """The real BinanceAPIException, loaded from its file (the sys.modules entry may be another test's mock)."""
+    import importlib.machinery
+    import importlib.util
+
+    spec = importlib.machinery.PathFinder.find_spec("binance")
+    path = Path(spec.submodule_search_locations[0]) / "exceptions.py"
+    loader = importlib.util.spec_from_file_location("real_binance_exceptions", path)
+    module = importlib.util.module_from_spec(loader)
+    loader.loader.exec_module(module)
+
+    def real(code, status, headers=None):
+        response = SimpleNamespace(headers=headers or {}, status_code=status)
+        return module.BinanceAPIException(
+            response, status, json.dumps({"code": code, "msg": "x"})
+        )
+
+    assert classify_error(real(-1022, 401)) is Result.AUTH_ERROR
+    assert classify_error(real(-1021, 400)) is Result.CLOCK_ERROR
+    assert classify_error(real(-4061, 400)) is Result.EXCHANGE_REJECT
+    assert classify_error(real(-1003, 429)) is Result.RATE_LIMITED
+    assert classify_error(real(-9999, 400)) is Result.UNEXPECTED
+    assert retry_after_seconds(real(-1003, 429, {"Retry-After": "45"})) == 45
+    assert (
+        classify_error(module.BinanceRequestException("not json"))
+        is Result.TRANSPORT_ERROR
+    )

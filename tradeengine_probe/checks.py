@@ -10,7 +10,6 @@ from enum import StrEnum
 from time import perf_counter, time
 from typing import Any
 
-from binance.exceptions import BinanceAPIException
 from requests import exceptions as requests_exceptions
 
 from . import metrics
@@ -39,6 +38,8 @@ class SkipCheck(RuntimeError):
     """Raised when a check cannot run because what it needs is not available (not a failure of its own)."""
 
 
+#: The real classes, taken at import: another test may replace an attribute of ``requests.exceptions`` later.
+_TIMEOUT_ERRORS = (TimeoutError, requests_exceptions.Timeout)
 AUTH_CODES = {-1022, -2014, -2015, -2008, -4045}
 #: -4061: the order's position side does not match the account's position mode.
 REJECT_CODES = {-1013, -1111, -4003, -4005, -4014, -4061, -4131, -4164, -2019}
@@ -78,10 +79,12 @@ def classify_error(error: BaseException) -> Result:
         return Result.EXCHANGE_REJECT
     if code in {-1003, -1015} or status in {418, 429}:
         return Result.RATE_LIMITED
-    if isinstance(error, TimeoutError | requests_exceptions.Timeout):
+    if isinstance(error, _TIMEOUT_ERRORS):
         return Result.TIMEOUT
-    if isinstance(error, BinanceAPIException):
-        return Result.UNEXPECTED
+    if code is not None:
+        return (
+            Result.UNEXPECTED
+        )  # an exchange error (BinanceAPIException carries a code) we have no class for
     return Result.TRANSPORT_ERROR
 
 
@@ -339,8 +342,10 @@ class _Cycle:
         params["quantity"] = format(below, "f")
         try:
             self.client.futures_create_test_order(**params)
-        except BinanceAPIException as error:
-            if error.code in FILTER_REJECT_CODES:
+        except Exception as error:
+            # Duck-typed: a BinanceAPIException carries the exchange ``code`` (the class itself is not imported,
+            # so a process that replaced ``binance.exceptions`` cannot break the check).
+            if getattr(error, "code", None) in FILTER_REJECT_CODES:
                 return  # the expected answer
             raise
         raise CheckFailure("order/test accepted a quantity below the minimum")

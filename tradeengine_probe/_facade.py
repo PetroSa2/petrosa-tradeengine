@@ -1,5 +1,9 @@
 """Small facade containing the probe's only allowed client methods."""
 
+from __future__ import annotations
+
+from collections.abc import Mapping
+
 from ._client import ProbeBinanceClient
 
 
@@ -30,3 +34,14 @@ class ProbeFacade:
 
     def futures_create_test_order(self, **kwargs):
         return self._client.futures_create_test_order(**kwargs)
+
+    def recv_window_seconds(self) -> float | None:
+        """The client's receive window, in seconds."""
+        milliseconds = getattr(self._client, "REQUEST_RECVWINDOW", None)
+        return float(milliseconds) / 1000.0 if milliseconds else None
+
+    def response_headers(self) -> Mapping[str, str]:
+        """The headers of the client's last response, names lower-cased (used weight, order count)."""
+        response = getattr(self._client, "response", None)
+        headers = getattr(response, "headers", None) or {}
+        return {str(name).lower(): str(value) for name, value in headers.items()}

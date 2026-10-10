@@ -12,6 +12,8 @@ Covers:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -290,3 +292,126 @@ async def test_publish_swallows_nats_errors(publisher):
             decision_id="d",
         )
     assert ok is False  # signalled, but no exception raised
+
+
+# ---------- JSON-safe payloads (petrosa-tradeengine#780) ----------
+
+
+def _position_closed_kwargs():
+    """What position_manager and strategy_position_manager pass: real datetimes and Decimals."""
+    return {
+        "event_type": "position_closed",
+        "strategy_id": "rsi_extreme_reversal",
+        "order_id": "exit-1",
+        "reason": "take_profit",
+        "decision_id": "dec-close",
+        "timestamp": datetime(2026, 10, 9, 16, 0, tzinfo=UTC),
+        "client_order_id": "cio-position-1",
+        "idempotency_key": "position_closed:exit-1:cio-position-1",
+        "extra": {
+            "position_id": "row-1",
+            "strategy_position_id": "sp-1",
+            "entry_order_id": "entry-1",
+            "closed_quantity": Decimal("0.00100000"),
+            "remaining_quantity": Decimal("0"),
+            "exit_price": Decimal("120.5"),
+            "exit_time": datetime(2026, 10, 9, 16, 0, 5, tzinfo=UTC),
+            "reason": "take_profit",
+            "exit_order_id": "exit-1",
+            "pnl_basis": "fifo_attributed",
+            "pnl": Decimal("20.25"),
+            "fee": None,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_position_closed_with_datetime_and_decimal_fields_publishes(
+    publisher, fake_nats_client
+):
+    with patch("tradeengine.services.execution_event_publisher.settings") as s:
+        s.nats_enabled = True
+        s.nats_servers = "nats://localhost:4222"
+        s.nats_topic_execution_events = "execution.events"
+        publisher.set_client(fake_nats_client)
+        ok = await publisher.publish(**_position_closed_kwargs())
+
+    assert ok is True
+    subject, encoded = fake_nats_client.publish.call_args.args
+    assert subject == "execution.events.rsi_extreme_reversal"
+    body = json.loads(encoded.decode())
+    assert body["exit_time"] == "2026-10-09T16:00:05+00:00"
+    assert body["timestamp"] == "2026-10-09T16:00:00+00:00"
+    assert body["closed_quantity"] == 0.001
+    assert body["pnl"] == 20.25
+    assert body["fee"] is None  # position_closed keeps its null fields
+
+
+@pytest.mark.asyncio
+async def test_position_closed_json_round_trips_into_the_contract(
+    publisher, fake_nats_client
+):
+    with patch("tradeengine.services.execution_event_publisher.settings") as s:
+        s.nats_enabled = True
+        s.nats_servers = "nats://localhost:4222"
+        s.nats_topic_execution_events = "execution.events"
+        publisher.set_client(fake_nats_client)
+        await publisher.publish(**_position_closed_kwargs())
+
+    body = json.loads(fake_nats_client.publish.call_args.args[1].decode())
+    event = ExecutionEvent(**body)
+    assert event.event_type == "position_closed"
+    assert event.client_order_id == "cio-position-1"
+    assert event.position_id == "row-1"
+    assert event.entry_order_id == "entry-1"
+    assert event.closed_quantity == pytest.approx(0.001)
+    assert event.remaining_quantity == 0
+    assert event.exit_price == pytest.approx(120.5)
+    assert event.exit_time == datetime(2026, 10, 9, 16, 0, 5, tzinfo=UTC)
+    assert event.exit_order_id == "exit-1"
+    assert event.pnl_basis == "fifo_attributed"
+    assert event.pnl == pytest.approx(20.25)
+    # the wire form is plain JSON: loading and dumping it again changes nothing
+    assert json.loads(json.dumps(body)) == body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["placed", "filled", "partial_fill", "rejected"])
+async def test_any_event_type_survives_datetimes_decimals_and_naive_times(
+    publisher, fake_nats_client, event_type
+):
+    """The fix is at the publisher: no event type can fail on a non-JSON field."""
+    with patch("tradeengine.services.execution_event_publisher.settings") as s:
+        s.nats_enabled = True
+        s.nats_servers = "nats://localhost:4222"
+        s.nats_topic_execution_events = "execution.events"
+        publisher.set_client(fake_nats_client)
+        ok = await publisher.publish(
+            event_type=event_type,
+            strategy_id="s1",
+            order_id="o1",
+            reason="r",
+            extra={
+                "fill_time": datetime(2026, 10, 9, 16, 0, 0),  # naive = UTC
+                "fill_price": Decimal("100.10"),
+                "nested": {"at": datetime(2026, 10, 9, 17, 0, tzinfo=UTC)},
+                "tags": ("a", Decimal("1")),
+            },
+        )
+
+    assert ok is True
+    body = json.loads(fake_nats_client.publish.call_args.args[1].decode())
+    assert body["fill_time"] == "2026-10-09T16:00:00+00:00"
+    assert body["fill_price"] == 100.1
+    assert body["nested"] == {"at": "2026-10-09T17:00:00+00:00"}
+    assert body["tags"] == ["a", 1.0]
+
+
+def test_json_safe_utc_mode_converts_offsets_and_leaves_default_mode_alone():
+    from datetime import timedelta, timezone
+
+    from tradeengine.json_safe import json_safe
+
+    plus_two = datetime(2026, 10, 9, 18, 0, tzinfo=timezone(timedelta(hours=2)))
+    assert json_safe(plus_two, utc=True) == "2026-10-09T16:00:00+00:00"
+    assert json_safe(plus_two) == "2026-10-09T18:00:00+02:00"  # unchanged for #755

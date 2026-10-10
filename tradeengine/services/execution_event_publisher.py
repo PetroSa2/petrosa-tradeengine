@@ -22,6 +22,7 @@ from prometheus_client import Counter
 
 from shared.config import settings
 from shared.constants import UTC
+from tradeengine.json_safe import json_safe
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -151,7 +152,9 @@ class ExecutionEventPublisher:
                     v is not None or event_type == "position_closed"
                 ):
                     payload[k] = v
-        return payload
+        # Every field is made JSON-safe here, for every event type: a datetime or Decimal in ``extra``
+        # (position_closed carried ``exit_time``) used to fail the whole publish (petrosa-tradeengine#780).
+        return json_safe(payload, utc=True)
 
     async def publish(
         self,

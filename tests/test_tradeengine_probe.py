@@ -1484,3 +1484,235 @@ def test_startup_accepts_a_valid_metrics_port(monkeypatch, port):
     monkeypatch.setattr(probe_main, "run_loop", lambda cycle, **kwargs: None)
     assert probe_main.main() == 0
     assert seen["port"] == int(float(port)) and isinstance(seen["port"], int)
+
+
+# ---------------------------------------------------------------- round 4: digits, windows, sizing, refresh, cap
+@pytest.mark.unit
+@pytest.mark.parametrize("raw", ["²", "①", "²⁰", "６０００x"])
+def test_a_digit_that_int_cannot_read_is_an_ignored_limit_not_a_failed_check(raw):
+    before = sample(
+        "tradeengine_synthetic_probe_rate_limit_ignored_total", limit="weight_1m"
+    )
+    client = FakeProbeClient(rate_limits=limit_entries(weight=raw))
+    state = ProbeState()
+    outcomes = cycle_of(client, state=state)
+    assert (
+        outcomes["filters_changed"] is Result.SUCCESS
+    )  # no transport error, the snapshot is kept
+    assert state.filters and state.weight_limit is None
+    assert (
+        sample(
+            "tradeengine_synthetic_probe_rate_limit_ignored_total", limit="weight_1m"
+        )
+        == before + 1
+    )
+
+
+@pytest.mark.unit
+def test_digits_of_another_script_that_int_reads_are_a_limit():
+    state = ProbeState()
+    cycle_of(
+        FakeProbeClient(rate_limits=limit_entries(weight="٦٠٠٠")), state=state
+    )  # Arabic-Indic 6000
+    assert state.weight_limit == 6000
+
+
+@pytest.mark.unit
+def test_a_zero_header_is_a_reading_not_a_missing_one():
+    from tradeengine_probe import metrics
+
+    metrics.used_weight.set(42)
+    metrics.order_count_10s.set(7)
+    client = with_headers(
+        FakeProbeClient(), X_MBX_USED_WEIGHT_1M=0, X_MBX_ORDER_COUNT_10S=0
+    )
+    outcomes = cycle_of(client, state=ProbeState())
+    assert all(result is Result.SUCCESS for result in outcomes.values())
+    assert sample("tradeengine_synthetic_probe_used_weight_1m") == 0
+    assert sample("tradeengine_synthetic_probe_order_count_10s") == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "SECOND",
+            "intervalNum": 10,
+            "limit": 777,
+        },
+        {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 5,
+            "limit": 777,
+        },
+        {"rateLimitType": "REQUEST_WEIGHT", "interval": "MINUTE", "limit": 777},
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 777,
+        },
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "SECOND",
+            "intervalNum": 5,
+            "limit": 777,
+        },
+        {"rateLimitType": "ORDERS", "interval": "SECOND", "limit": 777},
+        {
+            "rateLimitType": "RAW_REQUESTS",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": 777,
+        },
+    ],
+)
+def test_a_limit_of_another_window_or_kind_is_ignored(entry):
+    state = ProbeState()
+    cycle_of(FakeProbeClient(rate_limits=[entry]), state=state)
+    assert state.weight_limit is None and state.order_limit_10s is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("lot", "market"),
+    [
+        (("0.001", "0.5"), ("0.01", "0.7")),
+        (("0.01", "0.7"), ("0.001", "0.5")),
+        (
+            ("0.001", "0.7"),
+            ("0.01", "0.5"),
+        ),  # the step from one filter, the minimum quantity from the other
+        (("0.01", "0.5"), ("0.001", "0.7")),
+    ],
+)
+def test_the_order_size_is_the_stricter_step_and_the_larger_minimum_of_lot_and_market_lot(
+    lot, market
+):
+    filters = [
+        {"filterType": "LOT_SIZE", "stepSize": lot[0], "minQty": lot[1]},
+        {"filterType": "MARKET_LOT_SIZE", "stepSize": market[0], "minQty": market[1]},
+        {"filterType": "MIN_NOTIONAL", "notional": "5"},
+        {
+            "filterType": "PRICE_FILTER",
+            "minPrice": "0.01",
+            "maxPrice": "1000000",
+            "tickSize": "0.01",
+        },
+        {
+            "filterType": "PERCENT_PRICE",
+            "multiplierUp": "1.05",
+            "multiplierDown": "0.95",
+        },
+    ]
+    client = FakeProbeClient(filters=filters)
+    outcomes = cycle_of(client)
+    assert outcomes["order_test_market"] is Result.SUCCESS
+    quantity = client.test_orders[0]["quantity"]
+    assert float(quantity) >= 0.7  # the larger minimum
+    assert len(quantity.split(".")[1]) == 2  # the coarser step (0.01), not 0.001
+
+
+@pytest.mark.unit
+def test_a_failed_filter_refresh_keeps_the_old_snapshot_and_is_retried_on_the_next_cycle():
+    client = FakeProbeClient()
+    state = ProbeState()
+    cycle_of(client, state=state, clock=lambda: 10000.0)
+    snapshot = state.filters["BTCUSDT"]
+    state.filters_fetched_at = 0.0  # an hour has long passed
+    calls_before = client.exchange_info_calls
+    good = client.futures_exchange_info
+
+    def failing():
+        client.exchange_info_calls += 1
+        raise RuntimeError("down")
+
+    client.futures_exchange_info = failing
+    outcomes = cycle_of(client, state=state, clock=lambda: 10000.0)
+    assert outcomes["filters_changed"] is Result.TRANSPORT_ERROR
+    assert client.exchange_info_calls == calls_before + 1
+    assert state.filters_fetched_at == 0.0 and state.filters["BTCUSDT"] == snapshot
+    client.futures_exchange_info = good
+    outcomes = cycle_of(client, state=state, clock=lambda: 10000.0)
+    assert outcomes["filters_changed"] is Result.SUCCESS
+    assert state.filters_fetched_at == 10000.0
+    assert (
+        client.exchange_info_calls == calls_before + 2
+    )  # retried at once, not after another hour
+
+
+@pytest.mark.unit
+def test_a_fresh_snapshot_is_not_fetched_again():
+    client = FakeProbeClient()
+    state = ProbeState()
+    cycle_of(client, state=state)
+    cycle_of(client, state=state)
+    assert client.exchange_info_calls == 1
+
+
+@pytest.mark.unit
+def test_a_lowered_exchange_limit_is_picked_up_on_the_next_refresh():
+    client = FakeProbeClient(rate_limits=limit_entries(weight=6000, orders=300))
+    state = ProbeState()
+    cycle_of(client, state=state)
+    assert (state.weight_limit, state.order_limit_10s) == (6000, 300)
+    client.rate_limits = limit_entries(weight=1000, orders=100)
+    cycle_of(client, state=state, filters_ttl_seconds=0.0)
+    assert (state.weight_limit, state.order_limit_10s) == (1000, 100)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("weight", "orders", "weight_kept", "orders_kept"),
+    [
+        (24000, 3000, True, True),  # exactly ten times the fallback
+        (24001, 3001, False, False),
+        (10**30, 10**30, False, False),
+    ],
+)
+def test_an_absurd_reported_limit_is_ignored_and_counted_so_it_cannot_disable_the_guard(
+    weight, orders, weight_kept, orders_kept
+):
+    before = {
+        which: sample(
+            "tradeengine_synthetic_probe_rate_limit_ignored_total", limit=which
+        )
+        for which in ("weight_1m", "orders_10s")
+    }
+    state = ProbeState()
+    outcomes = cycle_of(
+        FakeProbeClient(rate_limits=limit_entries(weight=weight, orders=orders)),
+        state=state,
+    )
+    assert all(result is Result.SUCCESS for result in outcomes.values())
+    assert (state.weight_limit == weight) is weight_kept and (
+        state.order_limit_10s == orders
+    ) is orders_kept
+    for which, kept in (("weight_1m", weight_kept), ("orders_10s", orders_kept)):
+        added = (
+            sample("tradeengine_synthetic_probe_rate_limit_ignored_total", limit=which)
+            - before[which]
+        )
+        assert added == (0 if kept else 1)
+    if not weight_kept:
+        busy = with_headers(
+            FakeProbeClient(rate_limits=limit_entries(weight=weight)),
+            X_MBX_USED_WEIGHT_1M=1500,
+        )
+        assert (
+            cycle_of(busy, state=ProbeState())["order_test_market"] is Result.SKIPPED
+        )  # the fallback still guards
+
+
+@pytest.mark.unit
+def test_the_tick_price_is_floored_to_the_tick():
+    from tradeengine_probe.checks import _Cycle
+
+    snapshot = {
+        "PRICE_FILTER": {"minPrice": "0.1", "maxPrice": "1000000", "tickSize": "0.1"}
+    }
+    assert _Cycle._tick_price(None, snapshot, "83000.77") == Decimal("83000.7")  # type: ignore[arg-type]
+    assert _Cycle._tick_price(None, snapshot, "0.19") == Decimal("0.1")  # type: ignore[arg-type]

@@ -60,6 +60,8 @@ CYCLE_DEADLINE_SECONDS = 45.0
 DEFAULT_WEIGHT_LIMIT_1M = 2400
 DEFAULT_ORDER_LIMIT_10S = 300
 DEFAULT_MAX_LIMIT_FRACTION = 0.5
+#: A reported limit above this many times the fallback is not believed (a bogus value must not disable the guard).
+MAX_LIMIT_FACTOR = 10
 
 
 def classify_error(error: BaseException) -> Result:
@@ -126,11 +128,19 @@ def _positive_int(raw: Any) -> int | None:
         return None
     if isinstance(raw, int):
         value = raw
-    elif isinstance(raw, str) and raw.strip().isdigit():
+    elif isinstance(raw, str) and raw.strip().isdecimal():
         value = int(raw)
     else:
         return None
     return value if value > 0 else None
+
+
+def _plausible_limit(raw: Any, fallback: int) -> int | None:
+    """A positive whole number no more than ``MAX_LIMIT_FACTOR`` times the fallback, else None (ignored)."""
+    value = _positive_int(raw)
+    if value is None or value > MAX_LIMIT_FACTOR * fallback:
+        return None
+    return value
 
 
 def _decimal_places(value: str) -> int:
@@ -300,7 +310,7 @@ class _Cycle:
                 and interval == "MINUTE"
                 and limit.get("intervalNum") == 1
             ):
-                value = _positive_int(limit.get("limit"))
+                value = _plausible_limit(limit.get("limit"), DEFAULT_WEIGHT_LIMIT_1M)
                 if value is None:
                     metrics.rate_limit_ignored.labels(limit="weight_1m").inc()
                 else:
@@ -310,7 +320,7 @@ class _Cycle:
                 and interval == "SECOND"
                 and limit.get("intervalNum") == 10
             ):
-                value = _positive_int(limit.get("limit"))
+                value = _plausible_limit(limit.get("limit"), DEFAULT_ORDER_LIMIT_10S)
                 if value is None:
                     metrics.rate_limit_ignored.labels(limit="orders_10s").inc()
                 else:

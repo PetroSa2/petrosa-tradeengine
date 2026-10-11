@@ -35,6 +35,7 @@ EventType = Literal[
     "partial_fill",
     "position_force_closed_no_stops",
     "position_closed",
+    "unattributed_exchange_close",
 ]
 _VALID_EVENT_TYPES: set[str] = {
     "placed",
@@ -43,6 +44,7 @@ _VALID_EVENT_TYPES: set[str] = {
     "partial_fill",
     "position_force_closed_no_stops",
     "position_closed",
+    "unattributed_exchange_close",
 }
 
 
@@ -149,7 +151,8 @@ class ExecutionEventPublisher:
             # Skip keys that would clobber required fields.
             for k, v in extra.items():
                 if k not in payload and (
-                    v is not None or event_type == "position_closed"
+                    v is not None
+                    or event_type in {"position_closed", "unattributed_exchange_close"}
                 ):
                     payload[k] = v
         # Every field is made JSON-safe here, for every event type: a datetime or Decimal in ``extra``

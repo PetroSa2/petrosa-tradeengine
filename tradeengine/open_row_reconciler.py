@@ -16,6 +16,7 @@ only logs and measures the plan; ``close`` applies it; ``off`` disables the pass
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -44,6 +45,11 @@ open_rows_reconcile_rejected_total = Counter(
     "tradeengine_open_rows_reconcile_rejected_total",
     "Open position-row corrections rejected by a configured guardrail (#769)",
     ["symbol", "side", "reason"],
+)
+unattributed_exchange_close_total = Counter(
+    "tradeengine_unattributed_exchange_close_total",
+    "Exchange position decreases observed without a provable actor",
+    ["symbol", "side"],
 )
 
 
@@ -248,7 +254,9 @@ class OpenRowReconciler:
                 self._confirm,
             )
             if self.mode == "close" and rejection is None and passes >= self._confirm:
-                record["applied"] = await self._apply(plan)
+                record["applied"] = await self._apply(
+                    plan, exchange or {}, actor="reconciler"
+                )
                 if record["applied"]:
                     self._seen.pop((symbol, side), None)
             results.append(record)
@@ -269,19 +277,42 @@ class OpenRowReconciler:
             return "max_excess_ratio"
         return None
 
-    async def _apply(self, plan: RowPlan) -> bool:
+    async def _apply(
+        self,
+        plan: RowPlan,
+        exchange: dict[str, Any],
+        actor: str = "reconciler",
+    ) -> bool:
         stamp = int(self._clock())
+        exit_price = exchange.get("markPrice") or exchange.get("mark_price")
+        try:
+            exit_price = float(exit_price) if exit_price is not None else None
+        except (TypeError, ValueError):
+            exit_price = None
         ok = True
         for action in plan.actions:
             try:
+                if actor == "reconciler":
+                    unattributed_exchange_close_total.labels(
+                        symbol=plan.symbol, side=plan.side
+                    ).inc()
+                    logger.warning(
+                        "UNATTRIBUTED_EXCHANGE_CLOSE %s/%s qty=%s price=%s row=%s",
+                        plan.symbol,
+                        plan.side,
+                        action.quantity,
+                        exit_price,
+                        action.position_id,
+                    )
                 result = await self._pm.record_position_close(
                     position_id=action.position_id,
-                    exit_price=None,
+                    exit_price=exit_price,
                     exit_qty=action.quantity,
                     exit_order_id=f"reconcile-{plan.symbol}-{plan.side}-{action.position_id}-{stamp}",
                     exit_time=datetime.now(UTC),
                     close_reason=CLOSE_REASON,
                     pnl_unknown=True,
+                    close_actor=actor,
                 )
                 if result is None:
                     ok = False
@@ -290,6 +321,23 @@ class OpenRowReconciler:
                         action.position_id,
                     )
                     continue
+                if actor == "reconciler":
+                    publish = getattr(
+                        self._pm, "publish_unattributed_exchange_close", None
+                    )
+                    if publish is not None:
+                        published = publish(
+                            position_id=action.position_id,
+                            symbol=plan.symbol,
+                            side=plan.side,
+                            quantity=action.quantity,
+                            exit_price=exit_price,
+                            exit_order_id=result.get("exit_order_id")
+                            or f"reconcile-{plan.symbol}-{plan.side}-{action.position_id}-{stamp}",
+                            exit_time=datetime.now(UTC),
+                        )
+                        if inspect.isawaitable(published):
+                            await published
                 open_rows_reconciled_total.labels(
                     symbol=plan.symbol, side=plan.side, action=action.action
                 ).inc()

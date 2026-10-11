@@ -14,6 +14,7 @@ ExecutionEventType = Literal[
     "rejected",
     "position_force_closed_no_stops",
     "position_closed",
+    "unattributed_exchange_close",
 ]
 
 

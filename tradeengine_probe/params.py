@@ -28,6 +28,7 @@ def build_order_params(
     step: float | str,
     min_qty: float | str,
     min_notional: float | str,
+    tick: float | str | None = None,
     margin: float | None = None,
     position_side: str | None = None,
     reduce_only: bool = False,
@@ -51,8 +52,13 @@ def build_order_params(
     if order_type == "LIMIT":
         if limit_price is None:
             raise ValueError("limit_price is required for LIMIT orders")
+        if tick is None:
+            raise ValueError(
+                "tick (the PRICE_FILTER tickSize) is required for LIMIT orders"
+            )
+        # A price is a multiple of the price tick and has its precision; the quantity step is another filter.
         params["timeInForce"] = "GTC"
-        params["price"] = f"{_floor_step(limit_price, step):.{_decimal_places(step)}f}"
+        params["price"] = f"{_floor_step(limit_price, tick):.{_decimal_places(tick)}f}"
     if position_side and position_side != "BOTH":
         params["positionSide"] = position_side
     elif reduce_only:

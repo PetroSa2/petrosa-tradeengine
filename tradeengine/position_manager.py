@@ -1272,7 +1272,8 @@ class PositionManager:
                 - float(cumulative_commission),
                 "duration_seconds": duration_seconds,
                 "close_reason": close_reason,
-                "close_actor": close_actor or self._close_actor_for_reason(close_reason),
+                "close_actor": close_actor
+                or self._close_actor_for_reason(close_reason),
                 "final_commission": cumulative_commission,
                 "pnl_unknown": pnl_unknown,
                 "fee_status": "known" if fee_known else "unknown",

@@ -38,10 +38,10 @@ from tradeengine_probe.params import build_order_params
 
 ROOT = Path(__file__).parents[1]
 CHECKS = (
+    "filters_changed",  # exchangeInfo first: the real limits are known before any weight is judged
     "time_sync",
     "signed_read",
     "account",
-    "filters_changed",
     "order_test_market",
     "order_test_limit",
     "order_test_negative_control",
@@ -650,10 +650,10 @@ def test_a_cycle_is_skipped_when_the_shared_key_is_busy(headers):
     client = FakeProbeClient()
     client.response = SimpleNamespace(headers=headers)
     outcomes = cycle_of(client)
-    assert outcomes["time_sync"] is Result.SUCCESS
+    assert outcomes["filters_changed"] is Result.SUCCESS
     for check in CHECKS[1:]:
         assert outcomes[check] is Result.SKIPPED
-    assert client.test_orders == [] and client.exchange_info_calls == 0
+    assert client.test_orders == [] and client.exchange_info_calls == 1
 
 
 @pytest.mark.unit
@@ -694,7 +694,7 @@ def test_a_cycle_past_its_deadline_counts_the_rest_as_timeout():
     client = FakeProbeClient()
     ticks = iter(range(0, 1000, 20))  # every clock read advances 20 s
     outcomes = cycle_of(client, deadline_seconds=45, clock=lambda: next(ticks))
-    assert outcomes["time_sync"] is Result.SUCCESS
+    assert outcomes["filters_changed"] is Result.SUCCESS
     assert Result.TIMEOUT in outcomes.values()
     assert client.test_orders == []
 
@@ -1201,3 +1201,286 @@ def test_a_negative_or_unreadable_header_is_not_a_reading():
     outcomes = cycle_of(client)
     assert all(result is Result.SUCCESS for result in outcomes.values())
     assert sample("tradeengine_synthetic_probe_used_weight_1m") == 42
+
+
+# ---------------------------------------------------------------- round 3: busy start, limits, price filter, port
+def limit_entries(weight=6000, orders=300):
+    return [
+        {
+            "rateLimitType": "REQUEST_WEIGHT",
+            "interval": "MINUTE",
+            "intervalNum": 1,
+            "limit": weight,
+        },
+        {
+            "rateLimitType": "ORDERS",
+            "interval": "SECOND",
+            "intervalNum": 10,
+            "limit": orders,
+        },
+    ]
+
+
+def with_headers(client, **headers):
+    client.response = SimpleNamespace(
+        headers={k.replace("_", "-"): str(v) for k, v in headers.items()}
+    )
+    return client
+
+
+@pytest.mark.unit
+def test_a_restarted_probe_on_a_busy_key_learns_the_real_limit_before_judging_the_weight():
+    """Weight 1500 is above half of the 2400 fallback but far below half of the real 6000."""
+    client = with_headers(
+        FakeProbeClient(rate_limits=limit_entries()), X_MBX_USED_WEIGHT_1M=1500
+    )
+    calls = []
+    for name in ("futures_exchange_info", "futures_time"):
+        original = getattr(client, name)
+        setattr(
+            client,
+            name,
+            lambda original=original, name=name: calls.append(name) or original(),
+        )
+    state = ProbeState()
+    outcomes = cycle_of(client, state=state)
+    assert calls[0] == "futures_exchange_info"
+    assert all(result is Result.SUCCESS for result in outcomes.values()), outcomes
+    assert state.weight_limit == 6000 and len(client.test_orders) == 3
+
+
+@pytest.mark.unit
+def test_a_busy_key_is_still_skipped_when_the_exchange_reports_no_limits():
+    client = with_headers(
+        FakeProbeClient(), X_MBX_USED_WEIGHT_1M=1500
+    )  # no rateLimits: the 2400 fallback stands
+    outcomes = cycle_of(client, state=ProbeState())
+    assert outcomes["filters_changed"] is Result.SUCCESS
+    assert outcomes["order_test_market"] is Result.SKIPPED and client.test_orders == []
+
+
+@pytest.mark.unit
+def test_a_busy_key_is_skipped_against_the_real_limit_too():
+    client = with_headers(
+        FakeProbeClient(rate_limits=limit_entries(weight=1000)),
+        X_MBX_USED_WEIGHT_1M=600,
+    )
+    outcomes = cycle_of(client, state=ProbeState())
+    assert (
+        outcomes["filters_changed"] is Result.SUCCESS
+        and outcomes["time_sync"] is Result.SKIPPED
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad", [None, 0, -1, "abc", "", True, 5.5, [], {}])
+@pytest.mark.parametrize("which", ["weight_1m", "orders_10s"])
+def test_an_unusable_exchange_limit_is_ignored_counted_and_never_stops_the_cycle(
+    bad, which
+):
+    entries = limit_entries(weight=1000, orders=100)
+    index = 0 if which == "weight_1m" else 1
+    entries[index]["limit"] = bad
+    before = sample("tradeengine_synthetic_probe_rate_limit_ignored_total", limit=which)
+    client = FakeProbeClient(rate_limits=entries)
+    state = ProbeState()
+    outcomes = cycle_of(client, state=state)
+    assert all(result is Result.SUCCESS for result in outcomes.values()), outcomes
+    assert len(client.test_orders) == 3
+    assert (
+        sample("tradeengine_synthetic_probe_rate_limit_ignored_total", limit=which)
+        == before + 1
+    )
+    good = (1000, 100)
+    assert (state.weight_limit, state.order_limit_10s)[1 - index] == good[
+        1 - index
+    ]  # the other limit is read
+    assert (state.weight_limit, state.order_limit_10s)[
+        index
+    ] is None  # the fallback stands for the bad one
+
+
+@pytest.mark.unit
+def test_a_missing_limit_key_does_not_raise_and_a_good_value_is_kept_when_a_later_entry_is_bad():
+    entries = limit_entries(weight=1000)
+    del entries[0]["limit"]
+    client = FakeProbeClient(rate_limits=entries)
+    assert cycle_of(client)["filters_changed"] is Result.SUCCESS
+    state = ProbeState(weight_limit=1000, order_limit_10s=100)
+    cycle_of(
+        FakeProbeClient(rate_limits=limit_entries(weight=0, orders=-5)), state=state
+    )
+    assert (state.weight_limit, state.order_limit_10s) == (1000, 100)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rate_limits", ["x", {"a": 1}, 5, [None, 3, "x", []]])
+def test_malformed_rate_limits_are_ignored(rate_limits):
+    client = FakeProbeClient(rate_limits=rate_limits)
+    outcomes = cycle_of(client, state=ProbeState())
+    assert all(result is Result.SUCCESS for result in outcomes.values())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("raw", ["6000", " 6000 "])
+def test_a_limit_given_as_digits_is_accepted(raw):
+    state = ProbeState()
+    cycle_of(
+        FakeProbeClient(rate_limits=limit_entries(weight=raw, orders="300")),
+        state=state,
+    )
+    assert (state.weight_limit, state.order_limit_10s) == (6000, 300)
+
+
+@pytest.mark.unit
+def test_the_ignored_limit_counter_is_present_at_zero():
+    from tradeengine_probe import metrics
+
+    metrics.initialise_series()
+    for which in ("weight_1m", "orders_10s"):
+        assert (
+            REGISTRY.get_sample_value(
+                "tradeengine_synthetic_probe_rate_limit_ignored_total", {"limit": which}
+            )
+            is not None
+        )
+
+
+@pytest.mark.unit
+def test_without_percent_price_the_limit_sits_two_percent_below_the_mark():
+    client = FakeProbeClient(
+        filters=[f for f in FILTERS if f["filterType"] != "PERCENT_PRICE"]
+    )
+    cycle_of(client)
+    limit = client.test_orders[1]
+    assert limit["type"] == "LIMIT" and limit["price"] == "98.00"
+
+
+@pytest.mark.unit
+def test_with_percent_price_the_limit_is_the_midpoint_of_the_band_floored_to_the_tick():
+    client = FakeProbeClient(
+        price="83000.77", filters=filters_of(step="0.001", tick="0.1")
+    )
+    cycle_of(client)
+    assert (
+        client.test_orders[1]["price"] == "80925.7"
+    )  # 83000.77 * 0.975 = 80925.75, floored, not rounded up
+
+
+@pytest.mark.unit
+def test_the_tick_floor_rounds_down():
+    from tradeengine_probe.checks import _floor_to
+
+    assert _floor_to(Decimal("1.99"), Decimal("0.5")) == Decimal("1.5")
+    assert _floor_to(Decimal("1.5"), Decimal("0.5")) == Decimal("1.5")
+    assert _floor_to(Decimal("0.0099"), Decimal("0.01")) == Decimal("0")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("price", "check", "result"),
+    [
+        ("0.005", "order_test_market", Result.UNEXPECTED),  # below minPrice 0.01
+        (
+            "1000000.01",
+            "order_test_market",
+            Result.UNEXPECTED,
+        ),  # above maxPrice 1000000
+        ("0.01", "order_test_market", Result.SUCCESS),  # exactly minPrice
+        ("1000000", "order_test_market", Result.SUCCESS),  # exactly maxPrice
+    ],
+)
+def test_a_ticker_price_outside_the_price_filter_is_a_failed_check_not_an_order(
+    price, check, result
+):
+    client = FakeProbeClient(price=price)
+    outcomes = cycle_of(client)
+    assert outcomes[check] is result
+    if result is Result.UNEXPECTED:
+        assert all(order["type"] != "MARKET" for order in client.test_orders)
+
+
+@pytest.mark.unit
+def test_a_limit_price_below_the_price_filter_minimum_is_a_failed_check():
+    # mark 0.011 with the 0.975 factor is 0.010725, above 0.01; mark 0.0101 gives 0.0098 (below minPrice)
+    client = FakeProbeClient(price="0.0101")
+    outcomes = cycle_of(client)
+    assert outcomes["order_test_limit"] is Result.UNEXPECTED
+    assert all(order["type"] != "LIMIT" for order in client.test_orders)
+
+
+@pytest.mark.unit
+def test_the_weight_is_read_from_the_response_of_a_failed_check_too():
+    client = FakeProbeClient()
+
+    def failing_account():
+        client.response = SimpleNamespace(headers={"X-MBX-USED-WEIGHT-1M": "1500"})
+        raise api_error(-1013)
+
+    client.futures_account = failing_account
+    outcomes = cycle_of(client, state=ProbeState(weight_limit=2400))
+    assert outcomes["account"] is Result.EXCHANGE_REJECT
+    assert outcomes["order_test_market"] is Result.SKIPPED
+    assert sample("tradeengine_synthetic_probe_used_weight_1m") == 1500
+
+
+@pytest.mark.unit
+def test_the_order_count_is_read_from_the_response_of_a_failed_check_too():
+    client = FakeProbeClient()
+
+    def failing_account():
+        client.response = SimpleNamespace(headers={"X-MBX-ORDER-COUNT-10S": "250"})
+        raise api_error(-1013)
+
+    client.futures_account = failing_account
+    outcomes = cycle_of(client, state=ProbeState(order_limit_10s=300))
+    assert outcomes["order_test_market"] is Result.SKIPPED
+    assert sample("tradeengine_synthetic_probe_order_count_10s") == 250
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("headers", "skipped"),
+    [
+        ({"X-MBX-USED-WEIGHT-1M": "500"}, False),  # exactly half of 1000: still runs
+        ({"X-MBX-USED-WEIGHT-1M": "501"}, True),
+        ({"X-MBX-ORDER-COUNT-10S": "50"}, False),  # exactly half of 100
+        ({"X-MBX-ORDER-COUNT-10S": "51"}, True),
+    ],
+)
+def test_the_skip_starts_just_above_the_configured_fraction_of_the_limit(
+    headers, skipped
+):
+    client = FakeProbeClient()
+    client.response = SimpleNamespace(headers=headers)
+    outcomes = cycle_of(
+        client, state=ProbeState(weight_limit=1000, order_limit_10s=100)
+    )
+    assert (outcomes["order_test_market"] is Result.SKIPPED) is skipped
+    assert (len(client.test_orders) == 0) is skipped
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "port", ["99999", "65536", "0", "-1", "80.5", "1e999", "-1e999", "nan", "inf"]
+)
+def test_startup_refuses_a_metrics_port_that_is_not_a_port(port):
+    result = run_probe(
+        {"BINANCE_TESTNET": "true", "TE_SYNTHETIC_PROBE_METRICS_PORT": port}
+    )
+    assert result.returncode == 2
+    assert "Traceback" not in result.stderr
+    assert "whole number from 1 to 65535" in result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("port", ["1", "8000", "65535", "8000.0"])
+def test_startup_accepts_a_valid_metrics_port(monkeypatch, port):
+    seen: dict = {}
+    fake_main_env(monkeypatch, FakeProbeClient())
+    monkeypatch.delenv("TE_SYNTHETIC_PROBE_ONESHOT", raising=False)
+    monkeypatch.setenv("TE_SYNTHETIC_PROBE_METRICS_PORT", port)
+    monkeypatch.setattr(probe_main, "start_http_server", lambda p: seen.update(port=p))
+    monkeypatch.setattr(probe_main, "run_loop", lambda cycle, **kwargs: None)
+    assert probe_main.main() == 0
+    assert seen["port"] == int(float(port)) and isinstance(seen["port"], int)

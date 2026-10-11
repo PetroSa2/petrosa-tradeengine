@@ -12,6 +12,8 @@ CHECKS = (
     "order_test_negative_control",
     "filters_changed",
 )
+#: The closed set of ``limit`` label values of the ignored-rate-limit counter.
+RATE_LIMITS = ("weight_1m", "orders_10s")
 RESULTS = (
     "success",
     "auth_error",
@@ -75,6 +77,11 @@ used_weight = Gauge(
 order_count_10s = Gauge(
     "tradeengine_synthetic_probe_order_count_10s", "Binance order count (10 seconds)"
 )
+rate_limit_ignored = Counter(
+    "tradeengine_synthetic_probe_rate_limit_ignored_total",
+    "Unusable exchangeInfo rate limit entries that were ignored (the fallback or the last good value stands)",
+    ("limit",),
+)
 info = Gauge(
     "tradeengine_synthetic_probe_info",
     "Probe identity",
@@ -90,3 +97,5 @@ def initialise_series() -> None:
         duration.labels(check=check)
         last_success.labels(check=check)
         last_error.labels(check=check)
+    for limit in RATE_LIMITS:
+        rate_limit_ignored.labels(limit=limit)

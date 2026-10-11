@@ -104,8 +104,10 @@ def main() -> int:
             "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS",
             DEFAULT_FIRST_RUN_DELAY_SECONDS,
         )
-        port = int(_read_float("TE_SYNTHETIC_PROBE_METRICS_PORT", DEFAULT_METRICS_PORT))
-    except (ValueError, OverflowError):
+        port = float(
+            _read_float("TE_SYNTHETIC_PROBE_METRICS_PORT", DEFAULT_METRICS_PORT)
+        )
+    except ValueError:
         print("the TE_SYNTHETIC_PROBE_* settings must be numbers", file=sys.stderr)
         return 2
     if not math.isfinite(interval) or interval < MIN_INTERVAL_SECONDS:
@@ -118,6 +120,12 @@ def main() -> int:
     if not math.isfinite(first_run_delay) or first_run_delay < 0:
         print(
             "TE_SYNTHETIC_PROBE_FIRST_RUN_DELAY_SECONDS must be a finite number, not negative",
+            file=sys.stderr,
+        )
+        return 2
+    if not (math.isfinite(port) and port.is_integer() and 1 <= port <= 65535):
+        print(
+            "TE_SYNTHETIC_PROBE_METRICS_PORT must be a whole number from 1 to 65535",
             file=sys.stderr,
         )
         return 2
@@ -151,7 +159,9 @@ def main() -> int:
 
     if oneshot:
         return 0 if all(r is Result.SUCCESS for r in cycle().values()) else 1
-    start_http_server(port)  # the scrape endpoint (:8000), up before the first cycle
+    start_http_server(
+        int(port)
+    )  # the scrape endpoint (:8000), up before the first cycle
     run_loop(cycle, interval=interval, first_run_delay=first_run_delay, state=state)
     return 0
 

@@ -119,6 +119,20 @@ def _non_negative_int(raw: Any) -> int | None:
     return value if value >= 0 else None
 
 
+def _positive_int(raw: Any) -> int | None:
+    """A whole number above zero (a rate limit); anything else, including a bool, a float or a string of
+    letters, is not a limit."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str) and raw.strip().isdigit():
+        value = int(raw)
+    else:
+        return None
+    return value if value > 0 else None
+
+
 def _decimal_places(value: str) -> int:
     return max(0, -Decimal(str(value)).normalize().as_tuple().exponent)
 
@@ -274,20 +288,33 @@ class _Cycle:
 
     def _read_rate_limits(self, exchange_info: dict[str, Any]) -> None:
         """The account's limits from exchangeInfo ``rateLimits`` (the fallbacks stand until they are read)."""
-        for limit in exchange_info.get("rateLimits", []):
+        entries = exchange_info.get("rateLimits")
+        if not isinstance(entries, list):
+            return
+        for limit in entries:
+            if not isinstance(limit, dict):
+                continue
             kind, interval = limit.get("rateLimitType"), limit.get("interval")
             if (
                 kind == "REQUEST_WEIGHT"
                 and interval == "MINUTE"
                 and limit.get("intervalNum") == 1
             ):
-                self.state.weight_limit = int(limit["limit"])
+                value = _positive_int(limit.get("limit"))
+                if value is None:
+                    metrics.rate_limit_ignored.labels(limit="weight_1m").inc()
+                else:
+                    self.state.weight_limit = value
             elif (
                 kind == "ORDERS"
                 and interval == "SECOND"
                 and limit.get("intervalNum") == 10
             ):
-                self.state.order_limit_10s = int(limit["limit"])
+                value = _positive_int(limit.get("limit"))
+                if value is None:
+                    metrics.rate_limit_ignored.labels(limit="orders_10s").inc()
+                else:
+                    self.state.order_limit_10s = value
 
     def filters_changed(self, symbol: str) -> None:
         exchange_info = self.client.futures_exchange_info()
@@ -419,16 +446,18 @@ def run_cycle(
         clock=clock,
         wall=wall,
     )
-    cycle.run("time_sync", cycle.time_sync)
-    cycle.run("signed_read", cycle.signed_read)
-    cycle.run("account", cycle.account)
     due = (
         state.filters.get(symbol) is None
         or state.filters_fetched_at is None
         or clock() - state.filters_fetched_at >= filters_ttl_seconds
     )
+    # exchangeInfo first: it carries the account's real limits, and a restarted probe on a busy shared key
+    # must learn them before it judges the used weight against a fallback.
     if due:
         cycle.run("filters_changed", lambda: cycle.filters_changed(symbol))
+    cycle.run("time_sync", cycle.time_sync)
+    cycle.run("signed_read", cycle.signed_read)
+    cycle.run("account", cycle.account)
     cycle.run("order_test_market", lambda: cycle.order_test_market(symbol))
     cycle.run("order_test_limit", lambda: cycle.order_test_limit(symbol))
     cycle.run(

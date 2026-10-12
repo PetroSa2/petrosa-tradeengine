@@ -162,6 +162,22 @@ def test_position_closed_contract_accepts_required_row_fields():
     assert event.pnl_basis == "fifo_attributed"
 
 
+def test_unattributed_exchange_close_contract_carries_exchange_price():
+    event = ExecutionEvent(
+        strategy_id="unknown",
+        client_order_id="row-1",
+        order_id="reconcile-BTCUSDT-LONG-row-1-1",
+        event_type="unattributed_exchange_close",
+        timestamp="2026-10-10T03:10:05Z",
+        reason="unattributed_exchange_close",
+        position_id="row-1",
+        closed_quantity=0.0173,
+        exit_price=82567.0,
+    )
+    assert event.event_type == "unattributed_exchange_close"
+    assert event.exit_price == 82567.0
+
+
 # ---------- publish behaviour ----------
 
 

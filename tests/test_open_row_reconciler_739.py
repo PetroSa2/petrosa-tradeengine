@@ -11,6 +11,7 @@ from tradeengine.open_row_reconciler import (
     normalise_side,
     plan_rows,
 )
+from tradeengine.position_manager import PositionManager
 from tradeengine.position_reconciler import PositionReconciler
 
 NOW = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
@@ -66,6 +67,23 @@ def test_sides_are_normalised():
     assert normalise_side("short") == "SHORT"
 
 
+@pytest.mark.parametrize(
+    ("reason", "actor"),
+    [
+        ("stop_loss", "protective_leg"),
+        ("take_profit", "protective_leg"),
+        ("reconciled_to_exchange", "reconciler"),
+        ("naked_position_grace_expired", "remediator"),
+        ("malformed_position", "remediator"),
+        ("exposure_cap", "exposure_cap"),
+        ("cio_scale_out", "exposure_cap"),
+        ("manual", "manual"),
+    ],
+)
+def test_close_actor_is_persisted_for_each_known_path(reason, actor):
+    assert PositionManager._close_actor_for_reason(reason) == actor
+
+
 # --- the reconciler ------------------------------------------------------------------------------
 
 
@@ -73,6 +91,7 @@ def _manager(rows):
     pm = MagicMock()
     pm.position_records = {r["position_id"]: r for r in rows}
     pm.record_position_close = AsyncMock(return_value={})
+    pm.publish_unattributed_exchange_close = AsyncMock()
     return pm
 
 
@@ -112,6 +131,24 @@ async def test_close_mode_needs_the_plan_on_consecutive_passes():
     assert kw["exit_qty"] == 1.0 and kw["close_reason"] == CLOSE_REASON
     assert kw["pnl_unknown"] is True and kw["exit_price"] is None  # no P&L is made up
     assert kw["exit_order_id"].startswith("reconcile-ETHUSDT-LONG-a-")
+
+
+@pytest.mark.asyncio
+async def test_observed_decrease_persists_mark_price_actor_and_unknown_event():
+    pm = _manager([_row("a", 1.0, 100)])
+    reconciler = _reconciler(pm, "close", confirm_passes=1)
+
+    plans = await reconciler.reconcile(
+        {("ETHUSDT", "LONG"): {"positionAmt": "0.0", "markPrice": "2500.5"}}
+    )
+
+    assert plans[0]["applied"] is True
+    close = pm.record_position_close.await_args.kwargs
+    assert close["close_actor"] == "reconciler"
+    assert close["exit_price"] == 2500.5
+    unknown = pm.publish_unattributed_exchange_close.await_args.kwargs
+    assert unknown["exit_price"] == 2500.5
+    assert unknown["exit_order_id"] == close["exit_order_id"]
 
 
 @pytest.mark.asyncio

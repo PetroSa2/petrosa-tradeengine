@@ -1163,6 +1163,7 @@ class PositionManager:
         trade_id: str | None = None,
         fee_asset: str | None = None,
         closed_by_strategy_id: str | None = None,
+        close_actor: str | None = None,
     ) -> dict[str, Any] | None:
         """Record a full or partial exchange fill against a position row.
 
@@ -1271,6 +1272,8 @@ class PositionManager:
                 - float(cumulative_commission),
                 "duration_seconds": duration_seconds,
                 "close_reason": close_reason,
+                "close_actor": close_actor
+                or self._close_actor_for_reason(close_reason),
                 "final_commission": cumulative_commission,
                 "pnl_unknown": pnl_unknown,
                 "fee_status": "known" if fee_known else "unknown",
@@ -1350,6 +1353,7 @@ class PositionManager:
                     "exit_price": update_data["exit_price"],
                     "exit_time": effective_exit_time,
                     "reason": close_reason,
+                    "actor": update_data["close_actor"],
                     "exit_order_id": exit_order_id,
                     "pnl_basis": "unknown" if pnl_unknown else "fifo_attributed",
                     "pnl": update_data["pnl"],
@@ -1360,6 +1364,50 @@ class PositionManager:
         except Exception as e:
             logger.error("Error recording position close %s: %s", position_id, e)
             return None
+
+    @staticmethod
+    def _close_actor_for_reason(close_reason: str) -> str:
+        if close_reason in {"stop_loss", "take_profit"}:
+            return "protective_leg"
+        if close_reason == "reconciled_to_exchange":
+            return "reconciler"
+        if close_reason in {"naked_position_grace_expired", "malformed_position"}:
+            return "remediator"
+        if close_reason == "manual":
+            return "manual"
+        if close_reason in {"exposure_cap", "cio_scale_out"}:
+            return "exposure_cap"
+        return "tradeengine"
+
+    async def publish_unattributed_exchange_close(
+        self,
+        *,
+        position_id: str,
+        symbol: str,
+        side: str,
+        quantity: float,
+        exit_price: float | None,
+        exit_order_id: str,
+        exit_time: datetime,
+    ) -> None:
+        await execution_event_publisher.publish(
+            event_type="unattributed_exchange_close",
+            strategy_id="unknown",
+            order_id=exit_order_id,
+            reason="unattributed_exchange_close",
+            timestamp=exit_time,
+            client_order_id=position_id,
+            idempotency_key=f"unattributed_exchange_close:{exit_order_id}:{position_id}",
+            extra={
+                "position_id": position_id,
+                "symbol": symbol,
+                "position_side": side,
+                "closed_quantity": quantity,
+                "exit_price": exit_price,
+                "exit_time": exit_time,
+                "actor": "unknown",
+            },
+        )
 
     def _queue_close_retry(
         self,

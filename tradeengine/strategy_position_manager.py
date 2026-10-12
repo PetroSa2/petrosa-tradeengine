@@ -575,6 +575,20 @@ class StrategyPositionManager:
                     "exit_price": exit_price,
                     "exit_time": position["exit_time"],
                     "reason": close_reason,
+                    "actor": (
+                        "protective_leg"
+                        if close_reason in {"stop_loss", "take_profit"}
+                        else "manual"
+                        if close_reason == "manual"
+                        else "exposure_cap"
+                        if close_reason in {"exposure_cap", "cio_scale_out"}
+                        else "remediator"
+                        if close_reason
+                        in {"naked_position_grace_expired", "malformed_position"}
+                        else "reconciler"
+                        if close_reason == "reconciled_to_exchange"
+                        else "tradeengine"
+                    ),
                     "exit_order_id": exit_order_id,
                     "pnl_basis": "unknown" if pnl_unknown else "fifo_attributed",
                     "pnl": net_pnl,

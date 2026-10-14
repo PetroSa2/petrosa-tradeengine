@@ -5,9 +5,11 @@ import pytest
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import OrderType, Signal, StrategyMode
+from contracts.trading_config import LeverageStatus
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
+from tradeengine.metrics import leverage_change_failures_total, leverage_mismatch
 
 
 @pytest.fixture
@@ -926,7 +928,7 @@ async def test_end_to_end_signal_leverage_applied_to_exchange(
 
 @pytest.mark.asyncio
 async def test_apply_order_leverage_falls_back_to_default_when_absent(
-    dispatcher: Dispatcher,
+    dispatcher: Dispatcher, caplog
 ) -> None:
     """No leverage on the signal -> the named, configurable default is used
     and applied to the exchange, not a magic literal (#599)."""
@@ -943,13 +945,157 @@ async def test_apply_order_leverage_falls_back_to_default_when_absent(
     mock_client.futures_change_leverage = Mock()
     dispatcher.exchange = Mock()
     dispatcher.exchange.client = mock_client
-    dispatcher.settings.te_default_leverage = 7
-
-    await dispatcher._apply_order_leverage(order)
+    with caplog.at_level("WARNING"):
+        await dispatcher._apply_order_leverage(order)
 
     mock_client.futures_change_leverage.assert_called_once_with(
-        symbol="ETHUSDT", leverage=7
+        symbol="ETHUSDT", leverage=1
     )
+    assert "ETHUSDT" in caplog.text
+    assert "target=1x" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_apply_order_leverage_logs_actual_change(
+    dispatcher: Dispatcher, caplog
+) -> None:
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=1,
+        simulate=False,
+    )
+    mock_client = Mock()
+    mock_client.futures_symbol_config.return_value = [
+        {"symbol": "BTCUSDT", "leverage": 10}
+    ]
+    dispatcher.exchange = Mock(client=mock_client)
+
+    with caplog.at_level("WARNING"):
+        await dispatcher._apply_order_leverage(order)
+
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="BTCUSDT", leverage=1
+    )
+    assert "BTCUSDT" in caplog.text
+    assert "old=10x" in caplog.text
+    assert "new=1x" in caplog.text
+    assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_order_leverage_warns_and_records_missing_exchange_client(
+    dispatcher: Dispatcher, caplog
+) -> None:
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=1,
+        simulate=False,
+    )
+    dispatcher.exchange = Mock(client=None)
+    failures = leverage_change_failures_total.labels(symbol="BTCUSDT", code="no_client")
+    before = failures._value.get()
+
+    with caplog.at_level("WARNING"):
+        result = await dispatcher._apply_order_leverage(order)
+
+    assert result is True
+    assert "BTCUSDT" in caplog.text
+    assert "target=1x actual=unknown" in caplog.text
+    assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 1
+    assert failures._value.get() == before + 1
+
+
+@pytest.mark.asyncio
+async def test_order_leverage_refreshes_fresh_cache_before_changing_exchange(
+    dispatcher: Dispatcher,
+) -> None:
+    """A fresh cache must not hide an exchange still at 10x before an order."""
+    status = LeverageStatus(
+        id=None,
+        symbol="BTCUSDT",
+        configured_leverage=1,
+        actual_leverage=1,
+        last_sync_at=datetime.now(UTC),
+        last_sync_success=True,
+        last_sync_error=None,
+        updated_at=datetime.now(UTC),
+    )
+    dispatcher.leverage_manager._leverage_cache["BTCUSDT"] = status
+
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=1,
+        simulate=False,
+    )
+    mock_client = Mock()
+    mock_client.futures_symbol_config.return_value = [
+        {"symbol": "BTCUSDT", "leverage": 10}
+    ]
+    dispatcher.exchange = Mock(client=mock_client)
+
+    result = await dispatcher._apply_order_leverage(order)
+
+    assert result is True
+    mock_client.futures_symbol_config.assert_called_once_with(symbol="BTCUSDT")
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="BTCUSDT", leverage=1
+    )
+
+
+@pytest.mark.asyncio
+async def test_order_continues_when_leverage_change_is_refused(
+    dispatcher: Dispatcher, caplog
+) -> None:
+    class RefusedLeverage(Exception):
+        code = -4028
+        message = "Leverage not changed"
+
+    order = TradeOrder(
+        symbol="ETHUSDT",
+        type="market",
+        side="buy",
+        amount=0.01,
+        target_price=2500.0,
+        leverage=1,
+        simulate=False,
+        strategy_metadata={"strategy_id": "test-strategy"},
+    )
+    mock_client = Mock()
+    mock_client.futures_symbol_config.return_value = [
+        {"symbol": "ETHUSDT", "leverage": 10}
+    ]
+    mock_client.futures_change_leverage.side_effect = RefusedLeverage()
+    dispatcher.exchange = Mock(client=mock_client)
+    dispatcher.position_manager.check_position_limits = AsyncMock(return_value=True)
+    dispatcher.position_manager.check_daily_loss_limits = AsyncMock(return_value=True)
+    dispatcher.execute_order = AsyncMock(return_value={"status": "filled"})
+    dispatcher._register_pending_fill_signal = Mock()
+
+    with patch("tradeengine.leverage_manager.BinanceAPIException", RefusedLeverage):
+        with caplog.at_level("WARNING"):
+            with patch("tradeengine.dispatcher.strategy_position_manager") as mock_spm:
+                mock_spm.get_all_open_strategy_positions.return_value = []
+                result = await dispatcher._execute_order_with_consensus(order)
+
+    assert result["status"] == "filled"
+    dispatcher.execute_order.assert_awaited_once()
+    assert (
+        leverage_change_failures_total.labels(
+            symbol="ETHUSDT", code="-4028"
+        )._value.get()
+        == 1
+    )
+    assert leverage_mismatch.labels(symbol="ETHUSDT")._value.get() == 1
+    assert "ETHUSDT" in caplog.text
 
 
 @pytest.mark.asyncio

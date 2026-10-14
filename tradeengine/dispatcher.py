@@ -44,6 +44,8 @@ from tradeengine.metrics import (
     atomic_rollback_failed_total,
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
+    leverage_change_failures_total,
+    leverage_mismatch,
     maker_entry_post_only_rejection_total,
     maker_entry_unfilled_total,
     margin_shortfall_usd_total,
@@ -3634,22 +3636,36 @@ class Dispatcher:
         binance_client = (
             getattr(self.exchange, "client", None) if self.exchange else None
         )
-        if order.simulate or not binance_client:
+        if order.simulate:
             return True
 
         target_leverage = order.leverage
         if target_leverage is None:
             target_leverage = self.settings.te_default_leverage
-            self.logger.info(
-                f"ℹ️ Signal for {order.symbol} carried no leverage — falling "
-                f"back to configured default TE_DEFAULT_LEVERAGE="
-                f"{target_leverage}x"
+            self.logger.warning(
+                "Signal for %s carried no leverage; using fallback "
+                "target=%sx actual=unknown (TE_DEFAULT_LEVERAGE)",
+                order.symbol,
+                target_leverage,
             )
+
+        if not binance_client:
+            self.logger.warning(
+                "Binance client unavailable for leverage management for %s: "
+                "target=%sx actual=unknown",
+                order.symbol,
+                target_leverage,
+            )
+            leverage_mismatch.labels(symbol=order.symbol).set(1)
+            leverage_change_failures_total.labels(
+                symbol=order.symbol, code="no_client"
+            ).inc()
+            return True
 
         try:
             self.leverage_manager.binance_client = binance_client
             return await self.leverage_manager.ensure_leverage(
-                order.symbol, target_leverage
+                order.symbol, target_leverage, force_refresh=True
             )
         except Exception as lev_exc:
             self.logger.warning(

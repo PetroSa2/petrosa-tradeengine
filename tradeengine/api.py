@@ -4,7 +4,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import nats.errors
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -686,6 +686,7 @@ class AccountResponse(BaseModel):
     balances: dict[str, Any]
     total_balance_usdt: float
     positions: dict[str, Any]
+    positions_source: str
     pnl: dict[str, Any]
     risk_metrics: dict[str, Any]
 
@@ -1129,7 +1130,16 @@ async def get_account_info() -> AccountResponse:
             "simulator": {},
             "combined": {},
         }
+        authoritative_positions = dispatcher.position_manager.get_positions()
         combined_positions: dict[str, Any] = {}
+        for key, position in authoritative_positions.items():
+            symbol = position.get("symbol") or (
+                key[0] if isinstance(key, tuple) else str(key)
+            )
+            side = position.get("position_side") or (
+                key[1] if isinstance(key, tuple) and len(key) > 1 else "BOTH"
+            )
+            combined_positions[f"{symbol}:{side}"] = position
         combined_pnl: dict[str, Any] = {}
 
         def safe_float(val: Any, default: float = 0.0) -> float:
@@ -1179,7 +1189,6 @@ async def get_account_info() -> AccountResponse:
                         combined_balances["binance"][asset_name] = balance
                         combined_balances["combined"][asset_name] = balance.copy()
 
-            combined_positions.update(binance_account.get("positions", {}))
             combined_pnl.update(binance_account.get("pnl", {}))
 
         # Merge simulator data
@@ -1215,7 +1224,6 @@ async def get_account_info() -> AccountResponse:
                     else:
                         combined_balances["combined"][asset_name] = balance.copy()
 
-            combined_positions.update(simulator_account.get("positions", {}))
             combined_pnl.update(simulator_account.get("pnl", {}))
 
         # Calculate total USDT balance based on futures margin
@@ -1275,6 +1283,9 @@ async def get_account_info() -> AccountResponse:
             balances=combined_balances,
             total_balance_usdt=total_balance_usdt,
             positions=combined_positions,
+            positions_source=(
+                "exchange" if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on" else "local"
+            ),
             pnl=combined_pnl,
             risk_metrics=risk_metrics,
         )
@@ -1569,8 +1580,8 @@ async def get_positions(
         None, description="Filter by trading symbol (e.g., BTCUSDT)"
     ),
     side: str | None = Query(None, description="Filter by position side (LONG, SHORT)"),
-    status: str | None = Query(
-        None, description="Filter by position status (open, closed)"
+    status: Literal["open", "closed", "all"] | None = Query(
+        None, description="Filter by position status (open, closed, all)"
     ),
     min_size: float | None = Query(None, description="Minimum position size filter"),
     max_size: float | None = Query(None, description="Maximum position size filter"),
@@ -1617,7 +1628,7 @@ async def get_positions(
                 p for p in filtered_positions if p.get("side") == side
             ]
 
-        if status:
+        if status and status != "all":
             filtered_positions = [
                 p for p in filtered_positions if p.get("status") == status
             ]

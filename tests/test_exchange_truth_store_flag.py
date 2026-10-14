@@ -124,6 +124,41 @@ class TestAC2GetPositions:
         assert pos["avg_price"] == 60_000.0
         assert pos["source"] == "exchange"
 
+    def test_truth_store_refresh_preserves_journal_entry_time(self) -> None:
+        from tradeengine.position_manager import PositionManager
+
+        entry_time = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+        refresh_time = datetime(2026, 10, 14, 8, 0, tzinfo=UTC)
+        pm = PositionManager.__new__(PositionManager)
+        pm.positions = {
+            ("BTCUSDT", "LONG"): {
+                "symbol": "BTCUSDT",
+                "entry_time": entry_time,
+            }
+        }
+        pm.exchange_truth_store = _make_store(
+            {
+                ("BTCUSDT", "LONG"): PositionSnapshot(
+                    symbol="BTCUSDT",
+                    side="LONG",
+                    quantity=3.5,
+                    entry_price=60_000.0,
+                    unrealized_pnl=0.0,
+                    updated_at=refresh_time,
+                )
+            }
+        )
+
+        with patch(
+            "tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"
+        ):
+            assert pm._refresh_positions_from_exchange_truth_store() is True
+            result = pm.get_positions()[("BTCUSDT", "LONG")]
+
+        assert result["entry_time"] == entry_time
+        assert result["last_update"] == refresh_time
+        assert result["entry_time"] != result["last_update"]
+
     def test_flag_on_store_empty_returns_empty_dict(self) -> None:
         pm = self._make_pm()
         pm.positions = {("BTCUSDT", "LONG"): {"symbol": "BTCUSDT", "quantity": 1.0}}

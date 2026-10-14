@@ -212,10 +212,15 @@ def test_check_and_emit_sets_active_gauge_for_breach(
     gauge.labels.return_value.set.assert_called_once_with(1)
 
 
-def test_check_and_emit_skips_emission_when_no_breach() -> None:
+def test_check_and_emit_skips_emission_when_no_breach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     nc = _FakeNatsClient()
     publisher = _FakeAlertPublisher(nc=nc)
     emitter = DrawdownBreachEmitter(alert_publisher=publisher)
+    gauge = MagicMock()
+    monkeypatch.setattr("tradeengine.metrics.drawdown_breach_active", gauge)
+    monkeypatch.setattr("tradeengine.metrics.otel_drawdown_breach_active", MagicMock())
     breach = asyncio.run(
         check_and_emit(
             strategy_id="momentum-v3",
@@ -226,6 +231,8 @@ def test_check_and_emit_skips_emission_when_no_breach() -> None:
     )
     assert breach is None
     assert nc.published == []
+    gauge.labels.assert_called_once_with(strategy_id="momentum-v3")
+    gauge.labels.return_value.set.assert_called_once_with(0)
 
 
 def test_check_and_emit_clears_active_gauge_after_breach(

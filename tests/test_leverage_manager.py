@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from shared.constants import UTC
+from tradeengine.metrics import leverage_mismatch
 
 # Mock binance module before importing LeverageManager
 mock_binance = MagicMock()
@@ -131,6 +132,28 @@ class TestLeverageManagerBasic:
         assert result is True
         # Should not call binance client
         mock_binance_client.futures_change_leverage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_symbols_changes_ten_x_to_default_one_x(
+        self, leverage_manager
+    ):
+        client = Mock()
+        client.futures_symbol_config = Mock(
+            return_value=[{"symbol": "BTCUSDT", "leverage": 10}]
+        )
+        leverage_manager.binance_client = client
+        leverage_manager.get_leverage_status = AsyncMock(return_value=None)
+
+        result = await leverage_manager.reconcile_symbols(["BTCUSDT"], 1)
+
+        client.futures_change_leverage.assert_called_once_with(
+            symbol="BTCUSDT", leverage=1
+        )
+        assert result["changed"] == 1
+        assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 0
+        assert "tradeengine_leverage_mismatch" in str(
+            __import__("prometheus_client").generate_latest()
+        )
 
     @pytest.mark.asyncio
     async def test_ensure_leverage_no_binance_client(self, leverage_manager):

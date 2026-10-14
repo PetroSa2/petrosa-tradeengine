@@ -29,6 +29,12 @@ class TestSettings:
         assert settings.port == 8000
         assert settings.simulation_enabled is True
 
+    def test_default_leverage_is_one_without_override(self, monkeypatch):
+        monkeypatch.delenv("TE_DEFAULT_LEVERAGE", raising=False)
+        monkeypatch.delenv("te_default_leverage", raising=False)
+
+        assert Settings().te_default_leverage == 1
+
     def test_is_production(self):
         """Test is_production property"""
         settings = Settings(environment="production")

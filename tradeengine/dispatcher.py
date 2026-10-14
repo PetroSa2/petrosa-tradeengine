@@ -3640,10 +3640,11 @@ class Dispatcher:
         target_leverage = order.leverage
         if target_leverage is None:
             target_leverage = self.settings.te_default_leverage
-            self.logger.info(
-                f"ℹ️ Signal for {order.symbol} carried no leverage — falling "
-                f"back to configured default TE_DEFAULT_LEVERAGE="
-                f"{target_leverage}x"
+            self.logger.warning(
+                "Signal for %s carried no leverage; using fallback "
+                "target=%sx actual=unknown (TE_DEFAULT_LEVERAGE)",
+                order.symbol,
+                target_leverage,
             )
 
         try:

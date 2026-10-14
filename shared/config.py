@@ -113,14 +113,12 @@ class Settings(BaseSettings):
     # CIO Enforcement (Ticket #304 / P0 #1)
     enforce_cio_audit: bool = True  # Default to True for maximum safety
 
-    # #599: named, configurable fallback leverage applied per-order when the
-    # inbound Signal carries no `leverage` (legacy/strategy-direct signals,
-    # or a producer that has not adopted the field yet). Every use of this
-    # fallback is logged explicitly so silent-default usage stays visible.
-    # Was previously a magic literal (10) hardcoded in a startup loop that
-    # ran once at boot for every symbol regardless of what any signal
-    # actually decided.
-    te_default_leverage: int = 10
+    # #599/#790: conservative CIO-aligned fallback when a signal has no leverage.
+    # Override explicitly with TE_DEFAULT_LEVERAGE when a deployment requires it.
+    te_default_leverage: int = Field(
+        default=1,
+        validation_alias=AliasChoices("TE_DEFAULT_LEVERAGE", "te_default_leverage"),
+    )
     te_hedge_netting_policy: Literal["allow_both", "net", "block_opposite"] = Field(
         default="allow_both",
         validation_alias=AliasChoices(

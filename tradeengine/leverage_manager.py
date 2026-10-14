@@ -117,20 +117,34 @@ class LeverageManager:
                     )
                     leverage_mismatch.labels(symbol=symbol).set(0)
 
-                    logger.info(f"✓ Leverage set for {symbol}: {target_leverage}x")
+                    logger.warning(
+                        "Leverage changed for %s: old=%sx new=%sx target=%sx",
+                        symbol,
+                        actual_leverage,
+                        target_leverage,
+                        target_leverage,
+                    )
                     return True
 
                 except BinanceAPIException as e:
                     # Common error: -4028 = leverage not changed (open position)
                     if e.code == -4028:
                         logger.warning(
-                            f"Cannot change leverage for {symbol} (open position exists). "
-                            f"Using existing leverage. Target: {target_leverage}x"
+                            "Cannot change leverage for %s (open position exists). "
+                            "Using existing leverage. target=%sx actual=%sx",
+                            symbol,
+                            target_leverage,
+                            actual_leverage,
                         )
                     else:
                         logger.warning(
-                            f"Failed to set leverage for {symbol}: {e.message} "
-                            f"(code: {e.code})"
+                            "Failed to set leverage for %s: target=%sx actual=%sx "
+                            "error=%s (code: %s)",
+                            symbol,
+                            target_leverage,
+                            actual_leverage,
+                            e.message,
+                            e.code,
                         )
 
                     leverage_mismatch.labels(symbol=symbol).set(1)
@@ -193,22 +207,50 @@ class LeverageManager:
             "changed": 0,
             "matched": 0,
             "failed": 0,
+            "symbols": [],
         }
+        symbol_results: list[dict[str, Any]] = result["symbols"]
         for symbol in symbols:
             try:
                 actual = await self._read_exchange_leverage(symbol)
                 if actual is None:
                     leverage_mismatch.labels(symbol=symbol).set(1)
                     result["failed"] += 1
+                    symbol_results.append(
+                        {"symbol": symbol, "target": target_leverage, "actual": None}
+                    )
                 elif actual == target_leverage:
                     leverage_mismatch.labels(symbol=symbol).set(0)
                     result["matched"] += 1
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "target": target_leverage,
+                            "actual": actual,
+                        }
+                    )
                 elif await self.ensure_leverage(
                     symbol, target_leverage, force_refresh=True
                 ):
                     result["changed"] += 1
+                    leverage_mismatch.labels(symbol=symbol).set(0)
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "target": target_leverage,
+                            "actual": target_leverage,
+                        }
+                    )
                 else:
                     result["failed"] += 1
+                    leverage_mismatch.labels(symbol=symbol).set(1)
+                    symbol_results.append(
+                        {
+                            "symbol": symbol,
+                            "target": target_leverage,
+                            "actual": actual,
+                        }
+                    )
             except Exception as exc:
                 logger.warning("Leverage reconciliation failed for %s: %s", symbol, exc)
                 leverage_mismatch.labels(symbol=symbol).set(1)
@@ -216,7 +258,10 @@ class LeverageManager:
                     symbol=symbol, code="unknown"
                 ).inc()
                 result["failed"] += 1
-        logger.info("Leverage reconciliation complete: %s", result)
+                symbol_results.append(
+                    {"symbol": symbol, "target": target_leverage, "actual": None}
+                )
+        logger.warning("Leverage reconciliation complete: %s", result)
         return result
 
     async def get_leverage_status(self, symbol: str) -> LeverageStatus | None:

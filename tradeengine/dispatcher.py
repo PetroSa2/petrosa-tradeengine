@@ -3650,7 +3650,7 @@ class Dispatcher:
         try:
             self.leverage_manager.binance_client = binance_client
             return await self.leverage_manager.ensure_leverage(
-                order.symbol, target_leverage
+                order.symbol, target_leverage, force_refresh=True
             )
         except Exception as lev_exc:
             self.logger.warning(

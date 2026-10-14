@@ -73,6 +73,7 @@ class LeverageManager:
         Returns:
             True if leverage matches target, False if mismatch (but not critical)
         """
+        actual_leverage: int | None = None
         try:
             # Cache is only an optimization. Refresh before an order when its
             # target differs from the cached target, and whenever the status is stale.
@@ -80,6 +81,8 @@ class LeverageManager:
             cache_fresh = bool(
                 current_status
                 and current_status.last_sync_at
+                and current_status.last_sync_success
+                and current_status.actual_leverage is not None
                 and datetime.now(UTC) - current_status.last_sync_at < self.cache_ttl
             )
             refresh = force_refresh or not cache_fresh
@@ -91,7 +94,7 @@ class LeverageManager:
             )
 
             # Check if leverage needs update
-            if actual_leverage is None and current_status:
+            if actual_leverage is None and current_status and not refresh:
                 actual_leverage = current_status.actual_leverage
             if actual_leverage == target_leverage:
                 leverage_mismatch.labels(symbol=symbol).set(0)
@@ -166,13 +169,30 @@ class LeverageManager:
                     return False
 
             else:
-                logger.warning("Binance client not available for leverage management")
+                logger.warning(
+                    "Binance client not available for leverage management for %s: "
+                    "target=%sx actual=unknown",
+                    symbol,
+                    target_leverage,
+                )
                 leverage_mismatch.labels(symbol=symbol).set(1)
+                leverage_change_failures_total.labels(
+                    symbol=symbol, code="no_client"
+                ).inc()
                 return False
 
         except Exception as e:
-            logger.error(f"Unexpected error in ensure_leverage for {symbol}: {e}")
+            logger.warning(
+                "Unexpected leverage failure for %s: target=%sx actual=%s error=%s",
+                symbol,
+                target_leverage,
+                f"{actual_leverage}x" if actual_leverage is not None else "unknown",
+                e,
+            )
             leverage_mismatch.labels(symbol=symbol).set(1)
+            leverage_change_failures_total.labels(
+                symbol=symbol, code="unexpected_error"
+            ).inc()
             return False
 
     async def _read_exchange_leverage(self, symbol: str) -> int | None:

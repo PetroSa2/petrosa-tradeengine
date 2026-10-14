@@ -5,6 +5,7 @@ import pytest
 
 from contracts.order import OrderStatus, TradeOrder
 from contracts.signal import OrderType, Signal, StrategyMode
+from contracts.trading_config import LeverageStatus
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
@@ -982,6 +983,46 @@ async def test_apply_order_leverage_logs_actual_change(
     assert "old=10x" in caplog.text
     assert "new=1x" in caplog.text
     assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 0
+
+
+@pytest.mark.asyncio
+async def test_order_leverage_refreshes_fresh_cache_before_changing_exchange(
+    dispatcher: Dispatcher,
+) -> None:
+    """A fresh cache must not hide an exchange still at 10x before an order."""
+    status = LeverageStatus(
+        id=None,
+        symbol="BTCUSDT",
+        configured_leverage=1,
+        actual_leverage=1,
+        last_sync_at=datetime.now(UTC),
+        last_sync_success=True,
+        last_sync_error=None,
+        updated_at=datetime.now(UTC),
+    )
+    dispatcher.leverage_manager._leverage_cache["BTCUSDT"] = status
+
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=1,
+        simulate=False,
+    )
+    mock_client = Mock()
+    mock_client.futures_symbol_config.return_value = [
+        {"symbol": "BTCUSDT", "leverage": 10}
+    ]
+    dispatcher.exchange = Mock(client=mock_client)
+
+    result = await dispatcher._apply_order_leverage(order)
+
+    assert result is True
+    mock_client.futures_symbol_config.assert_called_once_with(symbol="BTCUSDT")
+    mock_client.futures_change_leverage.assert_called_once_with(
+        symbol="BTCUSDT", leverage=1
+    )
 
 
 @pytest.mark.asyncio

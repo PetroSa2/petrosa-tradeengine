@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from shared.constants import UTC
-from tradeengine.metrics import leverage_mismatch
+from tradeengine.metrics import leverage_change_failures_total, leverage_mismatch
 
 # Mock binance module before importing LeverageManager
 mock_binance = MagicMock()
@@ -156,12 +156,22 @@ class TestLeverageManagerBasic:
         )
 
     @pytest.mark.asyncio
-    async def test_ensure_leverage_no_binance_client(self, leverage_manager):
+    async def test_ensure_leverage_no_binance_client(self, leverage_manager, caplog):
         """Test ensure_leverage when binance client is not available"""
         leverage_manager.binance_client = None
 
-        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        with caplog.at_level("WARNING"):
+            result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+
         assert result is False
+        assert "BTCUSDT" in caplog.text
+        assert "target=10x actual=unknown" in caplog.text
+        assert (
+            leverage_change_failures_total.labels(
+                symbol="BTCUSDT", code="no_client"
+            )._value.get()
+            >= 1
+        )
 
     @pytest.mark.asyncio
     async def test_force_leverage_success(self, leverage_manager, mock_binance_client):
@@ -263,6 +273,39 @@ class TestLeverageManagerBasic:
         )
 
     @pytest.mark.asyncio
+    async def test_ensure_leverage_refreshes_uncertain_cache(
+        self, leverage_manager, mock_binance_client
+    ):
+        from contracts.trading_config import LeverageStatus
+
+        leverage_manager.binance_client = mock_binance_client
+        leverage_manager.get_leverage_status = AsyncMock(
+            return_value=LeverageStatus(
+                id=None,
+                symbol="BTCUSDT",
+                configured_leverage=1,
+                actual_leverage=1,
+                last_sync_at=datetime.now(UTC),
+                last_sync_success=False,
+                last_sync_error="exchange read failed",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        mock_binance_client.futures_symbol_config.return_value = [
+            {"symbol": "BTCUSDT", "leverage": 10}
+        ]
+
+        result = await leverage_manager.ensure_leverage("BTCUSDT", 1)
+
+        assert result is True
+        mock_binance_client.futures_symbol_config.assert_called_once_with(
+            symbol="BTCUSDT"
+        )
+        mock_binance_client.futures_change_leverage.assert_called_once_with(
+            symbol="BTCUSDT", leverage=1
+        )
+
+    @pytest.mark.asyncio
     @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")
     async def test_ensure_leverage_binance_error_4028(
         self, leverage_manager, mock_binance_client, mock_mongodb_client
@@ -328,7 +371,7 @@ class TestLeverageManagerBasic:
 
     @pytest.mark.asyncio
     async def test_ensure_leverage_exception(
-        self, leverage_manager, mock_binance_client
+        self, leverage_manager, mock_binance_client, caplog
     ):
         """Test ensure_leverage handling unexpected exceptions"""
         leverage_manager.binance_client = mock_binance_client
@@ -336,8 +379,18 @@ class TestLeverageManagerBasic:
             side_effect=Exception("Unexpected error")
         )
 
-        result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+        with caplog.at_level("WARNING"):
+            result = await leverage_manager.ensure_leverage("BTCUSDT", 10)
+
         assert result is False
+        assert "BTCUSDT" in caplog.text
+        assert "target=10x actual=unknown" in caplog.text
+        assert (
+            leverage_change_failures_total.labels(
+                symbol="BTCUSDT", code="unexpected_error"
+            )._value.get()
+            >= 1
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="BinanceAPIException mocking issue - needs investigation")

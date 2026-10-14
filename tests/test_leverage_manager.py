@@ -193,6 +193,17 @@ class TestLeverageManagerBasic:
         )
 
     @pytest.mark.asyncio
+    async def test_read_exchange_leverage_warns_when_client_is_missing(
+        self, leverage_manager, caplog
+    ):
+        with caplog.at_level("WARNING"):
+            result = await leverage_manager._read_exchange_leverage("BTCUSDT")
+
+        assert result is None
+        assert "Unable to read exchange leverage for BTCUSDT" in caplog.text
+        assert "Binance client unavailable" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_force_leverage_success(self, leverage_manager, mock_binance_client):
         """Test force_leverage successful operation"""
         leverage_manager.binance_client = mock_binance_client

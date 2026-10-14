@@ -198,6 +198,10 @@ class LeverageManager:
     async def _read_exchange_leverage(self, symbol: str) -> int | None:
         """Read leverage from Binance rather than trusting the local cache."""
         if not self.binance_client:
+            logger.warning(
+                "Unable to read exchange leverage for %s: Binance client unavailable",
+                symbol,
+            )
             return None
         try:
             method = getattr(self.binance_client, "futures_symbol_config", None)

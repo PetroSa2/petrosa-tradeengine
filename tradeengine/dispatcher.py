@@ -2812,6 +2812,10 @@ class Dispatcher:
 
             # #634: reconcile exchange state at boot instead of trusting the
             # pre-#599 10x values left on symbols that have not traded recently.
+            if self.exchange:
+                self.leverage_manager.binance_client = getattr(
+                    self.exchange, "client", None
+                )
             if self.exchange and getattr(self.exchange, "client", None):
                 from shared.constants import SUPPORTED_SYMBOLS
 

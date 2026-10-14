@@ -17,6 +17,18 @@ and `-4130` (arming legs that already exist) failures.
 **Decision: Option A — corrected mirror.**
 Keep `ExchangeTruthStore` as the single read model; close the four wiring gaps that make it
 untrustworthy today.
+## Reporting Authority
+
+The position reporting surface uses `PositionManager.get_positions()` as its single accessor.
+When `TE_EXCHANGE_TRUTH_STORE_ENABLED=on`, that accessor is exchange-authoritative; otherwise
+it reports the local persisted journal and labels the source accordingly. `/positions`,
+`/health`'s `positions_count`, and `/account`'s `positions` and `risk_metrics.open_positions`
+all derive from this accessor, so balances and P&L may still have endpoint-specific semantics
+but position counts do not.
+
+The journal owns `entry_time`. A truth-store refresh owns `last_update` and must not replace
+the journal entry time with the snapshot-construction timestamp.
+
 Option B (always consult Binance) is rejected as the primary path because it adds a live REST
 dependency to the per-order hot arming path — which today makes **zero** live calls — with **no
 existing TTL cache or rate-limit gate** to build on.

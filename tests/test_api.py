@@ -33,6 +33,7 @@ sys.modules["binance"] = binance_module
 sys.modules["binance.enums"] = binance_enums
 sys.modules["binance.exceptions"] = binance_exceptions
 
+import tradeengine.api as api  # noqa: E402
 from contracts.order import OrderStatus, TradeOrder  # noqa: E402
 from contracts.signal import Signal  # noqa: E402
 from tradeengine.api import app  # noqa: E402
@@ -682,6 +683,82 @@ class TestOrderEndpoints:
 
 class TestPositionEndpoints:
     """Test position-related endpoints"""
+
+    def test_position_endpoints_use_one_authoritative_snapshot(
+        self, client: TestClient
+    ) -> None:
+        position = {
+            "symbol": "BTCUSDT",
+            "position_side": "LONG",
+            "quantity": 1.0,
+            "avg_price": 50_000.0,
+            "notional": 50_000.0,
+            "status": "open",
+        }
+        with (
+            patch.object(
+                api.dispatcher.position_manager,
+                "positions",
+                {("BTCUSDT", "LONG"): position},
+            ),
+            patch.object(api.dispatcher.position_manager, "exchange_truth_store", None),
+            patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+            patch.object(api, "TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"),
+            patch.object(api.dispatcher, "user_data_consumer", None),
+            patch(
+                "tradeengine.dispatcher.distributed_lock_manager.health_check",
+                AsyncMock(return_value={"status": "healthy"}),
+            ),
+            patch.object(api, "binance_exchange") as mock_binance,
+            patch.object(api, "simulator_exchange") as mock_simulator,
+        ):
+            mock_binance.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_simulator.health_check = AsyncMock(return_value={"status": "healthy"})
+            mock_binance.get_account_info = AsyncMock(
+                return_value={"assets": [], "positions": {}, "pnl": {}}
+            )
+            mock_simulator.get_account_info = AsyncMock(
+                return_value={"balances": {}, "positions": {}, "pnl": {}}
+            )
+
+            positions = client.get("/positions")
+            health = client.get("/health")
+            account = client.get("/account")
+
+        assert positions.status_code == 200
+        assert health.status_code == 200
+        assert account.status_code == 200
+        assert positions.json()["pagination"]["total"] == 1
+        assert (
+            health.json()["components"]["dispatcher"]["components"]["position_manager"][
+                "positions_count"
+            ]
+            == 1
+        )
+        assert (
+            health.json()["components"]["dispatcher"]["components"]["position_manager"][
+                "positions_source"
+            ]
+            == "local"
+        )
+        assert positions.json()["source"] == "local"
+        assert account.json()["risk_metrics"]["open_positions"] == 1
+        assert account.json()["positions_source"] == positions.json()["source"]
+
+    def test_position_status_filter_validates_and_supports_all(
+        self, client: TestClient
+    ) -> None:
+        with patch("tradeengine.api.dispatcher") as mock_dispatcher:
+            mock_dispatcher.position_manager.get_positions.return_value = {
+                ("BTCUSDT", "LONG"): {"symbol": "BTCUSDT", "status": "open"}
+            }
+
+            all_response = client.get("/positions?status=all")
+            invalid_response = client.get("/positions?status=bogus")
+
+        assert all_response.status_code == 200
+        assert all_response.json()["pagination"]["total"] == 1
+        assert invalid_response.status_code == 422
 
     def test_get_positions_detailed(self, client: TestClient) -> None:
         """Test GET /positions endpoint"""

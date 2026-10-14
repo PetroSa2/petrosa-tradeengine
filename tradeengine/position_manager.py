@@ -488,6 +488,7 @@ class PositionManager:
             return False
 
         snapshots = store.get_positions()
+        journal = self.positions
         self.positions = {
             key: {
                 "symbol": snapshot.symbol,
@@ -498,7 +499,9 @@ class PositionManager:
                 "realized_pnl": 0.0,
                 "total_cost": 0.0,
                 "total_value": snapshot.quantity * snapshot.entry_price,
-                "entry_time": snapshot.updated_at,
+                "entry_time": journal.get(key, {}).get(
+                    "entry_time", snapshot.updated_at
+                ),
                 "last_update": snapshot.updated_at,
                 "status": "open",
             }
@@ -2243,7 +2246,9 @@ class PositionManager:
                     # position of 0.673 ETH at 2710.40 costs 1824, not just the last fill (#737).
                     "total_cost": v.quantity * v.entry_price,
                     "total_value": v.quantity * v.entry_price,
-                    "entry_time": v.updated_at,
+                    "entry_time": self.positions.get(k, {}).get(
+                        "entry_time", v.updated_at
+                    ),
                     "last_update": v.updated_at,
                     "status": "open",
                     "source": "exchange",
@@ -2298,6 +2303,15 @@ class PositionManager:
                     )
 
         return self.positions.copy()
+
+    def get_positions_source(self) -> str:
+        """Return the source represented by the current position accessor."""
+        return (
+            "exchange"
+            if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            and self.exchange_truth_store is not None
+            else "local"
+        )
 
     def get_position(
         self, symbol: str, position_side: str | None = None
@@ -2605,9 +2619,11 @@ class PositionManager:
         )
         failures = getattr(self, "_entry_persist_failures_consecutive", 0)
         degraded = failures >= threshold
+        positions = self.get_positions()
         return {
             "status": "degraded" if degraded else "healthy",
-            "positions_count": len(self.positions),
+            "positions_count": len(positions),
+            "positions_source": self.get_positions_source(),
             "last_sync": (
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),

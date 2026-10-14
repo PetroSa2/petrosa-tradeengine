@@ -109,6 +109,8 @@ class TestAC2GetPositions:
             result = pm.get_positions()
         assert ("ETHUSDT", "SHORT") in result
 
+        assert pm.get_positions_source() == "local"
+
     def test_flag_on_with_store_returns_exchange_snapshots(self) -> None:
         pm = self._make_pm()
         pm.positions = {}  # local is empty — exchange has a position
@@ -118,11 +120,12 @@ class TestAC2GetPositions:
             "tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"
         ):
             result = pm.get_positions()
-        assert ("BTCUSDT", "LONG") in result
-        pos = result[("BTCUSDT", "LONG")]
-        assert pos["quantity"] == 3.5
-        assert pos["avg_price"] == 60_000.0
-        assert pos["source"] == "exchange"
+            assert ("BTCUSDT", "LONG") in result
+            pos = result[("BTCUSDT", "LONG")]
+            assert pos["quantity"] == 3.5
+            assert pos["avg_price"] == 60_000.0
+            assert pos["source"] == "exchange"
+            assert pm.get_positions_source() == "exchange"
 
     def test_truth_store_refresh_preserves_journal_entry_time(self) -> None:
         from tradeengine.position_manager import PositionManager

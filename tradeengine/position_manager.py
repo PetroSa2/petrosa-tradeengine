@@ -2304,6 +2304,15 @@ class PositionManager:
 
         return self.positions.copy()
 
+    def get_positions_source(self) -> str:
+        """Return the source represented by the current position accessor."""
+        return (
+            "exchange"
+            if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+            and self.exchange_truth_store is not None
+            else "local"
+        )
+
     def get_position(
         self, symbol: str, position_side: str | None = None
     ) -> dict[str, Any] | None:
@@ -2614,9 +2623,7 @@ class PositionManager:
         return {
             "status": "degraded" if degraded else "healthy",
             "positions_count": len(positions),
-            "positions_source": (
-                "exchange" if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on" else "local"
-            ),
+            "positions_source": self.get_positions_source(),
             "last_sync": (
                 self.last_sync_time.isoformat() if self.last_sync_time else None
             ),

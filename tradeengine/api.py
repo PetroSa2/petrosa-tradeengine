@@ -670,6 +670,22 @@ dispatcher = Dispatcher(exchange=binance_exchange)
 logger = logging.getLogger(__name__)
 
 
+def _get_positions_source() -> str:
+    """Return the source represented by the dispatcher position accessor."""
+    source_getter = getattr(dispatcher.position_manager, "get_positions_source", None)
+    if callable(source_getter):
+        source = source_getter()
+        if isinstance(source, str):
+            return source
+    return (
+        "exchange"
+        if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
+        and getattr(dispatcher.position_manager, "exchange_truth_store", None)
+        is not None
+        else "local"
+    )
+
+
 class HealthResponse(BaseModel):
     """Health check response model"""
 
@@ -1283,9 +1299,7 @@ async def get_account_info() -> AccountResponse:
             balances=combined_balances,
             total_balance_usdt=total_balance_usdt,
             positions=combined_positions,
-            positions_source=(
-                "exchange" if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on" else "local"
-            ),
+            positions_source=_get_positions_source(),
             pnl=combined_pnl,
             risk_metrics=risk_metrics,
         )
@@ -1671,10 +1685,8 @@ async def get_positions(
         return {
             "status": "success",
             "data": paginated_positions,
-            # AC3 (#459 — 446-C): "source" field indicates the authoritative data source
-            "source": "exchange"
-            if TE_EXCHANGE_TRUTH_STORE_ENABLED == "on"
-            else "local",
+            # AC3 (#459 — 446-C): "source" reflects the accessor's authority.
+            "source": _get_positions_source(),
             "pagination": {
                 "total": total_count,
                 "limit": limit,

@@ -986,6 +986,31 @@ async def test_apply_order_leverage_logs_actual_change(
 
 
 @pytest.mark.asyncio
+async def test_apply_order_leverage_warns_and_records_missing_exchange_client(
+    dispatcher: Dispatcher, caplog
+) -> None:
+    order = TradeOrder(
+        symbol="BTCUSDT",
+        type="market",
+        side="buy",
+        amount=0.1,
+        leverage=1,
+        simulate=False,
+    )
+    dispatcher.exchange = Mock(client=None)
+    failures = leverage_change_failures_total.labels(symbol="BTCUSDT", code="no_client")
+    before = failures._value.get()
+
+    with caplog.at_level("WARNING"):
+        result = await dispatcher._apply_order_leverage(order)
+
+    assert result is True
+    assert "BTCUSDT" in caplog.text
+    assert "target=1x actual=unknown" in caplog.text
+    assert failures._value.get() == before + 1
+
+
+@pytest.mark.asyncio
 async def test_order_leverage_refreshes_fresh_cache_before_changing_exchange(
     dispatcher: Dispatcher,
 ) -> None:

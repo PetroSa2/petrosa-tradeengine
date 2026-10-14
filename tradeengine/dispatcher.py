@@ -44,6 +44,7 @@ from tradeengine.metrics import (
     atomic_rollback_failed_total,
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
+    leverage_change_failures_total,
     maker_entry_post_only_rejection_total,
     maker_entry_unfilled_total,
     margin_shortfall_usd_total,
@@ -3634,7 +3635,7 @@ class Dispatcher:
         binance_client = (
             getattr(self.exchange, "client", None) if self.exchange else None
         )
-        if order.simulate or not binance_client:
+        if order.simulate:
             return True
 
         target_leverage = order.leverage
@@ -3646,6 +3647,18 @@ class Dispatcher:
                 order.symbol,
                 target_leverage,
             )
+
+        if not binance_client:
+            self.logger.warning(
+                "Binance client unavailable for leverage management for %s: "
+                "target=%sx actual=unknown",
+                order.symbol,
+                target_leverage,
+            )
+            leverage_change_failures_total.labels(
+                symbol=order.symbol, code="no_client"
+            ).inc()
+            return True
 
         try:
             self.leverage_manager.binance_client = binance_client

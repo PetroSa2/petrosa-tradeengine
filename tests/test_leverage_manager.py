@@ -156,6 +156,25 @@ class TestLeverageManagerBasic:
         )
 
     @pytest.mark.asyncio
+    async def test_reconcile_symbols_records_exchange_read_failure(
+        self, leverage_manager
+    ):
+        client = Mock()
+        client.futures_symbol_config.side_effect = RuntimeError("exchange unavailable")
+        leverage_manager.binance_client = client
+        failures = leverage_change_failures_total.labels(
+            symbol="BTCUSDT", code="exchange_read_failed"
+        )
+        before = failures._value.get()
+
+        result = await leverage_manager.reconcile_symbols(["BTCUSDT"], 1)
+
+        assert result["failed"] == 1
+        assert result["symbols"] == [{"symbol": "BTCUSDT", "target": 1, "actual": None}]
+        assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 1
+        assert failures._value.get() == before + 1
+
+    @pytest.mark.asyncio
     async def test_ensure_leverage_no_binance_client(self, leverage_manager, caplog):
         """Test ensure_leverage when binance client is not available"""
         leverage_manager.binance_client = None

@@ -235,6 +235,9 @@ class LeverageManager:
                 actual = await self._read_exchange_leverage(symbol)
                 if actual is None:
                     leverage_mismatch.labels(symbol=symbol).set(1)
+                    leverage_change_failures_total.labels(
+                        symbol=symbol, code="exchange_read_failed"
+                    ).inc()
                     result["failed"] += 1
                     symbol_results.append(
                         {"symbol": symbol, "target": target_leverage, "actual": None}

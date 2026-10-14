@@ -17,6 +17,7 @@ from contracts.order import OrderType, TradeOrder
 from contracts.signal import Signal
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
+from tradeengine.metrics import risk_checks_total
 
 
 @pytest.fixture
@@ -209,6 +210,56 @@ async def test_place_stop_loss_order_handles_failure(
 
     # Verify order was attempted
     assert mock_exchange.execute.called
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_validation_bypass_records_metric_and_original_price(
+    dispatcher_with_mocks, sample_filled_order, sample_fill_result, caplog
+):
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+        side_effect=RuntimeError("filter unavailable")
+    )
+    mock_exchange.execute.return_value = {
+        "status": "pending",
+        "order_id": "sl-bypass",
+    }
+    metric = risk_checks_total.labels(
+        check_type="sl_price_validation", result="bypassed", exchange="binance"
+    )
+    before = metric._value.get()
+
+    with caplog.at_level("WARNING"):
+        await dispatcher._place_stop_loss_order(sample_filled_order, sample_fill_result)
+
+    assert metric._value.get() - before == 1.0
+    assert mock_exchange.execute.call_args.args[0].stop_loss == 48000.0
+    assert "BTCUSDT" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_refusal_does_not_record_bypass_metric(
+    dispatcher_with_mocks, sample_filled_order, sample_fill_result, caplog
+):
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+        return_value=(False, None, "unreachable")
+    )
+    metric = risk_checks_total.labels(
+        check_type="sl_price_validation", result="bypassed", exchange="binance"
+    )
+    before = metric._value.get()
+
+    with caplog.at_level("ERROR"):
+        result = await dispatcher._place_stop_loss_order(
+            sample_filled_order, sample_fill_result
+        )
+
+    assert metric._value.get() - before == 0.0
+    assert result["status"] == "rejected"
+    assert result["reason"] == "sl_unreachable_within_filter"
+    assert "STOP LOSS REFUSED" in caplog.text
+    mock_exchange.execute.assert_not_called()
 
 
 # ============================================================================
@@ -521,6 +572,33 @@ async def test_place_take_profit_handles_exception(
 
     # Verify attempt was made
     assert mock_exchange.execute.called
+
+
+@pytest.mark.asyncio
+async def test_take_profit_validation_bypass_records_metric_and_original_price(
+    dispatcher_with_mocks, sample_filled_order, sample_fill_result, caplog
+):
+    dispatcher, mock_exchange = dispatcher_with_mocks
+    mock_exchange.validate_and_adjust_price_for_percent_filter = AsyncMock(
+        side_effect=RuntimeError("filter unavailable")
+    )
+    mock_exchange.execute.return_value = {
+        "status": "pending",
+        "order_id": "tp-bypass",
+    }
+    metric = risk_checks_total.labels(
+        check_type="tp_price_validation", result="bypassed", exchange="binance"
+    )
+    before = metric._value.get()
+
+    with caplog.at_level("WARNING"):
+        await dispatcher._place_take_profit_order(
+            sample_filled_order, sample_fill_result
+        )
+
+    assert metric._value.get() - before == 1.0
+    assert mock_exchange.execute.call_args.args[0].take_profit == 52000.0
+    assert "BTCUSDT" in caplog.text
 
 
 # ============================================================================

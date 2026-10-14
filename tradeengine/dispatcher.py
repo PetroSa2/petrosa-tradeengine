@@ -7011,6 +7011,11 @@ class Dispatcher:
                         adjusted_stop_loss = adjusted_price
                 except Exception as validation_error:
                     # Log validation error but continue (fail open)
+                    risk_checks_total.labels(
+                        check_type="sl_price_validation",
+                        result="bypassed",
+                        exchange=order.exchange,
+                    ).inc()
                     self.logger.warning(
                         f"Failed to validate stop loss price for {order.symbol}: {validation_error}. "
                         f"Proceeding with original price."
@@ -7154,6 +7159,11 @@ class Dispatcher:
                         adjusted_take_profit = adjusted_price
                 except Exception as validation_error:
                     # Log validation error but continue (fail open)
+                    risk_checks_total.labels(
+                        check_type="tp_price_validation",
+                        result="bypassed",
+                        exchange=order.exchange,
+                    ).inc()
                     self.logger.warning(
                         f"Failed to validate take profit price for {order.symbol}: {validation_error}. "
                         f"Proceeding with original price."

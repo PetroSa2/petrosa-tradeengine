@@ -57,6 +57,59 @@ async def test_dispatcher_initialization(dispatcher: Dispatcher) -> None:
 
 
 @pytest.mark.asyncio
+async def test_initialize_reconciles_with_client_initialized_after_construction() -> (
+    None
+):
+    exchange = Mock()
+    exchange.client = None
+    dispatcher = Dispatcher(exchange=exchange)
+    client = Mock()
+    client.futures_symbol_config.return_value = [{"symbol": "BTCUSDT", "leverage": 10}]
+    exchange.client = client
+    dispatcher.execution_observability.start = AsyncMock()
+    dispatcher.order_manager.initialize = AsyncMock()
+    dispatcher.position_manager.initialize = AsyncMock()
+    dispatcher.oco_manager.reconcile_from_exchange = AsyncMock()
+    dispatcher.protective_leg_manager.start = AsyncMock()
+
+    reconciliation = {}
+
+    original_reconcile = dispatcher.leverage_manager.reconcile_symbols
+
+    async def reconcile_and_capture(symbols: list[str], target_leverage: int):
+        result = await original_reconcile(symbols, target_leverage)
+        reconciliation.update(result)
+        return result
+
+    dispatcher.leverage_manager.reconcile_symbols = reconcile_and_capture
+    with (
+        patch(
+            "tradeengine.dispatcher.distributed_lock_manager.initialize",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "tradeengine.dispatcher.strategy_position_manager.initialize",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "tradeengine.dispatcher.asyncio.create_task",
+            side_effect=lambda coroutine: coroutine.close() or Mock(),
+        ),
+        patch("shared.constants.SUPPORTED_SYMBOLS", ["BTCUSDT"]),
+        patch("tradeengine.dispatcher.UserDataStreamConsumer") as consumer_class,
+        patch("tradeengine.dispatcher.StrategyPositionReconciler") as reconciler_class,
+        patch("tradeengine.services.data_manager_client.DataManagerClient"),
+        patch("tradeengine.services.exchange_daily_publisher.ExchangeDailyPublisher"),
+    ):
+        consumer_class.return_value.start = AsyncMock()
+        reconciler_class.return_value.start = AsyncMock()
+        await dispatcher.initialize()
+
+    client.futures_change_leverage.assert_called_once_with(symbol="BTCUSDT", leverage=1)
+    assert reconciliation["changed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_process_signal_success(
     dispatcher: Dispatcher, sample_signal: Signal
 ) -> None:

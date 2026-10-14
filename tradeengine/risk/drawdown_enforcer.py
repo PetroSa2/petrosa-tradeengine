@@ -302,6 +302,9 @@ async def check_and_emit(
         envelope_version=envelope_version,
         envelope_source=envelope_source,
     )
+    from tradeengine.metrics import set_drawdown_breach_active
+
+    set_drawdown_breach_active(strategy_id, breach is not None)
     if breach is not None:
         await emitter.emit(breach)
     return breach

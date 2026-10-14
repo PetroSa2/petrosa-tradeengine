@@ -42,6 +42,8 @@ from tradeengine.metrics import (
     entry_fill_unknown_fee_total,
     exchange_truth_shadow_delta_total,
     otel_algo_orders_open,
+    otel_realized_loss_usd,
+    otel_risk_at_stop_usd,
     portfolio_exposure_cap_ratio,
     portfolio_exposure_ratio,
     position_close_persist_failures_total,
@@ -56,6 +58,8 @@ from tradeengine.metrics import (
     positions_losing_total,
     positions_opened_total,
     positions_winning_total,
+    realized_loss_usd,
+    risk_at_stop_usd,
     total_daily_pnl_usd,
     total_position_value_usd,
     total_realized_pnl_usd,
@@ -1492,6 +1496,29 @@ class PositionManager:
             entry_commission = position_data.get("commission_total") or 0.0
             final_commission = position_data.get("final_commission") or 0.0
             total_commission = entry_commission + final_commission
+
+            if position_data.get("status") == "closed" and pnl_after_fees is not None:
+                labels = {
+                    "strategy_id": strategy_id,
+                    "symbol": symbol,
+                    "exchange": exchange,
+                }
+                entry_price_decimal = _decimal(position_data.get("entry_price"))
+                stop_price = position_data.get("stop_loss_price")
+                quantity = _decimal(
+                    position_data.get(
+                        "entry_quantity", position_data.get("quantity", 0.0)
+                    )
+                )
+                stop_risk = (
+                    abs(entry_price_decimal - _decimal(stop_price)) * quantity
+                    if stop_price is not None
+                    else Decimal("0")
+                )
+                realized_loss_usd.labels(**labels).set(float(pnl_after_fees))
+                risk_at_stop_usd.labels(**labels).set(float(stop_risk))
+                otel_realized_loss_usd.set(float(pnl_after_fees), labels)
+                otel_risk_at_stop_usd.set(float(stop_risk), labels)
 
             # Increment position closed counter
             positions_closed_total.labels(

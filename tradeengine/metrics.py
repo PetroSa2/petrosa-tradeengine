@@ -516,6 +516,24 @@ risk_at_stop_total = Gauge(
     "Planned stop risk for open orders and positions",
 )
 
+drawdown_breach_active = Gauge(
+    "tradeengine_drawdown_breach_active",
+    "1 while a strategy drawdown breach is active, otherwise 0",
+    ["strategy_id"],
+)
+
+realized_loss_usd = Gauge(
+    "tradeengine_realized_loss_usd",
+    "Realized P&L in USD for the most recently closed trade",
+    ["strategy_id", "symbol", "exchange"],
+)
+
+risk_at_stop_usd = Gauge(
+    "tradeengine_risk_at_stop_usd",
+    "Planned stop risk in USD for the most recently closed trade",
+    ["strategy_id", "symbol", "exchange"],
+)
+
 margin_shortfall_usd_total = Counter(
     "tradeengine_margin_shortfall_usd_total",
     "USD margin shortfall observed before order submission",
@@ -896,6 +914,18 @@ otel_risk_checks = meter.create_counter(
     "tradeengine_risk_checks_total",
     description="Total risk checks performed (OTLP dual-export)",
 )
+otel_drawdown_breach_active = meter.create_gauge(
+    "tradeengine_drawdown_breach_active",
+    description="1 while a strategy drawdown breach is active, otherwise 0 (OTLP dual-export)",
+)
+otel_realized_loss_usd = meter.create_gauge(
+    "tradeengine_realized_loss_usd",
+    description="Realized P&L in USD for the most recently closed trade (OTLP dual-export)",
+)
+otel_risk_at_stop_usd = meter.create_gauge(
+    "tradeengine_risk_at_stop_usd",
+    description="Planned stop risk in USD for the most recently closed trade (OTLP dual-export)",
+)
 
 # #448 — position persist failures (OTLP dual-export)
 otel_position_persist_failed = meter.create_counter(
@@ -958,6 +988,14 @@ otel_execution_halt_active = meter.create_gauge(
     "petrosa_tradeengine_execution_halt_active",
     description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
 )
+
+
+def set_drawdown_breach_active(strategy_id: str, active: bool) -> None:
+    """Update both exports for the current per-strategy breach state."""
+    value = 1 if active else 0
+    drawdown_breach_active.labels(strategy_id=strategy_id).set(value)
+    otel_drawdown_breach_active.set(value, {"strategy_id": strategy_id})
+
 
 # #651 — protective-leg lifecycle (OTLP dual-export).
 otel_protective_fill_inversion = meter.create_counter(

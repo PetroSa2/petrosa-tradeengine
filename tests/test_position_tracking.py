@@ -259,6 +259,45 @@ async def test_closed_metrics_skip_unknown_reconciler_values():
 
 
 @pytest.mark.asyncio
+async def test_closed_metrics_export_realized_loss_and_risk_at_stop_pair():
+    position_manager = PositionManager()
+    position_data = {
+        "position_id": "closed-position-789",
+        "strategy_id": "strategy-123",
+        "symbol": "BTCUSDT",
+        "position_side": "LONG",
+        "exchange": "binance",
+        "status": "closed",
+        "close_reason": "stop_loss",
+        "pnl_after_fees": -650.0,
+        "pnl_pct": -0.013,
+        "duration_seconds": 10,
+        "entry_price": 50000.0,
+        "entry_quantity": 0.1,
+        "stop_loss_price": 43500.0,
+        "exit_price": 43500.0,
+        "commission_total": 0.0,
+        "final_commission": 0.0,
+    }
+
+    with (
+        patch("tradeengine.position_manager.realized_loss_usd") as loss,
+        patch("tradeengine.position_manager.risk_at_stop_usd") as risk,
+        patch("tradeengine.position_manager.otel_realized_loss_usd") as otel_loss,
+        patch("tradeengine.position_manager.otel_risk_at_stop_usd") as otel_risk,
+    ):
+        await position_manager._export_position_closed_metrics(position_data)
+
+    labels = {"strategy_id": "strategy-123", "symbol": "BTCUSDT", "exchange": "binance"}
+    loss.labels.assert_called_once_with(**labels)
+    loss.labels.return_value.set.assert_called_once_with(-650.0)
+    risk.labels.assert_called_once_with(**labels)
+    risk.labels.return_value.set.assert_called_once_with(650.0)
+    otel_loss.set.assert_called_once_with(-650.0, labels)
+    otel_risk.set.assert_called_once_with(650.0, labels)
+
+
+@pytest.mark.asyncio
 async def test_mysql_position_persistence():
     """Test MySQL position persistence"""
     from shared.mysql_client import position_client

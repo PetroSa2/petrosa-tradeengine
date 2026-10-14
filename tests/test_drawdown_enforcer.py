@@ -194,6 +194,24 @@ def test_check_and_emit_fires_when_breach_detected(
     assert len(nc.published) == 1
 
 
+def test_check_and_emit_sets_active_gauge_for_breach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gauge = MagicMock()
+    monkeypatch.setattr("tradeengine.metrics.drawdown_breach_active", gauge)
+    monkeypatch.setattr("tradeengine.metrics.otel_drawdown_breach_active", MagicMock())
+    asyncio.run(
+        check_and_emit(
+            strategy_id="momentum-v3",
+            observed_drawdown_pct=10.0,
+            emitter=DrawdownBreachEmitter(),
+            envelope_value_pct=5.0,
+        )
+    )
+    gauge.labels.assert_called_once_with(strategy_id="momentum-v3")
+    gauge.labels.return_value.set.assert_called_once_with(1)
+
+
 def test_check_and_emit_skips_emission_when_no_breach() -> None:
     nc = _FakeNatsClient()
     publisher = _FakeAlertPublisher(nc=nc)
@@ -208,6 +226,34 @@ def test_check_and_emit_skips_emission_when_no_breach() -> None:
     )
     assert breach is None
     assert nc.published == []
+
+
+def test_check_and_emit_clears_active_gauge_after_breach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gauge = MagicMock()
+    monkeypatch.setattr("tradeengine.metrics.drawdown_breach_active", gauge)
+    monkeypatch.setattr("tradeengine.metrics.otel_drawdown_breach_active", MagicMock())
+    asyncio.run(
+        check_and_emit(
+            strategy_id="momentum-v3",
+            observed_drawdown_pct=10.0,
+            emitter=DrawdownBreachEmitter(),
+            envelope_value_pct=5.0,
+        )
+    )
+    asyncio.run(
+        check_and_emit(
+            strategy_id="momentum-v3",
+            observed_drawdown_pct=3.0,
+            emitter=DrawdownBreachEmitter(),
+            envelope_value_pct=5.0,
+        )
+    )
+    assert [call.args[0] for call in gauge.labels.return_value.set.call_args_list] == [
+        1,
+        0,
+    ]
 
 
 def test_check_and_emit_falls_back_to_stub_envelope_source(

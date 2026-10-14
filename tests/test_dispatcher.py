@@ -1007,6 +1007,7 @@ async def test_apply_order_leverage_warns_and_records_missing_exchange_client(
     assert result is True
     assert "BTCUSDT" in caplog.text
     assert "target=1x actual=unknown" in caplog.text
+    assert leverage_mismatch.labels(symbol="BTCUSDT")._value.get() == 1
     assert failures._value.get() == before + 1
 
 

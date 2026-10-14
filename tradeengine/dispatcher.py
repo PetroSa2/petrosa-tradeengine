@@ -45,6 +45,7 @@ from tradeengine.metrics import (
     close_qty_clamped_total,
     dispatcher_thrash_circuit_open_total,
     leverage_change_failures_total,
+    leverage_mismatch,
     maker_entry_post_only_rejection_total,
     maker_entry_unfilled_total,
     margin_shortfall_usd_total,
@@ -3655,6 +3656,7 @@ class Dispatcher:
                 order.symbol,
                 target_leverage,
             )
+            leverage_mismatch.labels(symbol=order.symbol).set(1)
             leverage_change_failures_total.labels(
                 symbol=order.symbol, code="no_client"
             ).inc()

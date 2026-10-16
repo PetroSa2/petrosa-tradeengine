@@ -115,7 +115,7 @@ async def test_narrower_scopes_override_the_global_value():
 
 
 @pytest.mark.asyncio
-async def test_a_real_failure_is_still_logged_and_returns_none(caplog):
+async def test_a_real_failure_is_still_logged_and_raised(caplog):
     with patch("tradeengine.db.mongodb_client.DataManagerClient") as manager:
         manager.return_value._client.query = AsyncMock(
             side_effect=RuntimeError("data-manager down")
@@ -123,6 +123,7 @@ async def test_a_real_failure_is_still_logged_and_returns_none(caplog):
         client = DataManagerConfigClient()
 
     with caplog.at_level(logging.ERROR):
-        assert await client.get_global_config() is None
+        with pytest.raises(RuntimeError, match="data-manager down"):
+            await client.get_global_config()
 
     assert "Failed to get global config from Data Manager" in caplog.text

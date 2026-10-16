@@ -73,7 +73,8 @@ async def test_create_position_record(sample_order, sample_result):
 @pytest.mark.asyncio
 async def test_position_side_determination():
     """Test that position side is correctly determined from order action"""
-    from contracts.signal import Signal
+    from petrosa_contracts import Signal
+
     from tradeengine.dispatcher import Dispatcher
 
     dispatcher = Dispatcher()

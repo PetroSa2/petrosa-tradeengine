@@ -9,15 +9,15 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from prometheus_client import REGISTRY
-
-from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
-from contracts.signal import (
+from petrosa_contracts import (
     OrderType as SignalOrderType,
     Signal,
     SignalStrength,
     StrategyMode,
 )
+from prometheus_client import REGISTRY
+
+from contracts.order import OrderSide, OrderStatus, OrderType, TradeOrder
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 

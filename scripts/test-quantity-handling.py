@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 
-from contracts.signal import SignalStrength, SignalType
+from petrosa_contracts import SignalStrength, SignalType
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +44,7 @@ def test_signal_quantity_validation() -> bool:
     logger.info("🔍 Testing Signal quantity validation...")
 
     try:
-        from contracts.signal import Signal
+        from petrosa_contracts import Signal
 
         test_cases = [
             {
@@ -240,7 +240,8 @@ async def test_dispatcher_quantity_handling() -> None:
     logger.info("🔍 Testing dispatcher quantity handling...")
 
     try:
-        from contracts.signal import Signal
+        from petrosa_contracts import Signal
+
         from tradeengine.dispatcher import Dispatcher
 
         # Create dispatcher

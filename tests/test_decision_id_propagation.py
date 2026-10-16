@@ -6,8 +6,8 @@ from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from petrosa_contracts import Signal
 
-from contracts.signal import Signal
 from shared.constants import UTC
 
 try:

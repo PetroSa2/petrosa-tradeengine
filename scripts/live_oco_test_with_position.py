@@ -15,8 +15,9 @@ import logging
 import sys
 import time
 
+from petrosa_contracts import OrderType, TimeInForce
+
 from contracts.order import TradeOrder
-from contracts.signal import OrderType, TimeInForce
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange
 

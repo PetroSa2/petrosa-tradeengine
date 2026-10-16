@@ -520,7 +520,7 @@ class BinanceExchange:
 
 ```python
 from fastapi import FastAPI, HTTPException
-from contracts.signal import Signal
+from petrosa_contracts import Signal
 from contracts.order import TradeOrder
 
 app = FastAPI(title="Petrosa Trade Engine")

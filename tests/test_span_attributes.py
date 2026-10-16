@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from opentelemetry import trace
+from petrosa_contracts import Signal
 
 from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
 from shared.constants import UTC
 from tradeengine.api import app
 from tradeengine.consumer import SignalConsumer

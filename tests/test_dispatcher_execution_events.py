@@ -12,9 +12,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from petrosa_contracts import Signal
 
 from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
 from shared.constants import UTC
 
 

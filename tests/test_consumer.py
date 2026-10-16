@@ -14,8 +14,9 @@ from shared.constants import UTC
 # module-level constant that is always fresh (< max_signal_age_seconds).
 _RECENT_TS = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
 
+from petrosa_contracts import Signal  # noqa: E402
+
 from contracts.order import TradeOrder  # noqa: E402
-from contracts.signal import Signal  # noqa: E402
 from tradeengine.consumer import SignalConsumer  # noqa: E402
 
 

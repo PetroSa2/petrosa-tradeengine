@@ -6,8 +6,9 @@ This shows how to use the various enums and constants defined in the system.
 
 from typing import Any
 
+from petrosa_contracts import SignalType
+
 from contracts.order import OrderSide, OrderStatus, OrderType
-from contracts.signal import SignalType
 
 
 def demonstrate_signal_types() -> None:

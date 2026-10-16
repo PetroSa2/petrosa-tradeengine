@@ -1,13 +1,11 @@
 """
-Comprehensive tests for contracts/signal.py to increase coverage
+Comprehensive tests for the canonical signal contract to increase coverage
 """
 
 from datetime import datetime
 
 import pytest
-from pydantic import ValidationError
-
-from contracts.signal import (
+from petrosa_contracts import (
     OrderType,
     Signal,
     SignalStrength,
@@ -16,6 +14,8 @@ from contracts.signal import (
     TimeFrame,
     TimeInForce,
 )
+from pydantic import ValidationError
+
 from shared.constants import UTC
 
 

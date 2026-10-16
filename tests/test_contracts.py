@@ -1,14 +1,16 @@
 import pytest
 from petrosa_contracts import (
+    LeverageStatus,
     LeverageStatus as CanonicalLeverageStatus,
+    Signal,
+    TradingConfig,
     TradingConfig as CanonicalTradingConfig,
+    TradingConfigAudit,
     TradingConfigAudit as CanonicalTradingConfigAudit,
 )
 from pydantic import ValidationError
 
 from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import Signal
-from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 
 
@@ -96,6 +98,27 @@ def test_signal_leverage_field_accepts_cio_decision() -> None:
         leverage=3,
     )
     assert signal.leverage == 3
+
+
+def test_signal_round_trip_preserves_decision_and_leverage() -> None:
+    signal = Signal(
+        strategy_id="test-strategy-1",
+        symbol="BTCUSDT",
+        action="buy",
+        confidence=0.8,
+        price=45000.0,
+        quantity=0.1,
+        current_price=45000.0,
+        source="petrosa-cio",
+        strategy="test-strategy",
+        decision_id="decision-123",
+        leverage=3,
+    )
+
+    round_tripped = Signal.model_validate_json(signal.model_dump_json())
+
+    assert round_tripped.decision_id == "decision-123"
+    assert round_tripped.leverage == 3
 
 
 def test_signal_leverage_defaults_to_none() -> None:

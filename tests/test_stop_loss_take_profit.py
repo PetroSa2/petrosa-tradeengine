@@ -12,9 +12,9 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from petrosa_contracts import Signal
 
 from contracts.order import OrderType, TradeOrder
-from contracts.signal import Signal
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.metrics import risk_checks_total

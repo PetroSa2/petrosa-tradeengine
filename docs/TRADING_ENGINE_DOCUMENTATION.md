@@ -6,7 +6,7 @@ The Petrosa Trading Engine is a **multi-strategy signal aggregation and intellig
 
 ## 📋 Today's Major Changes
 
-### 1. **Enhanced Signal Model** (`contracts/signal.py`)
+### 1. **Enhanced Signal Model** (`petrosa_contracts.Signal`)
 - **Advanced Signal Structure**: Added support for all Binance order types and advanced trading features
 - **Strategy Modes**: Three distinct processing modes (deterministic, ML light, LLM reasoning)
 - **Risk Management**: Built-in stop loss, take profit, and position sizing

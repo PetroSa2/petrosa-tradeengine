@@ -17,9 +17,9 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from petrosa_contracts import Signal, StrategyMode, TimeInForce
 
 from contracts.order import OrderSide, OrderType, TradeOrder
-from contracts.signal import Signal, StrategyMode, TimeInForce
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 

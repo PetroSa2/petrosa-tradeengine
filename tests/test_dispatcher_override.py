@@ -2,8 +2,8 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from petrosa_contracts import Signal, StrategyMode
 
-from contracts.signal import Signal, StrategyMode
 from tradeengine.dispatcher import Dispatcher
 
 

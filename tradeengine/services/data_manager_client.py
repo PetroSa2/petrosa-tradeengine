@@ -570,7 +570,9 @@ class DataManagerClient:
                 limit=1,
             )
 
-            if result.get("data") and len(result["data"]) > 0:
+            if result is None or "data" not in result:
+                raise APIError("Data Manager returned no global config response")
+            if result["data"]:
                 doc = result["data"][0]
                 doc["id"] = str(doc.pop("_id", ""))
                 return TradingConfig(**doc)
@@ -578,7 +580,7 @@ class DataManagerClient:
 
         except Exception as e:
             self._logger.error(f"Error fetching global config: {e}")
-            return None
+            raise
 
     async def set_global_config(self, config: TradingConfig) -> bool:
         """Set global trading configuration."""
@@ -630,7 +632,9 @@ class DataManagerClient:
                 limit=1,
             )
 
-            if result.get("data") and len(result["data"]) > 0:
+            if result is None or "data" not in result:
+                raise APIError(f"Data Manager returned no config response for {symbol}")
+            if result["data"]:
                 doc = result["data"][0]
                 doc["id"] = str(doc.pop("_id", ""))
                 return TradingConfig(**doc)
@@ -638,7 +642,7 @@ class DataManagerClient:
 
         except Exception as e:
             self._logger.error(f"Error fetching symbol config for {symbol}: {e}")
-            return None
+            raise
 
     async def set_symbol_config(self, config: TradingConfig) -> bool:
         """Set symbol-specific trading configuration."""
@@ -695,7 +699,11 @@ class DataManagerClient:
                 limit=1,
             )
 
-            if result.get("data") and len(result["data"]) > 0:
+            if result is None or "data" not in result:
+                raise APIError(
+                    f"Data Manager returned no config response for {symbol}-{side}"
+                )
+            if result["data"]:
                 doc = result["data"][0]
                 doc["id"] = str(doc.pop("_id", ""))
                 return TradingConfig(**doc)
@@ -705,7 +713,7 @@ class DataManagerClient:
             self._logger.error(
                 f"Error fetching symbol-side config for {symbol}-{side}: {e}"
             )
-            return None
+            raise
 
     async def set_symbol_side_config(self, config: TradingConfig) -> bool:
         """Set symbol-side-specific trading configuration."""

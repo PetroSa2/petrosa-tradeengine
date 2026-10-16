@@ -205,7 +205,7 @@ class TradingConfigManager:
 
         except Exception as e:
             logger.error(f"Error resolving config: {e}")
-            # Fall back to defaults
+            raise
 
         # Update cache
         self._cache[cache_key] = (resolved_params, time.time())

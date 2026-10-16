@@ -363,9 +363,8 @@ class TestTradingConfigManagerGetConfig:
             side_effect=Exception("DB error")
         )
 
-        # Should fall back to defaults
-        config = await config_manager.get_config()
-        assert isinstance(config, dict)
+        with pytest.raises(Exception, match="DB error"):
+            await config_manager.get_config()
 
     @pytest.mark.asyncio
     async def test_get_config_with_mongodb_not_connected(

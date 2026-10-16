@@ -44,9 +44,8 @@ class TestDataManagerClientBasic:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            config = await data_manager_client.get_global_config()
-            # Should return None on error
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_global_config()
 
     @pytest.mark.asyncio
     async def test_get_symbol_config(self, data_manager_client):
@@ -64,9 +63,8 @@ class TestDataManagerClientBasic:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            config = await data_manager_client.get_symbol_config("BTCUSDT")
-            # Should return None on error
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_symbol_config("BTCUSDT")
 
     @pytest.mark.asyncio
     async def test_health_check(self, data_manager_client):
@@ -334,8 +332,8 @@ class TestDataManagerClientConfigManagement:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            config = await data_manager_client.get_symbol_side_config("BTCUSDT", "LONG")
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_symbol_side_config("BTCUSDT", "LONG")
 
     @pytest.mark.asyncio
     async def test_set_symbol_side_config(self, data_manager_client):

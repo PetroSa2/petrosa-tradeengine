@@ -66,13 +66,15 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError("Data Manager returned no global config response")
+            if response.get("data"):
                 return _config_from_document(response["data"][0], "global")
             return None
 
         except Exception as e:
             logger.error(f"Failed to get global config from Data Manager: {e}")
-            return None
+            raise
 
     async def upsert_global_config(self, config: TradingConfig) -> bool:
         """
@@ -126,7 +128,9 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError(f"Data Manager returned no config response for {symbol}")
+            if response.get("data"):
                 return _config_from_document(response["data"][0], symbol)
             return None
 
@@ -134,7 +138,7 @@ class DataManagerConfigClient:
             logger.error(
                 f"Failed to get symbol config for {symbol} from Data Manager: {e}"
             )
-            return None
+            raise
 
     async def upsert_symbol_config(self, symbol: str, config: TradingConfig) -> bool:
         """
@@ -317,7 +321,11 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError(
+                    f"Data Manager returned no audit record response for {audit_id}"
+                )
+            if response.get("data"):
                 return response["data"][0]
             return None
 
@@ -325,7 +333,7 @@ class DataManagerConfigClient:
             logger.error(
                 f"Failed to get audit record {audit_id} from Data Manager: {e}"
             )
-            return None
+            raise
 
     async def get_audit_record_by_version(
         self,
@@ -364,7 +372,11 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError(
+                    f"Data Manager returned no audit version response for {version}"
+                )
+            if response.get("data"):
                 return response["data"][0]
             return None
 
@@ -372,7 +384,7 @@ class DataManagerConfigClient:
             logger.error(
                 f"Failed to get version {version} for {config_type} from Data Manager: {e}"
             )
-            return None
+            raise
 
     async def get_config_history(
         self, symbol: str | None = None, side: str | None = None, limit: int = 20
@@ -411,7 +423,11 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError(
+                    f"Data Manager returned no config response for {symbol}-{side}"
+                )
+            if response.get("data"):
                 return _config_from_document(response["data"][0], f"{symbol}:{side}")
             return None
 
@@ -419,7 +435,7 @@ class DataManagerConfigClient:
             logger.error(
                 f"Failed to get symbol-side config for {symbol}-{side} from Data Manager: {e}"
             )
-            return None
+            raise
 
     async def set_global_config(self, config: TradingConfig) -> bool:
         """
@@ -551,12 +567,16 @@ class DataManagerConfigClient:
                 limit=1,
             )
 
-            if response and response.get("data"):
+            if response is None:
+                raise APIError(
+                    f"Data Manager returned no strategy config response for {strategy_id}"
+                )
+            if response.get("data"):
                 return _config_from_document(response["data"][0], strategy_id)
             return None
         except Exception as e:
             logger.error(f"Failed to get strategy config: {e}")
-            return None
+            raise
 
     async def upsert_strategy_config(self, config: TradingConfig) -> bool:
         """

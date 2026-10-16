@@ -131,8 +131,8 @@ class TestDataManagerConfigClientGlobalConfig:
         ) as mock_query:
             mock_query.side_effect = Exception("Connection error")
 
-            config = await mongodb_client.get_global_config()
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_global_config()
 
     @pytest.mark.asyncio
     async def test_upsert_global_config(self, mongodb_client):
@@ -295,8 +295,8 @@ class TestDataManagerConfigClientSymbolConfig:
         ) as mock_query:
             mock_query.side_effect = Exception("Connection error")
 
-            config = await mongodb_client.get_symbol_config("BTCUSDT")
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_symbol_config("BTCUSDT")
 
     @pytest.mark.asyncio
     async def test_upsert_symbol_config(self, mongodb_client):
@@ -485,8 +485,8 @@ class TestDataManagerConfigClientSymbolSideConfig:
         ) as mock_query:
             mock_query.side_effect = Exception("Connection error")
 
-            config = await mongodb_client.get_symbol_side_config("BTCUSDT", "LONG")
-            assert config is None
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_symbol_side_config("BTCUSDT", "LONG")
 
     @pytest.mark.asyncio
     async def test_set_symbol_side_config(self, mongodb_client):
@@ -755,6 +755,30 @@ class TestDataManagerConfigClientAuditTrail:
             with pytest.raises(Exception, match="no audit trail response"):
                 await mongodb_client.get_audit_trail()
 
+    @pytest.mark.asyncio
+    async def test_get_audit_record_by_id_preserves_empty_success_and_raises_errors(
+        self, mongodb_client
+    ):
+        with patch.object(
+            mongodb_client.data_manager_client._client, "query", new_callable=AsyncMock
+        ) as mock_query:
+            mock_query.return_value = {"data": []}
+            assert await mongodb_client.get_audit_record_by_id("missing") is None
+
+            mock_query.side_effect = Exception("Connection error")
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_audit_record_by_id("missing")
+
+    @pytest.mark.asyncio
+    async def test_get_audit_record_by_version_raises_errors(self, mongodb_client):
+        with patch.object(
+            mongodb_client.data_manager_client._client, "query", new_callable=AsyncMock
+        ) as mock_query:
+            mock_query.side_effect = Exception("Connection error")
+
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_audit_record_by_version(1, "global")
+
 
 class TestDataManagerConfigClientStrategyConfig:
     """Test strategy-specific configuration methods."""
@@ -781,6 +805,16 @@ class TestDataManagerConfigClientStrategyConfig:
             config = await mongodb_client.get_strategy_config("momentum")
             assert config is not None
             assert config.strategy_id == "momentum"
+
+    @pytest.mark.asyncio
+    async def test_get_strategy_config_with_error(self, mongodb_client):
+        with patch.object(
+            mongodb_client.data_manager_client._client, "query", new_callable=AsyncMock
+        ) as mock_query:
+            mock_query.side_effect = Exception("Connection error")
+
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_strategy_config("momentum")
 
     @pytest.mark.asyncio
     async def test_upsert_strategy_config_requires_strategy_id(self, mongodb_client):

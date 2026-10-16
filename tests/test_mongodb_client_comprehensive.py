@@ -6,8 +6,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from petrosa_contracts import TradingConfig, TradingConfigAudit
 
-from contracts.trading_config import TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 from tradeengine.db.mongodb_client import DataManagerConfigClient
 

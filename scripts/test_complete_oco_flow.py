@@ -14,13 +14,14 @@ import logging
 import sys
 from datetime import datetime
 
-from contracts.signal import (
+from petrosa_contracts import (
     OrderType,
     Signal,
     SignalStrength,
     StrategyMode,
     TimeInForce,
 )
+
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange.binance import BinanceFuturesExchange

@@ -17,7 +17,8 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from contracts.signal import Signal  # noqa: E402
+from petrosa_contracts import Signal  # noqa: E402
+
 from tradeengine.dispatcher import Dispatcher  # noqa: E402
 from tradeengine.exchange import BinanceExchange  # noqa: E402
 from tradeengine.strategy_position_manager import strategy_position_manager

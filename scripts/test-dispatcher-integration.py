@@ -21,8 +21,9 @@ from shared.constants import UTC
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
+    from petrosa_contracts import Signal, StrategyMode, TimeInForce
+
     from contracts.order import OrderType
-    from contracts.signal import Signal, StrategyMode, TimeInForce
     from tradeengine.dispatcher import Dispatcher
     from tradeengine.exchange.binance import BinanceFuturesExchange
 except ImportError as e:

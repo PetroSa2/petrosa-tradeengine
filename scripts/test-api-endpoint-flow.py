@@ -11,7 +11,8 @@ import sys
 from datetime import datetime
 from typing import Any
 
-from contracts.signal import SignalStrength, SignalType
+from petrosa_contracts import SignalStrength, SignalType
+
 from shared.constants import UTC
 
 # Configure logging
@@ -138,7 +139,8 @@ async def test_api_endpoint_flow() -> bool:
 
     try:
         # Import the API components
-        from contracts.signal import Signal
+        from petrosa_contracts import Signal
+
         from tradeengine.api import binance_exchange
 
         # Create test signal
@@ -168,7 +170,8 @@ async def test_signal_processing() -> bool:
     logger.info("🔍 Testing signal processing through dispatcher...")
 
     try:
-        from contracts.signal import Signal
+        from petrosa_contracts import Signal
+
         from tradeengine.dispatcher import Dispatcher
 
         # Create dispatcher

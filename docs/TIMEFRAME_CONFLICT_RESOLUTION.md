@@ -93,7 +93,7 @@ The system also supports traditional conflict resolution strategies:
 All signals now include a required `timeframe` field:
 
 ```python
-from contracts.signal import Signal, TimeFrame
+from petrosa_contracts import Signal, TimeFrame
 
 signal = Signal(
     strategy_id="my_strategy",
@@ -186,7 +186,7 @@ data:
 
 ```python
 import asyncio
-from contracts.signal import Signal, TimeFrame, StrategyMode
+from petrosa_contracts import Signal, TimeFrame, StrategyMode
 
 # Create conflicting signals
 signal_1m = Signal(

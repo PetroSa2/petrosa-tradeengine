@@ -311,7 +311,8 @@ async def test_emit_from_order_includes_rejection_fields_in_extra() -> None:
 async def test_emit_from_signal_includes_rejection_fields_in_extra() -> None:
     """When `rejection_source` is passed, `_emit_execution_event_from_signal`
     must include it (plus the reason + rejected_at) in extra."""
-    from contracts.signal import Signal
+    from petrosa_contracts import Signal
+
     from tradeengine.dispatcher import Dispatcher
 
     d = Dispatcher.__new__(Dispatcher)
@@ -364,7 +365,8 @@ async def test_emit_from_signal_includes_rejection_fields_in_extra() -> None:
 async def test_emit_from_signal_without_rejection_source_unchanged() -> None:
     """When no rejection_source is provided, the helper behaves exactly as
     before — no rejection fields leak into extra (back-compat)."""
-    from contracts.signal import Signal
+    from petrosa_contracts import Signal
+
     from tradeengine.dispatcher import Dispatcher
 
     d = Dispatcher.__new__(Dispatcher)

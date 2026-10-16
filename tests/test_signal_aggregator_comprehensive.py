@@ -3,9 +3,9 @@ Comprehensive tests for tradeengine/signal_aggregator.py to increase coverage
 """
 
 import pytest
+from petrosa_contracts import Signal, SignalStrength, StrategyMode, TimeInForce
 
 from contracts.order import OrderType
-from contracts.signal import Signal, SignalStrength, StrategyMode, TimeInForce
 from shared.constants import UTC
 from tradeengine.signal_aggregator import SignalAggregator
 

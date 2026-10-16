@@ -10,7 +10,7 @@ The subscription subject is defined by the `NATS_TOPIC_SIGNALS` environment vari
 If configured as a literal string without a wildcard (e.g., `signals.trading`), the engine will silently ignore all signals published to sub-topics like `signals.trading.rsi_reversal`.
 
 ### Signal Payload Schema
-The engine expects incoming NATS messages to be JSON-encoded representations of the `Signal` Pydantic model (`contracts/signal.py`).
+The engine expects incoming NATS messages to be JSON-encoded representations of the canonical `petrosa_contracts.Signal` Pydantic model.
 
 A valid organic trade signal must include the following mandatory fields at a minimum:
 *   `strategy_id` (str): Unique identifier for the strategy.

@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from petrosa_contracts import Signal  # noqa: E402
 
-from contracts.signal import Signal  # noqa: E402
 from shared.constants import UTC  # noqa: E402
 from tradeengine.consumer import SignalConsumer  # noqa: E402
 from tradeengine.dispatcher import Dispatcher  # noqa: E402

@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 
-from contracts.signal import SignalStrength, SignalType
+from petrosa_contracts import SignalStrength, SignalType
 
 # Configure logging
 logging.basicConfig(
@@ -230,7 +230,8 @@ async def test_dispatcher_minimum_amounts() -> None:
     logger.info("🔍 Testing dispatcher minimum amount calculation...")
 
     try:
-        from contracts.signal import Signal
+        from petrosa_contracts import Signal
+
         from tradeengine.dispatcher import Dispatcher
 
         # Create dispatcher

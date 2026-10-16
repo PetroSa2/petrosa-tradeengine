@@ -15,7 +15,8 @@ mock_binance.exceptions = MagicMock()
 sys.modules["binance"] = mock_binance
 sys.modules["binance.exceptions"] = mock_binance.exceptions
 
-from contracts.trading_config import LeverageStatus  # noqa: E402
+from petrosa_contracts import LeverageStatus  # noqa: E402
+
 from tradeengine.leverage_manager import LeverageManager  # noqa: E402
 
 
@@ -58,7 +59,7 @@ class TestLeverageManagerBasic:
     @pytest.mark.asyncio
     async def test_get_leverage_status_from_cache(self, leverage_manager):
         """Test getting leverage status from cache"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status = LeverageStatus(
             id=None,
@@ -82,7 +83,7 @@ class TestLeverageManagerBasic:
         self, leverage_manager, mock_mongodb_client
     ):
         """Test getting leverage status from database"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status = LeverageStatus(
             id=None,
@@ -113,7 +114,7 @@ class TestLeverageManagerBasic:
         self, leverage_manager, mock_binance_client
     ):
         """Test ensure_leverage when leverage is already correct"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status = LeverageStatus(
             id=None,
@@ -242,7 +243,7 @@ class TestLeverageManagerBasic:
         self, leverage_manager, mock_mongodb_client, mock_binance_client
     ):
         """Test sync_all_leverage successful operation"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status1 = LeverageStatus(
             id=None,
@@ -286,8 +287,7 @@ class TestLeverageManagerBasic:
     ):
         """Test ensure_leverage successful leverage change"""
         from binance.exceptions import BinanceAPIException
-
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         leverage_manager.binance_client = mock_binance_client
         leverage_manager.mongodb_client = mock_mongodb_client
@@ -306,7 +306,7 @@ class TestLeverageManagerBasic:
     async def test_ensure_leverage_refreshes_uncertain_cache(
         self, leverage_manager, mock_binance_client
     ):
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         leverage_manager.binance_client = mock_binance_client
         leverage_manager.get_leverage_status = AsyncMock(
@@ -457,7 +457,7 @@ class TestLeverageManagerBasic:
         self, leverage_manager, mock_mongodb_client, mock_binance_client
     ):
         """Test sync_all_leverage with some failures"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status1 = LeverageStatus(
             id=None,
@@ -604,7 +604,7 @@ class TestLeverageManagerBasic:
         self, leverage_manager, mock_mongodb_client, mock_binance_client
     ):
         """Test sync_all_leverage with some failures"""
-        from contracts.trading_config import LeverageStatus
+        from petrosa_contracts import LeverageStatus
 
         status1 = LeverageStatus(
             id=None,

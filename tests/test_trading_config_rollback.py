@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from petrosa_contracts import TradingConfig, TradingConfigAudit
 
-from contracts.trading_config import TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 from tradeengine.api_config_routes import router, set_config_manager
 from tradeengine.config_manager import TradingConfigManager

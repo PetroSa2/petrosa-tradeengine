@@ -12,9 +12,9 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from petrosa_contracts import Signal, SignalStrength, SignalType, StrategyMode
 
 from contracts.order import TradeOrder
-from contracts.signal import Signal, SignalStrength, SignalType, StrategyMode
 from shared.constants import UTC
 from tests.integration.fakes import FakeExchange, FakePositionManager
 from tradeengine.dispatcher import Dispatcher

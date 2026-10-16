@@ -11,9 +11,9 @@ This module tests the critical fixes for hedge mode support:
 from datetime import datetime
 
 import pytest
+from petrosa_contracts import OrderType, Signal, SignalStrength, TimeInForce
 
 from contracts.order import TradeOrder
-from contracts.signal import OrderType, Signal, SignalStrength, TimeInForce
 from shared.constants import UTC
 from tradeengine.position_manager import PositionManager
 from tradeengine.signal_aggregator import (

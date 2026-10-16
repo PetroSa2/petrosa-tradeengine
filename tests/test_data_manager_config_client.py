@@ -9,8 +9,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from petrosa_contracts import LeverageStatus, TradingConfig
 
-from contracts.trading_config import LeverageStatus, TradingConfig
 from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 
@@ -244,10 +244,8 @@ class TestSetLeverageStatus:
         # Arrange
         status = LeverageStatus(
             symbol="BTCUSDT",
-            current_leverage=5,
-            max_leverage=10,
             configured_leverage=5,
-            enabled=True,
+            actual_leverage=5,
         )
 
         # Act

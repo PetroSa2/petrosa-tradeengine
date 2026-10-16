@@ -6,8 +6,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from petrosa_contracts import LeverageStatus, TradingConfig, TradingConfigAudit
 
-from contracts.trading_config import LeverageStatus, TradingConfig, TradingConfigAudit
 from shared.constants import UTC
 from tradeengine.services.data_manager_client import DataManagerClient
 
@@ -133,7 +133,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_global_config(self, data_manager_client):
         """Test setting global config"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
@@ -149,7 +149,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_global_config_with_upserted_count(self, data_manager_client):
         """Test setting global config with upserted_count"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
@@ -164,7 +164,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_global_config_failure(self, data_manager_client):
         """Test setting global config with failure"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
@@ -179,7 +179,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_global_config_with_error(self, data_manager_client):
         """Test setting global config with error"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
@@ -224,7 +224,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_config(self, data_manager_client):
         """Test setting symbol config"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             symbol="BTCUSDT", parameters={"leverage": 10}, created_by="test_user"
@@ -241,7 +241,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_config_no_symbol(self, data_manager_client):
         """Test setting symbol config without symbol"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(parameters={"leverage": 10}, created_by="test_user")
 
@@ -251,7 +251,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_config_with_error(self, data_manager_client):
         """Test setting symbol config with error"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             symbol="BTCUSDT", parameters={"leverage": 10}, created_by="test_user"
@@ -338,7 +338,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_side_config(self, data_manager_client):
         """Test setting symbol-side config"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             symbol="BTCUSDT",
@@ -358,7 +358,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_side_config_no_symbol(self, data_manager_client):
         """Test setting symbol-side config without symbol"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             side="LONG", parameters={"leverage": 10}, created_by="test_user"
@@ -370,7 +370,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_side_config_no_side(self, data_manager_client):
         """Test setting symbol-side config without side"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             symbol="BTCUSDT", parameters={"leverage": 10}, created_by="test_user"
@@ -382,7 +382,7 @@ class TestDataManagerClientConfigManagement:
     @pytest.mark.asyncio
     async def test_set_symbol_side_config_with_error(self, data_manager_client):
         """Test setting symbol-side config with error"""
-        from contracts.trading_config import TradingConfig
+        from petrosa_contracts import TradingConfig
 
         config = TradingConfig(
             symbol="BTCUSDT",

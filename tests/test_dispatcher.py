@@ -2,10 +2,9 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from petrosa_contracts import LeverageStatus, OrderType, Signal, StrategyMode
 
 from contracts.order import OrderStatus, TradeOrder
-from contracts.signal import OrderType, Signal, StrategyMode
-from contracts.trading_config import LeverageStatus
 from shared.constants import UTC
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot

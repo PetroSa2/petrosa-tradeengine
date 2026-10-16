@@ -14,14 +14,14 @@ import sys
 from datetime import datetime
 
 import nats
-
-from contracts.signal import (
+from petrosa_contracts import (
     OrderType,
     Signal,
     SignalStrength,
     StrategyMode,
     TimeInForce,
 )
+
 from shared.constants import UTC
 
 # Setup logging

@@ -5,7 +5,8 @@ Advanced Trading Example - Demonstrates complex trading strategies
 import asyncio
 import logging
 
-from contracts.signal import Signal
+from petrosa_contracts import Signal
+
 from tradeengine.dispatcher import Dispatcher
 
 # Configure logging

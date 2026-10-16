@@ -4,9 +4,9 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from petrosa_contracts import Signal, TimeInForce
 
 from contracts.order import OrderSide, OrderType, TradeOrder
-from contracts.signal import Signal, TimeInForce
 from shared.constants import UTC
 from tradeengine.strategy_position_manager import StrategyPositionManager
 
@@ -332,8 +332,9 @@ class TestStrategyPositionManagerBasic:
     @pytest.mark.asyncio
     async def test_close_strategy_position_short_pnl(self, strategy_position_manager):
         """Test closing SHORT position PnL calculation"""
+        from petrosa_contracts import Signal, TimeInForce
+
         from contracts.order import OrderSide, OrderType, TradeOrder
-        from contracts.signal import Signal, TimeInForce
 
         short_signal = Signal(
             signal_id="test_signal_short",

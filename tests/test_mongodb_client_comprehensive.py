@@ -741,8 +741,8 @@ class TestDataManagerConfigClientAuditTrail:
         ) as mock_query:
             mock_query.side_effect = Exception("Connection error")
 
-            trail = await mongodb_client.get_audit_trail()
-            assert trail == []
+            with pytest.raises(Exception, match="Connection error"):
+                await mongodb_client.get_audit_trail()
 
     @pytest.mark.asyncio
     async def test_get_audit_trail_with_no_response(self, mongodb_client):
@@ -752,8 +752,8 @@ class TestDataManagerConfigClientAuditTrail:
         ) as mock_query:
             mock_query.return_value = None
 
-            trail = await mongodb_client.get_audit_trail()
-            assert trail == []
+            with pytest.raises(Exception, match="no audit trail response"):
+                await mongodb_client.get_audit_trail()
 
 
 class TestDataManagerConfigClientStrategyConfig:

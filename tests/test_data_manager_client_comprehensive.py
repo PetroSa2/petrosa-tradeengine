@@ -567,8 +567,16 @@ class TestDataManagerClientAuditTrail:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            trail = await data_manager_client.get_audit_trail()
-            assert trail == []
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_audit_trail()
+
+    @pytest.mark.asyncio
+    async def test_get_audit_trail_with_invalid_model(self, data_manager_client):
+        with patch.object(data_manager_client, "_client") as mock_client:
+            mock_client.query = AsyncMock(return_value={"data": [{"_id": "invalid"}]})
+
+            with pytest.raises(Exception):
+                await data_manager_client.get_audit_trail()
 
 
 class TestDataManagerClientLeverageStatus:
@@ -613,8 +621,8 @@ class TestDataManagerClientLeverageStatus:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            status = await data_manager_client.get_leverage_status("BTCUSDT")
-            assert status is None
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_leverage_status("BTCUSDT")
 
     @pytest.mark.asyncio
     async def test_set_leverage_status(self, data_manager_client):
@@ -721,5 +729,15 @@ class TestDataManagerClientLeverageStatus:
         with patch.object(data_manager_client, "_client") as mock_client:
             mock_client.query = AsyncMock(side_effect=Exception("Connection error"))
 
-            status_list = await data_manager_client.get_all_leverage_status()
-            assert status_list == []
+            with pytest.raises(Exception, match="Connection error"):
+                await data_manager_client.get_all_leverage_status()
+
+    @pytest.mark.asyncio
+    async def test_get_all_leverage_status_with_invalid_model(
+        self, data_manager_client
+    ):
+        with patch.object(data_manager_client, "_client") as mock_client:
+            mock_client.query = AsyncMock(return_value={"data": [{"_id": "invalid"}]})
+
+            with pytest.raises(Exception):
+                await data_manager_client.get_all_leverage_status()

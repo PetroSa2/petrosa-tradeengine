@@ -12,7 +12,7 @@ from typing import Any, Optional
 from petrosa_contracts import TradingConfig, TradingConfigAudit
 
 from shared.constants import UTC
-from tradeengine.services.data_manager_client import DataManagerClient
+from tradeengine.services.data_manager_client import APIError, DataManagerClient
 
 logger = logging.getLogger(__name__)
 
@@ -289,13 +289,15 @@ class DataManagerConfigClient:
                 limit=limit,
             )
 
-            records = response.get("data", []) if response else []
+            if response is None:
+                raise APIError("Data Manager returned no audit trail response")
+            records = response.get("data", [])
             logger.info(f"Retrieved {len(records)} audit records via Data Manager")
             return records
 
         except Exception as e:
             logger.error(f"Failed to get audit trail via Data Manager: {e}")
-            return []
+            raise
 
     async def get_audit_record_by_id(self, audit_id: str) -> dict[str, Any] | None:
         """

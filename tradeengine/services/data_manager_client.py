@@ -805,7 +805,7 @@ class DataManagerClient:
 
         except Exception as e:
             self._logger.error(f"Error fetching audit trail: {e}")
-            return []
+            raise
 
     # Leverage Status Methods
 
@@ -827,7 +827,7 @@ class DataManagerClient:
 
         except Exception as e:
             self._logger.error(f"Error fetching leverage status for {symbol}: {e}")
-            return None
+            raise
 
     async def set_leverage_status(self, status: LeverageStatus) -> bool:
         """Set leverage status for symbol."""
@@ -874,7 +874,7 @@ class DataManagerClient:
 
         except Exception as e:
             self._logger.error(f"Error fetching all leverage status: {e}")
-            return []
+            raise
 
     async def health_check(self) -> dict[str, Any]:
         """

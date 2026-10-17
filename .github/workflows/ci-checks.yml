@@ -28,7 +28,7 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
       - name: Run real producer-consumer contract
-        run: pytest -q tests/test_contract_ci.py
+        run: pytest -q tests/test_contract_ci.py -c /dev/null
 
   pipeline:
     name: CI Pipeline

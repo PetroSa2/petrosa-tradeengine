@@ -362,6 +362,8 @@ class StrategyPositionManager:
         strategy_position_id: str,
         sl_order_id: str | None = None,
         tp_order_id: str | None = None,
+        stop_loss_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> None:
         # AC3 of #424 (2026-05-30 OCO incident): the previous code stored
         # price strings here as placeholders, which made the stops-health
@@ -387,6 +389,29 @@ class StrategyPositionManager:
                 record["sl_order_id"] = validated.sl_order_id
             if validated.tp_order_id is not None:
                 record["tp_order_id"] = validated.tp_order_id
+            if stop_loss_price is not None:
+                record["stop_loss_price"] = float(stop_loss_price)
+            if take_profit_price is not None:
+                record["take_profit_price"] = float(take_profit_price)
+
+            updates = {
+                key: record[key]
+                for key in (
+                    "sl_order_id",
+                    "tp_order_id",
+                    "stop_loss_price",
+                    "take_profit_price",
+                )
+                if key in record
+            }
+            result = await self._persist_call(
+                "update_strategy_position",
+                "update_position",
+                strategy_position_id,
+                updates,
+            )
+            if not result.ok:
+                _on_persist_failure(result, {**record, **updates})
 
     async def close_strategy_position(
         self,

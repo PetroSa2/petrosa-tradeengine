@@ -802,6 +802,15 @@ class OCOManager:
             except Exception as exc:
                 sl_result = {"status": "exception", **_exception_context(exc)}
                 raise
+            effective_stop_loss_price = stop_loss_price
+            for price_key in ("triggerPrice", "trigger_price", "fill_price", "price"):
+                candidate_price = sl_result.get(price_key)
+                try:
+                    if candidate_price is not None and float(candidate_price) > 0:
+                        effective_stop_loss_price = float(candidate_price)
+                        break
+                except (TypeError, ValueError):
+                    continue
             sl_order_id = sl_result.get("order_id")
             if not sl_order_id:
                 self.logger.error(
@@ -852,6 +861,8 @@ class OCOManager:
                     "quantity": float(quantity) if quantity is not None else 0.0,
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
+                    "stop_loss_price": effective_stop_loss_price,
+                    "take_profit_price": take_profit_price,
                     # #650: leg kind from the placement response (algoId vs
                     # orderId) so the surviving-leg cancel uses the matching
                     # endpoint. Protective legs go through POST algoOrder, so a
@@ -915,6 +926,8 @@ class OCOManager:
                 return {
                     "sl_order_id": sl_order_id,
                     "tp_order_id": tp_order_id,
+                    "stop_loss_price": effective_stop_loss_price,
+                    "take_profit_price": take_profit_price,
                     "status": "success",
                 }
             else:
@@ -6802,6 +6815,12 @@ class Dispatcher:
                                     strategy_position_id=strategy_position_id,
                                     sl_order_id=oco_result.get("sl_order_id"),
                                     tp_order_id=oco_result.get("tp_order_id"),
+                                    stop_loss_price=oco_result.get(
+                                        "stop_loss_price", order.stop_loss
+                                    ),
+                                    take_profit_price=oco_result.get(
+                                        "take_profit_price", order.take_profit
+                                    ),
                                 )
                             )
                         except Exception as exc:

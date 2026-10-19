@@ -1255,6 +1255,7 @@ class TestAdditionalMethods:
         binance_exchange.client.futures_account = Mock(
             return_value={
                 "totalWalletBalance": "10000.0",
+                "totalMarginBalance": "10100.0",
                 "totalUnrealizedProfit": "100.0",
                 "availableBalance": "9900.0",
             }
@@ -1265,6 +1266,7 @@ class TestAdditionalMethods:
             or "total_wallet_balance" in result
             or isinstance(result, dict)
         )
+        assert result["total_margin_balance"] == "10100.0"
 
     @pytest.mark.asyncio
     async def test_get_account_info_no_client(self, binance_exchange):

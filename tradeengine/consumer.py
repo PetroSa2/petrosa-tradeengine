@@ -430,13 +430,29 @@ class SignalConsumer:
                     outcome_status = result.get("status", "unknown")
                     messages_processed.labels(status=outcome_status).inc()
                     log_prefix = "✅" if outcome_status == "executed" else "⚠️"
-                    logger.info(
-                        "%s NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
-                        log_prefix,
-                        signal.strategy_id,
-                        outcome_status,
-                        result,
-                    )
+                    result_reason = result.get("reason")
+                    execution_result = result.get("execution_result") or {}
+                    if outcome_status != "executed":
+                        logger.warning(
+                            "⚠️ EXECUTE DROPPED | NATS MESSAGE PROCESSED | subject=%s strategy=%s symbol=%s "
+                            "decision_id=%s status=%s reason=%s execution_status=%s result=%s",
+                            msg.subject,
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                            outcome_status,
+                            result_reason or "unspecified",
+                            execution_result.get("status", "none"),
+                            result,
+                        )
+                    else:
+                        logger.info(
+                            "%s NATS MESSAGE PROCESSED | Signal: %s | Status: %s | Result: %s",
+                            log_prefix,
+                            signal.strategy_id,
+                            outcome_status,
+                            result,
+                        )
                     logger.debug(
                         "Handler completing successfully for: %s", signal.strategy_id
                     )
@@ -495,6 +511,21 @@ class SignalConsumer:
 
         except Exception as e:
             logger.debug("HANDLER EXCEPTION: %s", e)
+            logger.warning(
+                "EXECUTE DROPPED | subject=%s strategy=%s symbol=%s decision_id=%s "
+                "reason=handler_exception error=%s",
+                msg.subject if msg else "unknown",
+                signal_data.get("strategy_id", "unknown")
+                if isinstance(signal_data, dict)
+                else "unknown",
+                signal_data.get("symbol", "unknown")
+                if isinstance(signal_data, dict)
+                else "unknown",
+                signal_data.get("decision_id", "unknown")
+                if isinstance(signal_data, dict)
+                else "unknown",
+                e,
+            )
             logger.error(
                 "❌ NATS MESSAGE PROCESSING FAILED | Subject: %s | Error: %s",
                 msg.subject,

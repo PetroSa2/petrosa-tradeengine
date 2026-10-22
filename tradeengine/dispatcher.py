@@ -3238,6 +3238,13 @@ class Dispatcher:
                             f"⚠️  RESTRICTED_MODE: Allowing CLOSE action for {signal.symbol} despite lost CIO heartbeat"
                         )
                     else:
+                        self.logger.warning(
+                            "EXECUTE DROPPED | strategy=%s symbol=%s decision_id=%s "
+                            "reason=restricted_mode_cio_heartbeat_lost",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                        )
                         self.logger.critical(
                             f"🛑 FAIL-SAFE ABORT: Rejecting {signal.action.upper()} for {signal.symbol} "
                             f"due to RESTRICTED_MODE (CIO heartbeat lost - LLM reasoning unavailable)"
@@ -3277,6 +3284,14 @@ class Dispatcher:
                 # This ensures every open signal has passed through the LLM reasoning loop.
                 if self.settings.enforce_cio_audit and signal.action in ("buy", "sell"):
                     if signal.source != "petrosa-cio":
+                        self.logger.warning(
+                            "EXECUTE DROPPED | strategy=%s symbol=%s decision_id=%s "
+                            "reason=cio_enforcement_unauthorized_source source=%s",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                            signal.source,
+                        )
                         self.logger.critical(
                             f"🛑 CIO ENFORCEMENT FAILURE: Rejecting {signal.action.upper()} for {signal.symbol} "
                             f"from UNAUTHORIZED source '{signal.source}'. Expected 'petrosa-cio'."
@@ -3378,6 +3393,14 @@ class Dispatcher:
                         hedge_netting.policy == "block_opposite"
                         and hedge_netting.position_side
                     ):
+                        self.logger.warning(
+                            "EXECUTE DROPPED | strategy=%s symbol=%s decision_id=%s "
+                            "reason=opposite_position_open position_side=%s",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                            hedge_netting.position_side,
+                        )
                         await self._emit_execution_event_from_signal(
                             signal,
                             event_type="rejected",
@@ -3406,9 +3429,14 @@ class Dispatcher:
 
                     if elapsed < ACCUMULATION_COOLDOWN_SECONDS:
                         remaining = ACCUMULATION_COOLDOWN_SECONDS - elapsed
-                        self.logger.info(
-                            f"⏱️ ACCUMULATION COOLDOWN: {signal.symbol} {position_side} "
-                            f"- {remaining:.0f}s remaining (existing qty: {existing_quantity})"
+                        self.logger.warning(
+                            "EXECUTE DROPPED | strategy=%s symbol=%s decision_id=%s "
+                            "reason=accumulation_cooldown remaining_sec=%.0f existing_qty=%s",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                            remaining,
+                            existing_quantity,
                         )
                         span.set_attribute("signal.rejected", True)
                         span.set_attribute("rejection.reason", "accumulation_cooldown")
@@ -3518,7 +3546,14 @@ class Dispatcher:
                         }
                     except LockUnavailableError as lock_error:
                         self.trading_idle.tick("lease_unavailable")
-                        self.logger.error("🔒 LOCK SERVICE UNAVAILABLE: %s", lock_error)
+                        self.logger.warning(
+                            "EXECUTE DROPPED | reason=lease_unavailable "
+                            "strategy=%s symbol=%s decision_id=%s error=%s",
+                            signal.strategy_id,
+                            signal.symbol,
+                            signal.decision_id or "unknown",
+                            lock_error,
+                        )
                         signals_processed.labels(
                             status="lock_unavailable", action=signal.action
                         ).inc()
@@ -3594,9 +3629,14 @@ class Dispatcher:
                         "no_signals",
                     ):
                         self.trading_idle.tick(reason)
-                    self.logger.info(
-                        f"⛔ SIGNAL REJECTED: {signal.strategy_id} | "
-                        f"Reason: {result.get('reason', 'Unknown')}"
+                    self.logger.warning(
+                        "EXECUTE DROPPED | strategy=%s symbol=%s decision_id=%s "
+                        "reason=%s rejection_source=%s",
+                        signal.strategy_id,
+                        signal.symbol,
+                        signal.decision_id or "unknown",
+                        result.get("reason", "Unknown"),
+                        result.get("rejection_source", "unknown"),
                     )
                     signals_processed.labels(
                         status="rejected", action=signal.action

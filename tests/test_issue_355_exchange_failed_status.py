@@ -11,6 +11,7 @@ import pytest
 from petrosa_contracts import Signal  # noqa: E402
 
 from shared.constants import UTC  # noqa: E402
+from shared.distributed_lock import LockUnavailableError  # noqa: E402
 from tradeengine.consumer import SignalConsumer  # noqa: E402
 from tradeengine.dispatcher import Dispatcher  # noqa: E402
 
@@ -45,6 +46,36 @@ def _make_signal(**overrides) -> Signal:
 # ---------------------------------------------------------------------------
 # Dispatcher: status derivation from execution_result
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_logs_lease_drop_at_warning(caplog) -> None:
+    """A lost leader lease remains fail-closed and is explicit at WARNING."""
+    dispatcher = Dispatcher()
+    signal = _make_signal(decision_id="decision-807")
+
+    with (
+        patch.object(
+            dispatcher,
+            "process_signal",
+            new_callable=AsyncMock,
+            return_value={"status": "success", "order_params": {"quantity": 0.01}},
+        ),
+        patch("tradeengine.dispatcher.distributed_lock_manager") as mock_lock,
+        patch.object(dispatcher, "heartbeat_monitor", None),
+        patch.object(dispatcher.settings, "enforce_cio_audit", False),
+        caplog.at_level("WARNING", logger="tradeengine.dispatcher"),
+    ):
+        mock_lock.execute_with_lock = AsyncMock(
+            side_effect=LockUnavailableError("Lease unavailable within timeout")
+        )
+
+        result = await dispatcher.dispatch(signal)
+
+    assert result["status"] == "lock_unavailable"
+    assert "EXECUTE DROPPED" in caplog.text
+    assert "reason=lease_unavailable" in caplog.text
+    assert "decision-807" in caplog.text
 
 
 @pytest.mark.asyncio

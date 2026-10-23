@@ -1559,6 +1559,12 @@ async def get_active_signals(
 async def get_state(
     symbol: str = Query(..., description="Target symbol for state context"),
     side: str | None = Query(None, description="Position side (LONG, SHORT)"),
+    stop_contract_version: int | None = Query(None, ge=1, le=1),
+    stop_loss: float | None = Query(None, gt=0, allow_inf_nan=False),
+    stop_loss_pct: float | None = Query(None, gt=0, lt=1, allow_inf_nan=False),
+    reference_price: float | None = Query(None, gt=0, allow_inf_nan=False),
+    timeframe: str | None = Query(None, max_length=16),
+    strategy_id: str | None = Query(None, max_length=128),
 ) -> dict[str, Any]:
     """
     Returns real-time portfolio, risk, and environment stats for the CIO.
@@ -1571,6 +1577,16 @@ async def get_state(
     """
     try:
         state = dispatcher.get_cio_state(symbol)
+        if stop_contract_version == 1:
+            state["risk_limits"]["stop_contract"] = await stop_floor.resolve_stop(
+                symbol,
+                side or "",
+                stop_loss=stop_loss,
+                stop_loss_pct=stop_loss_pct,
+                reference_price=reference_price,
+                timeframe=timeframe,
+                strategy_id=strategy_id,
+            )
         state["drawdown"] = equity_peak_tracker.state()
         await commission_rates.ensure(symbol)
         state["commission"] = commission_rates.get(symbol)

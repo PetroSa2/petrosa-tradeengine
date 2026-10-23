@@ -16,6 +16,7 @@ from tradeengine.stop_floor import (
     max_placeable_fraction,
     noise_floor,
     noise_multiplier,
+    order_stop_contract,
     stop_floor,
     technical_floor,
 )
@@ -220,6 +221,43 @@ async def test_an_explicit_env_floor_pins_the_value(monkeypatch):
     result = provider.floor(BTC)
     assert result.source == "env"
     assert result.placeable is True
+
+
+@pytest.mark.asyncio
+async def test_stop_contract_prefers_signal_level_and_is_self_consistent():
+    provider = await _provider()
+    contract = await provider.resolve_stop(
+        BTC,
+        "LONG",
+        stop_loss_pct=0.03,
+        reference_price=50_000.0,
+        strategy_id="s1",
+        timeframe="5m",
+    )
+
+    assert contract["source"] == "signal"
+    assert contract["stop_pct"] == pytest.approx(0.03, abs=1e-5)
+    assert contract["stop_price"] == pytest.approx(48_500.0, abs=0.1)
+    assert contract["placeable"] is True
+
+    order = SimpleNamespace(
+        symbol=BTC,
+        position_side="LONG",
+        stop_loss=contract["stop_price"],
+        strategy_metadata={"stop_contract": contract},
+    )
+    assert order_stop_contract(order) == contract
+
+
+@pytest.mark.asyncio
+async def test_stop_contract_requires_exchange_inputs():
+    client = MagicMock()
+    client.request = AsyncMock(return_value={"symbols": {}})
+    provider = StopFloorProvider()
+    provider.configure(client, None, [BTC])
+
+    with pytest.raises(ValueError, match="exchange inputs unavailable"):
+        await provider.resolve_stop(BTC, "LONG", reference_price=50_000.0)
 
 
 # --- unplaceable floor: skip the order -----------------------------------------------------------

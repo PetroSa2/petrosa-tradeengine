@@ -43,7 +43,6 @@ stop_contract_total = get_meter("tradeengine.stop_contract").create_counter(
 
 RISK_INPUTS_URL = "/api/v1/risk/inputs"
 CANDLES_URL = "/api/v1/data/candles"
-HISTORIC_CANDLES_URL = "/api/v1/data/candles/historic"
 REFRESH_SECONDS = 15 * 60
 #: Inputs older than this many refresh periods are not used.
 STALE_AFTER_REFRESHES = 3
@@ -284,31 +283,19 @@ class StopFloorProvider:
     async def _read_hourly_volatility(self, symbol: str) -> None:
         """Recover hourly sigma from bounded data-manager candle pages."""
         candles: list[dict[str, Any]] = []
-        end = datetime.now(UTC)
-        start = end - timedelta(days=HOURLY_FLOOR_DAYS)
         try:
             for offset in (0, CANDLE_PAGE_SIZE):
-                params = {
-                    "pair": symbol,
-                    "period": "1h",
-                    "limit": CANDLE_PAGE_SIZE,
-                    "offset": offset,
-                    "sort_order": "desc",
-                }
-                try:
-                    body = await self.client.request("GET", CANDLES_URL, params=params)
-                except Exception as exc:
-                    if getattr(exc, "status_code", None) != 400:
-                        raise
-                    body = await self.client.request(
-                        "GET",
-                        HISTORIC_CANDLES_URL,
-                        params={
-                            **params,
-                            "start": start.isoformat(),
-                            "end": end.isoformat(),
-                        },
-                    )
+                body = await self.client.request(
+                    "GET",
+                    CANDLES_URL,
+                    params={
+                        "pair": symbol,
+                        "period": "1h",
+                        "limit": CANDLE_PAGE_SIZE,
+                        "offset": offset,
+                        "sort_order": "desc",
+                    },
+                )
                 page = body.get("data") if isinstance(body, dict) else None
                 if not isinstance(page, list):
                     return

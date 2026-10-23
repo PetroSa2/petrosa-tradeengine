@@ -28,6 +28,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from statistics import NormalDist, median
 from typing import Any
@@ -41,6 +42,7 @@ stop_contract_total = get_meter("tradeengine.stop_contract").create_counter(
 )
 
 RISK_INPUTS_URL = "/api/v1/risk/inputs"
+CANDLES_URL = "/api/v1/data/candles"
 REFRESH_SECONDS = 15 * 60
 #: Inputs older than this many refresh periods are not used.
 STALE_AFTER_REFRESHES = 3
@@ -51,6 +53,10 @@ TECHNICAL_SPREADS = 3
 #: The margin the price-adjuster keeps inside the PERCENT_PRICE band (``binance.py``).
 BAND_SAFETY_MARGIN = 0.01
 SPREAD_SAMPLES = 96
+HOURLY_SHORT_DAYS = 14
+HOURLY_FLOOR_DAYS = 60
+MIN_HOURLY_RETURNS = 7 * 24
+CANDLE_PAGE_SIZE = 1000
 
 
 def order_stop_contract(order: Any) -> dict[str, Any] | None:
@@ -242,6 +248,15 @@ class StopFloorProvider:
         if isinstance(body, dict):
             self._read_risk_inputs(body)
         for symbol in self.symbols:
+            entry = self._inputs.get(symbol)
+            if (
+                entry is None
+                or entry.sigma_1h is None
+                or not entry.sufficient
+                or self._clock() - entry.fetched_at
+                > STALE_AFTER_REFRESHES * REFRESH_SECONDS
+            ):
+                await self._read_hourly_volatility(symbol)
             await self._read_exchange(symbol)
 
     def _read_risk_inputs(self, body: dict[str, Any]) -> None:
@@ -264,6 +279,92 @@ class StopFloorProvider:
             seconds = (item or {}).get("median_holding_seconds")
             if isinstance(seconds, int | float) and seconds > 0:
                 self._holding_hours[strategy] = float(seconds) / 3600.0
+
+    async def _read_hourly_volatility(self, symbol: str) -> None:
+        """Recover hourly sigma from bounded data-manager candle pages."""
+        candles: list[dict[str, Any]] = []
+        try:
+            for offset in (0, CANDLE_PAGE_SIZE):
+                body = await self.client.request(
+                    "GET",
+                    CANDLES_URL,
+                    params={
+                        "pair": symbol,
+                        "period": "1h",
+                        "limit": CANDLE_PAGE_SIZE,
+                        "offset": offset,
+                        "sort_order": "desc",
+                    },
+                )
+                page = body.get("data") if isinstance(body, dict) else None
+                if not isinstance(page, list):
+                    return
+                candles.extend(item for item in page if isinstance(item, dict))
+                if len(page) < CANDLE_PAGE_SIZE:
+                    break
+        except Exception as exc:
+            logger.warning(
+                "Stop floor: hourly candles not available for %s: %s", symbol, exc
+            )
+            return
+
+        series: dict[datetime, float] = {}
+        for candle in candles:
+            try:
+                when = datetime.fromisoformat(
+                    str(candle.get("timestamp")).replace("Z", "+00:00")
+                )
+                when = when if when.tzinfo else when.replace(tzinfo=UTC)
+                price = float(candle.get("close"))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(price) and price > 0:
+                series[when] = price
+
+        ordered = sorted(series.items())
+        now = datetime.now(UTC)
+        timed_returns = [
+            (timestamp, math.log(current_price / previous_price))
+            for (previous_time, previous_price), (timestamp, current_price) in zip(
+                ordered, ordered[1:], strict=False
+            )
+            if timestamp - previous_time == timedelta(hours=1)
+        ]
+        short = [
+            value
+            for timestamp, value in timed_returns
+            if timestamp > now - timedelta(days=HOURLY_SHORT_DAYS)
+        ]
+        long = [
+            value
+            for timestamp, value in timed_returns
+            if timestamp > now - timedelta(days=HOURLY_FLOOR_DAYS)
+        ]
+        candidates = [self._sample_sigma(values) for values in (short, long)]
+        candidates = [value for value in candidates if value is not None]
+        sigma = max(candidates) if candidates else None
+        if sigma is None:
+            return
+        entry = self._inputs.setdefault(symbol, _SymbolInputs())
+        entry.sigma_1h = sigma
+        entry.n_returns = len(short)
+        entry.sufficient = len(short) >= MIN_HOURLY_RETURNS
+        entry.fetched_at = self._clock()
+        logger.info(
+            "Stop floor: recovered hourly volatility for %s sigma_1h=%s n_returns=%s sufficient=%s",
+            symbol,
+            sigma,
+            len(short),
+            entry.sufficient,
+        )
+
+    @staticmethod
+    def _sample_sigma(values: list[float]) -> float | None:
+        if len(values) < 2:
+            return None
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+        return math.sqrt(variance) if math.isfinite(variance) else None
 
     async def _read_exchange(self, symbol: str) -> None:
         entry = self._inputs.setdefault(symbol, _SymbolInputs())

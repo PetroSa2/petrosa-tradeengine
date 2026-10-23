@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -195,6 +196,51 @@ async def test_data_manager_failure_falls_back():
     await provider.refresh()
     assert provider.floor(BTC).source == "fallback"
     assert provider.floor("UNKNOWN").reason == "no_inputs"
+
+
+@pytest.mark.asyncio
+async def test_missing_risk_report_recovers_sigma_from_hourly_candles():
+    client = MagicMock()
+    now = datetime.now(UTC)
+    candles = [
+        {
+            "timestamp": (now - timedelta(hours=168 - index)).isoformat(),
+            "close": str(50_000.0 + index * 10),
+        }
+        for index in range(169)
+    ]
+    client.request = AsyncMock(side_effect=[{"symbols": {}}, {"data": candles}])
+    provider = StopFloorProvider()
+    provider.configure(client, _exchange(), [BTC])
+
+    await provider.refresh()
+
+    result = provider.floor(BTC)
+    assert result.source == "derived"
+    assert result.sigma_1h is not None
+    assert result.n_returns >= 168
+
+
+@pytest.mark.asyncio
+async def test_sparse_hourly_candles_keep_the_labelled_fallback():
+    client = MagicMock()
+    now = datetime.now(UTC)
+    candles = [
+        {
+            "timestamp": (now - timedelta(hours=4 - index)).isoformat(),
+            "close": "50000",
+        }
+        for index in range(5)
+    ]
+    client.request = AsyncMock(side_effect=[{"symbols": {}}, {"data": candles}])
+    provider = StopFloorProvider()
+    provider.configure(client, _exchange(), [BTC])
+
+    await provider.refresh()
+
+    result = provider.floor(BTC)
+    assert result.source == "fallback"
+    assert result.reason == "sigma_1h_insufficient"
 
 
 @pytest.mark.asyncio

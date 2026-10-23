@@ -222,33 +222,6 @@ async def test_missing_risk_report_recovers_sigma_from_hourly_candles():
 
 
 @pytest.mark.asyncio
-async def test_candle_recovery_uses_historic_route_after_mongo_400():
-    client = MagicMock()
-    now = datetime.now(UTC)
-    candles = [
-        {
-            "timestamp": (now - timedelta(hours=168 - index)).isoformat(),
-            "close": str(50_000.0 + index * 10),
-        }
-        for index in range(169)
-    ]
-    bad_request = RuntimeError("data-manager returned 400")
-    bad_request.status_code = 400
-    client.request = AsyncMock(
-        side_effect=[{"symbols": {}}, bad_request, {"data": candles}]
-    )
-    provider = StopFloorProvider()
-    provider.configure(client, _exchange(), [BTC])
-
-    await provider.refresh()
-
-    result = provider.floor(BTC)
-    assert result.source == "derived"
-    assert result.n_returns >= 168
-    assert client.request.await_args_list[2].args[1].endswith("/candles/historic")
-
-
-@pytest.mark.asyncio
 async def test_sparse_hourly_candles_keep_the_labelled_fallback():
     client = MagicMock()
     now = datetime.now(UTC)

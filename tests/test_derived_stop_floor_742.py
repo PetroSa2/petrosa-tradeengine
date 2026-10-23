@@ -204,10 +204,10 @@ async def test_missing_risk_report_recovers_sigma_from_hourly_candles():
     now = datetime.now(UTC)
     candles = [
         {
-            "timestamp": (now - timedelta(hours=199 - index)).isoformat(),
+            "timestamp": (now - timedelta(hours=168 - index)).isoformat(),
             "close": str(50_000.0 + index * 10),
         }
-        for index in range(200)
+        for index in range(169)
     ]
     client.request = AsyncMock(side_effect=[{"symbols": {}}, {"data": candles}])
     provider = StopFloorProvider()

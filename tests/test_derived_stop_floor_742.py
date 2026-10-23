@@ -219,6 +219,20 @@ async def test_missing_risk_report_recovers_sigma_from_hourly_candles():
     assert result.source == "derived"
     assert result.sigma_1h is not None
     assert result.n_returns >= 168
+    candle_call = client.request.await_args_list[1]
+    assert candle_call.args[:2] == ("GET", "/api/v1/data/candles/historic")
+    assert candle_call.kwargs["params"] == {
+        "pair": BTC,
+        "period": "1h",
+        "start": candle_call.kwargs["params"]["start"],
+        "end": candle_call.kwargs["params"]["end"],
+        "limit": 1000,
+        "offset": 0,
+        "sort_order": "desc",
+    }
+    start = datetime.fromisoformat(candle_call.kwargs["params"]["start"])
+    end = datetime.fromisoformat(candle_call.kwargs["params"]["end"])
+    assert end - start == timedelta(days=60)
 
 
 @pytest.mark.asyncio

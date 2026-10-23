@@ -261,6 +261,17 @@ class StopFloorProvider:
 
     def _read_risk_inputs(self, body: dict[str, Any]) -> None:
         now = self._clock()
+        report_fetched_at = now
+        if "as_of" in body:
+            try:
+                as_of = datetime.fromisoformat(
+                    str(body["as_of"]).replace("Z", "+00:00")
+                )
+                as_of = as_of if as_of.tzinfo else as_of.replace(tzinfo=UTC)
+                age = max(0.0, (datetime.now(UTC) - as_of).total_seconds())
+                report_fetched_at = now - age
+            except (TypeError, ValueError):
+                report_fetched_at = 0.0
         for symbol, item in (body.get("symbols") or {}).items():
             hourly = (item or {}).get("hourly") or {}
             sigma = hourly.get("sigma_1h")
@@ -274,7 +285,7 @@ class StopFloorProvider:
                 entry.sigma_1h = float(sigma)
                 entry.n_returns = hourly.get("n_returns")
                 entry.sufficient = bool(hourly.get("sufficient"))
-                entry.fetched_at = now
+                entry.fetched_at = report_fetched_at
         for strategy, item in (body.get("strategies") or {}).items():
             seconds = (item or {}).get("median_holding_seconds")
             if isinstance(seconds, int | float) and seconds > 0:

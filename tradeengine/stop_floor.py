@@ -64,14 +64,24 @@ def order_stop_contract(order: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(contract, dict) or contract.get("version") != 1:
         raise ValueError("invalid stop contract version")
-    if contract.get("symbol") != order.symbol or contract.get("side") != str(order.position_side).upper():
+    if (
+        contract.get("symbol") != order.symbol
+        or contract.get("side") != str(order.position_side).upper()
+    ):
         raise ValueError("stop contract symbol or side mismatch")
     for key in ("reference_price", "stop_price", "stop_pct", "min_distance_pct"):
         value = contract.get(key)
-        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value <= 0:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            or value <= 0
+        ):
             raise ValueError("invalid stop contract number")
     reference, price = contract["reference_price"], contract["stop_price"]
-    fraction = (reference - price if contract["side"] == "LONG" else price - reference) / reference
+    fraction = (
+        reference - price if contract["side"] == "LONG" else price - reference
+    ) / reference
     if (
         contract.get("placeable") is not True
         or contract.get("source") not in ("signal", "derived", "fallback", "env")
@@ -337,14 +347,19 @@ class StopFloorProvider:
                 or entry is None
                 or self._clock() - entry.exchange_fetched_at > REFRESH_SECONDS
             )
-            if cold and self._clock() - self._warm_attempts.get(symbol, -math.inf) >= 15:
+            if (
+                cold
+                and self._clock() - self._warm_attempts.get(symbol, -math.inf) >= 15
+            ):
                 self._warm_attempts[symbol] = self._clock()
                 try:
                     body = await self.client.request("GET", RISK_INPUTS_URL)
                     if isinstance(body, dict):
                         self._read_risk_inputs(body)
                 except Exception as exc:
-                    logger.warning("Stop contract warmup failed for %s: %s", symbol, exc)
+                    logger.warning(
+                        "Stop contract warmup failed for %s: %s", symbol, exc
+                    )
                 await self._read_exchange(symbol)
         entry = self._inputs.get(symbol)
         entry = entry or _SymbolInputs()
@@ -355,8 +370,10 @@ class StopFloorProvider:
             technical = max(
                 MIN_SL_DISTANCE_PCT,
                 technical_floor(
-                    entry.tick, entry.price,
-                    median(entry.spreads) if entry.spreads else None, entry.band,
+                    entry.tick,
+                    entry.price,
+                    median(entry.spreads) if entry.spreads else None,
+                    entry.band,
                 ),
             )
         else:
@@ -364,7 +381,11 @@ class StopFloorProvider:
         derived = self.floor(symbol, strategy_id)
         source, reason = "signal", None
         if stop_loss is not None:
-            fraction = (reference - stop_loss) / reference if side == "LONG" else (stop_loss - reference) / reference
+            fraction = (
+                (reference - stop_loss) / reference
+                if side == "LONG"
+                else (stop_loss - reference) / reference
+            )
             if fraction <= 0 or fraction >= 1:
                 raise ValueError("signal stop is not on the protective side")
         elif stop_loss_pct is not None:
@@ -374,7 +395,8 @@ class StopFloorProvider:
             source, reason = derived.source, derived.reason
         fraction = max(fraction, technical)
         price = Decimal(str(reference)) * (
-            Decimal(1) - Decimal(str(fraction)) if side == "LONG"
+            Decimal(1) - Decimal(str(fraction))
+            if side == "LONG"
             else Decimal(1) + Decimal(str(fraction))
         )
         if entry.tick:
@@ -385,25 +407,54 @@ class StopFloorProvider:
         price_float = float(price)
         fraction = abs(reference - price_float) / reference
         placeable = (
-            price_float > 0 and fraction < 1 and (entry.band is None or fraction <= entry.band)
+            price_float > 0
+            and fraction < 1
+            and (entry.band is None or fraction <= entry.band)
             and (
                 entry.price is None
-                or (entry.price - price_float if side == "LONG" else price_float - entry.price)
-                / entry.price >= technical - 1e-12
+                or (
+                    entry.price - price_float
+                    if side == "LONG"
+                    else price_float - entry.price
+                )
+                / entry.price
+                >= technical - 1e-12
             )
         )
         contract = {
-            "version": 1, "symbol": symbol, "side": side,
-            "timeframe": timeframe, "strategy_id": strategy_id,
-            "reference_price": reference, "stop_price": price_float,
-            "stop_pct": fraction, "source": source, "reason": reason,
+            "version": 1,
+            "symbol": symbol,
+            "side": side,
+            "timeframe": timeframe,
+            "strategy_id": strategy_id,
+            "reference_price": reference,
+            "stop_price": price_float,
+            "stop_pct": fraction,
+            "source": source,
+            "reason": reason,
             "min_distance_pct": technical * 100,
-            "placeable": placeable, "inputs": derived.as_state(),
+            "placeable": placeable,
+            "inputs": derived.as_state(),
         }
-        stop_contract_total.add(1, {"source": source, "reason": reason or "none", "placeable": str(placeable).lower()})
+        stop_contract_total.add(
+            1,
+            {
+                "source": source,
+                "reason": reason or "none",
+                "placeable": str(placeable).lower(),
+            },
+        )
         log = logger.warning if source in ("fallback", "env") else logger.info
-        log("STOP_CONTRACT symbol=%s source=%s reason=%s stop=%s fraction=%s timeframe=%s placeable=%s",
-            symbol, source, reason, price_float, fraction, timeframe, placeable)
+        log(
+            "STOP_CONTRACT symbol=%s source=%s reason=%s stop=%s fraction=%s timeframe=%s placeable=%s",
+            symbol,
+            source,
+            reason,
+            price_float,
+            fraction,
+            timeframe,
+            placeable,
+        )
         return contract
 
     def floor(self, symbol: str, strategy_id: str | None = None) -> StopFloorResult:

@@ -3532,7 +3532,8 @@ class Dispatcher:
                                 exc,
                             )
                             order.mark_rejected(
-                                source="validation", reason=f"stop_contract_invalid: {exc}"
+                                source="validation",
+                                reason=f"stop_contract_invalid: {exc}",
                             )
                             return {
                                 "status": "rejected",
@@ -4183,14 +4184,21 @@ class Dispatcher:
         try:
             contract = order_stop_contract(order)
             if contract is not None:
-                if order.stop_loss_pct is None or not math.isclose(order.stop_loss_pct, contract["stop_pct"], abs_tol=1e-12):
+                if order.stop_loss_pct is None or not math.isclose(
+                    order.stop_loss_pct, contract["stop_pct"], abs_tol=1e-12
+                ):
                     raise ValueError("carried stop fraction differs from contract")
                 refreshed = await stop_floor.resolve_stop(
-                    order.symbol, contract["side"], stop_loss=contract["stop_price"],
+                    order.symbol,
+                    contract["side"],
+                    stop_loss=contract["stop_price"],
                     reference_price=contract["reference_price"],
-                    strategy_id=contract.get("strategy_id"), timeframe=contract.get("timeframe"),
+                    strategy_id=contract.get("strategy_id"),
+                    timeframe=contract.get("timeframe"),
                 )
-                if not refreshed["placeable"] or not math.isclose(refreshed["stop_price"], contract["stop_price"], abs_tol=1e-10):
+                if not refreshed["placeable"] or not math.isclose(
+                    refreshed["stop_price"], contract["stop_price"], abs_tol=1e-10
+                ):
                     raise ValueError("stop contract no longer placeable")
                 return None
         except (ValueError, TypeError) as exc:
@@ -6576,7 +6584,11 @@ class Dispatcher:
             # SL/TP percentages were computed off a suspect anchor. Force the
             # live-market fallback whenever the resolved entry_price deviates
             # beyond the symbol's PERCENT_PRICE band from the current market.
-            if entry_price > 0 and self.exchange is not None and contracted_stop is None:
+            if (
+                entry_price > 0
+                and self.exchange is not None
+                and contracted_stop is None
+            ):
                 entry_price = await self._reanchor_entry_price_if_stale(
                     order.symbol, entry_price
                 )
@@ -6686,7 +6698,9 @@ class Dispatcher:
                     else:
                         floor_in_force = stop_floor.floor(
                             order.symbol,
-                            strategy_id=(order.strategy_metadata or {}).get("strategy_id"),
+                            strategy_id=(order.strategy_metadata or {}).get(
+                                "strategy_id"
+                            ),
                         )
                         sl_safety_floor_pct = floor_in_force.fraction
                         self.logger.info(floor_in_force.log_line())
@@ -6704,7 +6718,9 @@ class Dispatcher:
                     )
                     if sl_corr.was_corrected:
                         if contracted_stop is not None:
-                            raise ValueError("stop contract requires direction correction")
+                            raise ValueError(
+                                "stop contract requires direction correction"
+                            )
                         self.logger.warning(
                             f"⚠️ SL DIRECTION FIX ({position_side_for_check}): "
                             f"{sl_corr.reason}"
@@ -6790,7 +6806,9 @@ class Dispatcher:
                             return
                         if mkt_decision.was_reanchored:
                             if contracted_stop is not None:
-                                raise ValueError("stop contract invalidated by market movement")
+                                raise ValueError(
+                                    "stop contract invalidated by market movement"
+                                )
                             self.logger.warning(
                                 f"⚠️ SL MARKET-SIDE RE-ANCHOR "
                                 f"({position_side_for_check}): {mkt_decision.reason}"
@@ -6879,7 +6897,9 @@ class Dispatcher:
                     f"strategy_position_id={strategy_position_id}, entry_price={entry_price}"
                 )
 
-                contract_kwargs = {"stop_contract": contracted_stop} if contracted_stop else {}
+                contract_kwargs = (
+                    {"stop_contract": contracted_stop} if contracted_stop else {}
+                )
                 oco_result = await self.oco_manager.place_oco_orders(
                     position_id=order.position_id or "",
                     symbol=order.symbol,
@@ -7099,10 +7119,25 @@ class Dispatcher:
                         adjusted_price,
                         adjustment_msg,
                     ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
-                        order.symbol, order.stop_loss, "STOP_LOSS",
-                        **({"min_safe_distance_pct": order_stop_contract(order)["min_distance_pct"]} if order_stop_contract(order) else {}),
+                        order.symbol,
+                        order.stop_loss,
+                        "STOP_LOSS",
+                        **(
+                            {
+                                "min_safe_distance_pct": order_stop_contract(order)[
+                                    "min_distance_pct"
+                                ]
+                            }
+                            if order_stop_contract(order)
+                            else {}
+                        ),
                     )
-                    if order_stop_contract(order) and (adjusted_price is None or not math.isclose(adjusted_price, order.stop_loss, abs_tol=1e-10)):
+                    if order_stop_contract(order) and (
+                        adjusted_price is None
+                        or not math.isclose(
+                            adjusted_price, order.stop_loss, abs_tol=1e-10
+                        )
+                    ):
                         raise ValueError("stop contract cannot be placed unchanged")
                     # AC4 of #424: adjuster returns (False, None, reason) when
                     # the requested SL cannot satisfy both PERCENT_PRICE and

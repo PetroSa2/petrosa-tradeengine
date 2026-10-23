@@ -1579,9 +1579,13 @@ async def get_state(
         state = dispatcher.get_cio_state(symbol)
         if stop_contract_version == 1:
             state["risk_limits"]["stop_contract"] = await stop_floor.resolve_stop(
-                symbol, side or "", stop_loss=stop_loss,
-                stop_loss_pct=stop_loss_pct, reference_price=reference_price,
-                timeframe=timeframe, strategy_id=strategy_id,
+                symbol,
+                side or "",
+                stop_loss=stop_loss,
+                stop_loss_pct=stop_loss_pct,
+                reference_price=reference_price,
+                timeframe=timeframe,
+                strategy_id=strategy_id,
             )
         state["drawdown"] = equity_peak_tracker.state()
         await commission_rates.ensure(symbol)

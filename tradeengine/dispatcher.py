@@ -3509,7 +3509,11 @@ class Dispatcher:
                     await self._refresh_notional_margin(signal.symbol)
                     order = self._signal_to_order(signal, order_params)
 
-                    if not order.reduce_only and stop_floor.exchange is not None:
+                    if (
+                        not order.reduce_only
+                        and stop_floor.exchange is not None
+                        and order.symbol in stop_floor._inputs
+                    ):
                         try:
                             stop_contract = await stop_floor.resolve_stop(
                                 order.symbol,

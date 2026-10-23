@@ -42,7 +42,7 @@ stop_contract_total = get_meter("tradeengine.stop_contract").create_counter(
 )
 
 RISK_INPUTS_URL = "/api/v1/risk/inputs"
-CANDLES_HISTORIC_URL = "/api/v1/data/candles/historic"
+CANDLES_HISTORIC_URL = "/data/candles/historic"
 REFRESH_SECONDS = 15 * 60
 #: Inputs older than this many refresh periods are not used.
 STALE_AFTER_REFRESHES = 3

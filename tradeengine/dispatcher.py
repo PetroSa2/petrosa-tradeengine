@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import os
 import time
 from datetime import UTC, datetime
@@ -90,7 +91,7 @@ from tradeengine.services.execution_event_publisher import (
 from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
-from tradeengine.stop_floor import stop_floor
+from tradeengine.stop_floor import order_stop_contract, stop_floor
 from tradeengine.strategy_position_manager import strategy_position_manager
 from tradeengine.strategy_position_reconciler import (
     StrategyPositionReconciler,
@@ -526,6 +527,7 @@ class OCOManager:
         take_profit_price: float,
         strategy_position_id: str | None = None,  # NEW: Link to strategy position
         entry_price: float | None = None,  # NEW: Strategy's entry price for P&L calc
+        stop_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Place an OCO SL/TP pair under the per-side lock (#651).
 
@@ -543,6 +545,7 @@ class OCOManager:
                 take_profit_price=take_profit_price,
                 strategy_position_id=strategy_position_id,
                 entry_price=entry_price,
+                stop_contract=stop_contract,
             )
 
     async def _place_oco_orders_locked(
@@ -555,6 +558,7 @@ class OCOManager:
         take_profit_price: float,
         strategy_position_id: str | None = None,
         entry_price: float | None = None,
+        stop_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Place SL/TP orders that will cancel each other (OCO behavior)
@@ -762,6 +766,7 @@ class OCOManager:
             position_size_pct=None,
             simulate=False,
             updated_at=None,
+            strategy_metadata={"stop_contract": stop_contract} if stop_contract else {},
         )
 
         # Place Take Profit order
@@ -3504,6 +3509,37 @@ class Dispatcher:
                     await self._refresh_notional_margin(signal.symbol)
                     order = self._signal_to_order(signal, order_params)
 
+                    if not order.reduce_only:
+                        try:
+                            stop_contract = await stop_floor.resolve_stop(
+                                order.symbol,
+                                order.position_side or "",
+                                stop_loss=order.stop_loss,
+                                stop_loss_pct=order.stop_loss_pct,
+                                reference_price=order.target_price,
+                                strategy_id=signal.strategy_id,
+                                timeframe=signal.timeframe,
+                            )
+                            order.stop_loss = stop_contract["stop_price"]
+                            order.stop_loss_pct = stop_contract["stop_pct"]
+                            order.strategy_metadata["stop_contract"] = stop_contract
+                        except (ValueError, TypeError) as exc:
+                            self.logger.warning(
+                                "EXECUTE DROPPED | symbol=%s strategy=%s "
+                                "reason=stop_contract_invalid detail=%s",
+                                order.symbol,
+                                signal.strategy_id,
+                                exc,
+                            )
+                            order.mark_rejected(
+                                source="validation", reason=f"stop_contract_invalid: {exc}"
+                            )
+                            return {
+                                "status": "rejected",
+                                "reason": "stop_contract_invalid",
+                                "rejection_source": "validation",
+                            }
+
                     # Store signal for strategy position creation later
                     self.order_to_signal[order.order_id] = signal
 
@@ -4144,6 +4180,21 @@ class Dispatcher:
         """
         if getattr(order, "reduce_only", False) or getattr(order, "simulate", False):
             return None
+        try:
+            contract = order_stop_contract(order)
+            if contract is not None:
+                if order.stop_loss_pct is None or not math.isclose(order.stop_loss_pct, contract["stop_pct"], abs_tol=1e-12):
+                    raise ValueError("carried stop fraction differs from contract")
+                refreshed = await stop_floor.resolve_stop(
+                    order.symbol, contract["side"], stop_loss=contract["stop_price"],
+                    reference_price=contract["reference_price"],
+                    strategy_id=contract.get("strategy_id"), timeframe=contract.get("timeframe"),
+                )
+                if not refreshed["placeable"] or not math.isclose(refreshed["stop_price"], contract["stop_price"], abs_tol=1e-10):
+                    raise ValueError("stop contract no longer placeable")
+                return None
+        except (ValueError, TypeError) as exc:
+            return await self._reject_sizing(order, "stop_contract_invalid", str(exc))
         floor = stop_floor.floor(
             order.symbol, strategy_id=(order.strategy_metadata or {}).get("strategy_id")
         )
@@ -6514,6 +6565,10 @@ class Dispatcher:
                 )
                 entry_price = 0.0
 
+            contracted_stop = order_stop_contract(order)
+            if contracted_stop is not None:
+                entry_price = contracted_stop["reference_price"]
+
             # #501 AC2: re-anchor a STALE reference price to live market.
             # The old code only fell back to live market when entry_price <= 0.
             # A non-zero-but-stale signal price (order.target_price =
@@ -6521,7 +6576,7 @@ class Dispatcher:
             # SL/TP percentages were computed off a suspect anchor. Force the
             # live-market fallback whenever the resolved entry_price deviates
             # beyond the symbol's PERCENT_PRICE band from the current market.
-            if entry_price > 0 and self.exchange is not None:
+            if entry_price > 0 and self.exchange is not None and contracted_stop is None:
                 entry_price = await self._reanchor_entry_price_if_stale(
                     order.symbol, entry_price
                 )
@@ -6626,13 +6681,15 @@ class Dispatcher:
                 )
 
                 try:
-                    floor_in_force = stop_floor.floor(
-                        order.symbol,
-                        strategy_id=(order.strategy_metadata or {}).get("strategy_id"),
-                    )
-                    sl_safety_floor_pct = floor_in_force.fraction
-                    # Logged on every use, with sigma_1h, H and q (petrosa-tradeengine#742)
-                    self.logger.info(floor_in_force.log_line())
+                    if contracted_stop is not None:
+                        sl_safety_floor_pct = contracted_stop["min_distance_pct"] / 100
+                    else:
+                        floor_in_force = stop_floor.floor(
+                            order.symbol,
+                            strategy_id=(order.strategy_metadata or {}).get("strategy_id"),
+                        )
+                        sl_safety_floor_pct = floor_in_force.fraction
+                        self.logger.info(floor_in_force.log_line())
                 except Exception:
                     sl_safety_floor_pct = 0.06
 
@@ -6646,6 +6703,8 @@ class Dispatcher:
                         min_distance_pct=sl_safety_floor_pct,
                     )
                     if sl_corr.was_corrected:
+                        if contracted_stop is not None:
+                            raise ValueError("stop contract requires direction correction")
                         self.logger.warning(
                             f"⚠️ SL DIRECTION FIX ({position_side_for_check}): "
                             f"{sl_corr.reason}"
@@ -6730,6 +6789,8 @@ class Dispatcher:
                             # unplaceable stop.
                             return
                         if mkt_decision.was_reanchored:
+                            if contracted_stop is not None:
+                                raise ValueError("stop contract invalidated by market movement")
                             self.logger.warning(
                                 f"⚠️ SL MARKET-SIDE RE-ANCHOR "
                                 f"({position_side_for_check}): {mkt_decision.reason}"
@@ -6818,6 +6879,7 @@ class Dispatcher:
                     f"strategy_position_id={strategy_position_id}, entry_price={entry_price}"
                 )
 
+                contract_kwargs = {"stop_contract": contracted_stop} if contracted_stop else {}
                 oco_result = await self.oco_manager.place_oco_orders(
                     position_id=order.position_id or "",
                     symbol=order.symbol,
@@ -6827,6 +6889,7 @@ class Dispatcher:
                     take_profit_price=order.take_profit or 0.0,
                     strategy_position_id=strategy_position_id,  # NEW
                     entry_price=entry_price,  # NEW
+                    **contract_kwargs,
                 )
 
                 if oco_result["status"] == "success":
@@ -7036,8 +7099,11 @@ class Dispatcher:
                         adjusted_price,
                         adjustment_msg,
                     ) = await self.exchange.validate_and_adjust_price_for_percent_filter(
-                        order.symbol, order.stop_loss, "STOP_LOSS"
+                        order.symbol, order.stop_loss, "STOP_LOSS",
+                        **({"min_safe_distance_pct": order_stop_contract(order)["min_distance_pct"]} if order_stop_contract(order) else {}),
                     )
+                    if order_stop_contract(order) and (adjusted_price is None or not math.isclose(adjusted_price, order.stop_loss, abs_tol=1e-10)):
+                        raise ValueError("stop contract cannot be placed unchanged")
                     # AC4 of #424: adjuster returns (False, None, reason) when
                     # the requested SL cannot satisfy both PERCENT_PRICE and
                     # the safety floor (e.g. SL would land within 6% of

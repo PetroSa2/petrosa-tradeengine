@@ -42,7 +42,7 @@ stop_contract_total = get_meter("tradeengine.stop_contract").create_counter(
 )
 
 RISK_INPUTS_URL = "/api/v1/risk/inputs"
-CANDLES_URL = "/api/v1/data/candles"
+CANDLES_HISTORIC_URL = "/api/v1/data/candles/historic"
 REFRESH_SECONDS = 15 * 60
 #: Inputs older than this many refresh periods are not used.
 STALE_AFTER_REFRESHES = 3
@@ -283,14 +283,18 @@ class StopFloorProvider:
     async def _read_hourly_volatility(self, symbol: str) -> None:
         """Recover hourly sigma from bounded data-manager candle pages."""
         candles: list[dict[str, Any]] = []
+        end = datetime.now(UTC)
+        start = end - timedelta(days=HOURLY_FLOOR_DAYS)
         try:
             for offset in (0, CANDLE_PAGE_SIZE):
                 body = await self.client.request(
                     "GET",
-                    CANDLES_URL,
+                    CANDLES_HISTORIC_URL,
                     params={
                         "pair": symbol,
                         "period": "1h",
+                        "start": start.isoformat(),
+                        "end": end.isoformat(),
                         "limit": CANDLE_PAGE_SIZE,
                         "offset": offset,
                         "sort_order": "desc",

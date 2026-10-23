@@ -220,7 +220,7 @@ async def test_missing_risk_report_recovers_sigma_from_hourly_candles():
     assert result.sigma_1h is not None
     assert result.n_returns >= 168
     candle_call = client.request.await_args_list[1]
-    assert candle_call.args[:2] == ("GET", "/api/v1/data/candles/historic")
+    assert candle_call.args[:2] == ("GET", "/data/candles/historic")
     assert candle_call.kwargs["params"] == {
         "pair": BTC,
         "period": "1h",

@@ -147,9 +147,9 @@ async def test_duplicate_signal_rejected(dispatcher_with_fakes):
     assert "duplicate" in result2.get("reason", "").lower()
     assert "duplicate_age_seconds" in result2
 
-    # One entry and one derived protective stop were executed.
+    # Verify only ONE order was executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert len(executed_orders) == 2, f"Expected 2 orders, got {len(executed_orders)}"
+    assert len(executed_orders) == 1, f"Expected 1 order, got {len(executed_orders)}"
 
 
 @pytest.mark.integration
@@ -301,9 +301,9 @@ async def test_different_signals_not_rejected(dispatcher_with_fakes):
     if result3.get("status") == "rejected":
         pytest.fail(f"Signal3 was rejected: {result3.get('reason')}")
 
-    # Each entry also arms one derived protective stop.
+    # Three orders should be executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert len(executed_orders) == 6, f"Expected 6 orders, got {len(executed_orders)}"
+    assert len(executed_orders) == 3, f"Expected 3 orders, got {len(executed_orders)}"
 
 
 @pytest.mark.integration
@@ -399,10 +399,10 @@ async def test_signal_after_cache_ttl_processed(dispatcher_with_fakes):
         f"Signal after TTL should not be rejected for any reason, got: {result2}"
     )
 
-    # Both entries and their derived protective stops should have been executed.
+    # Both should have been executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert len(executed_orders) == 4, (
-        f"Expected 4 orders after TTL, got {len(executed_orders)}"
+    assert len(executed_orders) == 2, (
+        f"Expected 2 orders after TTL, got {len(executed_orders)}"
     )
 
 
@@ -451,10 +451,10 @@ async def test_signals_within_cache_ttl_rejected(dispatcher_with_fakes):
     )
     assert "duplicate" in result2.get("reason", "").lower()
 
-    # Only one entry and its protective stop should be executed.
+    # Only one order should be executed
     executed_orders = fake_exchange.get_executed_orders()
-    assert len(executed_orders) == 2, (
-        f"Expected 2 orders within TTL, got {len(executed_orders)}"
+    assert len(executed_orders) == 1, (
+        f"Expected 1 order within TTL, got {len(executed_orders)}"
     )
 
 

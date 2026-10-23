@@ -362,22 +362,26 @@ class StopFloorProvider:
                     )
                 await self._read_exchange(symbol)
         entry = self._inputs.get(symbol)
-        entry = entry or _SymbolInputs()
+        if (
+            entry is None
+            or not entry.tick
+            or not entry.price
+            or entry.band is None
+            or self._clock() - entry.exchange_fetched_at > REFRESH_SECONDS
+        ):
+            raise ValueError("stop contract exchange inputs unavailable")
         reference = reference_price if reference_price is not None else entry.price
         if not reference:
             raise ValueError("stop contract reference price unavailable")
-        if entry.tick and entry.price and entry.band is not None:
-            technical = max(
-                MIN_SL_DISTANCE_PCT,
-                technical_floor(
-                    entry.tick,
-                    entry.price,
-                    median(entry.spreads) if entry.spreads else None,
-                    entry.band,
-                ),
-            )
-        else:
-            technical = MIN_SL_DISTANCE_PCT
+        technical = max(
+            MIN_SL_DISTANCE_PCT,
+            technical_floor(
+                entry.tick,
+                entry.price,
+                median(entry.spreads) if entry.spreads else None,
+                entry.band,
+            ),
+        )
         derived = self.floor(symbol, strategy_id)
         source, reason = "signal", None
         if stop_loss is not None:
@@ -399,27 +403,23 @@ class StopFloorProvider:
             if side == "LONG"
             else Decimal(1) + Decimal(str(fraction))
         )
-        if entry.tick:
-            tick = Decimal(str(entry.tick))
-            price = (price / tick).to_integral_value(
-                rounding=ROUND_FLOOR if side == "LONG" else ROUND_CEILING
-            ) * tick
+        tick = Decimal(str(entry.tick))
+        price = (price / tick).to_integral_value(
+            rounding=ROUND_FLOOR if side == "LONG" else ROUND_CEILING
+        ) * tick
         price_float = float(price)
         fraction = abs(reference - price_float) / reference
         placeable = (
             price_float > 0
             and fraction < 1
-            and (entry.band is None or fraction <= entry.band)
+            and fraction <= entry.band
             and (
-                entry.price is None
-                or (
-                    entry.price - price_float
-                    if side == "LONG"
-                    else price_float - entry.price
-                )
-                / entry.price
-                >= technical - 1e-12
+                entry.price - price_float
+                if side == "LONG"
+                else price_float - entry.price
             )
+            / entry.price
+            >= technical - 1e-12
         )
         contract = {
             "version": 1,

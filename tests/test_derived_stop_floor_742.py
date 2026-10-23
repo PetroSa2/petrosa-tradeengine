@@ -249,6 +249,17 @@ async def test_stop_contract_prefers_signal_level_and_is_self_consistent():
     assert order_stop_contract(order) == contract
 
 
+@pytest.mark.asyncio
+async def test_stop_contract_requires_exchange_inputs():
+    client = MagicMock()
+    client.request = AsyncMock(return_value={"symbols": {}})
+    provider = StopFloorProvider()
+    provider.configure(client, None, [BTC])
+
+    with pytest.raises(ValueError, match="exchange inputs unavailable"):
+        await provider.resolve_stop(BTC, "LONG", reference_price=50_000.0)
+
+
 # --- unplaceable floor: skip the order -----------------------------------------------------------
 
 

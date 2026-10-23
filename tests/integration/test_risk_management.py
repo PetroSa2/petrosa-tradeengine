@@ -251,8 +251,8 @@ async def test_valid_order_within_all_limits(dispatcher_with_risk_limits):
     # Assertions
     assert result["status"] != "rejected"
 
-    # Verify order was executed
-    assert len(fake_exchange.get_executed_orders()) == 1
+    # Verify the entry and derived protective stop were executed.
+    assert len(fake_exchange.get_executed_orders()) == 2
 
 
 @pytest.mark.integration
@@ -368,5 +368,5 @@ async def test_multiple_orders_accumulate_towards_limits(dispatcher_with_risk_li
     assert result1["status"] != "rejected"
     assert result2["status"] != "rejected"
 
-    # Verify both orders executed
-    assert len(fake_exchange.get_executed_orders()) == 2
+    # Verify both entries and their derived protective stops executed.
+    assert len(fake_exchange.get_executed_orders()) == 4

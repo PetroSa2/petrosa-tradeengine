@@ -181,9 +181,9 @@ async def test_lock_prevents_concurrent_processing(
                 return_exceptions=True,
             )
 
-            # Verify: Only ONE order should be executed
-            assert len(fake_exchange.executed_orders) == 1, (
-                f"Expected 1 order, but got {len(fake_exchange.executed_orders)}. "
+            # Verify: one entry and one protective stop should be executed.
+            assert len(fake_exchange.executed_orders) == 2, (
+                f"Expected 2 orders, but got {len(fake_exchange.executed_orders)}. "
                 f"This indicates the lock did not prevent concurrent processing."
             )
 
@@ -303,8 +303,8 @@ async def test_lock_released_after_success(
         await dispatcher.dispatch(sample_signal)
 
         # Verify: Function was executed (order was placed)
-        assert len(fake_exchange.executed_orders) == 1, (
-            f"Expected 1 order, got {len(fake_exchange.executed_orders)}"
+        assert len(fake_exchange.executed_orders) == 2, (
+            f"Expected 2 orders, got {len(fake_exchange.executed_orders)}"
         )
 
         # Verify: Lock was released
@@ -510,9 +510,9 @@ async def test_second_pod_waits_for_first_pod_lock_release(
                 return_exceptions=True,
             )
 
-            # Verify: Only first pod executed order
-            assert len(fake_exchange.executed_orders) == 1, (
-                f"Expected 1 order (from first pod), got {len(fake_exchange.executed_orders)}"
+            # Verify: only the first pod executed the entry and protective stop.
+            assert len(fake_exchange.executed_orders) == 2, (
+                f"Expected 2 orders (from first pod), got {len(fake_exchange.executed_orders)}"
             )
 
             # Verify: First result is executed, second is skipped

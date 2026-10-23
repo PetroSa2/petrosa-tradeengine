@@ -264,6 +264,34 @@ async def test_stale_risk_report_recovers_sigma_from_hourly_candles():
 
 
 @pytest.mark.asyncio
+async def test_invalid_risk_report_timestamp_triggers_bounded_recovery():
+    client = MagicMock()
+    now = datetime.now(UTC)
+    candles = [
+        {
+            "timestamp": (now - timedelta(hours=168 - index)).isoformat(),
+            "close": str(50_000.0 + index * 10),
+        }
+        for index in range(169)
+    ]
+    invalid = _risk_inputs(extra={"as_of": "not-a-timestamp"})
+    client.request = AsyncMock(side_effect=[invalid, {"data": candles}])
+    provider = StopFloorProvider()
+    provider.configure(client, _exchange(), [BTC])
+
+    await provider.refresh()
+
+    result = provider.floor(BTC)
+    assert result.source == "derived"
+    assert result.sigma_1h is not None
+    assert len(client.request.await_args_list) == 2
+    recovery_call = client.request.await_args_list[1]
+    assert recovery_call.args[:2] == ("GET", "/data/candles/historic")
+    assert recovery_call.kwargs["params"]["limit"] == 1000
+    assert recovery_call.kwargs["params"]["offset"] == 0
+
+
+@pytest.mark.asyncio
 async def test_sparse_hourly_candles_keep_the_labelled_fallback():
     client = MagicMock()
     now = datetime.now(UTC)

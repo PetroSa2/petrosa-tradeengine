@@ -1,6 +1,7 @@
 """Lease API behavior for the distributed lock manager."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock
 
 import httpx
@@ -68,18 +69,44 @@ def test_retry_budget_stays_below_leader_ttl():
 @pytest.mark.asyncio
 async def test_timeout_log_contains_exception_type(caplog):
     manager = DistributedLockManager()
-    manager.lease_client.renew = AsyncMock(
-        side_effect=httpx.ReadTimeout("upstream stalled")
-    )
+    calls = 0
+    deadline = time.monotonic() + 60
+    first_timeout = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def renew_with_timeout(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_timeout.set()
+        else:
+            await stop.wait()
+        raise httpx.ReadTimeout("upstream stalled")
+
+    manager.lease_client.renew = AsyncMock(side_effect=renew_with_timeout)
     manager.is_leader = True
+    manager.lease_valid_until = deadline
     manager.heartbeat_interval = 0
 
     task = asyncio.create_task(manager._heartbeat_loop())
-    await asyncio.sleep(0)
+    await first_timeout.wait()
+    assert manager.is_leader is True
+    assert manager.lease_valid_until == deadline
+    manager._is_leader = False
+    stop.set()
     await task
 
     assert "ReadTimeout" in caplog.text
+    assert calls == 2
     await manager.close()
+
+
+def test_expired_lease_is_not_leader():
+    manager = DistributedLockManager()
+    manager._is_leader = True
+    manager.lease_valid_until = time.monotonic() - 1
+
+    assert manager.is_leader is False
 
 
 @pytest.mark.asyncio

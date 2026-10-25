@@ -308,8 +308,6 @@ class DistributedLockManager:
                 ).inc()
                 lease_unavailable_total.labels(op="renew").inc()
                 _rate_limited_lease_warning("renew", exc)
-                # Keep leadership during a transient failure; the deadline is
-                # the authoritative validity boundary and the loop retries.
                 if self.lease_valid_until == float("inf"):
                     self.lease_valid_until = time.monotonic()
             else:

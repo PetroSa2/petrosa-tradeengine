@@ -88,6 +88,19 @@ async def test_unhalted_entry_is_allowed() -> None:
     assert manual_halt_active._value.get() == 0
 
 
+@pytest.mark.asyncio
+async def test_manual_halt_rejects_direct_order_path() -> None:
+    dispatcher = Dispatcher()
+    dispatcher._emit_execution_event_from_order = AsyncMock()
+    dispatcher.exchange = AsyncMock()
+
+    with patch.dict("os.environ", {"TRADING_HALT": "true"}):
+        result = await dispatcher.execute_order(_order(reduce_only=False))
+
+    assert result["status"] == "rejected"
+    dispatcher.exchange.execute.assert_not_awaited()
+
+
 def test_manual_halt_state_is_reversible() -> None:
     from tradeengine.manual_halt import manual_halt_state
 

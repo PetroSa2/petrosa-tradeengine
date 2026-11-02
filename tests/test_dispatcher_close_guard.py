@@ -24,6 +24,7 @@ import pytest
 
 from tradeengine.dispatcher import Dispatcher
 from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
+from tradeengine.metrics import residual_positions
 
 
 class _FakeConsumer:
@@ -248,6 +249,7 @@ async def test_586_oversized_close_is_clamped_to_live_qty() -> None:
     # The order sent to the exchange must be clamped to the live qty, never
     # the oversized requested amount — this is what prevents the sign flip.
     assert placed_order.amount == pytest.approx(0.303)
+    assert placed_order.reduce_only is True
 
 
 @pytest.mark.asyncio
@@ -384,3 +386,41 @@ async def test_586_clamp_disabled_by_close_guard_flag(
     placed_order = disp.exchange.execute.call_args[0][0]
     # Flag off -> no clamp applied, oversized quantity ships as-is.
     assert placed_order.amount == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_822_residual_is_detected_closed_and_counted() -> None:
+    positions = {
+        ("BTCUSDT", "LONG"): PositionSnapshot(
+            symbol="BTCUSDT",
+            side="LONG",
+            quantity=0.0581,
+            entry_price=60000.0,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+    disp.position_manager.positions = {("BTCUSDT", "LONG"): {"quantity": 0.0581}}
+    disp.exchange.get_position_info = AsyncMock(
+        return_value=[
+            {"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "0"},
+            {"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": "-0.0189"},
+        ]
+    )
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        quantity=0.0581,
+        reason="take_profit",
+    )
+
+    assert result["status"] == "success"
+    assert disp.exchange.execute.call_count == 2
+    residual_order = disp.exchange.execute.call_args_list[1][0][0]
+    assert residual_order.position_side == "SHORT"
+    assert residual_order.reduce_only is True
+    assert residual_order.amount == pytest.approx(0.0189)
+    assert residual_positions._value.get() == pytest.approx(1)
+    residual_positions.set(0)

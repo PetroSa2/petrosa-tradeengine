@@ -189,6 +189,17 @@ def test_the_mark_implied_by_the_unrealized_pnl_is_preferred_to_the_entry_price(
     assert both == pytest.approx(195.0)
 
 
+def test_exchange_positions_expose_unrealized_pnl_and_marked_total_value():
+    pm = manager_with(
+        snapshot(side="LONG", quantity=100.0, entry=2.0, upnl=5.0, mark=2.05)
+    )
+    with patch("tradeengine.position_manager.TE_EXCHANGE_TRUTH_STORE_ENABLED", "on"):
+        position = pm.get_positions()[("XRPUSDT", "LONG")]
+
+    assert position["unrealized_pnl"] == pytest.approx(5.0)
+    assert position["total_value"] == pytest.approx(205.0)
+
+
 def test_an_implied_mark_at_or_below_zero_falls_back_to_the_entry_price():
     value, failed = notional_of(manager_with(snapshot(upnl=-500.0)))
     assert failed is False and value == pytest.approx(200.0)

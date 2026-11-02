@@ -79,6 +79,19 @@ def _decimal(value: Any, default: str = "0") -> Decimal:
         return Decimal(default)
 
 
+def _exchange_position_value(snapshot: Any) -> float:
+    quantity = abs(float(snapshot.quantity))
+    if not quantity:
+        return 0.0
+    mark_price = float(snapshot.mark_price or 0.0)
+    if mark_price <= 0 and snapshot.entry_price:
+        direction = 1.0 if snapshot.side == "LONG" else -1.0
+        mark_price = float(snapshot.entry_price) + (
+            float(snapshot.unrealized_pnl or 0.0) / quantity * direction
+        )
+    return quantity * (mark_price or float(snapshot.entry_price))
+
+
 class PositionManager:
     """Manages trading positions and risk limits with distributed state management
     using the data-manager API backed by MongoDB."""
@@ -498,7 +511,7 @@ class PositionManager:
                 "unrealized_pnl": snapshot.unrealized_pnl,
                 "realized_pnl": 0.0,
                 "total_cost": 0.0,
-                "total_value": snapshot.quantity * snapshot.entry_price,
+                "total_value": _exchange_position_value(snapshot),
                 "entry_time": journal.get(key, {}).get(
                     "entry_time", snapshot.updated_at
                 ),
@@ -2245,7 +2258,7 @@ class PositionManager:
                     # The cost basis of the open quantity: the exchange's entry price is its average, so a
                     # position of 0.673 ETH at 2710.40 costs 1824, not just the last fill (#737).
                     "total_cost": v.quantity * v.entry_price,
-                    "total_value": v.quantity * v.entry_price,
+                    "total_value": _exchange_position_value(v),
                     "entry_time": self.positions.get(k, {}).get(
                         "entry_time", v.updated_at
                     ),

@@ -123,6 +123,77 @@ class TestExchangeTruthStore:
         assert snap.entry_price == pytest.approx(50000)
 
     @pytest.mark.asyncio
+    async def test_account_update_preserves_exchange_unrealized_pnl_for_long(self):
+        store = ExchangeTruthStore()
+        await store.update_positions_from_account_update(
+            {
+                "a": {
+                    "P": [
+                        {
+                            "s": "BTCUSDT",
+                            "ps": "LONG",
+                            "pa": "0.01",
+                            "ep": "50000",
+                            "up": "12.5",
+                        },
+                    ]
+                }
+            }
+        )
+
+        positions = store.get_positions()
+        assert positions[("BTCUSDT", "LONG")].unrealized_pnl == pytest.approx(12.5)
+
+    @pytest.mark.asyncio
+    async def test_account_update_preserves_exchange_unrealized_pnl_for_short(self):
+        store = ExchangeTruthStore()
+        await store.update_positions_from_account_update(
+            {
+                "a": {
+                    "P": [
+                        {
+                            "s": "BTCUSDT",
+                            "ps": "SHORT",
+                            "pa": "-0.01",
+                            "ep": "50000",
+                            "up": "8.5",
+                        },
+                    ]
+                }
+            }
+        )
+
+        positions = store.get_positions()
+        assert positions[("BTCUSDT", "SHORT")].unrealized_pnl == pytest.approx(8.5)
+
+    @pytest.mark.asyncio
+    async def test_seed_from_rest_calculates_side_correct_fallback_pnl(self):
+        store = ExchangeTruthStore()
+        await store.seed_from_rest(
+            [
+                {
+                    "symbol": "BTCUSDT",
+                    "positionSide": "LONG",
+                    "positionAmt": "0.01",
+                    "entryPrice": "50000",
+                    "markPrice": "50100",
+                },
+                {
+                    "symbol": "ETHUSDT",
+                    "positionSide": "SHORT",
+                    "positionAmt": "-0.02",
+                    "entryPrice": "3000",
+                    "markPrice": "2900",
+                },
+            ],
+            [],
+        )
+
+        positions = store.get_positions()
+        assert positions[("BTCUSDT", "LONG")].unrealized_pnl == pytest.approx(1.0)
+        assert positions[("ETHUSDT", "SHORT")].unrealized_pnl == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
     async def test_seed_from_rest_skips_zero_qty_positions(self):
         store = ExchangeTruthStore()
         positions = [

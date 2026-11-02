@@ -77,6 +77,22 @@ class PositionSnapshot:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
+def _unrealized_pnl(
+    position: dict[str, Any],
+    quantity: float,
+    entry_price: float,
+    mark_price: float,
+) -> float:
+    value = position.get("unrealizedProfit", position.get("up"))
+    if value is not None:
+        return float(value)
+    if not mark_price or not entry_price or not quantity:
+        return 0.0
+    side = position.get("positionSide", position.get("ps", "BOTH")).upper()
+    direction = 1.0 if side == "LONG" or (side == "BOTH" and quantity > 0) else -1.0
+    return (mark_price - entry_price) * abs(quantity) * direction
+
+
 @dataclass
 class OrderSnapshot:
     symbol: str
@@ -171,7 +187,6 @@ class ExchangeTruthStore:
                 side = p.get("ps", "BOTH").upper()
                 qty = float(p.get("pa", 0))
                 entry = float(p.get("ep", 0))
-                upnl = float(p.get("up", 0))
                 previous = self._positions.get((symbol, side))
                 previous_qty = previous.quantity if previous is not None else 0.0
                 if abs(previous_qty - qty) > 1e-12:
@@ -186,7 +201,7 @@ class ExchangeTruthStore:
                         side=side,
                         quantity=qty,
                         entry_price=entry,
-                        unrealized_pnl=upnl,
+                        unrealized_pnl=_unrealized_pnl(p, qty, entry, mark_price),
                         mark_price=mark_price
                         or (previous.mark_price if previous else 0.0),
                         notional=notional or (previous.notional if previous else 0.0),
@@ -261,7 +276,12 @@ class ExchangeTruthStore:
                     side=side,
                     quantity=qty,
                     entry_price=float(p.get("entryPrice", 0)),
-                    unrealized_pnl=float(p.get("unrealizedProfit", 0)),
+                    unrealized_pnl=_unrealized_pnl(
+                        p,
+                        qty,
+                        float(p.get("entryPrice", 0)),
+                        float(p.get("markPrice", 0) or 0),
+                    ),
                     mark_price=float(p.get("markPrice", 0) or 0),
                     notional=float(p.get("notional", 0) or 0),
                 )
@@ -304,7 +324,12 @@ class ExchangeTruthStore:
                     side=side,
                     quantity=qty,
                     entry_price=float(p.get("entryPrice", 0)),
-                    unrealized_pnl=float(p.get("unrealizedProfit", 0)),
+                    unrealized_pnl=_unrealized_pnl(
+                        p,
+                        qty,
+                        float(p.get("entryPrice", 0)),
+                        float(p.get("markPrice", 0) or 0),
+                    ),
                     mark_price=float(p.get("markPrice", 0) or 0),
                     notional=float(p.get("notional", 0) or 0),
                 )

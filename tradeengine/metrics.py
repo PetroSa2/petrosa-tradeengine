@@ -432,6 +432,11 @@ close_qty_clamped_total = Counter(
     ["symbol", "side", "outcome"],  # outcome: clamped | skipped_flat
 )
 
+residual_positions = Gauge(
+    "petrosa_tradeengine_residual_positions",
+    "Current exchange position legs with no matching strategy position",
+)
+
 # #497 — current OCO orphan count: positions on Binance that lack the full
 # stop/target pair (i.e. unhedged). The pre-existing
 # `tradeengine-oco-pair-orphan` Grafana alert fires on
@@ -989,12 +994,24 @@ otel_execution_halt_active = meter.create_gauge(
     description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
 )
 
+otel_residual_positions = meter.create_gauge(
+    "petrosa_tradeengine_residual_positions",
+    description="Current exchange position legs with no matching strategy position (OTLP dual-export)",
+)
+
 
 def set_drawdown_breach_active(strategy_id: str, active: bool) -> None:
     """Update both exports for the current per-strategy breach state."""
     value = 1 if active else 0
     drawdown_breach_active.labels(strategy_id=strategy_id).set(value)
     otel_drawdown_breach_active.set(value, {"strategy_id": strategy_id})
+
+
+def set_residual_positions_count(count: int) -> None:
+    """Update the residual-position gauge in both telemetry exporters."""
+    value = max(0, int(count))
+    residual_positions.set(value)
+    otel_residual_positions.set(value)
 
 
 # #651 — protective-leg lifecycle (OTLP dual-export).

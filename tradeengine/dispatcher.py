@@ -64,6 +64,7 @@ from tradeengine.metrics import (
     risk_at_stop_total,
     risk_checks_total,
     risk_rejections_total,
+    set_residual_positions_count,
     sizing_cap_total,
     strategy_close_blocked_no_exchange_position_total,
 )
@@ -7503,6 +7504,110 @@ class Dispatcher:
             )
         return None
 
+    async def _reconcile_close_residual(
+        self, symbol: str, position_side: str, reason: str
+    ) -> list[dict[str, Any]]:
+        """Close exchange residuals that have no strategy-side position."""
+        if self.exchange is None or not hasattr(self.exchange, "get_position_info"):
+            return []
+        try:
+            raw_positions = await self.exchange.get_position_info()
+        except Exception:
+            self.logger.warning(
+                "Close residual reconciliation lookup failed for %s",
+                symbol,
+                exc_info=True,
+            )
+            return []
+        if not isinstance(raw_positions, list):
+            return []
+
+        local_positions = getattr(self.position_manager, "positions", {})
+        opposite_side = "SHORT" if position_side == "LONG" else "LONG"
+        residuals: list[dict[str, Any]] = []
+        for raw in raw_positions:
+            if raw.get("symbol") != symbol:
+                continue
+            side = str(raw.get("positionSide", "BOTH")).upper()
+            if side != opposite_side:
+                continue
+            try:
+                quantity = abs(float(raw.get("positionAmt", 0) or 0))
+            except (TypeError, ValueError):
+                continue
+            if quantity <= 1e-9:
+                continue
+            local = local_positions.get((symbol, side), {})
+            try:
+                local_quantity = abs(
+                    float(local.get("quantity", local.get("amount", 0)) or 0)
+                )
+            except (TypeError, ValueError, AttributeError):
+                local_quantity = 0.0
+            if local_quantity > 1e-9:
+                continue
+            residual = {"symbol": symbol, "side": side, "quantity": quantity}
+            residuals.append(residual)
+
+        set_residual_positions_count(len(residuals))
+        for residual in residuals:
+            side = residual["side"]
+            quantity = residual["quantity"]
+            self.logger.critical(
+                "RESIDUAL_DETECTED symbol=%s side=%s quantity=%s reason=%s",
+                symbol,
+                side,
+                quantity,
+                reason,
+            )
+            residual_order = TradeOrder(
+                symbol=symbol,
+                side="sell" if side == "LONG" else "buy",
+                type=OrderType.MARKET,
+                amount=quantity,
+                target_price=None,
+                stop_loss=None,
+                take_profit=None,
+                conditional_price=None,
+                conditional_direction=None,
+                conditional_timeout=None,
+                iceberg_quantity=None,
+                client_order_id=None,
+                order_id=f"residual_close_{symbol}_{int(time.time())}",
+                status=OrderStatus.PENDING,
+                filled_amount=0.0,
+                average_price=None,
+                position_id=None,
+                position_side=side,
+                exchange="binance",
+                reduce_only=True,
+                time_in_force=TimeInForce.GTC,
+                position_size_pct=None,
+                simulate=False,
+                updated_at=None,
+            )
+            try:
+                result = await self.exchange.execute(residual_order)
+                await alert_publisher.publish(
+                    alert_name="residual_position_detected",
+                    severity="critical",
+                    payload={
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "remediation_status": result.get("status", "unknown"),
+                    },
+                )
+            except Exception:
+                self.logger.error(
+                    "Residual close failed for %s %s quantity=%s",
+                    symbol,
+                    side,
+                    quantity,
+                    exc_info=True,
+                )
+        return residuals
+
     async def close_position_with_cleanup(
         self,
         position_id: str,
@@ -7740,6 +7845,9 @@ class Dispatcher:
             # its explicit-quantity legs (the follow-up passes absorb
             # positionRisk lag after the MARKET fill).
             self._request_leg_sync(symbol, position_side, f"close:{reason}")
+
+            if position_closed:
+                await self._reconcile_close_residual(symbol, position_side, reason)
 
             # Step 3: Persist the actual exchange fill. Do not mark a row
             # closed from the requested quantity or a zero placeholder price.

@@ -858,6 +858,11 @@ execution_halt_active = Gauge(
     "NOT the same signal as tradeengine_restricted_mode_status — see #569.",
 )
 
+manual_halt_active = Gauge(
+    "petrosa_tradeengine_manual_halt",
+    "1 when the operator-controlled halt rejects new entries, otherwise 0.",
+)
+
 
 # ============================================================
 # OTel SDK instruments (dual-export — OTLP push to Grafana Alloy)
@@ -994,6 +999,11 @@ otel_execution_halt_active = meter.create_gauge(
     description="1 when HaltSuspectedDetector has an active halt_suspected condition, else 0 (OTLP dual-export)",
 )
 
+otel_manual_halt_active = meter.create_gauge(
+    "petrosa_tradeengine_manual_halt",
+    description="1 when the operator-controlled halt rejects new entries, otherwise 0",
+)
+
 otel_residual_positions = meter.create_gauge(
     "petrosa_tradeengine_residual_positions",
     description="Current exchange position legs with no matching strategy position (OTLP dual-export)",
@@ -1005,6 +1015,12 @@ def set_drawdown_breach_active(strategy_id: str, active: bool) -> None:
     value = 1 if active else 0
     drawdown_breach_active.labels(strategy_id=strategy_id).set(value)
     otel_drawdown_breach_active.set(value, {"strategy_id": strategy_id})
+
+
+def set_manual_halt_active(active: bool) -> None:
+    value = 1 if active else 0
+    manual_halt_active.set(value)
+    otel_manual_halt_active.set(value)
 
 
 def set_residual_positions_count(count: int) -> None:

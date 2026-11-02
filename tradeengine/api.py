@@ -59,6 +59,7 @@ from tradeengine.dispatcher import Dispatcher
 from tradeengine.equity_peak import equity_peak_tracker
 from tradeengine.exchange.binance import BinanceFuturesExchange
 from tradeengine.exchange.simulator import SimulatorExchange
+from tradeengine.manual_halt import manual_halt_state
 from tradeengine.position_health_guard import (
     PositionStopsHealthResponse,
     check_position_stops,
@@ -757,6 +758,7 @@ async def health_check() -> HealthResponse:
             "binance_exchange": await binance_exchange.health_check(),
             "simulator_exchange": await simulator_exchange.health_check(),
             "audit_logger": audit_logger.health(),
+            "manual_halt": manual_halt_state(),
         }
 
         # Determine overall status

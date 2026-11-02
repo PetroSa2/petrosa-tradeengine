@@ -40,6 +40,7 @@ from tradeengine.hedge_netting import (
 from tradeengine.leverage_bound_guard import LeverageBoundGuard
 from tradeengine.leverage_manager import LeverageManager
 from tradeengine.maker_entry import MakerEntryExecutor
+from tradeengine.manual_halt import is_manual_halt_active
 from tradeengine.metrics import (
     TradingIdleTracker,
     atomic_rollback_failed_total,
@@ -4249,9 +4250,40 @@ class Dispatcher:
             "rejection_source": "risk_check",
         }
 
+    async def _reject_manual_halt(self, order: TradeOrder) -> dict[str, Any]:
+        order.mark_rejected(source="risk_check", reason="manual_halt")
+        risk_rejections_total.labels(
+            reason="manual_halt", symbol=order.symbol, exchange=order.exchange
+        ).inc()
+        risk_checks_total.labels(
+            check_type="manual_halt",
+            result="rejected",
+            exchange=order.exchange,
+        ).inc()
+        self.logger.warning(
+            "EXECUTE DROPPED | symbol=%s side=%s reason=manual_halt",
+            order.symbol,
+            order.side,
+        )
+        await self._emit_execution_event_from_order(
+            order,
+            {"status": "rejected"},
+            event_type="rejected",
+            reason="manual_halt",
+        )
+        _record_orders_total("rejected", order.symbol, order.exchange)
+        return {
+            "status": "rejected",
+            "reason": "manual_halt",
+            "rejection_source": "risk_check",
+        }
+
     async def _execute_order_with_consensus(self, order: TradeOrder) -> dict[str, Any]:
         """Execute order with distributed consensus"""
         try:
+            if is_manual_halt_active() and not order.reduce_only:
+                return await self._reject_manual_halt(order)
+
             # The USD cap runs first so every later check sees the quantity that will be sent.
             # Probe sizing first (smallest valid order), then the optional USD ceiling on the result.
             for sizing in (
@@ -5334,6 +5366,9 @@ class Dispatcher:
         import time
 
         start_time = time.time()
+
+        if is_manual_halt_active() and not order.reduce_only:
+            return await self._reject_manual_halt(order)
 
         with tracer.start_as_current_span("dispatcher.execute_order") as span:
             # Add business context attributes to span

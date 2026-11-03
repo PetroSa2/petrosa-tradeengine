@@ -424,3 +424,71 @@ async def test_822_residual_is_detected_closed_and_counted() -> None:
     assert residual_order.amount == pytest.approx(0.0189)
     assert residual_positions._value.get() == pytest.approx(1)
     residual_positions.set(0)
+
+
+@pytest.mark.asyncio
+async def test_822_reconciles_both_exchange_legs_using_live_quantities() -> None:
+    positions = {
+        ("BTCUSDT", "LONG"): PositionSnapshot(
+            symbol="BTCUSDT",
+            side="LONG",
+            quantity=0.0581,
+            entry_price=60000.0,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+    disp.exchange.get_position_info = AsyncMock(
+        return_value=[
+            {"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "0.012"},
+            {"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": "-0.0189"},
+            "malformed-position",
+        ]
+    )
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        quantity=0.0581,
+        reason="take_profit",
+    )
+
+    assert result["status"] == "success"
+    assert disp.exchange.execute.call_count == 3
+    remediation_orders = [
+        call.args[0] for call in disp.exchange.execute.call_args_list[1:]
+    ]
+    assert remediation_orders[0].position_side == "LONG"
+    assert remediation_orders[0].amount == pytest.approx(0.012)
+    assert remediation_orders[1].position_side == "SHORT"
+    assert remediation_orders[1].amount == pytest.approx(0.0189)
+    assert all(order.reduce_only for order in remediation_orders)
+    assert residual_positions._value.get() == pytest.approx(2)
+    residual_positions.set(0)
+
+
+@pytest.mark.asyncio
+async def test_822_residual_read_failure_does_not_guess_a_remediation() -> None:
+    positions = {
+        ("ETHUSDT", "LONG"): PositionSnapshot(
+            symbol="ETHUSDT",
+            side="LONG",
+            quantity=0.5,
+            entry_price=3000.0,
+            unrealized_pnl=0.0,
+        )
+    }
+    disp = _dispatcher_with_positions(positions)
+    disp.exchange.get_position_info = AsyncMock(side_effect=RuntimeError("timeout"))
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="ETHUSDT",
+        position_side="LONG",
+        quantity=0.5,
+        reason="take_profit",
+    )
+
+    assert result["status"] == "success"
+    assert disp.exchange.execute.call_count == 1

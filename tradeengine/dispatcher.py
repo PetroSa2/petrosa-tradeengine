@@ -7558,13 +7558,14 @@ class Dispatcher:
             return []
 
         local_positions = getattr(self.position_manager, "positions", {})
-        opposite_side = "SHORT" if position_side == "LONG" else "LONG"
         residuals: list[dict[str, Any]] = []
         for raw in raw_positions:
+            if not isinstance(raw, dict):
+                continue
             if raw.get("symbol") != symbol:
                 continue
             side = str(raw.get("positionSide", "BOTH")).upper()
-            if side != opposite_side:
+            if side not in ("LONG", "SHORT"):
                 continue
             try:
                 quantity = abs(float(raw.get("positionAmt", 0) or 0))
@@ -7608,7 +7609,7 @@ class Dispatcher:
                 conditional_timeout=None,
                 iceberg_quantity=None,
                 client_order_id=None,
-                order_id=f"residual_close_{symbol}_{int(time.time())}",
+                order_id=f"residual_close_{symbol}_{side}_{int(time.time())}",
                 status=OrderStatus.PENDING,
                 filled_amount=0.0,
                 average_price=None,

@@ -142,6 +142,20 @@ def technical_floor(
     return min(value, band) if band is not None else value
 
 
+class StopNotProtectiveError(ValueError):
+    """A signal's stop is not on the protective side of its reference price.
+
+    A rejection of the signal (the input), not a failure of the engine: ``/state`` answers it with 422
+    so callers can tell it from an outage (PetroSa2/petrosa-tradeengine#829).
+    """
+
+    def __init__(self, side: str, stop_loss: float, reference_price: float) -> None:
+        super().__init__("signal stop is not on the protective side")
+        self.side = side
+        self.stop_loss = stop_loss
+        self.reference_price = reference_price
+
+
 def max_placeable_fraction(multiplier_up: float, multiplier_down: float) -> float:
     """The farthest stop distance the PERCENT_PRICE band allows, inside the adjuster's safety margin."""
     up = multiplier_up * (1 - BAND_SAFETY_MARGIN) - 1.0
@@ -507,7 +521,7 @@ class StopFloorProvider:
                 else (stop_loss - reference) / reference
             )
             if fraction <= 0 or fraction >= 1:
-                raise ValueError("signal stop is not on the protective side")
+                raise StopNotProtectiveError(side, stop_loss, reference)
         elif stop_loss_pct is not None:
             fraction = stop_loss_pct
         else:

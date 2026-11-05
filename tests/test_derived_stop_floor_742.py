@@ -531,3 +531,21 @@ def test_the_module_level_provider_is_the_one_the_dispatcher_uses():
 
     assert dispatcher_module.stop_floor is stop_floor
     assert math.isfinite(noise_multiplier(0.1))
+
+
+@pytest.mark.asyncio
+async def test_long_stop_above_the_reference_raises_stop_not_protective():
+    """te#829: the case /state turned into a 500 (mean_reversion_scalper LONG, 2026-11-05)."""
+    from tradeengine.stop_floor import StopNotProtectiveError
+
+    provider = await _provider()
+    with pytest.raises(StopNotProtectiveError) as raised:
+        await provider.resolve_stop(
+            BTC, "LONG", stop_loss=50_100.0, reference_price=50_000.0
+        )
+    assert isinstance(
+        raised.value, ValueError
+    )  # existing ValueError handlers still apply
+    assert raised.value.side == "LONG"
+    assert raised.value.stop_loss == 50_100.0
+    assert raised.value.reference_price == 50_000.0

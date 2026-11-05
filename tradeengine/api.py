@@ -65,7 +65,7 @@ from tradeengine.position_health_guard import (
     check_position_stops,
 )
 from tradeengine.services.execution_event_publisher import execution_event_publisher
-from tradeengine.stop_floor import stop_floor
+from tradeengine.stop_floor import StopNotProtectiveError, stop_floor
 from tradeengine.strategy_position_manager import (
     strategy_position_manager as _strategy_position_manager,
 )
@@ -1599,6 +1599,24 @@ async def get_state(
         if cap["max_position_size_usd"] is not None:
             state["risk_limits"]["max_position_size_usd"] = cap["max_position_size_usd"]
         return state
+    except StopNotProtectiveError as e:
+        # The signal's stop is invalid input, not an engine failure: 422 lets the CIO reject the
+        # signal instead of fail-safe blocking it as PORTFOLIO_CONTEXT_UNAVAILABLE (te#829).
+        logger.warning(
+            f"State request rejected for {symbol}: stop_not_protective side={e.side} "
+            f"stop_loss={e.stop_loss} reference_price={e.reference_price} "
+            f"strategy_id={strategy_id}"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "stop_not_protective",
+                "message": str(e),
+                "side": e.side,
+                "stop_loss": e.stop_loss,
+                "reference_price": e.reference_price,
+            },
+        ) from e
     except Exception as e:
         logger.error(f"Error getting state for {symbol}: {e}")
         raise HTTPException(

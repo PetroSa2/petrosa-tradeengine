@@ -408,39 +408,21 @@ class TestLLMProcessorHedgeMode:
         processor = LLMProcessor()
         processor.llm_available = True
 
-        # Mock LLM reasoning to approve signals
-        async def mock_llm_reasoning(context):
-            return {"approved": True, "confidence": 0.8}
-
-        processor._get_llm_reasoning = mock_llm_reasoning
+        # CIO signals carrying their audited reasoning (te#828: the only kind accepted)
+        buy = btc_buy_signal.model_copy(update={"llm_reasoning": "routed: execute"})
+        sell = btc_sell_signal.model_copy(update={"llm_reasoning": "routed: execute"})
 
         # First signal
         active_signals = {}
-        result1 = await processor.process(btc_buy_signal, active_signals)
+        result1 = await processor.process(buy, active_signals)
         assert result1["status"] == "executed"
 
         # Add to active signals
-        active_signals[btc_buy_signal.strategy_id] = btc_buy_signal
+        active_signals[buy.strategy_id] = buy
 
         # Opposite direction signal - should not conflict
-        result2 = await processor.process(btc_sell_signal, active_signals)
+        result2 = await processor.process(sell, active_signals)
         assert result2["status"] == "executed"
-
-    @pytest.mark.asyncio
-    async def test_llm_context_includes_position_mode(
-        self, btc_buy_signal, monkeypatch
-    ):
-        """LLM context should include position mode information"""
-        monkeypatch.setattr("shared.constants.POSITION_MODE", "hedge")
-
-        processor = LLMProcessor()
-
-        context = processor._prepare_llm_context(btc_buy_signal, {}, [])
-
-        assert "market_context" in context
-        assert "position_mode" in context["market_context"]
-        assert context["market_context"]["position_mode"] == "hedge"
-        assert context["market_context"]["hedge_mode_enabled"] is True
 
 
 # =============================================================================

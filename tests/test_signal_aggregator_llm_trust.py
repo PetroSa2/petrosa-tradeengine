@@ -1,6 +1,3 @@
-import asyncio
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from petrosa_contracts import Signal, StrategyMode
 
@@ -11,7 +8,7 @@ from tradeengine.signal_aggregator import LLMProcessor
 async def test_llm_processor_trusts_cio_reasoning():
     """
     Verifies that LLMProcessor trusts existing reasoning from petrosa-cio
-    and does NOT call _get_llm_reasoning.
+    with no LLM fallback.
     """
     processor = LLMProcessor()
 
@@ -32,17 +29,15 @@ async def test_llm_processor_trusts_cio_reasoning():
         take_profit_pct=0.05,
     )
 
-    # Mock _get_llm_reasoning to raise an error if called
-    with patch.object(
-        processor, "_get_llm_reasoning", side_effect=Exception("Should not be called!")
-    ):
-        result = await processor.process(signal, {})
+    # te#828: there is no LLM fallback to call; CIO's reasoning is used as is.
+    assert not hasattr(processor, "_get_llm_reasoning")
+    result = await processor.process(signal, {})
 
-        assert result["status"] == "executed"
-        assert result["reason"] == "CIO audit trusted"
-        assert result["llm_reasoning"]["reasoning"] == "CIO TRUSTED REASONING"
-        assert result["order_params"]["stop_loss_pct"] == "0.02"
-        assert result["order_params"]["take_profit_pct"] == "0.05"
+    assert result["status"] == "executed"
+    assert result["reason"] == "CIO audit trusted"
+    assert result["llm_reasoning"]["reasoning"] == "CIO TRUSTED REASONING"
+    assert result["order_params"]["stop_loss_pct"] == "0.02"
+    assert result["order_params"]["take_profit_pct"] == "0.05"
 
 
 @pytest.mark.asyncio

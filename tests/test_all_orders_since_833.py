@@ -6,8 +6,12 @@ import time
 
 import pytest
 
-from tradeengine.exchange import binance as binance_module
-from tradeengine.exchange.binance import BinanceFuturesExchange
+# Import the shared binance mocks first (see tests/test_binance_4130_reconciliation.py):
+# this file sorts before test_binance_*, and binding the real BinanceAPIException
+# here would break their ``except BinanceAPIException`` matching.
+import tests.test_binance_exchange_comprehensive as _shared_mocks  # noqa: F401
+from tradeengine.exchange import binance as binance_module  # noqa: E402
+from tradeengine.exchange.binance import BinanceFuturesExchange  # noqa: E402
 
 DAY_MS = 24 * 60 * 60 * 1000
 

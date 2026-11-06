@@ -60,6 +60,13 @@ class _Exchange:
         self.fetch_all_orders_since = AsyncMock(return_value=[ORDER])
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_window():
+    routes._calls.clear()
+    yield
+    routes._calls.clear()
+
+
 @pytest.fixture
 def exchange():
     fake = _Exchange()
@@ -286,3 +293,53 @@ def test_module_cannot_place_cancel_or_amend_orders() -> None:
     assert not names & forbidden
     readers = {n for n in names if n.startswith("fetch_")}
     assert readers == {"fetch_user_trades_since", "fetch_all_orders_since"}
+
+
+# --- rate guard: a share of the account's weight budget ----------------------------
+
+
+class _Monitor:
+    def __init__(self, limit_1m: int = 2400, paused: bool = False) -> None:
+        self.limit_1m = limit_1m
+        self.polling_paused = paused
+
+
+def test_budget_is_derived_from_the_weight_limit(exchange) -> None:
+    assert routes.requests_per_minute() == 48  # fallback 2400 x 10% / 5
+    exchange.rate_monitor = _Monitor(limit_1m=1200)
+    assert routes.requests_per_minute() == 24
+
+
+def test_over_the_budget_is_429_with_retry_after(exchange) -> None:
+    exchange.rate_monitor = _Monitor(limit_1m=100)  # 100 x 10% / 5 = 2 per minute
+    routes._admit("data-manager", now=0.0)
+    routes._admit("data-manager", now=10.0)
+    with pytest.raises(HTTPException) as err:
+        routes._admit("data-manager", now=20.0)
+    assert err.value.status_code == 429
+    assert err.value.headers == {"Retry-After": "40"}
+    assert err.value.detail["requests_per_minute"] == 2
+    routes._admit("data-manager", now=60.0)  # the first call left the window
+
+
+def test_exhausted_exchange_weight_is_503(exchange) -> None:
+    exchange.rate_monitor = _Monitor(paused=True)
+    with pytest.raises(HTTPException) as err:
+        routes._admit("data-manager", now=0.0)
+    assert err.value.status_code == 503
+    assert err.value.detail["error"] == "exchange_weight_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_rejected_calls_do_not_reach_the_guard(monkeypatch, exchange) -> None:
+    monkeypatch.setenv("DM_SERVICE_TOKEN", TOKEN)
+    exchange.rate_monitor = _Monitor(limit_1m=50)  # 1 per minute
+    for _ in range(3):
+        with pytest.raises(HTTPException):
+            await routes.require_data_manager(
+                _request({"X-Petrosa-Service": "data-manager"})
+            )
+    ok = _request(
+        {"Authorization": f"Bearer {TOKEN}", "X-Petrosa-Service": "data-manager"}
+    )
+    assert await routes.require_data_manager(ok) == "data-manager"

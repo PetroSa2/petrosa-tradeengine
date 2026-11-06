@@ -19,7 +19,10 @@ the bearer token of the tradeengine<->data-manager service identity (secret
 token under another identity: 403; no token configured here: 503 (fails closed).
 
 Each call covers at most one exchange query span (7 days) and returns at most
-``limit`` rows, paged by id (``after_id`` / ``next_after_id``). Error reasons and log
+``limit`` rows, paged by id (``after_id`` / ``next_after_id``). A rate guard keeps
+these reads to a fixed share of the account's per-minute request weight, so a caller
+bug cannot starve trading: over it, 429 with ``Retry-After``; while the exchange
+weight is near exhaustion or banned, 503. Error reasons and log
 lines carry the exchange's error code and message or the exception type only, never
 request URLs, signatures or keys.
 """
@@ -28,9 +31,11 @@ from __future__ import annotations
 
 import hmac
 import logging
+import math
 import os
 import re
 import time
+from collections import deque
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -42,6 +47,16 @@ CALLER_SERVICE = "data-manager"
 MAX_RANGE_MS = 7 * 24 * 60 * 60 * 1000
 # Binance's own page size for these endpoints.
 MAX_PAGE_ROWS = 1000
+# Binance's documented request weight of one userTrades / allOrders call.
+HISTORY_CALL_WEIGHT = 5
+# Policy: history reads may use at most this share of the account's per-minute
+# request weight; trading keeps the rest.
+HISTORY_WEIGHT_SHARE = 0.10
+# Fallback per-minute weight limit when the exchange's rate monitor is not running
+# (Binance USD-M futures REQUEST_WEIGHT, 1 minute).
+FALLBACK_WEIGHT_LIMIT_1M = 2400
+_RATE_WINDOW_SECONDS = 60.0
+_calls: dict[str, deque[float]] = {}
 
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,30}$")
 
@@ -96,7 +111,41 @@ async def require_data_manager(request: Request) -> str:
     service = request.headers.get("X-Petrosa-Service", "")
     if service != CALLER_SERVICE:
         raise HTTPException(status_code=403, detail={"error": "caller_not_allowed"})
+    _admit(service)
     return service
+
+
+def requests_per_minute() -> int:
+    """The caller's request budget, derived from the account's weight limit."""
+    monitor = getattr(_exchange, "rate_monitor", None)
+    limit = getattr(monitor, "limit_1m", None) or FALLBACK_WEIGHT_LIMIT_1M
+    return max(1, math.floor(limit * HISTORY_WEIGHT_SHARE / HISTORY_CALL_WEIGHT))
+
+
+def _admit(service: str, now: float | None = None) -> None:
+    monitor = getattr(_exchange, "rate_monitor", None)
+    if monitor is not None and getattr(monitor, "polling_paused", False):
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "exchange_weight_exhausted"},
+            headers={"Retry-After": "60"},
+        )
+    clock = time.monotonic() if now is None else now
+    calls = _calls.setdefault(service, deque())
+    while calls and clock - calls[0] >= _RATE_WINDOW_SECONDS:
+        calls.popleft()
+    budget = requests_per_minute()
+    if len(calls) >= budget:
+        retry = max(1, math.ceil(_RATE_WINDOW_SECONDS - (clock - calls[0])))
+        logger.warning(
+            "exchange history rate guard: %s over %d requests/min", service, budget
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "rate_limited", "requests_per_minute": budget},
+            headers={"Retry-After": str(retry)},
+        )
+    calls.append(clock)
 
 
 router = APIRouter(

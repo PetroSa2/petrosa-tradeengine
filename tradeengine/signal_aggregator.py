@@ -477,7 +477,15 @@ class MLProcessor:
 
 
 class LLMProcessor:
-    """LLM reasoning signal processor"""
+    """Signals in ``llm_reasoning`` mode: only CIO's audited reasoning is accepted.
+
+    Tradeengine makes no LLM call. A signal from ``petrosa-cio`` carrying its
+    ``llm_reasoning`` executes; any other ``llm_reasoning`` signal is rejected with
+    ``rejection_source="llm_reasoning_missing"``. Every rejection from this processor
+    names its ``rejection_source`` (petrosa-tradeengine#828).
+    """
+
+    TRUSTED_SOURCE = "petrosa-cio"
 
     def __init__(self) -> None:
         self.llm_available = True
@@ -496,57 +504,47 @@ class LLMProcessor:
     async def process(
         self, signal: Signal, active_signals: dict[str, Signal]
     ) -> dict[str, Any]:
-        """Process signal using LLM reasoning"""
-        # Check LLM availability
+        """Accept a CIO signal carrying its audited reasoning; reject anything else."""
         if not self.llm_available:
-            return {"status": "rejected", "reason": "LLM not available"}
+            return {
+                "status": "rejected",
+                "reason": "LLM not available",
+                "rejection_source": "llm_unavailable",
+            }
 
-        # Check for conflicting signals with hedge mode awareness
-        conflicting_signals = self._get_conflicting_signals(signal, active_signals)
-
-        # Check for same-direction signals
         same_direction_result = self._handle_same_direction_signals(
             signal, active_signals
         )
         if same_direction_result.get("status") == "rejected":
-            return same_direction_result
-
-        # Prepare context for LLM
-        context = self._prepare_llm_context(signal, active_signals, conflicting_signals)
-
-        # Get LLM reasoning
-        if signal.source == "petrosa-cio" and signal.llm_reasoning:
-            # Trust existing reasoning from CIO
-            reasoning = {
-                "approved": True,
-                "confidence": signal.confidence,
-                "reasoning": signal.llm_reasoning,
-                "source": "petrosa-cio",
+            return {
+                **same_direction_result,
+                "rejection_source": "same_direction_conflict",
             }
-        else:
-            # Get fresh LLM reasoning
-            reasoning = await self._get_llm_reasoning(context)
 
-        if not reasoning["approved"]:
+        if signal.source != self.TRUSTED_SOURCE or not signal.llm_reasoning:
+            source = signal.source or "unknown"
             return {
                 "status": "rejected",
-                "reason": reasoning.get("reason", "LLM rejected signal"),
-                "llm_reasoning": reasoning,
+                "reason": (
+                    f"llm_reasoning signal from {source} carries no LLM reasoning; "
+                    f"only {self.TRUSTED_SOURCE}'s audited reasoning is accepted"
+                ),
+                "rejection_source": "llm_reasoning_missing",
             }
 
-        # Calculate order parameters
+        reasoning = {
+            "approved": True,
+            "confidence": signal.confidence,
+            "reasoning": signal.llm_reasoning,
+            "source": self.TRUSTED_SOURCE,
+        }
         order_params = self._calculate_order_parameters(signal, reasoning)
-
         return {
             "status": "executed",
             "signal": signal,
             "order_params": order_params,
-            "confidence": reasoning.get("confidence", signal.confidence),
-            "reason": (
-                "LLM reasoning approved signal"
-                if signal.source != "petrosa-cio"
-                else "CIO audit trusted"
-            ),
+            "confidence": signal.confidence,
+            "reason": "CIO audit trusted",
             "llm_reasoning": reasoning,
         }
 
@@ -603,67 +601,6 @@ class LLMProcessor:
             }
 
         return {"status": "ok"}
-
-    def _prepare_llm_context(
-        self,
-        signal: Signal,
-        active_signals: dict[str, Signal],
-        conflicting_signals: list[Signal],
-    ) -> dict[str, Any]:
-        """Prepare context for LLM reasoning"""
-        context = {
-            "signal": {
-                "strategy_id": signal.strategy_id,
-                "symbol": signal.symbol,
-                "action": signal.action,
-                "confidence": signal.confidence,
-                "strength": signal.strength.value,
-                "current_price": signal.current_price,
-                "target_price": signal.target_price,
-                "rationale": signal.rationale,
-                "indicators": signal.indicators or {},
-                "meta": signal.meta,
-            },
-            "market_context": {
-                "active_signals_count": len(active_signals),
-                "conflicting_signals": [
-                    {
-                        "strategy_id": s.strategy_id,
-                        "action": s.action,
-                        "confidence": s.confidence,
-                    }
-                    for s in conflicting_signals
-                ],
-                "position_mode": self.position_mode,
-                "hedge_mode_enabled": (self.position_mode == "hedge"),
-            },
-        }
-
-        return context
-
-    async def _get_llm_reasoning(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Get LLM reasoning for signal"""
-        # Placeholder for LLM reasoning
-        # In real implementation, this would call the actual LLM API
-
-        # Simulate LLM reasoning
-        confidence = context["signal"]["confidence"]
-        approved = confidence > 0.7
-
-        return {
-            "approved": approved,
-            "confidence": confidence,
-            "reasoning": (
-                f"Signal confidence is {confidence:.2f}, which is "
-                f"{'sufficient' if approved else 'insufficient'} for execution"
-            ),
-            "alternatives_considered": [
-                "Hold position",
-                "Reduce position size",
-                "Wait for better entry",
-            ],
-            "risk_assessment": "Medium risk due to market volatility",
-        }
 
     def _calculate_order_parameters(
         self, signal: Signal, reasoning: dict[str, Any]

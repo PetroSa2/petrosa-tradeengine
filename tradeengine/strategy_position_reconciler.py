@@ -17,6 +17,12 @@ On each pass:
    call ``StrategyPositionManager.evict_ghost_position`` and increment
    ``strategy_position_ghost_evicted_total``.
 
+#831: before evicting, the reconciler reads the symbol's trade history
+(``GET /fapi/v1/userTrades`` through the injected ``fills_fetcher``) and hands
+the closing fills to :func:`attribute_closing_fills`, so the closed row carries
+the exchange's realized P&L, or says why it can't (``unattributed`` /
+``missing``).
+
 Read-only with respect to Binance — the reconciler never places or cancels
 orders.  Its only side effect is removing already-orphaned strategy rows
 from the in-memory tracker and journaling the eviction to Data Manager.
@@ -37,9 +43,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shared.constants import UTC
+from tradeengine.external_close_fills import (
+    FillsFetcher,
+    fetch_closure,
+    position_open_ms,
+)
 from tradeengine.metrics import (
     strategy_position_ghost_evicted_total,
     strategy_position_ghost_gauge,
@@ -124,9 +135,11 @@ class StrategyPositionReconciler:
         store: ExchangeTruthStore,
         interval_seconds: int = _DEFAULT_INTERVAL_SECONDS,
         min_age_seconds: int = _DEFAULT_MIN_AGE_SECONDS,
+        fills_fetcher: FillsFetcher | None = None,
     ) -> None:
         self._manager = strategy_pos_manager
         self._store = store
+        self._fills_fetcher = fills_fetcher
         self._interval = max(1, int(interval_seconds))
         self._min_age = max(0, int(min_age_seconds))
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -203,6 +216,7 @@ class StrategyPositionReconciler:
             ghosts = 0
             evicted = 0
             skipped_young = 0
+            evictable: list[dict[str, Any]] = []
 
             for pos in open_positions:
                 if _has_matching_exchange_position(pos, exchange_positions):
@@ -212,12 +226,24 @@ class StrategyPositionReconciler:
                 if age < self._min_age:
                     skipped_young += 1
                     continue
-                spid = pos.get("strategy_position_id")
-                if not spid:
+                if not pos.get("strategy_position_id"):
                     continue
+                evictable.append(pos)
+
+            # Oldest first: the first read per symbol starts early enough to
+            # cover every later ghost on it (fetch_closure's per-pass cache).
+            evictable.sort(key=lambda p: position_open_ms(p) or 0)
+            trades_cache: dict[str, tuple[int, list[dict[str, Any]] | str]] = {}
+
+            for pos in evictable:
+                spid = str(pos["strategy_position_id"])
+                closure = await fetch_closure(
+                    self._fills_fetcher, pos, open_positions, trades_cache
+                )
                 ok = await self._manager.evict_ghost_position(
                     strategy_position_id=spid,
                     reason="no_exchange_position",
+                    closure=closure,
                 )
                 if ok:
                     strategy_position_ghost_evicted_total.labels(

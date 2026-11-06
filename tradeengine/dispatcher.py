@@ -2930,9 +2930,14 @@ class Dispatcher:
                 # the truth store is available.  AC1 runs an immediate pass
                 # inside start() so any positions left over from a previous
                 # boot get reconciled before the dispatcher accepts work.
+                # #831: read the closing fills (userTrades, read-only) so an
+                # externally closed row records the exchange's realized P&L.
                 self.strategy_position_reconciler = StrategyPositionReconciler(
                     strategy_pos_manager=strategy_position_manager,
                     store=self.user_data_consumer.store,
+                    fills_fetcher=getattr(
+                        self.exchange, "fetch_user_trades_since", None
+                    ),
                 )
                 try:
                     await self.strategy_position_reconciler.start()

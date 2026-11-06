@@ -6,6 +6,7 @@ all types of trading orders including market, limit, stop, and take-profit order
 """
 
 import asyncio
+import functools
 import logging
 import math
 import os
@@ -34,6 +35,13 @@ from tradeengine.protective_leg_mode import CLOSE_POSITION, protective_leg_mode
 from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
+
+# #831: Binance USD-M userTrades API limits, from the exchange's documentation
+# (not tunables): one query spans at most 7 days and returns at most 1000 rows,
+# and trade history is kept for 6 months.
+_USER_TRADES_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+_USER_TRADES_PAGE_LIMIT = 1000
+_USER_TRADES_RETENTION_MS = 180 * 24 * 60 * 60 * 1000
 
 # #543: Binance rejects closePosition=true conditional (STOP_MARKET /
 # TAKE_PROFIT_MARKET / STOP / TAKE_PROFIT) orders whose TIF resolves to the
@@ -2236,6 +2244,64 @@ class BinanceFuturesExchange:
             result["fills"] = synthetic_fills
         if saw_pnl:
             result["pnl"] = realized_pnl
+
+    async def fetch_user_trades_since(
+        self, symbol: str, start_ms: int, end_ms: int | None = None
+    ) -> list[dict[str, Any]]:
+        """#831: the account's futures trades on ``symbol`` from ``start_ms``.
+
+        Read-only (``GET /fapi/v1/userTrades``). Binance limits one query to a
+        7-day span and 1000 rows, so the range is walked in 7-day windows, and a
+        full page continues from its last trade time; rows are de-duplicated by
+        trade id. Raises when the client is missing or the range starts before
+        the exchange's trade-history retention, so the caller records the gap
+        instead of a partial history.
+        """
+        if self.client is None:
+            raise RuntimeError("Binance client not initialized")
+        now_ms = int(time.time() * 1000)
+        end_ms = now_ms if end_ms is None else min(end_ms, now_ms)
+        if now_ms - start_ms > _USER_TRADES_RETENTION_MS:
+            raise ValueError(
+                f"userTrades range starts {start_ms}, beyond the exchange's "
+                "trade-history retention"
+            )
+
+        loop = asyncio.get_event_loop()
+        trades: dict[Any, dict[str, Any]] = {}
+        window_start = start_ms
+        while window_start <= end_ms:
+            window_end = min(window_start + _USER_TRADES_WINDOW_MS - 1, end_ms)
+            page_start = window_start
+            while True:
+                page = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        self.client.futures_account_trades,
+                        symbol=symbol,
+                        startTime=page_start,
+                        endTime=window_end,
+                        limit=_USER_TRADES_PAGE_LIMIT,
+                    ),
+                )
+                if not isinstance(page, list):
+                    raise RuntimeError(f"unexpected userTrades payload for {symbol}")
+                for trade in page:
+                    if isinstance(trade, dict):
+                        trades[trade.get("id")] = trade
+                if len(page) < _USER_TRADES_PAGE_LIMIT:
+                    break
+                last_ms = max(int(t.get("time", page_start)) for t in page)
+                if last_ms <= page_start:
+                    # 1000 trades in one millisecond: cannot page further.
+                    raise RuntimeError(
+                        f"userTrades page for {symbol} cannot advance past {last_ms}"
+                    )
+                page_start = last_ms
+            window_start = window_end + 1
+        return sorted(
+            trades.values(), key=lambda t: (int(t.get("time", 0)), t.get("id") or 0)
+        )
 
     async def get_account_info(self) -> dict[str, Any]:
         """Get account information"""

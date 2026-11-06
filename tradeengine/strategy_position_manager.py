@@ -32,10 +32,15 @@ from shared.constants import TE_EXCHANGE_TRUTH_STORE_ENABLED, UTC
 from shared.mysql_client import position_client
 from shared.retry import PersistResult
 from tradeengine.exchange_truth_store import ExchangeTruthStore
+from tradeengine.external_close_fills import (
+    PNL_SOURCE_EXCHANGE_FILLS,
+    PNL_SOURCE_MISSING,
+)
 from tradeengine.metrics import (
     otel_position_persist_failed,
     position_persist_failed_total,
     strategy_attribution_persist_failures_total,
+    strategy_position_external_close_total,
 )
 from tradeengine.services.alert_publisher import alert_publisher
 from tradeengine.services.execution_event_publisher import execution_event_publisher
@@ -1066,7 +1071,10 @@ class StrategyPositionManager:
         ]
 
     async def evict_ghost_position(
-        self, strategy_position_id: str, reason: str = "no_exchange_position"
+        self,
+        strategy_position_id: str,
+        reason: str = "no_exchange_position",
+        closure: dict[str, Any] | None = None,
     ) -> bool:
         """Evict a strategy position that has no matching exchange position (#480).
 
@@ -1076,6 +1084,15 @@ class StrategyPositionManager:
         is removed and Data Manager is updated with ``status="closed_externally"``
         so the audit journal still shows what happened.
 
+        #831: ``closure`` comes from
+        :func:`tradeengine.external_close_fills.attribute_closing_fills`. With
+        ``pnl_source == "exchange_fills"`` the row records the closing fills'
+        exit price, realized P&L (sum of Binance ``realizedPnl``) and
+        commission. Otherwise (``unattributed``/``missing``, or no closure at
+        all) no P&L is invented; the source and reason are kept in
+        ``strategy_metadata["external_close"]`` and counted on
+        ``strategy_position_external_close_total``.
+
         Returns True if the position was found and evicted, False otherwise.
         Never raises — eviction errors are logged but must not break the
         reconcile loop.
@@ -1084,9 +1101,13 @@ class StrategyPositionManager:
         if position is None:
             return False
 
+        if closure is None:
+            closure = {"pnl_source": PNL_SOURCE_MISSING, "reason": "not_fetched"}
+
         position["status"] = "closed_externally"
         position["exit_time"] = datetime.now(UTC)
         position["close_reason"] = reason
+        self._apply_external_closure(position, closure)
 
         try:
             await self._update_strategy_position_closure(strategy_position_id, position)
@@ -1098,14 +1119,90 @@ class StrategyPositionManager:
             )
 
         self.strategy_positions.pop(strategy_position_id, None)
+        pnl_source = str(closure.get("pnl_source", PNL_SOURCE_MISSING))
+        strategy_position_external_close_total.labels(
+            pnl_source=pnl_source,
+            reason=str(closure.get("reason") or "-"),
+        ).inc()
         logger.info(
-            "Evicted ghost strategy position %s (%s %s) — reason=%s",
+            "Evicted ghost strategy position %s (%s %s) — reason=%s "
+            "pnl_source=%s realized_pnl=%s",
             strategy_position_id,
             position.get("symbol"),
             position.get("side"),
             reason,
+            pnl_source,
+            position.get("realized_pnl")
+            if pnl_source == PNL_SOURCE_EXCHANGE_FILLS
+            else "-",
         )
         return True
+
+    @staticmethod
+    def _apply_external_closure(
+        position: dict[str, Any], closure: dict[str, Any]
+    ) -> None:
+        """Write an external-close record onto the position row (#831)."""
+        pnl_source = closure.get("pnl_source", PNL_SOURCE_MISSING)
+        record: dict[str, Any] = {"pnl_source": pnl_source}
+        for key in (
+            "reason",
+            "sharing_positions",
+            "remaining_quantity",
+            "closing_quantity",
+            "candidate_fills",
+        ):
+            if key in closure:
+                record[key] = closure[key]
+
+        if pnl_source == PNL_SOURCE_EXCHANGE_FILLS:
+            exit_price = _decimal(closure["exit_price"])
+            exit_quantity = _decimal(closure["exit_quantity"])
+            realized = _money(closure["realized_pnl"])
+            commission_by_asset = {
+                asset: str(_money(amount))
+                for asset, amount in closure.get("commission_by_asset", {}).items()
+            }
+            order_ids = [
+                str(order_id) for order_id in closure.get("exit_order_ids", [])
+            ]
+            entry_price = _decimal(position.get("entry_price"))
+
+            position["exit_price"] = float(exit_price)
+            position["exit_quantity"] = float(
+                _decimal(position.get("exit_quantity", 0)) + exit_quantity
+            )
+            position["exit_time"] = closure.get("exit_time") or position["exit_time"]
+            position["exit_order_id"] = order_ids[-1] if order_ids else None
+            position["gross_realized_pnl"] = realized
+            position["realized_pnl"] = realized
+            position["realized_pnl_pct"] = (
+                _money(realized / (entry_price * exit_quantity) * 100)
+                if entry_price and exit_quantity
+                else None
+            )
+            if set(commission_by_asset) <= {"USDT"}:
+                exit_commission = _money(commission_by_asset.get("USDT", 0))
+                position["commission_total"] = (
+                    _money(position.get("entry_fee")) + exit_commission
+                )
+            record.update(
+                {
+                    "pnl_basis": "exchange_realized_pnl",
+                    "exit_commission_by_asset": commission_by_asset,
+                    "exit_order_ids": order_ids,
+                    "fills": closure.get("fills", []),
+                }
+            )
+        else:
+            # No invented number: the row stays without exit price or P&L.
+            position["realized_pnl"] = None
+            position["gross_realized_pnl"] = None
+            position["realized_pnl_pct"] = None
+
+        metadata = dict(position.get("strategy_metadata") or {})
+        metadata["external_close"] = record
+        position["strategy_metadata"] = metadata
 
     def get_strategy_position(self, strategy_position_id: str) -> dict[str, Any] | None:
         """Get strategy position by ID"""

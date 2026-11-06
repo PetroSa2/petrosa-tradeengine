@@ -386,6 +386,16 @@ strategy_position_ghost_gauge = Gauge(
     "Current count of strategy positions with no matching exchange position",
 )
 
+# #831 — positions closed outside tradeengine (ghost eviction): where their
+# realized P&L came from. pnl_source: "exchange_fills" (closing fills
+# attributed), "unattributed" (fills not tied to one position, no P&L) or
+# "missing" (trade history not read, no P&L).
+strategy_position_external_close_total = Counter(
+    "petrosa_tradeengine_strategy_position_external_close_total",
+    "Externally closed strategy positions by realized P&L source",
+    ["pnl_source", "reason"],
+)
+
 # #481 AC3 — close-order emission blocked because the exchange has no matching
 # position. The 2026-06-18 testnet thrash loop fired reduceOnly closes against
 # ghost strategy positions with no exchange counterpart. This is the

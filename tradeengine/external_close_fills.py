@@ -19,16 +19,21 @@ The result always carries ``pnl_source``:
   candidate fills are kept for audit.
 - ``missing``: the trade history could not be read. No P&L is recorded.
 
-Pure functions only: no I/O, so the attribution is testable on recorded fills.
+The attribution is pure (testable on recorded fills); :func:`fetch_closure` adds the
+one trade-history read both reconcilers share (strategy ghosts and open position rows).
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from shared.constants import UTC
+
+logger = logging.getLogger(__name__)
 
 PNL_SOURCE_EXCHANGE_FILLS = "exchange_fills"
 PNL_SOURCE_UNATTRIBUTED = "unattributed"
@@ -214,3 +219,69 @@ def attribute_closing_fills(
         "exit_order_ids": order_ids,
         "fills": summaries,
     }
+
+
+# (symbol, start_ms) -> the symbol's userTrades rows since start_ms.
+FillsFetcher = Callable[[str, int], Awaitable[list[dict[str, Any]]]]
+
+
+async def fetch_closure(
+    fetcher: FillsFetcher | None,
+    position: dict[str, Any],
+    other_positions: list[dict[str, Any]],
+    cache: dict[str, tuple[int, list[dict[str, Any]] | str]] | None = None,
+) -> dict[str, Any]:
+    """Read the symbol's trades and attribute them: the one helper both reconcilers use.
+
+    ``position`` needs ``symbol``, ``side``, ``entry_time`` and the quantities
+    (``entry_quantity``/``exit_quantity``); ``strategy_position_id`` is its id for the
+    shared-position check. ``cache`` keeps one read per symbol within a pass: a read
+    from an earlier start covers every later position on that symbol.
+    """
+    open_ms = position_open_ms(position)
+    if open_ms is None:
+        return missing_closure("entry_time_unknown")
+    symbol = str(position.get("symbol") or "")
+    if not symbol:
+        return missing_closure("symbol_unknown")
+    if fetcher is None:
+        return missing_closure("fetcher_unavailable")
+
+    cached = cache.get(symbol) if cache is not None else None
+    if cached is not None and cached[0] <= open_ms:
+        trades: list[dict[str, Any]] | str = cached[1]
+    else:
+        try:
+            fetched = await fetcher(symbol, open_ms)
+            trades = fetched if isinstance(fetched, list) else "fetch_failed"
+        except Exception as exc:
+            logger.warning(
+                "external close: userTrades read failed for %s since %s: %s",
+                symbol,
+                open_ms,
+                exc,
+            )
+            trades = "fetch_failed"
+        if cache is not None:
+            cache[symbol] = (open_ms, trades)
+    if isinstance(trades, str):
+        return missing_closure(trades)
+    return attribute_closing_fills(position, trades, other_positions)
+
+
+def net_realized_pnl(
+    closure: dict[str, Any], entry_fee_share: Decimal = Decimal("0")
+) -> Decimal | None:
+    """Realized P&L net of fees, the meaning every other close uses (gross minus commission).
+
+    ``None`` when the closure has no exchange P&L, or when a commission is charged in
+    an asset other than USDT (it can't be netted without inventing a conversion).
+    """
+    if closure.get("pnl_source") != PNL_SOURCE_EXCHANGE_FILLS:
+        return None
+    commission = closure.get("commission_by_asset") or {}
+    if set(commission) - {"USDT"}:
+        return None
+    usdt = _dec(commission.get("USDT")) or Decimal("0")
+    gross = _dec(closure.get("realized_pnl")) or Decimal("0")
+    return gross - usdt - entry_fee_share

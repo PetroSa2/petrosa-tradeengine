@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock
+
+import pytest
 
 from tradeengine.external_close_fills import (
     PNL_SOURCE_EXCHANGE_FILLS,
@@ -14,7 +17,9 @@ from tradeengine.external_close_fills import (
     PNL_SOURCE_UNATTRIBUTED,
     attribute_closing_fills,
     closing_fill_candidates,
+    fetch_closure,
     missing_closure,
+    net_realized_pnl,
 )
 
 ENTRY = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
@@ -182,3 +187,78 @@ def test_iso_string_entry_time_is_accepted():
 def test_missing_closure_has_no_pnl():
     closure = missing_closure("fetch_failed")
     assert closure == {"pnl_source": PNL_SOURCE_MISSING, "reason": "fetch_failed"}
+
+
+# --- fetch_closure: the helper both reconcilers share ------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_closure_reads_from_entry_and_attributes():
+    fetcher = AsyncMock(
+        return_value=[_trade(2, 222, "SELL", "0.010", "101000", pnl="10.0")]
+    )
+    closure = await fetch_closure(fetcher, _pos(), [])
+    fetcher.assert_awaited_once_with("BTCUSDT", ENTRY_MS)
+    assert closure["pnl_source"] == PNL_SOURCE_EXCHANGE_FILLS
+
+
+@pytest.mark.asyncio
+async def test_fetch_closure_named_missing_reasons():
+    failing = AsyncMock(side_effect=RuntimeError("HTTP 503"))
+    assert await fetch_closure(failing, _pos(), []) == missing_closure("fetch_failed")
+    assert await fetch_closure(None, _pos(), []) == missing_closure(
+        "fetcher_unavailable"
+    )
+    assert await fetch_closure(
+        AsyncMock(), _pos(entry_time=None), []
+    ) == missing_closure("entry_time_unknown")
+    assert await fetch_closure(AsyncMock(), _pos(symbol=""), []) == missing_closure(
+        "symbol_unknown"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_closure_cache_reuses_an_earlier_read_only():
+    fetcher = AsyncMock(return_value=[])
+    cache: dict = {}
+    await fetch_closure(fetcher, _pos(), [], cache)
+    later = _pos(entry_time=datetime.fromtimestamp((ENTRY_MS + 1000) / 1000, tz=UTC))
+    await fetch_closure(fetcher, later, [], cache)
+    assert fetcher.await_count == 1
+    earlier = _pos(entry_time=datetime.fromtimestamp((ENTRY_MS - 1000) / 1000, tz=UTC))
+    await fetch_closure(fetcher, earlier, [], cache)
+    assert fetcher.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_closure_caches_a_failure_for_the_pass():
+    fetcher = AsyncMock(side_effect=RuntimeError("down"))
+    cache: dict = {}
+    await fetch_closure(fetcher, _pos(), [], cache)
+    closure = await fetch_closure(fetcher, _pos(), [], cache)
+    assert fetcher.await_count == 1
+    assert closure == missing_closure("fetch_failed")
+
+
+def test_net_realized_pnl_subtracts_usdt_commission_and_entry_fee():
+    closure = {
+        "pnl_source": PNL_SOURCE_EXCHANGE_FILLS,
+        "realized_pnl": Decimal("16.0"),
+        "commission_by_asset": {"USDT": Decimal("0.1016")},
+    }
+    assert net_realized_pnl(closure) == Decimal("15.8984")
+    assert net_realized_pnl(closure, Decimal("0.04")) == Decimal("15.8584")
+
+
+def test_net_realized_pnl_none_without_exchange_pnl_or_with_non_usdt_fee():
+    assert net_realized_pnl(missing_closure("fetch_failed")) is None
+    assert (
+        net_realized_pnl(
+            {
+                "pnl_source": PNL_SOURCE_EXCHANGE_FILLS,
+                "realized_pnl": Decimal("1"),
+                "commission_by_asset": {"BNB": Decimal("0.0001")},
+            }
+        )
+        is None
+    )

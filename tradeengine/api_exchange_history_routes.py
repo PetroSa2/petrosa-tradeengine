@@ -8,22 +8,40 @@ routes, so the keys never leave tradeengine.
 Read-only by construction: the routes only call ``fetch_user_trades_since`` and
 ``fetch_all_orders_since`` (``GET /fapi/v1/userTrades`` and ``/fapi/v1/allOrders``).
 Nothing here places, cancels or amends an order. A failed read is an explicit error,
-never an empty 200: a range beyond the exchange's retention is 422, an exchange
-failure 502.
+never an empty 200: bad input, a too-wide range or one beyond the exchange's retention
+is 422, an exchange failure 502.
+
+Only data-manager may call them. It presents ``X-Petrosa-Service: data-manager`` and
+the bearer token of the tradeengine<->data-manager service identity (secret
+``petrosa-data-manager-service-identities``: tradeengine mounts it as
+``DM_SERVICE_TOKEN``, data-manager holds it as the ``tradeengine`` entry of
+``DM_SERVICE_TOKENS``), so no other pod holds it. Missing or wrong token: 401; a valid
+token under another identity: 403; no token configured here: 503 (fails closed).
+
+Each call covers at most one exchange query span (7 days) and returns at most
+``limit`` rows, paged by id (``after_id`` / ``next_after_id``). Error reasons and log
+lines carry the exchange's error code and message or the exception type only, never
+request URLs, signatures or keys.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/exchange", tags=["exchange-history"])
+CALLER_SERVICE = "data-manager"
+# One exchange query span: Binance userTrades/allOrders accept at most 7 days.
+MAX_RANGE_MS = 7 * 24 * 60 * 60 * 1000
+# Binance's own page size for these endpoints.
+MAX_PAGE_ROWS = 1000
 
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,30}$")
 
@@ -61,6 +79,32 @@ ORDER_FIELDS = (
     "updateTime",
 )
 
+
+async def require_data_manager(request: Request) -> str:
+    """Authenticate the caller as data-manager; fail closed."""
+    expected = os.environ.get("DM_SERVICE_TOKEN", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503, detail={"error": "service_auth_unconfigured"}
+        )
+    presented = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not presented or not hmac.compare_digest(expected, presented):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "valid service authentication required"},
+        )
+    service = request.headers.get("X-Petrosa-Service", "")
+    if service != CALLER_SERVICE:
+        raise HTTPException(status_code=403, detail={"error": "caller_not_allowed"})
+    return service
+
+
+router = APIRouter(
+    prefix="/api/v1/exchange",
+    tags=["exchange-history"],
+    dependencies=[Depends(require_data_manager)],
+)
+
 _exchange: Any = None
 
 
@@ -75,18 +119,35 @@ def _validated(symbol: str, start_ms: int, end_ms: int | None) -> tuple[str, int
     if not _SYMBOL.match(normalized):
         raise HTTPException(status_code=422, detail={"error": "invalid_symbol"})
     now_ms = int(time.time() * 1000)
-    end = now_ms if end_ms is None else end_ms
+    end = min(now_ms, start_ms + MAX_RANGE_MS - 1) if end_ms is None else end_ms
     if start_ms < 0 or start_ms > end:
         raise HTTPException(status_code=422, detail={"error": "invalid_range"})
+    if end - start_ms >= MAX_RANGE_MS:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "range_too_large", "max_range_ms": MAX_RANGE_MS},
+        )
     return normalized, end
+
+
+def _safe_reason(exc: Exception) -> str:
+    """The exchange's code and message, or the exception type: never a URL or key."""
+    code = getattr(exc, "code", None)
+    message = getattr(exc, "message", None)
+    if code is not None and isinstance(message, str):
+        return f"code={code}: {message}"[:200]
+    return type(exc).__name__
 
 
 async def _read(
     method_name: str,
     fields: tuple[str, ...],
+    id_key: str,
     symbol: str,
     start_ms: int,
     end_ms: int | None,
+    limit: int,
+    after_id: int | None,
 ) -> dict[str, Any]:
     normalized, end = _validated(symbol, start_ms, end_ms)
     reader = getattr(_exchange, method_name, None)
@@ -98,29 +159,39 @@ async def _read(
         rows = await reader(normalized, start_ms, end)
     except ValueError as exc:
         raise HTTPException(
-            status_code=422,
-            detail={"error": "beyond_retention", "reason": str(exc)},
+            status_code=422, detail={"error": "beyond_retention"}
         ) from exc
     except Exception as exc:
+        reason = _safe_reason(exc)
         logger.warning(
             "exchange history read failed: %s %s [%s, %s]: %s",
             method_name,
             normalized,
             start_ms,
             end,
-            exc,
+            reason,
         )
         raise HTTPException(
             status_code=502,
-            detail={"error": "exchange_read_failed", "reason": str(exc)},
+            detail={"error": "exchange_read_failed", "reason": reason},
         ) from exc
-    projected = [{key: row.get(key) for key in fields} for row in rows]
+    ordered = sorted(
+        (
+            row
+            for row in rows
+            if after_id is None or int(row.get(id_key) or 0) > after_id
+        ),
+        key=lambda row: int(row.get(id_key) or 0),
+    )
+    page = ordered[:limit]
+    more = len(ordered) > limit
     return {
         "symbol": normalized,
         "start_ms": start_ms,
         "end_ms": end,
-        "count": len(projected),
-        "rows": projected,
+        "count": len(page),
+        "next_after_id": int(page[-1][id_key]) if more and page else None,
+        "rows": [{key: row.get(key) for key in fields} for row in page],
     }
 
 
@@ -129,11 +200,22 @@ async def get_fills(
     symbol: str = Query(..., description="Futures symbol, e.g. BTCUSDT"),
     start_ms: int = Query(..., description="Range start, epoch ms"),
     end_ms: int | None = Query(
-        None, description="Range end, epoch ms (now if omitted)"
+        None, description="Range end, epoch ms (start + 7 days or now if omitted)"
     ),
+    limit: int = Query(MAX_PAGE_ROWS, ge=1, le=MAX_PAGE_ROWS),
+    after_id: int | None = Query(None, description="Only trades with id > after_id"),
 ) -> dict[str, Any]:
-    """The account's fills (userTrades) for ``symbol`` in the range, oldest first."""
-    return await _read("fetch_user_trades_since", FILL_FIELDS, symbol, start_ms, end_ms)
+    """The account's fills (userTrades) for ``symbol`` in the range, by trade id."""
+    return await _read(
+        "fetch_user_trades_since",
+        FILL_FIELDS,
+        "id",
+        symbol,
+        start_ms,
+        end_ms,
+        limit,
+        after_id,
+    )
 
 
 @router.get("/orders")
@@ -141,8 +223,21 @@ async def get_orders(
     symbol: str = Query(..., description="Futures symbol, e.g. BTCUSDT"),
     start_ms: int = Query(..., description="Range start, epoch ms"),
     end_ms: int | None = Query(
-        None, description="Range end, epoch ms (now if omitted)"
+        None, description="Range end, epoch ms (start + 7 days or now if omitted)"
+    ),
+    limit: int = Query(MAX_PAGE_ROWS, ge=1, le=MAX_PAGE_ROWS),
+    after_id: int | None = Query(
+        None, description="Only orders with orderId > after_id"
     ),
 ) -> dict[str, Any]:
-    """The account's orders (allOrders) for ``symbol`` created in the range, oldest first."""
-    return await _read("fetch_all_orders_since", ORDER_FIELDS, symbol, start_ms, end_ms)
+    """The account's orders (allOrders) for ``symbol`` created in the range."""
+    return await _read(
+        "fetch_all_orders_since",
+        ORDER_FIELDS,
+        "orderId",
+        symbol,
+        start_ms,
+        end_ms,
+        limit,
+        after_id,
+    )

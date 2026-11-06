@@ -87,3 +87,34 @@ def test_the_placeholder_and_its_threshold_are_gone() -> None:
     assert not hasattr(LLMProcessor, "_get_llm_reasoning")
     source = inspect.getsource(signal_aggregator.LLMProcessor)
     assert "> 0.7" not in source and "Simulate LLM" not in source
+
+
+@pytest.mark.asyncio
+async def test_missing_reasoning_warns_once_per_source_per_hour(
+    monkeypatch, caplog
+) -> None:
+    signal_aggregator._LLM_REASONING_MISSING_WARNED.clear()
+    now = {"t": 0.0}
+    monkeypatch.setattr(signal_aggregator.time, "monotonic", lambda: now["t"])
+    processor = LLMProcessor()
+    with caplog.at_level("WARNING", logger="tradeengine.signal_aggregator"):
+        for t, source in [
+            (0.0, "realtime-strategies"),
+            (10.0, "realtime-strategies"),
+            (20.0, "manual-api"),
+            (3601.0, "realtime-strategies"),
+        ]:
+            now["t"] = t
+            await processor.process(_signal(source, None, 0.9), {})
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if "LLM_REASONING_MISSING" in r.getMessage()
+    ]
+    assert len(lines) == 3  # rts at 0 s, manual-api at 20 s, rts again after an hour
+    assert all("rejection_source=llm_reasoning_missing" in line for line in lines)
+    assert [
+        "source=realtime-strategies" in lines[0],
+        "source=manual-api" in lines[1],
+    ] == [True, True]
+    signal_aggregator._LLM_REASONING_MISSING_WARNED.clear()

@@ -8,6 +8,7 @@ and risk management rules. Supports three modes: deterministic, ML light, "
 """
 
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
@@ -15,6 +16,8 @@ from typing import Any
 from petrosa_contracts import Signal, TimeFrame
 
 from shared.constants import UTC
+
+logger = logging.getLogger(__name__)
 
 
 class SignalAggregator:
@@ -476,6 +479,27 @@ class MLProcessor:
         return params
 
 
+# Last WARNING time per signal source rejected for missing LLM reasoning (te#828):
+# one line per source per hour makes a new source visible without flooding the log.
+_LLM_REASONING_MISSING_WARNED: dict[str, float] = {}
+_LLM_REASONING_MISSING_WARN_SECONDS = 3600.0
+
+
+def _warn_llm_reasoning_missing(source: str, signal: Signal) -> None:
+    now = time.monotonic()
+    last = _LLM_REASONING_MISSING_WARNED.get(source)
+    if last is not None and now - last < _LLM_REASONING_MISSING_WARN_SECONDS:
+        return
+    _LLM_REASONING_MISSING_WARNED[source] = now
+    logger.warning(
+        "LLM_REASONING_MISSING rejection_source=llm_reasoning_missing source=%s "
+        "strategy=%s symbol=%s (logged once per source per hour)",
+        source,
+        signal.strategy_id,
+        signal.symbol,
+    )
+
+
 class LLMProcessor:
     """Signals in ``llm_reasoning`` mode: only CIO's audited reasoning is accepted.
 
@@ -523,6 +547,7 @@ class LLMProcessor:
 
         if signal.source != self.TRUSTED_SOURCE or not signal.llm_reasoning:
             source = signal.source or "unknown"
+            _warn_llm_reasoning_missing(source, signal)
             return {
                 "status": "rejected",
                 "reason": (

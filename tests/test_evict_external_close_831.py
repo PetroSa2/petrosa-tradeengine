@@ -42,7 +42,7 @@ def _manager(*rows: dict) -> StrategyPositionManager:
 
 def _count(pnl_source: str, reason: str) -> float:
     return strategy_position_external_close_total.labels(
-        pnl_source=pnl_source, reason=reason
+        ledger="strategy_positions", pnl_source=pnl_source, reason=reason
     )._value.get()
 
 
@@ -74,12 +74,14 @@ async def test_exchange_fills_record_exit_price_pnl_and_commission() -> None:
     assert row["exit_quantity"] == 0.01
     assert row["exit_time"] == EXIT_TIME
     assert row["exit_order_id"] == "223"
-    assert row["realized_pnl"] == Decimal("16.00000000")
+    # net = gross 16.0 - exit commission 0.1016 - entry fee 0.04 (full quantity)
+    assert row["realized_pnl"] == Decimal("15.85840000")
     assert row["gross_realized_pnl"] == Decimal("16.00000000")
-    assert row["realized_pnl_pct"] == Decimal("1.60000000")
+    assert row["realized_pnl_pct"] == Decimal("1.58584000")
     assert row["commission_total"] == Decimal("0.14160000")
     record = row["strategy_metadata"]["external_close"]
     assert record["pnl_source"] == "exchange_fills"
+    assert record["pnl_basis"] == "exchange_realized_pnl_net_of_fees"
     assert record["exit_commission_by_asset"] == {"USDT": "0.10160000"}
     assert record["exit_order_ids"] == ["222", "223"]
     assert row["strategy_metadata"]["timeframe"] == "5m"
@@ -163,9 +165,11 @@ async def test_non_usdt_commission_leaves_commission_total_unchanged() -> None:
 
     row = _journaled(mgr)
     assert "commission_total" not in row
-    assert row["strategy_metadata"]["external_close"]["exit_commission_by_asset"] == {
-        "BNB": "0.00010000"
-    }
+    assert row["gross_realized_pnl"] == Decimal("10.00000000")
+    assert row["realized_pnl"] is None  # can't net a BNB fee without a price
+    record = row["strategy_metadata"]["external_close"]
+    assert record["exit_commission_by_asset"] == {"BNB": "0.00010000"}
+    assert record["net_unavailable"] == "commission_not_usdt"
 
 
 @pytest.mark.asyncio

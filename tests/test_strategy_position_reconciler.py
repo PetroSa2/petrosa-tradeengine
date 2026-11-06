@@ -507,7 +507,8 @@ class TestExternalCloseFills831:
         row = mgr._update_strategy_position_closure.await_args.args[1]
         assert row["status"] == "closed_externally"
         assert row["exit_price"] == 51000.0
-        assert float(row["realized_pnl"]) == 10.0
+        assert float(row["gross_realized_pnl"]) == 10.0
+        assert float(row["realized_pnl"]) == 9.98  # net of the 0.02 commission
         record = row["strategy_metadata"]["external_close"]
         assert record["pnl_source"] == "exchange_fills"
         assert record["exit_commission_by_asset"] == {"USDT": "0.02000000"}

@@ -36,7 +36,7 @@ from tradeengine.services.rate_monitor import RateLimitMonitor
 
 logger = logging.getLogger(__name__)
 
-# #831: Binance USD-M userTrades API limits, from the exchange's documentation
+# #831/#833: Binance USD-M userTrades/allOrders API limits, from the exchange's documentation
 # (not tunables): one query spans at most 7 days and returns at most 1000 rows,
 # and trade history is kept for 6 months.
 _USER_TRADES_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
@@ -2250,25 +2250,74 @@ class BinanceFuturesExchange:
     ) -> list[dict[str, Any]]:
         """#831: the account's futures trades on ``symbol`` from ``start_ms``.
 
-        Read-only (``GET /fapi/v1/userTrades``). Binance limits one query to a
-        7-day span and 1000 rows, so the range is walked in 7-day windows, and a
-        full page continues from its last trade time; rows are de-duplicated by
-        trade id. Raises when the client is missing or the range starts before
-        the exchange's trade-history retention, so the caller records the gap
-        instead of a partial history.
+        Read-only (``GET /fapi/v1/userTrades``), walked in the API's 7-day / 1000-row
+        limits and de-duplicated by trade id. Raises when the client is missing or
+        the range starts before the exchange's trade-history retention, so the
+        caller records the gap instead of a partial history.
         """
         if self.client is None:
             raise RuntimeError("Binance client not initialized")
         now_ms = int(time.time() * 1000)
-        end_ms = now_ms if end_ms is None else min(end_ms, now_ms)
         if now_ms - start_ms > _USER_TRADES_RETENTION_MS:
             raise ValueError(
                 f"userTrades range starts {start_ms}, beyond the exchange's "
                 "trade-history retention"
             )
+        return await self._walk_time_windows(
+            self.client.futures_account_trades,
+            symbol,
+            start_ms,
+            end_ms,
+            id_key="id",
+            time_key="time",
+            label="userTrades",
+        )
 
+    async def fetch_all_orders_since(
+        self, symbol: str, start_ms: int, end_ms: int | None = None
+    ) -> list[dict[str, Any]]:
+        """#833: the account's futures orders on ``symbol`` created from ``start_ms``.
+
+        Read-only (``GET /fapi/v1/allOrders``), walked like
+        :meth:`fetch_user_trades_since` and de-duplicated by order id. Binance does
+        not return cancelled/expired orders without a fill once they are older than
+        3 days; filled orders, which carry the ``clientOrderId`` of every fill, are
+        returned.
+        """
+        if self.client is None:
+            raise RuntimeError("Binance client not initialized")
+        now_ms = int(time.time() * 1000)
+        if now_ms - start_ms > _USER_TRADES_RETENTION_MS:
+            raise ValueError(
+                f"allOrders range starts {start_ms}, beyond the exchange's "
+                "order-history retention"
+            )
+        return await self._walk_time_windows(
+            self.client.futures_get_all_orders,
+            symbol,
+            start_ms,
+            end_ms,
+            id_key="orderId",
+            time_key="time",
+            label="allOrders",
+        )
+
+    async def _walk_time_windows(
+        self,
+        call: Any,
+        symbol: str,
+        start_ms: int,
+        end_ms: int | None,
+        *,
+        id_key: str,
+        time_key: str,
+        label: str,
+    ) -> list[dict[str, Any]]:
+        """Walk ``[start_ms, end_ms]`` in 7-day windows and full pages; unique rows by ``id_key``."""
+        now_ms = int(time.time() * 1000)
+        end_ms = now_ms if end_ms is None else min(end_ms, now_ms)
         loop = asyncio.get_event_loop()
-        trades: dict[Any, dict[str, Any]] = {}
+        rows: dict[Any, dict[str, Any]] = {}
         window_start = start_ms
         while window_start <= end_ms:
             window_end = min(window_start + _USER_TRADES_WINDOW_MS - 1, end_ms)
@@ -2277,7 +2326,7 @@ class BinanceFuturesExchange:
                 page = await loop.run_in_executor(
                     None,
                     functools.partial(
-                        self.client.futures_account_trades,
+                        call,
                         symbol=symbol,
                         startTime=page_start,
                         endTime=window_end,
@@ -2285,22 +2334,23 @@ class BinanceFuturesExchange:
                     ),
                 )
                 if not isinstance(page, list):
-                    raise RuntimeError(f"unexpected userTrades payload for {symbol}")
-                for trade in page:
-                    if isinstance(trade, dict):
-                        trades[trade.get("id")] = trade
+                    raise RuntimeError(f"unexpected {label} payload for {symbol}")
+                for row in page:
+                    if isinstance(row, dict):
+                        rows[row.get(id_key)] = row
                 if len(page) < _USER_TRADES_PAGE_LIMIT:
                     break
-                last_ms = max(int(t.get("time", page_start)) for t in page)
+                last_ms = max(int(r.get(time_key, page_start)) for r in page)
                 if last_ms <= page_start:
-                    # 1000 trades in one millisecond: cannot page further.
+                    # A full page inside one millisecond: cannot page further.
                     raise RuntimeError(
-                        f"userTrades page for {symbol} cannot advance past {last_ms}"
+                        f"{label} page for {symbol} cannot advance past {last_ms}"
                     )
                 page_start = last_ms
             window_start = window_end + 1
         return sorted(
-            trades.values(), key=lambda t: (int(t.get("time", 0)), t.get("id") or 0)
+            rows.values(),
+            key=lambda r: (int(r.get(time_key, 0)), r.get(id_key) or 0),
         )
 
     async def get_account_info(self) -> dict[str, Any]:

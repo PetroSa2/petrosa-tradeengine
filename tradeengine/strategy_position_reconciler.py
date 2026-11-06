@@ -220,7 +220,7 @@ class StrategyPositionReconciler:
             ghosts = 0
             evicted = 0
             skipped_young = 0
-            evictable: list[dict] = []
+            evictable: list[dict[str, Any]] = []
 
             for pos in open_positions:
                 if _has_matching_exchange_position(pos, exchange_positions):
@@ -274,7 +274,7 @@ class StrategyPositionReconciler:
             return {"open": 0, "ghosts": 0, "evicted": 0, "skipped_young": 0}
 
     async def _fetch_trades(
-        self, evictable: list[dict]
+        self, evictable: list[dict[str, Any]]
     ) -> dict[str, list[dict[str, Any]] | str]:
         """One userTrades read per symbol, from its earliest evictable entry.
 
@@ -311,9 +311,9 @@ class StrategyPositionReconciler:
 
     @staticmethod
     def _closure_for(
-        pos: dict,
+        pos: dict[str, Any],
         trades_by_symbol: dict[str, list[dict[str, Any]] | str],
-        open_positions: list[dict],
+        open_positions: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if position_open_ms(pos) is None:
             return missing_closure("entry_time_unknown")

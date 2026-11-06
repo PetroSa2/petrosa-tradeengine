@@ -378,6 +378,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         _te_settings.te_open_row_reconcile_max_excess_quantity
                     ),
                     max_excess_ratio=_te_settings.te_open_row_reconcile_max_excess_ratio,
+                    # #831: closing fills (userTrades, read-only) for the closes it books.
+                    fills_fetcher=binance_exchange.fetch_user_trades_since,
                 ),
             )
             await _reconciler.start()

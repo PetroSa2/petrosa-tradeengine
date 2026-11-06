@@ -8,8 +8,10 @@ ever and the ledger shows more open groups than the exchange has.
 
 The model: **the exchange quantity is the truth for a (symbol, side)**. When the open rows add up to more than the
 exchange holds, the excess is allocated oldest first (FIFO): older rows are closed in full, the next one is
-reduced. The closes are booked without a P&L (``pnl_unknown``): no fill is attributed to them, and a made-up
-price would be a made-up P&L. Rows younger than a grace period are left alone (the exchange may not show their
+reduced. #831: before booking, the symbol's closing fills are read (``fetch_closure``, the helper the ghost
+reconciler shares). A row whose closing fills are attributed exactly gets the fills' exit price and commission;
+any other row is booked without a P&L (``pnl_unknown``) and the reason is counted, because a made-up price
+would be a made-up P&L. Rows younger than a grace period are left alone (the exchange may not show their
 fill yet), and a plan must be seen on consecutive passes before it is applied. Mode ``dry_run`` (the default)
 only logs and measures the plan; ``close`` applies it; ``off`` disables the pass.
 """
@@ -24,6 +26,13 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from prometheus_client import Counter, Gauge
+
+from tradeengine.external_close_fills import (
+    PNL_SOURCE_EXCHANGE_FILLS,
+    FillsFetcher,
+    fetch_closure,
+)
+from tradeengine.metrics import strategy_position_external_close_total
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +162,10 @@ class OpenRowReconciler:
         max_excess_quantity: float = 0.0,
         max_excess_ratio: float = 0.0,
         clock: Any = time.time,
+        fills_fetcher: FillsFetcher | None = None,
     ) -> None:
         self._pm = position_manager
+        self._fills_fetcher = fills_fetcher
         self.mode: RowReconcileMode = self._coerce(mode)
         self._grace = float(grace_seconds)
         self._confirm = max(int(confirm_passes), 1)
@@ -284,34 +295,69 @@ class OpenRowReconciler:
         actor: str = "reconciler",
     ) -> bool:
         stamp = int(self._clock())
-        exit_price = exchange.get("markPrice") or exchange.get("mark_price")
+        mark_price = exchange.get("markPrice") or exchange.get("mark_price")
         try:
-            exit_price = float(exit_price) if exit_price is not None else None
+            mark_price = float(mark_price) if mark_price is not None else None
         except (TypeError, ValueError):
-            exit_price = None
+            mark_price = None
+        closures = await self._closures(plan) if actor == "reconciler" else {}
         ok = True
         for action in plan.actions:
+            exit_price = mark_price
+            exit_order_id = (
+                f"reconcile-{plan.symbol}-{plan.side}-{action.position_id}-{stamp}"
+            )
+            trade_id: str | None = None
+            commission: float | None = None
+            fee_asset: str | None = None
+            pnl_unknown = True
+            closure = closures.get(action.position_id)
+            if closure is not None:
+                strategy_position_external_close_total.labels(
+                    ledger="positions",
+                    pnl_source=str(closure.get("pnl_source")),
+                    reason=str(closure.get("reason") or "-"),
+                ).inc()
+                if closure.get("pnl_source") == PNL_SOURCE_EXCHANGE_FILLS:
+                    exit_price = float(closure["exit_price"])
+                    order_ids = closure.get("exit_order_ids") or []
+                    if order_ids:
+                        exit_order_id = str(order_ids[-1])
+                    trade_id = ",".join(
+                        str(fill.get("trade_id")) for fill in closure.get("fills", [])
+                    )
+                    by_asset = closure.get("commission_by_asset") or {}
+                    if len(by_asset) == 1:
+                        fee_asset, amount = next(iter(by_asset.items()))
+                        commission = float(amount)
+                    pnl_unknown = False
             try:
                 if actor == "reconciler":
                     unattributed_exchange_close_total.labels(
                         symbol=plan.symbol, side=plan.side
                     ).inc()
                     logger.warning(
-                        "UNATTRIBUTED_EXCHANGE_CLOSE %s/%s qty=%s price=%s row=%s",
+                        "UNATTRIBUTED_EXCHANGE_CLOSE %s/%s qty=%s price=%s row=%s "
+                        "pnl_source=%s reason=%s",
                         plan.symbol,
                         plan.side,
                         action.quantity,
                         exit_price,
                         action.position_id,
+                        (closure or {}).get("pnl_source", "-"),
+                        (closure or {}).get("reason", "-"),
                     )
                 result = await self._pm.record_position_close(
                     position_id=action.position_id,
                     exit_price=exit_price,
                     exit_qty=action.quantity,
-                    exit_order_id=f"reconcile-{plan.symbol}-{plan.side}-{action.position_id}-{stamp}",
-                    exit_time=datetime.now(UTC),
+                    exit_order_id=exit_order_id,
+                    exit_time=(closure or {}).get("exit_time") or datetime.now(UTC),
                     close_reason=CLOSE_REASON,
-                    pnl_unknown=True,
+                    commission=commission,
+                    pnl_unknown=pnl_unknown,
+                    trade_id=trade_id,
+                    fee_asset=fee_asset,
                     close_actor=actor,
                 )
                 if result is None:
@@ -332,8 +378,7 @@ class OpenRowReconciler:
                             side=plan.side,
                             quantity=action.quantity,
                             exit_price=exit_price,
-                            exit_order_id=result.get("exit_order_id")
-                            or f"reconcile-{plan.symbol}-{plan.side}-{action.position_id}-{stamp}",
+                            exit_order_id=result.get("exit_order_id") or exit_order_id,
                             exit_time=datetime.now(UTC),
                         )
                         if inspect.isawaitable(published):
@@ -349,3 +394,41 @@ class OpenRowReconciler:
                     action.position_id,
                 )
         return ok
+
+    async def _closures(self, plan: RowPlan) -> dict[str, dict[str, Any]]:
+        """#831: the closing-fills closure for every row this plan takes off.
+
+        Each row is matched on its own (entry time, the quantity taken off). Every other
+        open row on the same (symbol, side) shares the fills, so attribution is refused
+        whenever one exists: no P&L is split by guesswork.
+        """
+        records = getattr(self._pm, "position_records", {}) or {}
+        same_side = [
+            {
+                "strategy_position_id": str(record.get("position_id")),
+                "symbol": record.get("symbol"),
+                "side": normalise_side(record.get("position_side")),
+            }
+            for record in list(records.values())
+            if str(record.get("status", "open")).lower() in ("open", "partially_closed")
+            and record.get("symbol") == plan.symbol
+            and normalise_side(record.get("position_side")) == plan.side
+        ]
+        cache: dict[str, tuple[int, list[dict[str, Any]] | str]] = {}
+        closures: dict[str, dict[str, Any]] = {}
+        for action in plan.actions:
+            record = records.get(action.position_id) or {}
+            row = {
+                "strategy_position_id": action.position_id,
+                "symbol": plan.symbol,
+                "side": plan.side,
+                "entry_time": record.get("entry_time"),
+                "entry_quantity": action.quantity,
+                "exit_quantity": 0,
+                "entry_order_id": record.get("entry_order_id")
+                or record.get("order_id"),
+            }
+            closures[action.position_id] = await fetch_closure(
+                self._fills_fetcher, row, same_side, cache
+            )
+        return closures

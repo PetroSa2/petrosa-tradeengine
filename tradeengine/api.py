@@ -48,6 +48,10 @@ from tradeengine.api_config_routes import (
     router as config_router,
     set_config_manager,
 )
+from tradeengine.api_exchange_history_routes import (
+    router as exchange_history_router,
+    set_exchange as set_history_exchange,
+)
 from tradeengine.api_filter_routes import (
     router as filter_router,
     set_config_manager as set_filter_config_manager,
@@ -664,9 +668,13 @@ app.include_router(config_router)
 # Include filter API routes
 app.include_router(filter_router)
 
+# #833: read-only account fills/orders for data-manager's ground truth
+app.include_router(exchange_history_router)
+
 # Initialize components
 settings = Settings()
 binance_exchange = BinanceFuturesExchange()
+set_history_exchange(binance_exchange)
 simulator_exchange = SimulatorExchange()
 dispatcher = Dispatcher(exchange=binance_exchange)
 

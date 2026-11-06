@@ -462,3 +462,112 @@ class TestPostReconcileInvariant:
             assert _has_matching_exchange_position(pos, exchange_positions), (
                 f"AC5 violation: {pos['strategy_position_id']} has no exchange match"
             )
+
+
+# ---------------------------------------------------------------------------
+# #831 — closing fills read before eviction
+# ---------------------------------------------------------------------------
+
+
+def _sell_fill(trade_id: int, qty: str, price: str, pnl: str, at: datetime) -> dict:
+    return {
+        "symbol": "BTCUSDT",
+        "id": trade_id,
+        "orderId": 9000 + trade_id,
+        "side": "SELL",
+        "positionSide": "BOTH",
+        "price": price,
+        "qty": qty,
+        "realizedPnl": pnl,
+        "commission": "0.0200",
+        "commissionAsset": "USDT",
+        "time": int(at.timestamp() * 1000),
+    }
+
+
+class TestExternalCloseFills831:
+    @pytest.mark.asyncio
+    async def test_ghost_close_carries_exchange_fills_pnl(self) -> None:
+        ghost = _spos("g1")
+        store = await _build_store()
+        mgr = _manager_with(ghost)
+        mgr._update_strategy_position_closure = AsyncMock(return_value=None)
+        fill_time = ghost["entry_time"] + timedelta(minutes=10)
+        fetcher = AsyncMock(
+            return_value=[_sell_fill(1, "0.01", "51000", "10.0", fill_time)]
+        )
+        recon = StrategyPositionReconciler(mgr, store, fills_fetcher=fetcher)
+
+        result = await recon.reconcile_once()
+
+        assert result["evicted"] == 1
+        symbol, start_ms = fetcher.await_args.args
+        assert symbol == "BTCUSDT"
+        assert start_ms == int(ghost["entry_time"].timestamp() * 1000)
+        row = mgr._update_strategy_position_closure.await_args.args[1]
+        assert row["status"] == "closed_externally"
+        assert row["exit_price"] == 51000.0
+        assert float(row["realized_pnl"]) == 10.0
+        record = row["strategy_metadata"]["external_close"]
+        assert record["pnl_source"] == "exchange_fills"
+        assert record["exit_commission_by_asset"] == {"USDT": "0.02000000"}
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_still_evicts_as_missing(self) -> None:
+        store = await _build_store()
+        mgr = _manager_with(_spos("g1"))
+        mgr._update_strategy_position_closure = AsyncMock(return_value=None)
+        fetcher = AsyncMock(side_effect=RuntimeError("HTTP 503"))
+        recon = StrategyPositionReconciler(mgr, store, fills_fetcher=fetcher)
+
+        result = await recon.reconcile_once()
+
+        assert result["evicted"] == 1
+        row = mgr._update_strategy_position_closure.await_args.args[1]
+        assert row["status"] == "closed_externally"
+        assert row["realized_pnl"] is None
+        assert row["strategy_metadata"]["external_close"] == {
+            "pnl_source": "missing",
+            "reason": "fetch_failed",
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_fetcher_marks_missing_fetcher_unavailable(self) -> None:
+        store = await _build_store()
+        mgr = _manager_with(_spos("g1"))
+        mgr._update_strategy_position_closure = AsyncMock(return_value=None)
+        recon = StrategyPositionReconciler(mgr, store)
+
+        await recon.reconcile_once()
+
+        row = mgr._update_strategy_position_closure.await_args.args[1]
+        assert row["strategy_metadata"]["external_close"]["reason"] == (
+            "fetcher_unavailable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_ghosts_on_one_symbol_side_are_unattributed_one_read(
+        self,
+    ) -> None:
+        older = _spos("g1", entry_time=datetime.now(UTC) - timedelta(hours=3))
+        newer = _spos("g2", entry_time=datetime.now(UTC) - timedelta(hours=1))
+        store = await _build_store()
+        mgr = _manager_with(older, newer)
+        mgr._update_strategy_position_closure = AsyncMock(return_value=None)
+        fill_time = newer["entry_time"] + timedelta(minutes=5)
+        fetcher = AsyncMock(
+            return_value=[_sell_fill(1, "0.02", "51000", "20.0", fill_time)]
+        )
+        recon = StrategyPositionReconciler(mgr, store, fills_fetcher=fetcher)
+
+        result = await recon.reconcile_once()
+
+        assert result["evicted"] == 2
+        assert fetcher.await_count == 1
+        assert fetcher.await_args.args[1] == int(older["entry_time"].timestamp() * 1000)
+        for call in mgr._update_strategy_position_closure.await_args_list:
+            row = call.args[1]
+            assert row["realized_pnl"] is None
+            record = row["strategy_metadata"]["external_close"]
+            assert record["pnl_source"] == "unattributed"
+            assert record["reason"] == "symbol_side_shared"

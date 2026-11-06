@@ -17,6 +17,12 @@ On each pass:
    call ``StrategyPositionManager.evict_ghost_position`` and increment
    ``strategy_position_ghost_evicted_total``.
 
+#831: before evicting, the reconciler reads the symbol's trade history
+(``GET /fapi/v1/userTrades`` through the injected ``fills_fetcher``) and hands
+the closing fills to :func:`attribute_closing_fills`, so the closed row carries
+the exchange's realized P&L, or says why it can't (``unattributed`` /
+``missing``).
+
 Read-only with respect to Binance — the reconciler never places or cancels
 orders.  Its only side effect is removing already-orphaned strategy rows
 from the in-memory tracker and journaling the eviction to Data Manager.
@@ -36,10 +42,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shared.constants import UTC
+from tradeengine.external_close_fills import (
+    attribute_closing_fills,
+    missing_closure,
+    position_open_ms,
+)
 from tradeengine.metrics import (
     strategy_position_ghost_evicted_total,
     strategy_position_ghost_gauge,
@@ -54,6 +66,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SECONDS = 60
 _DEFAULT_MIN_AGE_SECONDS = 300  # 5 minutes
+
+# (symbol, start_ms) -> the symbol's userTrades rows since start_ms.
+FillsFetcher = Callable[[str, int], Awaitable[list[dict[str, Any]]]]
 
 
 def _position_age_seconds(position: dict, now: datetime) -> float:
@@ -124,9 +139,11 @@ class StrategyPositionReconciler:
         store: ExchangeTruthStore,
         interval_seconds: int = _DEFAULT_INTERVAL_SECONDS,
         min_age_seconds: int = _DEFAULT_MIN_AGE_SECONDS,
+        fills_fetcher: FillsFetcher | None = None,
     ) -> None:
         self._manager = strategy_pos_manager
         self._store = store
+        self._fills_fetcher = fills_fetcher
         self._interval = max(1, int(interval_seconds))
         self._min_age = max(0, int(min_age_seconds))
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -203,6 +220,7 @@ class StrategyPositionReconciler:
             ghosts = 0
             evicted = 0
             skipped_young = 0
+            evictable: list[dict] = []
 
             for pos in open_positions:
                 if _has_matching_exchange_position(pos, exchange_positions):
@@ -212,12 +230,19 @@ class StrategyPositionReconciler:
                 if age < self._min_age:
                     skipped_young += 1
                     continue
-                spid = pos.get("strategy_position_id")
-                if not spid:
+                if not pos.get("strategy_position_id"):
                     continue
+                evictable.append(pos)
+
+            trades_by_symbol = await self._fetch_trades(evictable)
+
+            for pos in evictable:
+                spid = str(pos["strategy_position_id"])
+                closure = self._closure_for(pos, trades_by_symbol, open_positions)
                 ok = await self._manager.evict_ghost_position(
                     strategy_position_id=spid,
                     reason="no_exchange_position",
+                    closure=closure,
                 )
                 if ok:
                     strategy_position_ghost_evicted_total.labels(
@@ -247,3 +272,54 @@ class StrategyPositionReconciler:
             logger.exception("StrategyPositionReconciler pass failed")
             strategy_position_reconcile_runs_total.labels(result="error").inc()
             return {"open": 0, "ghosts": 0, "evicted": 0, "skipped_young": 0}
+
+    async def _fetch_trades(
+        self, evictable: list[dict]
+    ) -> dict[str, list[dict[str, Any]] | str]:
+        """One userTrades read per symbol, from its earliest evictable entry.
+
+        Values are the trade rows, or a ``missing`` reason string when the read
+        could not happen or failed.
+        """
+        start_by_symbol: dict[str, int] = {}
+        for pos in evictable:
+            symbol = str(pos.get("symbol") or "")
+            open_ms = position_open_ms(pos)
+            if not symbol or open_ms is None:
+                continue
+            start_by_symbol[symbol] = min(open_ms, start_by_symbol.get(symbol, open_ms))
+
+        result: dict[str, list[dict[str, Any]] | str] = {}
+        for symbol, start_ms in start_by_symbol.items():
+            if self._fills_fetcher is None:
+                result[symbol] = "fetcher_unavailable"
+                continue
+            try:
+                trades = await self._fills_fetcher(symbol, start_ms)
+            except Exception as exc:
+                logger.warning(
+                    "StrategyPositionReconciler: userTrades read failed for %s "
+                    "since %s: %s",
+                    symbol,
+                    start_ms,
+                    exc,
+                )
+                result[symbol] = "fetch_failed"
+                continue
+            result[symbol] = trades if isinstance(trades, list) else "fetch_failed"
+        return result
+
+    @staticmethod
+    def _closure_for(
+        pos: dict,
+        trades_by_symbol: dict[str, list[dict[str, Any]] | str],
+        open_positions: list[dict],
+    ) -> dict[str, Any]:
+        if position_open_ms(pos) is None:
+            return missing_closure("entry_time_unknown")
+        trades = trades_by_symbol.get(str(pos.get("symbol") or ""))
+        if trades is None:
+            return missing_closure("symbol_unknown")
+        if isinstance(trades, str):
+            return missing_closure(trades)
+        return attribute_closing_fills(pos, trades, other_positions=open_positions)

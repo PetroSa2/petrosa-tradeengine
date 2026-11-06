@@ -386,14 +386,15 @@ strategy_position_ghost_gauge = Gauge(
     "Current count of strategy positions with no matching exchange position",
 )
 
-# #831 — positions closed outside tradeengine (ghost eviction): where their
-# realized P&L came from. pnl_source: "exchange_fills" (closing fills
-# attributed), "unattributed" (fills not tied to one position, no P&L) or
-# "missing" (trade history not read, no P&L).
+# #831 — positions closed outside tradeengine: where their realized P&L came
+# from. ledger: "strategy_positions" (ghost eviction) or "positions" (open-row
+# reconciler). pnl_source: "exchange_fills" (closing fills attributed),
+# "unattributed" (fills not tied to one position, no P&L) or "missing" (trade
+# history not read, no P&L).
 strategy_position_external_close_total = Counter(
     "petrosa_tradeengine_strategy_position_external_close_total",
-    "Externally closed strategy positions by realized P&L source",
-    ["pnl_source", "reason"],
+    "Externally closed positions by ledger and realized P&L source",
+    ["ledger", "pnl_source", "reason"],
 )
 
 # #481 AC3 — close-order emission blocked because the exchange has no matching

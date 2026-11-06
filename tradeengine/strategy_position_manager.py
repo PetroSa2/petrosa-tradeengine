@@ -35,6 +35,7 @@ from tradeengine.exchange_truth_store import ExchangeTruthStore
 from tradeengine.external_close_fills import (
     PNL_SOURCE_EXCHANGE_FILLS,
     PNL_SOURCE_MISSING,
+    net_realized_pnl,
 )
 from tradeengine.metrics import (
     otel_position_persist_failed,
@@ -1087,8 +1088,9 @@ class StrategyPositionManager:
         #831: ``closure`` comes from
         :func:`tradeengine.external_close_fills.attribute_closing_fills`. With
         ``pnl_source == "exchange_fills"`` the row records the closing fills'
-        exit price, realized P&L (sum of Binance ``realizedPnl``) and
-        commission. Otherwise (``unattributed``/``missing``, or no closure at
+        exit price, gross realized P&L (sum of Binance ``realizedPnl``),
+        commission, and ``realized_pnl`` net of fees (gross minus exit
+        commission minus the entry fee's share), the meaning other closes use. Otherwise (``unattributed``/``missing``, or no closure at
         all) no P&L is invented; the source and reason are kept in
         ``strategy_metadata["external_close"]`` and counted on
         ``strategy_position_external_close_total``.
@@ -1121,6 +1123,7 @@ class StrategyPositionManager:
         self.strategy_positions.pop(strategy_position_id, None)
         pnl_source = str(closure.get("pnl_source", PNL_SOURCE_MISSING))
         strategy_position_external_close_total.labels(
+            ledger="strategy_positions",
             pnl_source=pnl_source,
             reason=str(closure.get("reason") or "-"),
         ).inc()
@@ -1158,7 +1161,7 @@ class StrategyPositionManager:
         if pnl_source == PNL_SOURCE_EXCHANGE_FILLS:
             exit_price = _decimal(closure["exit_price"])
             exit_quantity = _decimal(closure["exit_quantity"])
-            realized = _money(closure["realized_pnl"])
+            gross = _money(closure["realized_pnl"])
             commission_by_asset = {
                 asset: str(_money(amount))
                 for asset, amount in closure.get("commission_by_asset", {}).items()
@@ -1167,6 +1170,13 @@ class StrategyPositionManager:
                 str(order_id) for order_id in closure.get("exit_order_ids", [])
             ]
             entry_price = _decimal(position.get("entry_price"))
+            entry_quantity = _decimal(position.get("entry_quantity"))
+            entry_fee_share = (
+                _money(position.get("entry_fee")) * exit_quantity / entry_quantity
+                if entry_quantity
+                else Decimal("0")
+            )
+            net = net_realized_pnl(closure, entry_fee_share)
 
             position["exit_price"] = float(exit_price)
             position["exit_quantity"] = float(
@@ -1174,11 +1184,11 @@ class StrategyPositionManager:
             )
             position["exit_time"] = closure.get("exit_time") or position["exit_time"]
             position["exit_order_id"] = order_ids[-1] if order_ids else None
-            position["gross_realized_pnl"] = realized
-            position["realized_pnl"] = realized
+            position["gross_realized_pnl"] = gross
+            position["realized_pnl"] = None if net is None else _money(net)
             position["realized_pnl_pct"] = (
-                _money(realized / (entry_price * exit_quantity) * 100)
-                if entry_price and exit_quantity
+                _money(net / (entry_price * exit_quantity) * 100)
+                if net is not None and entry_price and exit_quantity
                 else None
             )
             if set(commission_by_asset) <= {"USDT"}:
@@ -1186,9 +1196,11 @@ class StrategyPositionManager:
                 position["commission_total"] = (
                     _money(position.get("entry_fee")) + exit_commission
                 )
+            if net is None:
+                record["net_unavailable"] = "commission_not_usdt"
             record.update(
                 {
-                    "pnl_basis": "exchange_realized_pnl",
+                    "pnl_basis": "exchange_realized_pnl_net_of_fees",
                     "exit_commission_by_asset": commission_by_asset,
                     "exit_order_ids": order_ids,
                     "fills": closure.get("fills", []),

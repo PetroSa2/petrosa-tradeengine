@@ -149,3 +149,28 @@ async def test_real_position_manager_books_net_pnl_after_fees() -> None:
     assert data["pnl"] == pytest.approx(0.3)  # (276 - 270) * 0.05
     assert data["final_commission"] == pytest.approx(0.014)
     assert data["pnl_after_fees"] == pytest.approx(0.3 - 0.014)
+
+
+@pytest.mark.asyncio
+async def test_bnb_commission_is_not_netted_as_usdt() -> None:
+    pm = PositionManager()
+    pm.position_records = {"a": _row("a", 0.05)}
+    pm.publish_unattributed_exchange_close = AsyncMock()  # type: ignore[method-assign]
+    bnb = {
+        **_fill(1, "0.05", "276.0"),
+        "commission": "0.00004",
+        "commissionAsset": "BNB",
+    }
+    fetcher = AsyncMock(return_value=[bnb])
+
+    with patch(
+        "tradeengine.position_manager.position_client.update_position",
+        new=AsyncMock(return_value=MagicMock(ok=True)),
+    ) as update:
+        await _reconciler(pm, fetcher).reconcile(_flat())
+
+    data = update.await_args.args[1]
+    assert data["pnl"] == pytest.approx(0.3)  # the fill price is still used
+    assert data["fee_status"] == "unknown"  # the BNB fee is not converted
+    assert data["fee_asset"] == "BNB"
+    assert data["final_commission"] == 0.0  # nothing subtracted as if it were USDT

@@ -327,9 +327,15 @@ class OpenRowReconciler:
                         str(fill.get("trade_id")) for fill in closure.get("fills", [])
                     )
                     by_asset = closure.get("commission_by_asset") or {}
-                    if len(by_asset) == 1:
-                        fee_asset, amount = next(iter(by_asset.items()))
-                        commission = float(amount)
+                    # Only a quote-asset (USDT) commission is netted. A BNB-paid or
+                    # mixed-asset fee is not converted: commission stays None, so the
+                    # row is booked fee_status="unknown" and counted, never netted
+                    # as if it were USDT.
+                    if set(by_asset) == {"USDT"}:
+                        fee_asset = "USDT"
+                        commission = float(by_asset["USDT"])
+                    elif by_asset:
+                        fee_asset = ",".join(sorted(by_asset))
                     pnl_unknown = False
             try:
                 if actor == "reconciler":

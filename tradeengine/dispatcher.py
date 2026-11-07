@@ -205,9 +205,8 @@ async def _load_persisted_open_strategy_rows() -> list[dict[str, Any]]:
     from shared.mysql_client import position_client as strategy_store
     from tradeengine.strategy_position_rebase import OPEN_STATUSES
 
-    return await strategy_store.list_strategy_positions(
-        {"status": {"$in": list(OPEN_STATUSES)}}
-    )
+    # data-manager's query takes flat equality filters only (an operator is a 400)
+    return await strategy_store.list_open_strategy_positions(tuple(OPEN_STATUSES))
 
 
 class OCOManager:

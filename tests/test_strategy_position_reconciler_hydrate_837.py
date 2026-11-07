@@ -120,3 +120,31 @@ async def test_without_a_loader_nothing_changes():
     manager = _manager_with()
     reconciler = StrategyPositionReconciler(manager, store)
     assert (await reconciler.reconcile_once())["open"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_wired_loader_uses_data_managers_flat_filter_contract(monkeypatch):
+    from types import SimpleNamespace
+
+    import shared.mysql_client as mysql_client
+    from shared.mysql_client import DataManagerPositionClient
+    from tradeengine.dispatcher import _load_persisted_open_strategy_rows
+
+    seen = []
+
+    async def query(**kwargs):
+        f = kwargs["filter"]
+        assert f and all(
+            not k.startswith("$") and not isinstance(v, dict) for k, v in f.items()
+        )
+        seen.append(f)
+        return {"data": [{"strategy_position_id": f["status"]}]}
+
+    store = DataManagerPositionClient.__new__(DataManagerPositionClient)
+    store.data_manager_client = SimpleNamespace(_client=SimpleNamespace(query=query))
+    monkeypatch.setattr(mysql_client, "position_client", store)
+
+    rows = await _load_persisted_open_strategy_rows()
+
+    assert seen == [{"status": "open"}, {"status": "partially_closed"}]
+    assert len(rows) == 2

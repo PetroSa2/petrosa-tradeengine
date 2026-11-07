@@ -54,10 +54,13 @@ from tradeengine.external_close_fills import (
 from tradeengine.metrics import (
     strategy_position_ghost_evicted_total,
     strategy_position_ghost_gauge,
+    strategy_position_persisted_uncovered_gauge,
     strategy_position_reconcile_runs_total,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from tradeengine.exchange_truth_store import ExchangeTruthStore, PositionSnapshot
     from tradeengine.strategy_position_manager import StrategyPositionManager
 
@@ -136,10 +139,14 @@ class StrategyPositionReconciler:
         interval_seconds: int = _DEFAULT_INTERVAL_SECONDS,
         min_age_seconds: int = _DEFAULT_MIN_AGE_SECONDS,
         fills_fetcher: FillsFetcher | None = None,
+        persisted_loader: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
     ) -> None:
         self._manager = strategy_pos_manager
         self._store = store
         self._fills_fetcher = fills_fetcher
+        # #837: reads the persisted open rows once, on the first pass with a ready store.
+        self._persisted_loader = persisted_loader
+        self._hydrated = persisted_loader is None
         self._interval = max(1, int(interval_seconds))
         self._min_age = max(0, int(min_age_seconds))
         self._task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -196,6 +203,58 @@ class StrategyPositionReconciler:
             except Exception:
                 logger.exception("StrategyPositionReconciler loop pass failed")
 
+    async def _hydrate_persisted_rows(self) -> None:
+        """#837: load the persisted open rows a restart left out of memory, covered rows only.
+
+        Only rows that cover the exchange's quantity on their (symbol, side), newest first (the
+        re-base plan), are loaded, so the normal close paths and this reconciler see them. The rest
+        are counted on ``strategy_position_persisted_uncovered`` and logged, never loaded (they
+        would absorb today's exit fills) and never closed here: the audited one-shot re-base does
+        that. A failed read is retried on the next pass.
+        """
+        from decimal import Decimal
+
+        from tradeengine.strategy_position_rebase import plan_rebase
+
+        assert self._persisted_loader is not None
+        try:
+            rows = await self._persisted_loader()
+        except Exception as exc:
+            logger.warning(
+                "StrategyPositionReconciler: persisted rows not readable: %s", exc
+            )
+            return
+        exchange_quantities = {
+            key: Decimal(str(abs(snap.quantity)))
+            for key, snap in self._store.get_positions().items()
+            if snap.quantity
+        }
+        plans = plan_rebase(
+            rows, exchange_quantities, datetime.now(UTC), grace_seconds=self._min_age
+        )
+        loaded = 0
+        uncovered: dict[str, int] = {}
+        for plan in plans:
+            for entry in plan.keep:
+                spid = str(entry["row"]["strategy_position_id"])
+                if spid not in self._manager.strategy_positions:
+                    self._manager.strategy_positions[spid] = dict(entry["row"])
+                    loaded += 1
+            if plan.close:
+                reason = str(plan.reason)
+                uncovered[reason] = uncovered.get(reason, 0) + len(plan.close)
+        for reason in ("no_exchange_position", "exceeds_exchange_quantity"):
+            strategy_position_persisted_uncovered_gauge.labels(reason=reason).set(
+                uncovered.get(reason, 0)
+            )
+        self._hydrated = True
+        logger.warning(
+            "StrategyPositionReconciler: persisted open rows read=%d loaded=%d uncovered=%s",
+            len(rows),
+            loaded,
+            uncovered,
+        )
+
     async def reconcile_once(self) -> dict[str, int]:
         """Run one reconciliation pass.
 
@@ -208,6 +267,9 @@ class StrategyPositionReconciler:
                     result="skipped_store_not_ready"
                 ).inc()
                 return {"open": 0, "ghosts": 0, "evicted": 0, "skipped_young": 0}
+
+            if not self._hydrated:
+                await self._hydrate_persisted_rows()
 
             open_positions = self._manager.get_all_open_strategy_positions()
             exchange_positions = self._store.get_positions()

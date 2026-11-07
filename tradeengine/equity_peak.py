@@ -36,6 +36,20 @@ def _number(value: Any) -> float | None:
     return number if number > 0 else None
 
 
+def confirmed_no_history(body: Any) -> bool:
+    """#839: data-manager answered that the ledger has no wallet days at all (not an error, not a gap)."""
+    if not isinstance(body, dict):
+        return False
+    equity = body.get("equity")
+    return (
+        isinstance(equity, dict)
+        and "error" not in equity
+        and equity.get("available") is not False
+        and equity.get("days") == 0
+        and _number(equity.get("peak")) is None
+    )
+
+
 def peak_from_risk_inputs(body: Any) -> tuple[float, str | None] | None:
     """The equity peak (and its time) in a ``/api/v1/risk/inputs`` response, when it has one.
 
@@ -73,6 +87,11 @@ class EquityPeakTracker:
         self.as_of: str | None = None
         self._last_save: float | None = None
         self._unsaved = False
+        # #839: until a source answers, the peak is unknown and so is the drawdown (never 0).
+        self.seeded = False
+        #: risk_inputs | stored | first_sample_fallback (labelled: confirmed empty history only)
+        self.peak_source: str | None = None
+        self._first_sample_allowed = False
 
     def configure(self, client: Any, exchange: Any, position_manager: Any) -> None:
         self.client = client
@@ -80,14 +99,22 @@ class EquityPeakTracker:
         self.position_manager = position_manager
 
     # -- persistence -------------------------------------------------------------------------------
-    async def seed(self) -> None:
-        """Start from the higher of data-manager's equity peak and the stored value."""
-        candidates: list[tuple[float, str | None]] = []
+    async def seed(self) -> bool:
+        """Start from the higher of data-manager's equity peak and the stored value.
+
+        #839: returns whether the tracker is seeded. With neither source answering, the peak stays
+        unknown (``from_peak_pct`` None, never 0) and ``sample`` retries. Only a confirmed empty
+        history (data-manager answers with no ledger days and the store answers with no row) lets
+        the first sample start the peak, as a labelled fallback.
+        """
+        candidates: list[tuple[float, str | None, str]] = []
+        dm_empty = store_empty = False
         try:
             body = await self.client.request("GET", RISK_INPUTS_URL)
             found = peak_from_risk_inputs(body)
             if found:
-                candidates.append(found)
+                candidates.append((found[0], found[1], "risk_inputs"))
+            dm_empty = confirmed_no_history(body)
         except Exception as exc:
             logger.info("No equity peak from %s (%s)", RISK_INPUTS_URL, exc)
         try:
@@ -98,14 +125,31 @@ class EquityPeakTracker:
             if rows:
                 peak = _number(rows[0].get("equity_peak"))
                 if peak is not None:
-                    candidates.append((peak, rows[0].get("peak_at")))
+                    candidates.append((peak, rows[0].get("peak_at"), "stored"))
+            else:
+                store_empty = True
         except Exception as exc:
             logger.warning("Could not read the stored equity peak: %s", exc)
         if candidates:
-            self.equity_peak, self.peak_at = max(candidates, key=lambda c: c[0])
+            self.equity_peak, self.peak_at, self.peak_source = max(
+                candidates, key=lambda c: c[0]
+            )
+            self.seeded = True
             logger.info("Equity peak seeded at %s (%s)", self.equity_peak, self.peak_at)
             # A seed that beat the stored value is saved with the first new sample.
             self._unsaved = len(candidates) > 1
+        elif dm_empty and store_empty:
+            self._first_sample_allowed = True
+            logger.warning(
+                "EQUITY_PEAK_FALLBACK: data-manager reports no ledger history and no peak is stored; "
+                "the first equity sample starts the peak (labelled first_sample_fallback)"
+            )
+        else:
+            logger.warning(
+                "EQUITY_PEAK_UNSEEDED: no equity peak from data-manager or the store; the drawdown "
+                "is reported unknown until a source answers (retrying each sample)"
+            )
+        return self.seeded or self._first_sample_allowed
 
     async def _save(self) -> None:
         now = self._clock()
@@ -146,6 +190,13 @@ class EquityPeakTracker:
             return False
         self.equity_now = wallet + unrealized
         self.as_of = datetime.now(UTC).isoformat()
+        if not self.seeded and not self._first_sample_allowed:
+            await self.seed()
+        if not self.seeded and not self._first_sample_allowed:
+            return True  # equity known, peak unknown: the drawdown stays None
+        if self.equity_peak is None:
+            self.peak_source = "first_sample_fallback"
+            self.seeded = True
         if self.equity_peak is None or self.equity_now > self.equity_peak:
             self.equity_peak = self.equity_now
             self.peak_at = self.as_of
@@ -165,7 +216,11 @@ class EquityPeakTracker:
     def state(self) -> dict[str, Any]:
         """``/state`` ``drawdown``: equity, peak, drawdown from the peak and net notional over equity."""
         now, peak = self.equity_now, self.equity_peak
-        from_peak = max(0.0, (peak - now) / peak) if now is not None and peak else None
+        from_peak = (
+            max(0.0, (peak - now) / peak)
+            if self.seeded and now is not None and peak
+            else None
+        )
         net_ratio = None
         if now and now > 0 and self.position_manager is not None:
             try:
@@ -179,6 +234,8 @@ class EquityPeakTracker:
             "from_peak_pct": from_peak,
             "net_notional_ratio": net_ratio,
             "as_of": self.as_of,
+            "seeded": self.seeded,
+            "peak_source": self.peak_source,
         }
 
 

@@ -1852,9 +1852,7 @@ async def rebase_strategy_positions(
         for key, snap in store.get_positions().items()
         if snap.quantity
     }
-    rows = await strategy_store.list_strategy_positions(
-        {"status": {"$in": list(OPEN_STATUSES)}}
-    )
+    rows = await strategy_store.list_open_strategy_positions(tuple(OPEN_STATUSES))
 
     async def update_row(strategy_position_id: str, update: dict[str, Any]) -> bool:
         result = await strategy_store.update_strategy_position(

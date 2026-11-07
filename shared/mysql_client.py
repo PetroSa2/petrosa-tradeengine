@@ -297,6 +297,20 @@ class DataManagerPositionClient:
                 return rows
             offset += page_size
 
+    async def list_open_strategy_positions(
+        self, statuses: tuple[str, ...] = ("open", "partially_closed")
+    ) -> list[dict[str, Any]]:
+        """#837: every persisted strategy row in one of ``statuses``.
+
+        data-manager's query accepts only flat equality filters (an operator such as ``$in`` is a 400), so
+        each status is read on its own and the pages are merged, de-duplicated by id.
+        """
+        rows: dict[str, dict[str, Any]] = {}
+        for status in statuses:
+            for row in await self.list_strategy_positions({"status": status}):
+                rows.setdefault(str(row.get("strategy_position_id")), row)
+        return list(rows.values())
+
     async def create_exchange_position(
         self, position_data: dict[str, Any]
     ) -> PersistResult:

@@ -29,6 +29,7 @@ from typing import Any
 
 from shared.constants import UTC
 from tradeengine.external_close_fills import (
+    PNL_SOURCE_EXCHANGE_FILLS,
     PNL_SOURCE_UNATTRIBUTED,
     FillsFetcher,
     fetch_closure,
@@ -54,6 +55,18 @@ RESTORABLE_FIELDS = (
     "realized_pnl",
     "gross_realized_pnl",
     "realized_pnl_pct",
+    "commission_total",
+)
+#: The row fields an attributed (``exchange_fills``) closure writes, from the manager's own close logic.
+_ATTRIBUTED_FIELDS = (
+    "exit_time",
+    "exit_price",
+    "exit_quantity",
+    "exit_order_id",
+    "realized_pnl",
+    "gross_realized_pnl",
+    "realized_pnl_pct",
+    "commission_total",
 )
 
 
@@ -178,6 +191,36 @@ def plan_rebase(
     return plans
 
 
+def _closure_fields(
+    row: dict[str, Any], reason: str, closure: dict[str, Any], at: datetime
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The row fields and the ``external_close`` record for ``closure``, as an organic external close writes them.
+
+    #837 follow-up: an attributed (``exchange_fills``) closure goes through
+    ``StrategyPositionManager._apply_external_closure``, the same code as the reconciler's evictions, so the
+    row carries the closing fills' exit price and quantity, gross and net realized P&L and fees. Any other
+    closure writes no P&L (null), never an invented number.
+    """
+    from tradeengine.strategy_position_manager import StrategyPositionManager
+
+    closed = {**row, "exit_time": at, "close_reason": reason}
+    StrategyPositionManager._apply_external_closure(closed, closure)
+    record = dict((closed.get("strategy_metadata") or {}).get("external_close") or {})
+    record["reason"] = reason
+    if closure.get("reason") and closure.get("reason") != reason:
+        record["closure_reason"] = closure["reason"]
+    if closure.get("pnl_source") == PNL_SOURCE_EXCHANGE_FILLS:
+        fields = {f: closed.get(f) for f in _ATTRIBUTED_FIELDS}
+    else:
+        fields = {
+            "exit_time": at,
+            "realized_pnl": None,
+            "gross_realized_pnl": None,
+            "realized_pnl_pct": None,
+        }
+    return fields, record
+
+
 def build_closure_update(
     row: dict[str, Any],
     reason: str,
@@ -196,22 +239,47 @@ def build_closure_update(
         "prev_fields": {f: _iso(row.get(f)) for f in RESTORABLE_FIELDS},
         "prev_external_close": metadata.get("external_close"),
     }
-    record: dict[str, Any] = {"pnl_source": closure.get("pnl_source"), "reason": reason}
-    for key in ("sharing_positions", "candidate_fills", "remaining_quantity"):
-        if key in closure:
-            record[key] = closure[key]
-    if closure.get("reason") and closure.get("reason") != reason:
-        record["closure_reason"] = closure["reason"]
+    fields, record = _closure_fields(row, reason, closure, at)
     metadata["external_close"] = record
     return {
+        **fields,
         "status": "closed_externally",
-        "exit_time": at,
         "close_reason": reason,
-        "realized_pnl": None,
-        "gross_realized_pnl": None,
-        "realized_pnl_pct": None,
         "strategy_metadata": metadata,
     }
+
+
+def build_pnl_repair_update(
+    row: dict[str, Any], closure: dict[str, Any], run_id: str, at: datetime
+) -> dict[str, Any] | None:
+    """#837 follow-up: write the P&L an attributed closure of ``run_id`` left null; None when nothing to repair.
+
+    Only a row this run closed, whose closure is attributed (``exchange_fills``) and whose realized P&L is
+    null, is repaired, and only from a closure re-read now that is attributed too. The repair is audited in
+    ``reconcile_rebase.pnl_repair`` with the values it replaced, so it can be undone from the row alone.
+    """
+    metadata = dict(row.get("strategy_metadata") or {})
+    audit = dict(metadata.get("reconcile_rebase") or {})
+    close = metadata.get("external_close") or {}
+    if (
+        audit.get("run_id") != run_id
+        or row.get("status") != "closed_externally"
+        or close.get("pnl_source") != PNL_SOURCE_EXCHANGE_FILLS
+        or row.get("realized_pnl") is not None
+        or closure.get("pnl_source") != PNL_SOURCE_EXCHANGE_FILLS
+    ):
+        return None
+    reason = str(row.get("close_reason") or audit.get("reason"))
+    fields, record = _closure_fields(row, reason, closure, at)
+    audit["pnl_repair"] = {
+        "at": at.isoformat(),
+        "replaced": {f: _iso(row.get(f)) for f in _ATTRIBUTED_FIELDS},
+        "replaced_external_close": close,
+    }
+    metadata["reconcile_rebase"] = audit
+    metadata["external_close"] = record
+    fields["exit_time"] = row.get("exit_time") or fields.get("exit_time")
+    return {**fields, "strategy_metadata": metadata}
 
 
 def build_rollback_update(row: dict[str, Any], run_id: str) -> dict[str, Any] | None:
@@ -357,4 +425,63 @@ async def run_rollback(
         len(targets) - len(failed),
         len(failed),
     )
+    return report
+
+
+async def run_pnl_repair(
+    *,
+    rows: list[dict[str, Any]],
+    update_row: Any,
+    fills_fetcher: FillsFetcher | None,
+    run_id: str,
+    dry_run: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Re-read the closing fills of a run's attributed closures that kept a null P&L, and write it."""
+    at = now or datetime.now(UTC)
+    candidates = [
+        r
+        for r in rows
+        if ((r.get("strategy_metadata") or {}).get("reconcile_rebase") or {}).get(
+            "run_id"
+        )
+        == run_id
+        and ((r.get("strategy_metadata") or {}).get("external_close") or {}).get(
+            "pnl_source"
+        )
+        == PNL_SOURCE_EXCHANGE_FILLS
+        and r.get("realized_pnl") is None
+    ]
+    report: dict[str, Any] = {
+        "run_id": run_id,
+        "dry_run": dry_run,
+        "candidates": [str(r.get("strategy_position_id")) for r in candidates],
+        "repaired": [],
+        "not_attributable": [],
+        "failed": [],
+    }
+    trades_cache: dict[str, Any] = {}
+    for row in candidates:
+        spid = str(row.get("strategy_position_id"))
+        reopened = {**row, "status": "open", "exit_quantity": 0}
+        closure = await fetch_closure(fills_fetcher, reopened, [reopened], trades_cache)
+        update = build_pnl_repair_update(row, closure, run_id, at)
+        if update is None:
+            report["not_attributable"].append(
+                {"strategy_position_id": spid, "closure": closure.get("reason")}
+            )
+            continue
+        report.setdefault("planned", []).append(
+            {
+                "strategy_position_id": spid,
+                "realized_pnl": str(update.get("realized_pnl")),
+                "exit_price": update.get("exit_price"),
+            }
+        )
+        if dry_run:
+            continue
+        if await update_row(spid, update):
+            report["repaired"].append(spid)
+        else:
+            report["failed"].append(spid)
     return report

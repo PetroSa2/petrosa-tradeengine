@@ -1872,6 +1872,39 @@ async def rebase_strategy_positions(
     )
 
 
+@app.post("/admin/strategy-positions/rebase/repair-pnl")
+async def repair_strategy_positions_rebase_pnl(
+    run_id: str = Query(..., min_length=1),
+    dry_run: bool = Query(True, description="Plan only (default); false writes"),
+) -> dict[str, Any]:
+    """#837 follow-up: write the realized P&L that a re-base run's attributed closures left null.
+
+    Re-reads the closing fills (read-only userTrades) of each row the run closed as ``exchange_fills`` with a
+    null P&L, and writes exit price, quantity, P&L and fees through data-manager, audited in
+    ``reconcile_rebase.pnl_repair``. Ledger only: no order is placed, cancelled or amended.
+    """
+    from shared.mysql_client import position_client as strategy_store
+    from tradeengine.strategy_position_rebase import run_pnl_repair
+
+    rows = await strategy_store.list_strategy_positions(
+        {"strategy_metadata.reconcile_rebase.run_id": run_id}
+    )
+
+    async def update_row(strategy_position_id: str, update: dict[str, Any]) -> bool:
+        result = await strategy_store.update_strategy_position(
+            strategy_position_id, update
+        )
+        return bool(result.ok)
+
+    return await run_pnl_repair(
+        rows=rows,
+        update_row=update_row,
+        fills_fetcher=binance_exchange.fetch_user_trades_since,
+        run_id=run_id,
+        dry_run=dry_run,
+    )
+
+
 @app.post("/admin/strategy-positions/rebase/rollback")
 async def rollback_strategy_positions_rebase(
     run_id: str = Query(..., min_length=1),

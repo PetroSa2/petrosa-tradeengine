@@ -312,3 +312,187 @@ async def test_the_rebase_endpoint_reads_with_data_managers_filter_contract(
     assert response.status_code == 200, response.text
     assert response.json()["dry_run"] is True
     assert seen == [{"status": "open"}, {"status": "partially_closed"}]
+
+
+# --- #837 follow-up: an attributed closure carries the closing fills' P&L --------------------
+
+
+def _short_row(**kw):
+    row = _row("ada-short", "ADAUSDT", "SHORT", 21, 30, entry_order_id="E1", **kw)
+    row["entry_price"] = 0.50
+    row["entry_fee"] = 0.0
+    return row
+
+
+def _closing_fill(**kw):
+    return {
+        "symbol": "ADAUSDT",
+        "side": "BUY",
+        "positionSide": "SHORT",
+        "qty": "21",
+        "price": "0.48",
+        "realizedPnl": "0.42",
+        "commission": "0.004",
+        "commissionAsset": "USDT",
+        "orderId": 777,
+        "id": 9001,
+        "time": int((NOW - timedelta(hours=2)).timestamp() * 1000),
+        **kw,
+    }
+
+
+def test_an_attributed_closure_writes_the_fills_pnl_like_an_organic_external_close():
+    from tradeengine.external_close_fills import attribute_closing_fills
+
+    row = _short_row()
+    closure = attribute_closing_fills(row, [_closing_fill()], [row])
+    assert closure["pnl_source"] == "exchange_fills"
+
+    update = rebase.build_closure_update(
+        row, "no_exchange_position", closure, "r5", NOW
+    )
+
+    assert update["status"] == "closed_externally"
+    assert update["exit_price"] == pytest.approx(0.48)
+    assert update["exit_order_id"] == "777"
+    assert float(update["gross_realized_pnl"]) == pytest.approx(0.42)
+    assert float(update["realized_pnl"]) == pytest.approx(
+        0.416
+    )  # gross minus the exit commission
+    record = update["strategy_metadata"]["external_close"]
+    assert (
+        record["pnl_source"] == "exchange_fills"
+        and record["reason"] == "no_exchange_position"
+    )
+    assert (
+        update["strategy_metadata"]["reconcile_rebase"]["prev_fields"]["realized_pnl"]
+        is None
+    )
+
+
+def test_an_unattributed_closure_still_writes_no_pnl():
+    row = _short_row()
+    closure = {"pnl_source": "unattributed", "reason": "symbol_side_shared"}
+    update = rebase.build_closure_update(
+        row, "no_exchange_position", closure, "r6", NOW
+    )
+    assert update["realized_pnl"] is None and update["gross_realized_pnl"] is None
+    assert (
+        update["strategy_metadata"]["external_close"]["closure_reason"]
+        == "symbol_side_shared"
+    )
+
+
+def _closed_without_pnl(run_id="rebase-x", **kw):
+    """The 2026-11-07 apply's defect: an exchange_fills closure whose P&L was left null."""
+    row = _short_row(
+        status="closed_externally", close_reason="no_exchange_position", **kw
+    )
+    row["exit_time"] = NOW.isoformat()
+    row["realized_pnl"] = None
+    row["strategy_metadata"] = {
+        "source": "signal",
+        "reconcile_rebase": {
+            "run_id": run_id,
+            "prev_status": "open",
+            "reason": "no_exchange_position",
+        },
+        "external_close": {
+            "pnl_source": "exchange_fills",
+            "reason": "no_exchange_position",
+        },
+    }
+    return row
+
+
+@pytest.mark.asyncio
+async def test_pnl_repair_plans_then_writes_and_audits_only_the_runs_null_attributed_rows():
+    target = _closed_without_pnl()
+    other_run = _closed_without_pnl(run_id="someone-else", strategy_position_id="other")
+    other_run["strategy_position_id"] = "other"
+    already = _closed_without_pnl()
+    already["strategy_position_id"] = "already"
+    already["realized_pnl"] = 1.0
+    rows = [target, other_run, already]
+    store = _Store(rows)
+    fetcher = AsyncMock(return_value=[_closing_fill()])
+
+    dry = await rebase.run_pnl_repair(
+        rows=rows,
+        update_row=store.update_row,
+        fills_fetcher=fetcher,
+        run_id="rebase-x",
+        now=NOW,
+    )
+    assert dry["candidates"] == ["ada-short"] and store.writes == []
+    assert dry["planned"][0]["exit_price"] == pytest.approx(0.48)
+
+    applied = await rebase.run_pnl_repair(
+        rows=rows,
+        update_row=store.update_row,
+        fills_fetcher=fetcher,
+        run_id="rebase-x",
+        dry_run=False,
+        now=NOW,
+    )
+    assert applied["repaired"] == ["ada-short"] and applied["failed"] == []
+    repaired = store.rows["ada-short"]
+    assert float(repaired["realized_pnl"]) == pytest.approx(0.416)
+    assert repaired["exit_order_id"] == "777"
+    assert repaired["status"] == "closed_externally"
+    audit = repaired["strategy_metadata"]["reconcile_rebase"]
+    assert audit["run_id"] == "rebase-x"  # the original audit is kept
+    assert audit["pnl_repair"]["replaced"]["realized_pnl"] is None
+    assert repaired["strategy_metadata"]["source"] == "signal"
+    assert [w[0] for w in store.writes] == ["ada-short"]  # nothing else written
+
+
+@pytest.mark.asyncio
+async def test_pnl_repair_never_writes_from_a_closure_that_is_no_longer_attributable():
+    rows = [_closed_without_pnl()]
+    store = _Store(rows)
+    fetcher = AsyncMock(
+        return_value=[_closing_fill(qty="5")]
+    )  # quantity no longer matches
+    report = await rebase.run_pnl_repair(
+        rows=rows,
+        update_row=store.update_row,
+        fills_fetcher=fetcher,
+        run_id="rebase-x",
+        dry_run=False,
+        now=NOW,
+    )
+    assert (
+        report["repaired"] == []
+        and report["not_attributable"][0]["closure"] == "quantity_mismatch"
+    )
+    assert store.writes == []
+
+
+@pytest.mark.asyncio
+async def test_the_repair_endpoint_reads_with_data_managers_filter_contract(
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    import shared.mysql_client as mysql_client
+    import tradeengine.api as api
+
+    seen = []
+
+    async def query(**kwargs):
+        _assert_flat_equality(kwargs["filter"])
+        seen.append(kwargs["filter"])
+        return {"data": []}
+
+    store = DataManagerPositionClient.__new__(DataManagerPositionClient)
+    store.data_manager_client = SimpleNamespace(_client=SimpleNamespace(query=query))
+    monkeypatch.setattr(mysql_client, "position_client", store)
+
+    response = TestClient(api.app).post(
+        "/admin/strategy-positions/rebase/repair-pnl", params={"run_id": "rebase-x"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["dry_run"] is True
+    assert seen == [{"strategy_metadata.reconcile_rebase.run_id": "rebase-x"}]

@@ -120,6 +120,7 @@ class DataManagerPositionClient:
             "exit_price",
             "exit_time",
             "exit_order_id",
+            "exit_algo_id",
             "close_reason",
             "realized_pnl",
             "realized_pnl_pct",

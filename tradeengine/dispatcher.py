@@ -2226,6 +2226,29 @@ class OCOManager:
             return str(on_side[0])
         return None
 
+    @classmethod
+    def _oco_exit_ids(
+        cls,
+        filled_order_id: str,
+        owning_oco: dict[str, Any],
+        order_details: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        """#838: (exit_order_id, exit_algo_id) for a filled OCO leg.
+
+        A triggered conditional (algo) leg fills as a different, standard order: its exchange fills
+        (``userTrades``) carry that order's ``orderId``, never the ``algoId``. ``exit_order_id`` is the
+        filled order's id from the resolved order details; the ``algoId`` is kept apart in
+        ``exit_algo_id``. When the fill could not be resolved, ``exit_order_id`` is None (unknown), never
+        the algo id, which would not link to any fill. A standard (non-algo) leg's id is its order id.
+        """
+        leg_kind = (
+            "tp" if str(filled_order_id) == str(owning_oco.get("tp_order_id")) else "sl"
+        )
+        if not cls._leg_is_algo(owning_oco, leg_kind):
+            return str(filled_order_id), None
+        resolved = (order_details or {}).get("orderId")
+        return (str(resolved) if resolved else None), str(filled_order_id)
+
     def _fetch_oco_exit_details(
         self, symbol: str, filled_order_id: str, owning_oco: dict[str, Any]
     ) -> dict[str, Any]:
@@ -2405,12 +2428,16 @@ class OCOManager:
                     if strategy_pos:
                         strategy_id = strategy_pos.get("strategy_id", "unknown")
 
+                    exit_order_id, exit_algo_id = self._oco_exit_ids(
+                        filled_order_id, owning_oco, order_details
+                    )
                     closure = await strategy_position_manager.close_strategy_position(
                         strategy_position_id=strategy_position_id,
                         exit_price=exit_price,
                         exit_quantity=filled_quantity,
                         close_reason=close_reason,
-                        exit_order_id=filled_order_id,
+                        exit_order_id=exit_order_id,
+                        exit_algo_id=exit_algo_id,
                         pnl_unknown=pnl_unknown,
                         exit_fee=order_details.get("commission"),
                         trade_id=str(order_details.get("trade_id", "")) or None,
@@ -2433,7 +2460,7 @@ class OCOManager:
                         exit_price=exit_price,
                         filled_quantity=filled_quantity,
                         pnl=pnl,
-                        filled_order_id=filled_order_id,
+                        filled_order_id=exit_order_id or filled_order_id,
                         close_reason=close_reason,
                         fee=order_details.get("commission"),
                         fee_asset=order_details.get("commission_asset"),
@@ -2459,7 +2486,7 @@ class OCOManager:
                             position_id=str(owning_oco["position_id"]),
                             exit_price=exit_price,
                             exit_qty=filled_quantity,
-                            exit_order_id=str(filled_order_id),
+                            exit_order_id=str(exit_order_id or filled_order_id),
                             exit_time=datetime.now(UTC),
                             close_reason=close_reason,
                             commission=float(order_details["commission"])

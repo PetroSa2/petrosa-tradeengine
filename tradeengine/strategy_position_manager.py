@@ -430,6 +430,7 @@ class StrategyPositionManager:
         exit_fee: Any = None,
         trade_id: str | None = None,
         exit_time: datetime | None = None,
+        exit_algo_id: str | None = None,
     ) -> dict[str, Any]:
         """Close a strategy position when TP/SL triggers
 
@@ -438,7 +439,9 @@ class StrategyPositionManager:
             exit_price: Exit price
             exit_quantity: Exit quantity (None = close full position)
             close_reason: Reason for closure (take_profit, stop_loss, manual)
-            exit_order_id: Order ID that triggered the close
+            exit_order_id: The ``orderId`` of the order that filled (the one its exchange fills carry)
+            exit_algo_id: #838: the conditional (algo) order's ``algoId`` when the close was a triggered
+                TP/SL leg; kept apart from ``exit_order_id`` so fills link by the real order id
 
         Returns:
             Closure details with PnL
@@ -518,6 +521,8 @@ class StrategyPositionManager:
             )
             position["exit_time"] = exit_time or datetime.now(UTC)
             position["exit_order_id"] = exit_order_id
+            if exit_algo_id is not None:
+                position["exit_algo_id"] = exit_algo_id
             position["trade_id"] = trade_id
             position["close_reason"] = close_reason
             position["gross_realized_pnl"] = gross_pnl

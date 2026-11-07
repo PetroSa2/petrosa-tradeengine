@@ -264,6 +264,39 @@ class DataManagerPositionClient:
             "update_strategy_position",
         )
 
+    async def list_strategy_positions(
+        self,
+        filter: dict[str, Any],
+        *,
+        page_size: int = 500,
+        max_rows: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """#837: persisted strategy rows matching ``filter``, oldest entry first, paged.
+
+        Raises on a read failure (a partial list would make a re-base plan wrong) and when more than
+        ``max_rows`` match, so the caller never acts on a truncated set.
+        """
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="strategy_positions",
+                filter=filter,
+                sort={"entry_time": 1},
+                limit=page_size,
+                offset=offset,
+            )
+            page = (response or {}).get("data") or []
+            rows.extend(page)
+            if len(rows) > max_rows:
+                raise RuntimeError(
+                    f"strategy_positions read exceeded max_rows={max_rows}"
+                )
+            if len(page) < page_size:
+                return rows
+            offset += page_size
+
     async def create_exchange_position(
         self, position_data: dict[str, Any]
     ) -> PersistResult:

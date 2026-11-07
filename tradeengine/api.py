@@ -1827,6 +1827,77 @@ async def force_reconcile_positions() -> dict[str, Any]:
     }
 
 
+@app.post("/admin/strategy-positions/rebase")
+async def rebase_strategy_positions(
+    dry_run: bool = Query(True, description="Plan only (default); false applies"),
+    max_closures: int = Query(2000, ge=0, le=10000),
+    run_id: str | None = Query(None, description="Defaults to a timestamped id"),
+) -> dict[str, Any]:
+    """#837: one-shot, ledger-only re-base of persisted open strategy rows onto the exchange's positions.
+
+    Dry run by default. Applying writes only strategy-row updates through data-manager, each audited in
+    ``strategy_metadata.reconcile_rebase`` (undo with ``/admin/strategy-positions/rebase/rollback``). No order
+    is placed, cancelled or amended.
+    """
+    from decimal import Decimal
+
+    from shared.mysql_client import position_client as strategy_store
+    from tradeengine.strategy_position_rebase import OPEN_STATUSES, run_rebase
+
+    store = getattr(_strategy_position_manager, "exchange_truth_store", None)
+    if store is None or not getattr(store, "is_ready", False):
+        raise HTTPException(status_code=503, detail="exchange truth store not ready")
+    exchange_quantities = {
+        key: Decimal(str(abs(snap.quantity)))
+        for key, snap in store.get_positions().items()
+        if snap.quantity
+    }
+    rows = await strategy_store.list_strategy_positions(
+        {"status": {"$in": list(OPEN_STATUSES)}}
+    )
+
+    async def update_row(strategy_position_id: str, update: dict[str, Any]) -> bool:
+        result = await strategy_store.update_strategy_position(
+            strategy_position_id, update
+        )
+        return bool(result.ok)
+
+    return await run_rebase(
+        rows=rows,
+        exchange_quantities=exchange_quantities,
+        update_row=update_row,
+        manager=_strategy_position_manager,
+        fills_fetcher=binance_exchange.fetch_user_trades_since,
+        run_id=run_id or f"rebase-{datetime.now(UTC):%Y%m%dT%H%M%SZ}",
+        dry_run=dry_run,
+        max_closures=max_closures,
+    )
+
+
+@app.post("/admin/strategy-positions/rebase/rollback")
+async def rollback_strategy_positions_rebase(
+    run_id: str = Query(..., min_length=1),
+    dry_run: bool = Query(True, description="Count only (default); false restores"),
+) -> dict[str, Any]:
+    """#837: restore every row a re-base run closed, from the rows' own audit records."""
+    from shared.mysql_client import position_client as strategy_store
+    from tradeengine.strategy_position_rebase import run_rollback
+
+    rows = await strategy_store.list_strategy_positions(
+        {"strategy_metadata.reconcile_rebase.run_id": run_id}
+    )
+
+    async def update_row(strategy_position_id: str, update: dict[str, Any]) -> bool:
+        result = await strategy_store.update_strategy_position(
+            strategy_position_id, update
+        )
+        return bool(result.ok)
+
+    return await run_rollback(
+        rows=rows, update_row=update_row, run_id=run_id, dry_run=dry_run
+    )
+
+
 @app.get("/orders")
 async def get_orders(
     symbol: str | None = Query(

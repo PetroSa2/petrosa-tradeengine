@@ -256,3 +256,59 @@ async def test_listing_pages_and_never_returns_a_truncated_set():
         await client.list_strategy_positions(
             {"status": "open"}, page_size=2, max_rows=3
         )
+
+
+def _assert_flat_equality(filter_dict):
+    """data-manager's /api/v1/data/query contract: a non-empty, flat equality match (else HTTP 400)."""
+    assert filter_dict
+    for key, value in filter_dict.items():
+        assert not key.startswith("$") and not isinstance(value, dict), filter_dict
+
+
+@pytest.mark.asyncio
+async def test_open_rows_are_read_with_flat_equality_filters_and_merged():
+    client = DataManagerPositionClient.__new__(DataManagerPositionClient)
+    by_status = {
+        "open": [{"strategy_position_id": "a", "status": "open"}],
+        "partially_closed": [
+            {"strategy_position_id": "b", "status": "partially_closed"},
+            {"strategy_position_id": "a", "status": "open"},  # never twice
+        ],
+    }
+
+    async def query(**kwargs):
+        _assert_flat_equality(kwargs["filter"])
+        return {"data": by_status[kwargs["filter"]["status"]]}
+
+    client.data_manager_client = SimpleNamespace(_client=SimpleNamespace(query=query))
+    rows = await client.list_open_strategy_positions()
+    assert sorted(r["strategy_position_id"] for r in rows) == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_the_rebase_endpoint_reads_with_data_managers_filter_contract(
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    import shared.mysql_client as mysql_client
+    import tradeengine.api as api
+
+    seen = []
+
+    async def query(**kwargs):
+        _assert_flat_equality(kwargs["filter"])
+        seen.append(kwargs["filter"])
+        return {"data": []}
+
+    store = DataManagerPositionClient.__new__(DataManagerPositionClient)
+    store.data_manager_client = SimpleNamespace(_client=SimpleNamespace(query=query))
+    monkeypatch.setattr(mysql_client, "position_client", store)
+    truth = SimpleNamespace(is_ready=True, get_positions=lambda: {})
+    monkeypatch.setattr(api._strategy_position_manager, "exchange_truth_store", truth)
+
+    response = TestClient(api.app).post("/admin/strategy-positions/rebase")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["dry_run"] is True
+    assert seen == [{"status": "open"}, {"status": "partially_closed"}]

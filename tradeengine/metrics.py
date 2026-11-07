@@ -386,6 +386,16 @@ strategy_position_ghost_gauge = Gauge(
     "Current count of strategy positions with no matching exchange position",
 )
 
+# #837 — persisted open strategy rows a restart did NOT load because the exchange's
+# quantity on their (symbol, side) is already covered by newer rows (or the key is
+# not held). Non-zero means the ledger holds stale open rows: run the one-shot
+# re-base (POST /admin/strategy-positions/rebase).
+strategy_position_persisted_uncovered_gauge = Gauge(
+    "petrosa_tradeengine_strategy_position_persisted_uncovered",
+    "Persisted open strategy rows not loaded at startup (not covered by the exchange)",
+    ["reason"],
+)
+
 # #831 — positions closed outside tradeengine: where their realized P&L came
 # from. ledger: "strategy_positions" (ghost eviction) or "positions" (open-row
 # reconciler). pnl_source: "exchange_fills" (closing fills attributed),

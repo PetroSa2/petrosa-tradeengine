@@ -120,6 +120,7 @@ class DataManagerPositionClient:
             "exit_price",
             "exit_time",
             "exit_order_id",
+            "exit_algo_id",
             "close_reason",
             "realized_pnl",
             "realized_pnl_pct",
@@ -262,6 +263,53 @@ class DataManagerPositionClient:
             self._STRATEGY_POSITION_COLUMNS,
             "update_strategy_position",
         )
+
+    async def list_strategy_positions(
+        self,
+        filter: dict[str, Any],
+        *,
+        page_size: int = 500,
+        max_rows: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """#837: persisted strategy rows matching ``filter``, oldest entry first, paged.
+
+        Raises on a read failure (a partial list would make a re-base plan wrong) and when more than
+        ``max_rows`` match, so the caller never acts on a truncated set.
+        """
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            response = await self.data_manager_client._client.query(
+                database="mongodb",
+                collection="strategy_positions",
+                filter=filter,
+                sort={"entry_time": 1},
+                limit=page_size,
+                offset=offset,
+            )
+            page = (response or {}).get("data") or []
+            rows.extend(page)
+            if len(rows) > max_rows:
+                raise RuntimeError(
+                    f"strategy_positions read exceeded max_rows={max_rows}"
+                )
+            if len(page) < page_size:
+                return rows
+            offset += page_size
+
+    async def list_open_strategy_positions(
+        self, statuses: tuple[str, ...] = ("open", "partially_closed")
+    ) -> list[dict[str, Any]]:
+        """#837: every persisted strategy row in one of ``statuses``.
+
+        data-manager's query accepts only flat equality filters (an operator such as ``$in`` is a 400), so
+        each status is read on its own and the pages are merged, de-duplicated by id.
+        """
+        rows: dict[str, dict[str, Any]] = {}
+        for status in statuses:
+            for row in await self.list_strategy_positions({"status": status}):
+                rows.setdefault(str(row.get("strategy_position_id")), row)
+        return list(rows.values())
 
     async def create_exchange_position(
         self, position_data: dict[str, Any]

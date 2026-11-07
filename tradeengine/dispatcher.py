@@ -200,6 +200,15 @@ def exchange_name_of(value: Any) -> str:
     return DEFAULT_EXCHANGE_NAME
 
 
+async def _load_persisted_open_strategy_rows() -> list[dict[str, Any]]:
+    """#837: every persisted open strategy row (data-manager), for the reconciler's startup load."""
+    from shared.mysql_client import position_client as strategy_store
+    from tradeengine.strategy_position_rebase import OPEN_STATUSES
+
+    # data-manager's query takes flat equality filters only (an operator is a 400)
+    return await strategy_store.list_open_strategy_positions(tuple(OPEN_STATUSES))
+
+
 class OCOManager:
     """Manages OCO (One-Cancels-the-Other) logic for SL/TP orders"""
 
@@ -2965,6 +2974,9 @@ class Dispatcher:
                     fills_fetcher=getattr(
                         self.exchange, "fetch_user_trades_since", None
                     ),
+                    # #837: after a restart, load the persisted open rows that
+                    # cover the exchange's positions (covered rows only).
+                    persisted_loader=_load_persisted_open_strategy_rows,
                 )
                 try:
                     await self.strategy_position_reconciler.start()

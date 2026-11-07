@@ -32,11 +32,25 @@ def _account(wallet, unrealized=None):
     return info
 
 
-def _tracker(accounts, stored=None, risk_inputs=None, unrealized_pnl=0.0, clock=None):
+#: data-manager answering that the ledger has no wallet days (#839: the only case where the first
+#: sample may start the peak). The peak-mechanics tests start from it.
+NO_HISTORY = {
+    "equity": {"days": 0, "peak": None, "source": "ledger_exchange_day_revision"}
+}
+
+
+def _tracker(
+    accounts,
+    stored=None,
+    risk_inputs=NO_HISTORY,
+    unrealized_pnl=0.0,
+    clock=None,
+    dm_down=False,
+):
     client = MagicMock()
     client.query = AsyncMock(return_value={"data": [stored] if stored else []})
     client.upsert_one = AsyncMock(return_value={"updated_count": 1})
-    if risk_inputs is None:
+    if dm_down:
         client.request = AsyncMock(side_effect=RuntimeError("404"))
     else:
         client.request = AsyncMock(return_value=risk_inputs)
@@ -140,14 +154,19 @@ async def test_the_seed_is_the_higher_of_data_manager_and_the_stored_value():
 
 
 @pytest.mark.asyncio
-async def test_an_unavailable_data_manager_does_not_stop_the_tracker():
-    tracker = _tracker([_account(10000, 0)])
+async def test_an_unavailable_data_manager_does_not_stop_the_tracker_and_the_drawdown_is_unknown():
+    """#839: with no source answering, sampling goes on but the peak is never invented."""
+    tracker = _tracker([_account(10000, 0)], dm_down=True)
     tracker.client.query = AsyncMock(side_effect=RuntimeError("down"))
 
     await tracker.seed()
     assert await tracker.sample() is True
 
-    assert tracker.state()["equity_peak"] == 10000
+    state = tracker.state()
+    assert state["equity_now"] == 10000
+    assert state["equity_peak"] is None
+    assert state["from_peak_pct"] is None
+    assert state["seeded"] is False
 
 
 @pytest.mark.asyncio
@@ -251,3 +270,71 @@ async def test_the_exchange_account_info_carries_unrealized_profit():
 
     assert info["total_unrealized_profit"] == "-250"
     assert info["total_wallet_balance"] == "10000"
+
+
+# --- #839: an unseeded tracker reports the drawdown unknown, never 0 --------------------------
+
+
+@pytest.mark.asyncio
+async def test_unseeded_tracker_retries_and_seeds_when_data_manager_answers():
+    tracker = _tracker(
+        [_account(9500, 0), _account(9500, 0)], dm_down=True
+    )  # data-manager down, store empty
+    await tracker.seed()
+    await tracker.sample()
+    assert tracker.state()["from_peak_pct"] is None
+
+    tracker.client.request = AsyncMock(
+        return_value={"equity": {"peak": 10000.0, "peak_at": "2026-11-06T20:23:53Z"}}
+    )
+    await tracker.sample()  # retries the seed before using the sample
+
+    state = tracker.state()
+    assert state["seeded"] is True and state["peak_source"] == "risk_inputs"
+    assert state["equity_peak"] == 10000.0
+    assert state["from_peak_pct"] == pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_peak_alone_seeds_while_data_manager_is_down():
+    tracker = _tracker(
+        [_account(9800, 0)],
+        stored={"equity_peak": 10000.0, "peak_at": "x"},
+        dm_down=True,
+    )
+    await tracker.seed()
+    await tracker.sample()
+    state = tracker.state()
+    assert state["peak_source"] == "stored"
+    assert state["from_peak_pct"] == pytest.approx(0.02)
+
+
+@pytest.mark.asyncio
+async def test_confirmed_empty_history_starts_the_peak_from_the_first_sample_labelled(
+    caplog,
+):
+    tracker = _tracker([_account(10000, 0), _account(9900, 0)])
+    with caplog.at_level("WARNING"):
+        await tracker.seed()
+    assert "EQUITY_PEAK_FALLBACK" in caplog.text
+    await tracker.sample()
+    await tracker.sample()
+    state = tracker.state()
+    assert state["peak_source"] == "first_sample_fallback"
+    assert state["equity_peak"] == 10000
+    assert state["from_peak_pct"] == pytest.approx(0.01)
+
+
+@pytest.mark.asyncio
+async def test_an_errored_equity_block_is_not_empty_history():
+    errored = {
+        "equity": {
+            "available": False,
+            "sufficient": False,
+            "error": "wallet read failed",
+        }
+    }
+    tracker = _tracker([_account(10000, 0)], risk_inputs=errored)
+    await tracker.seed()
+    await tracker.sample()
+    assert tracker.state()["from_peak_pct"] is None

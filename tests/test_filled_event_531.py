@@ -224,6 +224,50 @@ async def test_on_user_data_fill_skips_reduce_only_exit(dispatcher):
 
 
 @pytest.mark.asyncio
+async def test_on_user_data_fill_publishes_triggered_market_exit(dispatcher):
+    order_obj = {
+        "s": "BTCUSDT",
+        "i": 1234,
+        "t": 5678,
+        "X": "FILLED",
+        "S": "SELL",
+        "o": "MARKET",
+        "R": True,
+        "ps": "LONG",
+        "L": "49000",
+        "l": "0.01",
+        "n": "0.02",
+        "N": "USDT",
+        "T": 1716163200123,
+    }
+    fake_spm = MagicMock()
+    fake_spm.get_all_open_strategy_positions.return_value = [
+        {
+            "symbol": "BTCUSDT",
+            "side": "LONG",
+            "strategy_id": "rsi_reversal",
+            "decision_id": "dec-EXIT",
+            "client_order_id": "position-1",
+        }
+    ]
+    with (
+        patch("tradeengine.dispatcher.execution_event_publisher") as pub,
+        patch(
+            "tradeengine.strategy_position_manager.strategy_position_manager", fake_spm
+        ),
+    ):
+        pub.publish = AsyncMock(return_value=True)
+        await dispatcher._on_user_data_fill(order_obj)
+
+    pub.publish.assert_awaited_once()
+    kw = pub.publish.await_args.kwargs
+    assert kw["event_type"] == "filled"
+    assert kw["order_id"] == "1234"
+    assert kw["extra"]["algo_id"] is None
+    assert kw["extra"]["fill_quantity"] == 0.01
+
+
+@pytest.mark.asyncio
 async def test_on_user_data_fill_publisher_error_does_not_raise(dispatcher):
     order_obj = {
         "s": "BTCUSDT",

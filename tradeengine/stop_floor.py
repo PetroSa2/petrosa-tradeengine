@@ -100,6 +100,21 @@ def order_stop_contract(order: Any) -> dict[str, Any] | None:
     return contract
 
 
+def stop_contract_tolerance(exchange: Any, symbol: str, price: float) -> float:
+    """Return one exchange tick, or a labelled precision fallback when filters are absent."""
+    for item in (
+        (getattr(exchange, "symbol_info", {}) or {}).get(symbol, {}).get("filters", [])
+    ):
+        if item.get("filterType") == "PRICE_FILTER":
+            try:
+                tick = float(item.get("tickSize", 0))
+            except (TypeError, ValueError):
+                tick = 0.0
+            if tick > 0 and math.isfinite(tick):
+                return tick
+    return max(abs(price) * 1e-8, 1e-8)
+
+
 def _env_float(name: str, default: float, low: float, high: float) -> float:
     try:
         value = float(os.environ[name])

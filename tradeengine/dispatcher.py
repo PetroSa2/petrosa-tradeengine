@@ -93,7 +93,11 @@ from tradeengine.services.execution_event_publisher import (
 from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
-from tradeengine.stop_floor import order_stop_contract, stop_floor
+from tradeengine.stop_floor import (
+    order_stop_contract,
+    stop_contract_tolerance,
+    stop_floor,
+)
 from tradeengine.strategy_position_manager import strategy_position_manager
 from tradeengine.strategy_position_reconciler import (
     StrategyPositionReconciler,
@@ -4246,10 +4250,22 @@ class Dispatcher:
                     strategy_id=contract.get("strategy_id"),
                     timeframe=contract.get("timeframe"),
                 )
-                if not refreshed["placeable"] or not math.isclose(
-                    refreshed["stop_price"], contract["stop_price"], abs_tol=1e-10
-                ):
-                    raise ValueError("stop contract no longer placeable")
+                if not refreshed["placeable"]:
+                    raise ValueError(
+                        f"stop contract not placeable (original={contract['stop_price']} "
+                        f"refreshed={refreshed['stop_price']})"
+                    )
+                tolerance = stop_contract_tolerance(
+                    stop_floor.exchange, order.symbol, contract["stop_price"]
+                )
+                if abs(refreshed["stop_price"] - contract["stop_price"]) > tolerance:
+                    raise ValueError(
+                        f"stop contract moved beyond tolerance (original={contract['stop_price']} "
+                        f"refreshed={refreshed['stop_price']} tolerance={tolerance})"
+                    )
+                order.stop_loss = refreshed["stop_price"]
+                order.stop_loss_pct = refreshed["stop_pct"]
+                order.strategy_metadata["stop_contract"] = refreshed
                 return None
         except (ValueError, TypeError) as exc:
             return await self._reject_sizing(order, "stop_contract_invalid", str(exc))

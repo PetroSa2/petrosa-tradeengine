@@ -492,3 +492,38 @@ async def test_822_residual_read_failure_does_not_guess_a_remediation() -> None:
 
     assert result["status"] == "success"
     assert disp.exchange.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_822_non_mapping_local_position_does_not_skip_exchange_residual() -> None:
+    disp = _dispatcher_with_positions(
+        {
+            ("BTCUSDT", "LONG"): PositionSnapshot(
+                symbol="BTCUSDT",
+                side="LONG",
+                quantity=0.1,
+                entry_price=60000.0,
+                unrealized_pnl=0.0,
+            )
+        }
+    )
+    disp.position_manager.positions = {("BTCUSDT", "SHORT"): None}  # type: ignore[assignment]
+    disp.exchange.get_position_info = AsyncMock(
+        return_value=[
+            {"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": "-0.01"}
+        ]
+    )
+
+    result = await disp.close_position_with_cleanup(
+        position_id="pos-1",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        quantity=0.1,
+        reason="take_profit",
+    )
+
+    assert result["status"] == "success"
+    assert disp.exchange.execute.call_count == 2
+    residual_order = disp.exchange.execute.call_args_list[1].args[0]
+    assert residual_order.position_side == "SHORT"
+    assert residual_order.amount == pytest.approx(0.01)

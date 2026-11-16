@@ -7697,6 +7697,8 @@ class Dispatcher:
             return []
 
         local_positions = getattr(self.position_manager, "positions", {})
+        if not isinstance(local_positions, dict):
+            local_positions = {}
         residuals: list[dict[str, Any]] = []
         for raw in raw_positions:
             if not isinstance(raw, dict):
@@ -7713,6 +7715,8 @@ class Dispatcher:
             if quantity <= 1e-9:
                 continue
             local = local_positions.get((symbol, side), {})
+            if not isinstance(local, dict):
+                local = {}
             try:
                 local_quantity = abs(
                     float(local.get("quantity", local.get("amount", 0)) or 0)
@@ -7726,8 +7730,8 @@ class Dispatcher:
 
         set_residual_positions_count(len(residuals))
         for residual in residuals:
-            side = residual["side"]
-            quantity = residual["quantity"]
+            side = str(residual["side"])
+            quantity = float(residual["quantity"])
             self.logger.critical(
                 "RESIDUAL_DETECTED symbol=%s side=%s quantity=%s reason=%s",
                 symbol,

@@ -18,6 +18,7 @@ from tradeengine.stop_floor import (
     noise_floor,
     noise_multiplier,
     order_stop_contract,
+    stop_contract_tolerance,
     stop_floor,
     technical_floor,
 )
@@ -67,6 +68,13 @@ def test_max_placeable_fraction_keeps_the_adjusters_margin():
     assert max_placeable_fraction(1.05, 0.95) == pytest.approx(
         min(1.05 * 0.99 - 1, 1 - 0.95 * 1.01)
     )
+
+
+def test_stop_contract_tolerance_uses_tick_or_precision_fallback():
+    exchange = _exchange(tick="0.1")
+    assert stop_contract_tolerance(exchange, BTC, 50_000.0) == pytest.approx(0.1)
+    exchange.symbol_info = {}
+    assert stop_contract_tolerance(exchange, BTC, 50_000.0) == pytest.approx(0.0005)
 
 
 # --- the provider --------------------------------------------------------------------------------

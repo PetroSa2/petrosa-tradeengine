@@ -93,7 +93,11 @@ from tradeengine.services.execution_event_publisher import (
 from tradeengine.services.halt_suspected_detector import halt_suspected_detector
 from tradeengine.services.heartbeat_monitor import HeartbeatMonitor
 from tradeengine.signal_aggregator import SignalAggregator
-from tradeengine.stop_floor import order_stop_contract, stop_floor
+from tradeengine.stop_floor import (
+    order_stop_contract,
+    stop_contract_tolerance,
+    stop_floor,
+)
 from tradeengine.strategy_position_manager import strategy_position_manager
 from tradeengine.strategy_position_reconciler import (
     StrategyPositionReconciler,
@@ -4246,10 +4250,22 @@ class Dispatcher:
                     strategy_id=contract.get("strategy_id"),
                     timeframe=contract.get("timeframe"),
                 )
-                if not refreshed["placeable"] or not math.isclose(
-                    refreshed["stop_price"], contract["stop_price"], abs_tol=1e-10
-                ):
-                    raise ValueError("stop contract no longer placeable")
+                if not refreshed["placeable"]:
+                    raise ValueError(
+                        f"stop contract not placeable (original={contract['stop_price']} "
+                        f"refreshed={refreshed['stop_price']})"
+                    )
+                tolerance = stop_contract_tolerance(
+                    stop_floor.exchange, order.symbol, contract["stop_price"]
+                )
+                if abs(refreshed["stop_price"] - contract["stop_price"]) > tolerance:
+                    raise ValueError(
+                        f"stop contract moved beyond tolerance (original={contract['stop_price']} "
+                        f"refreshed={refreshed['stop_price']} tolerance={tolerance})"
+                    )
+                order.stop_loss = refreshed["stop_price"]
+                order.stop_loss_pct = refreshed["stop_pct"]
+                order.strategy_metadata["stop_contract"] = refreshed
                 return None
         except (ValueError, TypeError) as exc:
             return await self._reject_sizing(order, "stop_contract_invalid", str(exc))
@@ -5940,6 +5956,69 @@ class Dispatcher:
             fee_asset=order_obj.get("N"),
         )
 
+    async def _emit_untracked_protective_fill(self, order_obj: dict[str, Any]) -> None:
+        """Publish a triggered protective fill whose MARKET order is untracked."""
+        from tradeengine.strategy_position_manager import strategy_position_manager
+
+        symbol = str(order_obj.get("s", ""))
+        position_side = position_side_of(order_obj.get("ps"))
+        if strategy_position_manager is None or not symbol or not position_side:
+            return
+
+        positions = [
+            pos
+            for pos in strategy_position_manager.get_all_open_strategy_positions()
+            if pos.get("symbol") == symbol and pos.get("side") == position_side
+        ]
+        if not positions:
+            return
+        position = positions[0]
+
+        def _number(value: Any) -> float | None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        fill_price = _number(order_obj.get("L")) or _number(order_obj.get("ap"))
+        quantity = _number(order_obj.get("l")) or _number(order_obj.get("z"))
+        if fill_price is None or quantity is None:
+            return
+        fee = _number(order_obj.get("n"))
+        timestamp = order_obj.get("T")
+        fill_time = datetime.now(UTC)
+        if isinstance(timestamp, int | float):
+            fill_time = datetime.fromtimestamp(
+                timestamp / 1000 if timestamp > 1e12 else timestamp, tz=UTC
+            )
+
+        await execution_event_publisher.publish(
+            event_type="filled",
+            strategy_id=str(position.get("strategy_id") or "unknown"),
+            order_id=str(order_obj.get("i", "")),
+            reason="protective_leg_triggered_fill",
+            decision_id=position.get("decision_id"),
+            timestamp=fill_time,
+            client_order_id=position.get("client_order_id"),
+            idempotency_key=f"{order_obj.get('i')}:{order_obj.get('t', '')}",
+            extra={
+                "symbol": symbol,
+                "side": order_obj.get("S"),
+                "position_side": position_side,
+                "fill_price": fill_price,
+                "price": fill_price,
+                "fill_quantity": quantity,
+                "fill_qty": quantity,
+                "fee": fee,
+                "fee_asset": order_obj.get("N"),
+                "fee_status": "known" if fee is not None else "unknown",
+                "trade_id": str(order_obj.get("t", "")) or None,
+                "algo_id": order_obj.get("a"),
+                "reduce_only": True,
+                "close_reason": "protective_leg_triggered",
+            },
+        )
+
     async def _on_user_data_fill(
         self, order_obj: dict[str, Any], *, _deferred: bool = False
     ) -> None:
@@ -5970,6 +6049,22 @@ class Dispatcher:
                 "STOP",
                 "TAKE_PROFIT",
             ):
+                if (
+                    is_reduce_only
+                    and order_type == "MARKET"
+                    and not any(
+                        order_id
+                        in {
+                            str(pair.get("sl_order_id", "")),
+                            str(pair.get("tp_order_id", "")),
+                        }
+                        for pairs in getattr(
+                            getattr(self, "oco_manager", None), "active_oco_pairs", {}
+                        ).values()
+                        for pair in (pairs if isinstance(pairs, list) else [pairs])
+                    )
+                ):
+                    await self._emit_untracked_protective_fill(order_obj)
                 await self._record_reduce_only_fill(order_obj)
                 # #651: a closing fill can shrink, flatten or (testnet
                 # residual) invert the side — run the post-fill inversion

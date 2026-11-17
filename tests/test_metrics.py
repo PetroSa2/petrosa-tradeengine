@@ -24,6 +24,7 @@ from tradeengine.metrics import (
     positions_winning_total,
     risk_checks_total,
     risk_rejections_total,
+    signal_outcomes_total,
     strategy_oco_placed_total,
     strategy_pnl_realized,
     strategy_sl_triggered_total,
@@ -436,6 +437,12 @@ class TestBusinessMetrics:
         """Test risk_rejections_total metric exists"""
         assert risk_rejections_total is not None
         assert risk_rejections_total._name == "tradeengine_risk_rejections"
+
+    def test_signal_outcomes_total_has_bounded_outcome_label(self):
+        metric = signal_outcomes_total.labels(outcome="skip_duplicate")
+        initial_value = metric._value._value
+        metric.inc()
+        assert metric._value._value == initial_value + 1
 
     def test_risk_checks_total_exists(self):
         """Test risk_checks_total metric exists"""

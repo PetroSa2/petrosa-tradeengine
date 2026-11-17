@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import math
 import os
@@ -62,10 +63,12 @@ from tradeengine.metrics import (
     orders_total,
     otel_oco_pair_age_seconds,
     otel_orders_total,
+    otel_signal_outcomes_total,
     risk_at_stop_total,
     risk_checks_total,
     risk_rejections_total,
     set_residual_positions_count,
+    signal_outcomes_total,
     sizing_cap_total,
     strategy_close_blocked_no_exchange_position_total,
 )
@@ -141,6 +144,101 @@ signals_duplicate = Counter(
     "Total duplicate signals detected and rejected",
     ["strategy", "symbol", "action"],
 )
+
+_RISK_OUTCOME_REASONS = frozenset(
+    {
+        "algo_order_limits",
+        "absolute_position_size",
+        "daily_loss_limits_exceeded",
+        "insufficient_margin",
+        "max_position_size_usd",
+        "portfolio_exposure",
+        "position_limits_exceeded",
+        "position_size_pct",
+        "probe_sizing_unavailable",
+        "refresh_failure",
+        "risk_budget_below_minimum",
+        "risk_sizing_unavailable",
+        "stop_contract_invalid",
+        "stop_floor_unplaceable",
+        "stop_risk_budget",
+        "symbol_not_allowed",
+    }
+)
+
+
+def _signal_outcome(result: dict[str, Any]) -> str:
+    """Return one bounded terminal outcome for a dispatcher result."""
+    status = str(result.get("status", "error"))
+    if status in ("executed", "success"):
+        execution_status = str(result.get("execution_result", {}).get("status", ""))
+        if execution_status in {"error", "rollback_failed"}:
+            return "order_error"
+        if execution_status in {"rejected", "cancelled", "failed", "rolled_back"}:
+            return "order_rejected"
+        return "order_accepted"
+    if status == "exchange_failed":
+        execution_status = str(result.get("execution_result", {}).get("status", ""))
+        return (
+            "order_error"
+            if execution_status in {"error", "rollback_failed"}
+            else "order_rejected"
+        )
+    if status == "rejected":
+        reason = str(result.get("reason", "other"))
+        source = str(result.get("rejection_source", ""))
+        if reason == "symbol_not_allowed":
+            return "skip_symbol_not_allowed"
+        if reason == "manual_halt":
+            return "skip_halted"
+        if source == "stale_signal":
+            return "skip_stale"
+        if source in {"risk_check", "balance", "whitelist"}:
+            return (
+                f"risk_rejected_{reason}"
+                if reason in _RISK_OUTCOME_REASONS
+                else "risk_rejected_other"
+            )
+        skip_reasons = {
+            "accumulation_cooldown",
+            "cio_enforcement_unauthorized_source",
+            "opposite_position_open",
+            "stop_contract_invalid",
+        }
+        return f"skip_{reason}" if reason in skip_reasons else "skip_other"
+    if status in {"duplicate", "skipped_duplicate"}:
+        return "skip_duplicate"
+    if status == "hold":
+        return "skip_hold"
+    if status == "aborted":
+        return "skip_restricted"
+    if status == "lock_unavailable":
+        return "timeout"
+    return "error"
+
+
+def record_signal_outcome(dispatch_method):
+    @functools.wraps(dispatch_method)
+    async def wrapper(self, signal: Signal) -> dict[str, Any]:
+        signals_received.labels(
+            strategy=signal.strategy_id,
+            symbol=signal.symbol,
+            action=signal.action,
+        ).inc()
+        try:
+            result = await dispatch_method(self, signal)
+        except Exception:
+            outcome = "error"
+            signal_outcomes_total.labels(outcome=outcome).inc()
+            otel_signal_outcomes_total.add(1, {"outcome": outcome})
+            raise
+        outcome = _signal_outcome(result)
+        signal_outcomes_total.labels(outcome=outcome).inc()
+        otel_signal_outcomes_total.add(1, {"outcome": outcome})
+        return result
+
+    return wrapper
+
 
 # OpenTelemetry tracer for business context spans
 tracer = trace.get_tracer(__name__)
@@ -3253,6 +3351,7 @@ class Dispatcher:
 
         self.last_cache_cleanup = current_time
 
+    @record_signal_outcome
     async def dispatch(self, signal: Signal) -> dict[str, Any]:
         """Dispatch a signal for processing with distributed state management"""
         with tracer.start_as_current_span("dispatcher.dispatch") as span:
@@ -3326,13 +3425,6 @@ class Dispatcher:
                             "symbol": signal.symbol,
                             "action": signal.action,
                         }
-
-                # Track signal reception in metrics
-                signals_received.labels(
-                    strategy=signal.strategy_id,
-                    symbol=signal.symbol,
-                    action=signal.action,
-                ).inc()
 
                 # CIO AUDIT ENFORCEMENT (Ticket #304 / P0 #1)
                 # If enforce_cio_audit is True, we only accept BUY/SELL signals from 'petrosa-cio'

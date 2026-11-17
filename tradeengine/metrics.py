@@ -531,6 +531,12 @@ risk_rejections_total = Counter(
     ["reason", "symbol", "exchange"],
 )
 
+signal_outcomes_total = Counter(
+    "tradeengine_signal_outcomes_total",
+    "Terminal outcomes for received signals; outcome values are bounded by the dispatcher contract",
+    ["outcome"],
+)
+
 sizing_cap_total = Counter(
     "tradeengine_sizing_cap_total",
     "Orders whose quantity was reduced by a sizing cap",
@@ -940,6 +946,10 @@ otel_total_daily_pnl_usd = meter.create_up_down_counter(
 otel_risk_rejections = meter.create_counter(
     "tradeengine_risk_rejections_total",
     description="Total orders rejected by risk management (OTLP dual-export)",
+)
+otel_signal_outcomes_total = meter.create_counter(
+    "tradeengine_signal_outcomes_total",
+    description="Terminal outcomes for received signals (OTLP dual-export)",
 )
 otel_risk_checks = meter.create_counter(
     "tradeengine_risk_checks_total",

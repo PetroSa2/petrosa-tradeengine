@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from prometheus_client import REGISTRY
 
-from tradeengine.metrics import IDLE_CAUSES, TradingIdleTracker
+from tradeengine.metrics import (
+    IDLE_CAUSE_STALE_SECONDS,
+    IDLE_CAUSES,
+    TradingIdleTracker,
+)
 
 
 class Clock:
@@ -77,4 +81,30 @@ def test_healthy_trading_never_accrues_blocking_causes():
     blocking = [c for c in IDLE_CAUSES if c not in ("no_signals", "cio_skip")]
     assert (
         sum(_gauge("tradeengine_trading_idle_seconds_total", c) for c in blocking) == 0
+    )
+
+
+def test_a_blocking_cause_goes_stale_into_no_signals():
+    """A quiet spell after one rejection (e.g. CIO's halt) is not charged to that cause forever."""
+    clock = Clock()
+    tracker = TradingIdleTracker(clock=clock)
+    tracker.tick("insufficient_margin")
+    clock.now += IDLE_CAUSE_STALE_SECONDS + 3600
+    assert (
+        _gauge("tradeengine_trading_idle_seconds_total", "insufficient_margin")
+        == IDLE_CAUSE_STALE_SECONDS
+    )
+    assert _gauge("tradeengine_trading_idle_seconds", "no_signals") == 3600
+    assert tracker.cause == "no_signals"
+
+
+def test_repeated_rejections_keep_the_cause_current():
+    clock = Clock()
+    tracker = TradingIdleTracker(clock=clock)
+    for _ in range(6):
+        tracker.tick("portfolio_exposure")
+        clock.now += 600
+    assert tracker.cause == "portfolio_exposure"
+    assert (
+        _gauge("tradeengine_trading_idle_seconds_total", "portfolio_exposure") == 3600
     )

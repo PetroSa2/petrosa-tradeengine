@@ -68,6 +68,11 @@ trading_idle_seconds_total = Gauge(
 )
 
 
+# A blocking cause not re-confirmed by a tick within this long goes stale and further idle
+# time counts as no_signals (labelled fallback; rejections tick on every refused signal).
+IDLE_CAUSE_STALE_SECONDS = 900.0
+
+
 class TradingIdleTracker:
     """Track the current idle run and attribute each interval to its last cause.
 
@@ -96,8 +101,18 @@ class TradingIdleTracker:
     def cause(self) -> str:
         return self._cause
 
+    def _settle(self, now: float) -> None:
+        """Move a stale blocking cause's run into its total and continue as no_signals."""
+        if self._cause == "no_signals":
+            return
+        if now - self._last_tick > IDLE_CAUSE_STALE_SECONDS:
+            self._totals[self._cause] += IDLE_CAUSE_STALE_SECONDS
+            self._last_tick += IDLE_CAUSE_STALE_SECONDS
+            self._cause = "no_signals"
+
     def current_seconds(self, cause: str) -> float:
         """Seconds of the current idle run when ``cause`` is the current cause, else 0."""
+        self._settle(self.clock())
         if cause != self._cause:
             return 0.0
         return max(0.0, self.clock() - self._last_tick)
@@ -109,6 +124,7 @@ class TradingIdleTracker:
     def tick(self, cause: str, now: float | None = None) -> None:
         cause = cause if cause in IDLE_CAUSES else "other"
         current = self.clock() if now is None else now
+        self._settle(current)
         self._totals[self._cause] += max(0.0, current - self._last_tick)
         self._cause = cause
         self._last_tick = current
@@ -120,6 +136,7 @@ class TradingIdleTracker:
         """An order went out: the blocking cause is cleared, so further idle time is "no signals"
         until a rejection ticks a cause (the readiness alert excludes no_signals)."""
         current = self.clock()
+        self._settle(current)
         self._totals[self._cause] += max(0.0, current - self._last_tick)
         self._cause = "no_signals"
         self._last_tick = current

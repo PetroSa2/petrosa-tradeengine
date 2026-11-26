@@ -31,9 +31,11 @@ def test_a_quiet_period_shows_at_scrape_without_observe():
     clock = Clock()
     TradingIdleTracker(clock=clock)
     clock.now += 3600
-    assert _gauge("tradeengine_trading_idle_seconds", "other") == 3600
-    assert _gauge("tradeengine_trading_idle_seconds_total", "other") == 3600
-    assert _gauge("tradeengine_trading_idle_seconds", "cio_skip") == 0
+    assert _gauge("tradeengine_trading_idle_seconds", "no_signals") == 3600
+    assert _gauge("tradeengine_trading_idle_seconds_total", "no_signals") == 3600
+    for cause in IDLE_CAUSES:
+        if cause != "no_signals":
+            assert _gauge("tradeengine_trading_idle_seconds_total", cause) == 0
 
 
 def test_tick_attributes_the_run_to_the_previous_cause_and_switches():
@@ -42,10 +44,10 @@ def test_tick_attributes_the_run_to_the_previous_cause_and_switches():
     clock.now += 100
     tracker.tick("cio_skip")
     clock.now += 50
-    assert _gauge("tradeengine_trading_idle_seconds_total", "other") == 100
+    assert _gauge("tradeengine_trading_idle_seconds_total", "no_signals") == 100
     assert _gauge("tradeengine_trading_idle_seconds", "cio_skip") == 50
     assert _gauge("tradeengine_trading_idle_seconds_total", "cio_skip") == 50
-    assert _gauge("tradeengine_trading_idle_seconds", "other") == 0
+    assert _gauge("tradeengine_trading_idle_seconds", "no_signals") == 0
     tracker.tick("not-a-cause")
     assert tracker.cause == "other"
 
@@ -59,4 +61,20 @@ def test_order_submitted_ends_the_run_and_keeps_the_total():
     assert _gauge("tradeengine_trading_idle_seconds", "insufficient_margin") == 0
     assert _gauge("tradeengine_trading_idle_seconds_total", "insufficient_margin") == 30
     clock.now += 10
-    assert _gauge("tradeengine_trading_idle_seconds", "insufficient_margin") == 10
+    # The blocking cause is cleared: time after the order is "no signals", not margin.
+    assert _gauge("tradeengine_trading_idle_seconds", "insufficient_margin") == 0
+    assert _gauge("tradeengine_trading_idle_seconds_total", "insufficient_margin") == 30
+    assert _gauge("tradeengine_trading_idle_seconds", "no_signals") == 10
+
+
+def test_healthy_trading_never_accrues_blocking_causes():
+    """Orders keep going out: the alert's sum over blocking causes stays 0 (review of #861)."""
+    clock = Clock()
+    tracker = TradingIdleTracker(clock=clock)
+    for _ in range(24):
+        clock.now += 3600
+        tracker.order_submitted()
+    blocking = [c for c in IDLE_CAUSES if c not in ("no_signals", "cio_skip")]
+    assert (
+        sum(_gauge("tradeengine_trading_idle_seconds_total", c) for c in blocking) == 0
+    )

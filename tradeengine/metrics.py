@@ -74,13 +74,15 @@ class TradingIdleTracker:
     petrosa-tradeengine#860: both idle gauges are computed when Prometheus scrapes them
     (``set_function``), so the current run is visible without anyone calling ``observe()``,
     and every cause's series exists from the start, even while nothing reaches the engine
-    (e.g. CIO's drawdown halt, when no request or rejection ever ticks the tracker).
+    (e.g. CIO's drawdown halt, when no request or rejection ever ticks the tracker); that quiet
+    time is attributed to ``no_signals``, as after every submitted order.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self._last_tick = clock()
-        self._cause = "other"
+        # Nothing has been rejected yet: idle time is "no signals" until a blocking cause ticks.
+        self._cause = "no_signals"
         self._totals = dict.fromkeys(IDLE_CAUSES, 0.0)
         for cause in IDLE_CAUSES:
             trading_idle_seconds.labels(cause=cause).set_function(
@@ -115,8 +117,11 @@ class TradingIdleTracker:
         """Kept for callers; the gauges are computed at scrape time."""
 
     def order_submitted(self) -> None:
+        """An order went out: the blocking cause is cleared, so further idle time is "no signals"
+        until a rejection ticks a cause (the readiness alert excludes no_signals)."""
         current = self.clock()
         self._totals[self._cause] += max(0.0, current - self._last_tick)
+        self._cause = "no_signals"
         self._last_tick = current
 
 

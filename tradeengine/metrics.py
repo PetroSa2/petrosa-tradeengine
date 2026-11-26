@@ -15,6 +15,7 @@ OTLP push pipeline to Grafana Alloy. The prometheus_client path is unchanged.
 
 import time
 from collections.abc import Callable
+from functools import partial
 
 from petrosa_otel import get_meter
 from prometheus_client import Counter, Gauge, Histogram
@@ -67,40 +68,78 @@ trading_idle_seconds_total = Gauge(
 )
 
 
+# A blocking cause not re-confirmed by a tick within this long goes stale and further idle
+# time counts as no_signals (labelled fallback; rejections tick on every refused signal).
+IDLE_CAUSE_STALE_SECONDS = 900.0
+
+
 class TradingIdleTracker:
-    """Track the current idle run and attribute each interval to its last cause."""
+    """Track the current idle run and attribute each interval to its last cause.
+
+    petrosa-tradeengine#860: both idle gauges are computed when Prometheus scrapes them
+    (``set_function``), so the current run is visible without anyone calling ``observe()``,
+    and every cause's series exists from the start, even while nothing reaches the engine
+    (e.g. CIO's drawdown halt, when no request or rejection ever ticks the tracker); that quiet
+    time is attributed to ``no_signals``, as after every submitted order.
+    """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self._last_tick = clock()
-        self._cause = "other"
+        # Nothing has been rejected yet: idle time is "no signals" until a blocking cause ticks.
+        self._cause = "no_signals"
+        self._totals = dict.fromkeys(IDLE_CAUSES, 0.0)
+        for cause in IDLE_CAUSES:
+            trading_idle_seconds.labels(cause=cause).set_function(
+                partial(self.current_seconds, cause)
+            )
+            trading_idle_seconds_total.labels(cause=cause).set_function(
+                partial(self.total_seconds, cause)
+            )
 
     @property
     def cause(self) -> str:
         return self._cause
 
+    def _settle(self, now: float) -> None:
+        """Move a stale blocking cause's run into its total and continue as no_signals."""
+        if self._cause == "no_signals":
+            return
+        if now - self._last_tick > IDLE_CAUSE_STALE_SECONDS:
+            self._totals[self._cause] += IDLE_CAUSE_STALE_SECONDS
+            self._last_tick += IDLE_CAUSE_STALE_SECONDS
+            self._cause = "no_signals"
+
+    def current_seconds(self, cause: str) -> float:
+        """Seconds of the current idle run when ``cause`` is the current cause, else 0."""
+        self._settle(self.clock())
+        if cause != self._cause:
+            return 0.0
+        return max(0.0, self.clock() - self._last_tick)
+
+    def total_seconds(self, cause: str) -> float:
+        """Idle seconds attributed to ``cause`` so far, including the current run."""
+        return self._totals.get(cause, 0.0) + self.current_seconds(cause)
+
     def tick(self, cause: str, now: float | None = None) -> None:
         cause = cause if cause in IDLE_CAUSES else "other"
         current = self.clock() if now is None else now
-        elapsed = max(0.0, current - self._last_tick)
-        trading_idle_seconds_total.labels(cause=self._cause).inc(elapsed)
+        self._settle(current)
+        self._totals[self._cause] += max(0.0, current - self._last_tick)
         self._cause = cause
         self._last_tick = current
-        trading_idle_seconds.labels(cause=cause).set(0.0)
-        for other in IDLE_CAUSES:
-            if other != cause:
-                trading_idle_seconds.labels(cause=other).set(0.0)
 
     def observe(self, now: float | None = None) -> None:
-        current = self.clock() if now is None else now
-        trading_idle_seconds.labels(cause=self._cause).set(
-            max(0.0, current - self._last_tick)
-        )
+        """Kept for callers; the gauges are computed at scrape time."""
 
     def order_submitted(self) -> None:
-        self._last_tick = self.clock()
-        for cause in IDLE_CAUSES:
-            trading_idle_seconds.labels(cause=cause).set(0.0)
+        """An order went out: the blocking cause is cleared, so further idle time is "no signals"
+        until a rejection ticks a cause (the readiness alert excludes no_signals)."""
+        current = self.clock()
+        self._settle(current)
+        self._totals[self._cause] += max(0.0, current - self._last_tick)
+        self._cause = "no_signals"
+        self._last_tick = current
 
 
 binance_used_weight_1m = Gauge(
